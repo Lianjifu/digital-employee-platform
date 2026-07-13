@@ -1,7 +1,11 @@
+/**
+ * P5 智能体
+ * 1:1 对齐 docs/01-product/mockups/p5-agents.html
+ */
 import { useState } from 'react';
 import { useApiQuery } from '@/services/query';
-import { Card, CardHeader, CardTitle, CardBody, Badge, Button, Tabs, Empty, Progress } from '@de/web-ui';
-import { Star, Download, Settings, Bot, Zap, ShieldCheck, AlertTriangle } from 'lucide-react';
+import { Badge, Button, Tabs } from '@de/web-ui';
+import { Star, Download, Settings, Bot, Zap, ShieldCheck, AlertTriangle, Plus, CheckCircle2, BarChart3 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import type { Agent } from '@de/web-types';
 
@@ -14,15 +18,21 @@ export default function Agents() {
   const active = agents?.find((a) => a.id === activeId);
 
   return (
-    <div className="grid h-full grid-cols-[1fr_360px] divide-x divide-[var(--border)]">
-      <section className="flex h-full flex-col overflow-hidden">
-        <div className="border-b border-[var(--border)] p-4">
-          <div className="mb-3 flex items-center justify-between">
+    <div className="flex h-full">
+      <section className="flex-1 flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="border-b border-[var(--border)] p-6">
+          <div className="flex items-center justify-between mb-4">
             <div>
-              <h1 className="text-lg font-semibold">智能体市场</h1>
-              <p className="text-xs text-[var(--text-muted)]">8 个领域 · 24 商用 · 5 社区 · 2 企业包</p>
+              <h1 className="page-header__title">智能体市场</h1>
+              <p className="page-header__sub">8 个领域 · 24 商用 · 5 社区 · 2 企业包</p>
             </div>
-            <Button>上传自定义 Agent</Button>
+            <div className="page-header__actions">
+              <Button variant="secondary" size="sm">
+                <BarChart3 className="h-3.5 w-3.5" />用量排行
+              </Button>
+              <Button size="sm"><Plus className="h-3.5 w-3.5" />上传 Agent</Button>
+            </div>
           </div>
           <Tabs
             value={tab}
@@ -34,75 +44,96 @@ export default function Agents() {
           />
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4">
+        <div className="flex-1 overflow-y-auto p-6">
           <SectionTitle>AIOps · 运维智能体</SectionTitle>
-          <div className="mb-6 grid grid-cols-4 gap-3">
-            {(list ?? []).filter((a) => a.category === 'AIOps').map((a) => (
+          <div className="mb-6 grid grid-cols-4 gap-4">
+            {list.filter((a) => a.category === 'AIOps').map((a) => (
               <AgentCard key={a.id} a={a} active={a.id === activeId} onClick={() => setActiveId(a.id)} />
             ))}
           </div>
-
           <SectionTitle>SecOps · 安全智能体</SectionTitle>
-          <div className="grid grid-cols-4 gap-3">
-            {(list ?? []).filter((a) => a.category === 'SecOps').map((a) => (
+          <div className="grid grid-cols-4 gap-4">
+            {list.filter((a) => a.category === 'SecOps').map((a) => (
               <AgentCard key={a.id} a={a} active={a.id === activeId} onClick={() => setActiveId(a.id)} />
             ))}
           </div>
-
-          {list.length === 0 && <Empty title="暂无 Agent" description="切换到商店 Tab 安装" />}
         </div>
       </section>
 
       {/* 右侧详情 */}
-      <aside className="overflow-y-auto p-4">
+      <aside className="w-[360px] shrink-0 border-l border-[var(--border)] bg-[var(--bg)] overflow-y-auto p-5">
         {active ? (
-          <div className="space-y-3">
-            <Card>
-              <CardBody className="flex items-start gap-3">
-                <div className="grid h-12 w-12 place-items-center rounded-lg bg-[var(--brand)]/15 text-[var(--brand)]">
-                  <Bot className="h-6 w-6" />
+          <div className="space-y-4">
+            {/* Header */}
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-4">
+              <div className="flex items-start gap-3">
+                <div className="grid h-12 w-12 place-items-center rounded-lg bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white">
+                  <Bot className="h-5 w-5" />
                 </div>
                 <div className="flex-1">
-                  <div className="text-sm font-semibold">{active.name}</div>
-                  <div className="mt-1 flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]">
+                  <div className="text-base font-semibold">{active.name}</div>
+                  <div className="mt-1 flex items-center gap-1.5">
                     <Badge tone={active.category === 'AIOps' ? 'info' : 'warn'}>{active.category}</Badge>
-                    <span>v{active.version}</span>
-                    <span>·</span>
-                    <span className="flex items-center gap-0.5 text-amber-500"><Star className="h-3 w-3 fill-current" />{active.rating}</span>
+                    <span className="text-[10px] text-[var(--text-muted)] font-mono">v{active.version}</span>
+                    <span className="flex items-center gap-0.5 text-[10px] text-[var(--warning)] ml-auto">
+                      <Star className="h-3 w-3 fill-current" />{active.rating}
+                    </span>
                   </div>
                   <div className="mt-2 text-xs text-[var(--text-muted)]">{active.description}</div>
                 </div>
-              </CardBody>
-            </Card>
+              </div>
+            </div>
 
-            <Card>
-              <CardHeader><CardTitle className="text-xs">性能指标</CardTitle></CardHeader>
-              <CardBody className="space-y-3 text-xs">
+            {/* 性能指标 */}
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-4">
+              <div className="text-xs font-semibold mb-3 flex items-center gap-2">
+                <Zap className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                性能指标
+              </div>
+              <div className="grid grid-cols-3 gap-2 text-center">
                 <Stat label="调用次数" value={active.installCount.toLocaleString()} />
                 {active.cacheHitRate !== undefined && (
-                  <div>
-                    <div className="mb-1 flex justify-between"><span>缓存命中</span><span>{(active.cacheHitRate * 100).toFixed(0)}%</span></div>
-                    <Progress value={active.cacheHitRate * 100} tone="success" />
-                  </div>
+                  <Stat label="缓存命中" value={`${(active.cacheHitRate * 100).toFixed(0)}%`} tone="success" />
                 )}
-                {active.p95Ms !== undefined && <Stat label="P95 响应" value={`${active.p95Ms}ms`} />}
-                <Stat label="工具" value={active.tools.join(', ') || '—'} />
-              </CardBody>
-            </Card>
+                {active.p95Ms !== undefined && (
+                  <Stat label="P95 响应" value={`${active.p95Ms}ms`} tone="warn" />
+                )}
+              </div>
+            </div>
 
-            <Card>
-              <CardHeader><CardTitle className="text-xs">版本说明</CardTitle></CardHeader>
-              <CardBody className="space-y-1 text-xs text-[var(--text-muted)]">
-                <div>v{active.version} · 当前版本</div>
+            {/* 版本说明 */}
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-4">
+              <div className="text-xs font-semibold mb-2 flex items-center gap-2">
+                <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" />
+                版本说明
+              </div>
+              <div className="space-y-1.5 text-[11px] text-[var(--text-muted)] font-mono">
+                <div className="text-[var(--text-secondary)] font-sans font-semibold">v{active.version} · 当前版本</div>
                 <div>+ 新增智能重试机制</div>
                 <div>+ 支持自定义 prompt 模板</div>
-                <div>- 修复内存泄漏问题</div>
-              </CardBody>
-            </Card>
+                <div className="text-[var(--success)]">+ 缓存命中率 +8%</div>
+                <div className="text-[var(--warning)]">- 修复内存泄漏</div>
+              </div>
+            </div>
 
+            {/* 工具 */}
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-4">
+              <div className="text-xs font-semibold mb-2 flex items-center gap-2">
+                <Settings className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                工具
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {(active.tools.length ? active.tools : ['—']).map((t) => (
+                  <span key={t} className="nav-pill text-[10px]">{t}</span>
+                ))}
+              </div>
+            </div>
+
+            {/* 操作 */}
             <div className="flex gap-2">
-              <Button size="sm" variant="outline" className="flex-1"><Settings className="h-3.5 w-3.5" />配置</Button>
-              <Button size="sm" variant="outline" className="flex-1">回滚</Button>
+              <Button size="sm" variant="secondary" className="flex-1">
+                <Settings className="h-3.5 w-3.5" />配置
+              </Button>
               {active.status === 'installed' ? (
                 <Button size="sm" variant="danger" className="flex-1">停用</Button>
               ) : (
@@ -111,7 +142,9 @@ export default function Agents() {
             </div>
           </div>
         ) : (
-          <Empty title="选择一个 Agent" description="左侧卡片查看详情" icon={<Bot className="h-8 w-8" />} />
+          <div className="text-center text-xs text-[var(--text-muted)] py-12">
+            选择左侧卡片查看详情
+          </div>
         )}
       </aside>
     </div>
@@ -119,7 +152,7 @@ export default function Agents() {
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <div className="mb-3 text-xs font-semibold text-[var(--text-muted)]">{children}</div>;
+  return <div className="mb-3 text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wide">{children}</div>;
 }
 
 function AgentCard({ a, active, onClick }: { a: Agent; active: boolean; onClick: () => void }) {
@@ -127,35 +160,55 @@ function AgentCard({ a, active, onClick }: { a: Agent; active: boolean; onClick:
     <button
       onClick={onClick}
       className={cn(
-        'rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3 text-left transition-all hover:border-[var(--brand)]',
-        active && 'border-[var(--brand)] ring-2 ring-[var(--brand)]/30',
+        'relative rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4 text-left transition-all tile-topbrand overflow-hidden',
+        active && 'card-active',
       )}
     >
-      <div className="mb-2 flex items-center justify-between">
-        <div className="grid h-9 w-9 place-items-center rounded-md bg-[var(--brand)]/15 text-[var(--brand)]">
-          <Bot className="h-4 w-4" />
+      <div className="mb-3 flex items-center justify-between">
+        <div className="grid h-10 w-10 place-items-center rounded-md bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white">
+          <Bot className="h-5 w-5" />
         </div>
-        <Star className={cn('h-3.5 w-3.5', a.isStarred ? 'fill-amber-400 text-amber-400' : 'text-[var(--text-muted)]')} />
+        <div className="flex items-center gap-1">
+          <Star className={cn('h-3.5 w-3.5', a.isStarred ? 'fill-amber-400 text-amber-400' : 'text-[var(--text-muted)]')} />
+          <span className="text-[11px] font-mono">{a.rating}</span>
+        </div>
       </div>
-      <div className="text-sm font-semibold">{a.name}</div>
-      <div className="mt-0.5 truncate text-[11px] text-[var(--text-muted)]">{a.description}</div>
-      <div className="mt-2 flex items-center gap-2 text-[10px]">
+      <div className="text-sm font-semibold mb-1">{a.name}</div>
+      <div className="text-[11px] text-[var(--text-muted)] line-clamp-2 mb-3 h-8">{a.description}</div>
+
+      <div className="flex items-center gap-2 text-[10px] mb-3">
         <Badge tone={a.category === 'AIOps' ? 'info' : 'warn'}>{a.category}</Badge>
-        <span className="text-[var(--text-muted)]">v{a.version}</span>
+        <span className="text-[var(--text-muted)] font-mono">v{a.version}</span>
       </div>
-      <div className="mt-2 flex items-center justify-between text-[10px] text-[var(--text-muted)]">
-        <span className="flex items-center gap-0.5"><Star className="h-3 w-3 fill-amber-400 text-amber-400" />{a.rating}</span>
-        <span className="flex items-center gap-0.5"><Download className="h-3 w-3" />{a.installCount}</span>
+
+      {/* 性能条 */}
+      <div className="grid grid-cols-3 gap-2 pt-3 border-t border-[var(--border)]">
+        <Mini label="调用" value={a.installCount >= 1000 ? `${(a.installCount / 1000).toFixed(1)}k` : String(a.installCount)} />
+        {a.cacheHitRate !== undefined && (
+          <Mini label="缓存" value={`${(a.cacheHitRate * 100).toFixed(0)}%`} />
+        )}
+        {a.p95Ms !== undefined && <Mini label="P95" value={`${a.p95Ms}ms`} />}
       </div>
     </button>
   );
 }
 
-function Stat({ label, value }: { label: string; value: any }) {
+function Mini({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-[var(--text-muted)]">{label}</span>
-      <span className="font-mono">{value}</span>
+    <div>
+      <div className="text-[9px] text-[var(--text-muted)] uppercase">{label}</div>
+      <div className="text-[11px] font-mono font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: string; tone?: 'success' | 'warn' }) {
+  return (
+    <div>
+      <div className="text-[10px] text-[var(--text-muted)] uppercase">{label}</div>
+      <div className={cn('text-base font-mono font-bold', tone === 'success' ? 'text-[var(--success)]' : tone === 'warn' ? 'text-[var(--warning)]' : 'text-[var(--text)]')}>
+        {value}
+      </div>
     </div>
   );
 }

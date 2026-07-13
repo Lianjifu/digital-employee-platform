@@ -576,3 +576,279 @@ body {
   box-shadow: 0 0 0 2px var(--brand-light);
 }
 .wf-node.failed { border-color: var(--danger); }
+
+/* ============ 列表卡增强（PSSP）============ */
+.list-card-accent {
+  position: relative;
+  overflow: hidden;
+}
+.list-card-accent::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 3px;
+  background: var(--brand);
+}
+.list-card-accent--danger::before { background: var(--danger); }
+.list-card-accent--warning::before { background: var(--warning); }
+.list-card-accent--success::before { background: var(--success); }
+.list-card-accent--purple::before { background: var(--purple); }
+
+/* 任务卡（Kanban 左侧 SLA 彩边）============ */
+.task-tile {
+  position: relative;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  transition: all 0.2s;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+}
+.task-tile::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 3px;
+  background: var(--info);
+  border-radius: 3px 0 0 3px;
+}
+.task-tile--danger::before { background: var(--danger); }
+.task-tile--warning::before { background: var(--warning); }
+.task-tile--success::before { background: var(--success); }
+.task-tile:hover {
+  border-color: var(--brand);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+/* Provider/Agent active 卡（左侧彩边 + 渐变背景）============ */
+.card-active {
+  border-color: var(--brand) !important;
+  background: linear-gradient(135deg, var(--brand-light) 0%, var(--surface-1) 60%) !important;
+  box-shadow: 0 0 0 2px var(--brand-light);
+}
+
+/* 文档/Provider 卡片（hover 渐变边）============ */
+.tile-brandable {
+  position: relative;
+  transition: all 0.2s;
+  cursor: pointer;
+}
+.tile-brandable::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--brand), var(--purple));
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.tile-brandable:hover::before { opacity: 1; }
+.tile-brandable:hover {
+  border-color: var(--brand);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+/* 状态徽章（导航/侧栏用）============ */
+.nav-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.nav-pill--success { background: var(--success-bg); color: var(--success); border-color: transparent; }
+.nav-pill--warning { background: var(--warning-bg); color: var(--warning); border-color: transparent; }
+.nav-pill--info { background: var(--info-bg); color: var(--info); border-color: transparent; }
+.nav-pill--danger { background: var(--danger-bg); color: var(--danger); border-color: transparent; }
+
+/* 会话列表项（PSSP session-item 风格）============ */
+.session-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  margin-bottom: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border-left: 3px solid transparent;
+}
+.session-item:hover { background: var(--bg-elevated); }
+.session-item--active {
+  background: var(--brand-light);
+  border-left-color: var(--brand);
+}
+.session-item__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.session-item__preview {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.session-item__meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+/* 会话气泡（chat-message）============ */
+.chat-bubble {
+  padding: 12px 16px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  line-height: 1.6;
+  font-size: 14px;
+  color: var(--text);
+  max-width: 100%;
+}
+.chat-bubble--user {
+  background: linear-gradient(135deg, var(--brand) 0%, var(--brand-hover) 100%);
+  color: white;
+  border-color: transparent;
+}
+.chat-bubble--tool {
+  background: var(--warning-bg);
+  border-color: var(--warning);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+/* 引用 / 工具调用块 ============ */
+.cite-block {
+  margin-top: 8px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  font-size: 12px;
+}
+.cite-block__title {
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* 工具调用条（tool-call）============ */
+.tool-call {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.tool-call__name { font-weight: 600; color: var(--brand); }
+.tool-call__result { color: var(--success); margin-left: auto; }
+
+/* 分隔线（PSSP detail-section）============ */
+.section-divider {
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  margin-top: 16px;
+}
+
+/* 流节点状态小色块（flow-node）============ */
+.flow-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--brand);
+  background: var(--brand-light);
+  color: var(--brand);
+  font-size: 12px;
+  font-weight: 500;
+}
+.flow-pill--success { border-color: var(--success); background: var(--success-bg); color: var(--success); }
+.flow-pill--warning { border-color: var(--warning); background: var(--warning-bg); color: var(--warning); }
+.flow-pill--danger { border-color: var(--danger); background: var(--danger-bg); color: var(--danger); }
+.flow-pill--info { border-color: var(--info); background: var(--info-bg); color: var(--info); }
+.flow-pill--purple { border-color: var(--purple); background: var(--purple-bg); color: var(--purple); }
+.flow-pill--neutral { border-color: var(--border-strong); background: var(--bg-elevated); color: var(--text-secondary); }
+
+/* 状态更新列表（chat-status-update）============ */
+.status-list { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; }
+.status-list__item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+}
+.status-list__icon { flex-shrink: 0; }
+.status-list__icon--success { color: var(--success); }
+.status-list__icon--info { color: var(--info); }
+.status-list__icon--warning { color: var(--warning); }
+.status-list__icon--danger { color: var(--danger); }
+
+/* Provider / 智能体 / 文档 卡片顶边渐变（hover 增强）============ */
+.tile-topbrand::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--brand) 0%, var(--purple) 100%);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+.tile-topbrand:hover::after { opacity: 1; }
+
+/* 工作流节点 DAG（flow）============ */
+.flow-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+.flow-node-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  border: 1.5px solid var(--brand);
+  border-radius: var(--radius-md);
+  background: var(--surface-1);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+.flow-node-pill:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+.flow-node-pill--success { border-color: var(--success); background: var(--success-bg); color: var(--success); }
+.flow-node-pill--warning { border-color: var(--warning); background: var(--warning-bg); color: var(--warning); }
+.flow-node-pill--danger { border-color: var(--danger); background: var(--danger-bg); color: var(--danger); }
+.flow-node-pill--purple { border-color: var(--purple); background: var(--purple-bg); color: var(--purple); }
+.flow-arrow { color: var(--text-muted); flex-shrink: 0; }
