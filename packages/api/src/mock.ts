@@ -297,6 +297,49 @@ export const mockSkills: Skill[] = [
   { id: 's8', name: 'jira-tool', kind: 'tool', description: 'Jira 工单', version: '1.0', status: 'installed', rating: 4.5, installCount: 690, riskLevel: 'mid', cacheable: true },
 ];
 
+// ============ P9 模型扩展数据 ============
+
+export const mockProviderHealth = {
+  p1: { status: 'healthy', latency: 320, uptime: 99.98, lastCheck: '2 min 前' },
+  p2: { status: 'healthy', latency: 280, uptime: 99.95, lastCheck: '2 min 前' },
+  p3: { status: 'healthy', latency: 410, uptime: 99.92, lastCheck: '1 min 前' },
+  p4: { status: 'standby', latency: 0, uptime: 100, lastCheck: '5 min 前' },
+  p5: { status: 'healthy', latency: 120, uptime: 99.99, lastCheck: '30s 前' },
+  p6: { status: 'healthy', latency: 180, uptime: 99.96, lastCheck: '1 min 前' },
+};
+
+export const mockPromptTemplates = [
+  { id: 't1', name: '代码审查', category: 'engineering', preview: '你是一位资深 SRE，请审查以下代码...', uses: 1280, rating: 4.8 },
+  { id: 't2', name: '故障定位', category: 'ops', preview: '检测到 Redis OOM，请按 Runbook 执行...', uses: 856, rating: 4.7 },
+  { id: 't3', name: '威胁分析', category: 'security', preview: '基于 ATT&CK 框架分析此 SIEM 告警...', uses: 412, rating: 4.5 },
+];
+
+export const mockRouteFlow = [
+  { level: 'P0', path: ['用户请求', 'P9 路由', 'Sonnet-4', 'GPT-4o (降级)', 'Opus-4 (兜底)'] },
+  { level: 'P1', path: ['用户请求', 'P9 路由', 'Sonnet-4', 'Qwen2.5-72B (降级)'] },
+  { level: 'P2', path: ['用户请求', 'P9 路由', 'Qwen2.5-72B'] },
+  { level: 'P3', path: ['异步队列', 'Qwen2.5-72B (异步)'] },
+  { level: 'Audit', path: ['审计通道', '独立集群'] },
+];
+
+export const mockExportRoutes = {
+  cn: 94,   // 境内占比
+  global: 6, // 出境占比
+};
+
+export const mockModelCompare = [
+  { id: 'p1', name: 'Claude Sonnet-4', price: '$3 / $15', latency: 320, quality: 96, context: '200K' },
+  { id: 'p5', name: 'Qwen2.5-72B', price: '$0.4 / $0.4', latency: 120, quality: 88, context: '32K' },
+  { id: 'p6', name: 'DeepSeek-V3', price: '$0.3 / $0.5', latency: 180, quality: 90, context: '64K' },
+];
+
+export const mockAuditLog = [
+  { id: 'l1', time: '14:32', user: '王昊', action: '查询', key: 'sk-prod-...', model: 'Sonnet-4', tokens: 1240 },
+  { id: 'l2', time: '14:18', user: '李婷', action: '查询', key: 'sk-prod-...', model: 'Qwen2.5-72B', tokens: 856 },
+  { id: 'l3', time: '13:55', user: '孙博', action: '轮转', key: 'sk-prod-...', model: 'GPT-4o', tokens: 0 },
+  { id: 'l4', time: '13:42', user: '张睿', action: '查询', key: 'sk-prod-...', model: 'Sonnet-4', tokens: 2100 },
+];
+
 export const mockProviders: Provider[] = [
   { id: 'p1', name: 'Anthropic', tier: 'official', models: ['Claude Sonnet-4', 'Opus-4', 'Haiku-4'], region: 'global', status: 'active', monthlyTokens: 8_400_000, monthlyCostUsd: 980 },
   { id: 'p2', name: 'Azure OpenAI', tier: 'official', models: ['GPT-4o'], region: 'global', status: 'standby', monthlyTokens: 0, monthlyCostUsd: 0 },
@@ -604,6 +647,12 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 模型
   if (path === '/api/providers') return mockProviders;
+  if (path === '/api/provider-health') return mockProviderHealth;
+  if (path === '/api/prompt-templates') return mockPromptTemplates;
+  if (path === '/api/route-flow') return mockRouteFlow;
+  if (path === '/api/export-routes') return mockExportRoutes;
+  if (path === '/api/model-compare') return mockModelCompare;
+  if (path === '/api/model-audit') return mockAuditLog;
   if (path === '/api/routes') return mockRoutes;
 
   // 渠道
