@@ -76,6 +76,45 @@ export const mockTasks: Task[] = [
   { id: 't6', code: 'TSK-20260712-018', title: '容量预测 - Q3 评估', priority: 'P3', status: 'completed', assignee: '周慧', agentId: 'a4', progress: { done: 4, total: 4 }, tags: ['容量'], createdAt: '2026-07-12T10:00:00Z', updatedAt: '2026-07-12T18:00:00Z' },
   { id: 't7', code: 'TSK-20260712-017', title: '变更辅助 - 网关灰度', priority: 'P2', status: 'completed', assignee: '孙博', agentId: 'a3', progress: { done: 6, total: 6 }, tags: ['灰度'], createdAt: '2026-07-12T09:15:00Z', updatedAt: '2026-07-12T11:30:00Z' },
 ];
+// Agent 扩展数据：版本历史 + 7 天调用趋势 + Top 排行
+export interface AgentVersion {
+  version: string;
+  date: string;
+  changelog: string[];
+  type: 'major' | 'minor' | 'patch';
+}
+
+export const mockAgentVersions: Record<string, AgentVersion[]> = {
+  a1: [
+    { version: '1.4.2', date: '2026-07-08', type: 'minor', changelog: ['+ 新增 Redis 7.x 兼容', '+ 优化 volatile-lru 策略切换', '- 修复内存计算偏差'] },
+    { version: '1.4.1', date: '2026-06-20', type: 'patch', changelog: ['+ 支持 cluster bus', '- 修复大 Key 扫描卡顿'] },
+    { version: '1.4.0', date: '2026-06-01', type: 'major', changelog: ['+ 全新 LangGraph 0.2 内核', '+ 支持多实例并行恢复', '+ 缓存命中率 +12%'] },
+    { version: '1.3.5', date: '2026-05-15', type: 'minor', changelog: ['+ 双签流程整合'] },
+    { version: '1.3.0', date: '2026-04-01', type: 'major', changelog: ['+ RAG 检索集成'] },
+  ],
+};
+
+export const mockCallTrends: Record<string, number[]> = {
+  a1: [120, 180, 220, 190, 240, 280, 310], // 7 天调用趋势
+  a2: [80, 95, 110, 90, 120, 130, 140],
+  a3: [40, 60, 80, 70, 90, 100, 110],
+  a4: [1, 0, 2, 1, 0, 1, 1],
+  a5: [380, 420, 410, 450, 480, 460, 500],
+  a6: [780, 820, 810, 850, 880, 860, 900],
+  a7: [0, 2, 1, 3, 1, 2, 3],
+  a8: [5, 6, 7, 8, 6, 7, 7],
+};
+
+export const mockAgentRank = [
+  { rank: 1, id: 'a6', name: '告警降噪', calls: 5900, change: 8.2 },
+  { rank: 2, id: 'a1', name: '故障自愈', calls: 1540, change: 12.5 },
+  { rank: 3, id: 'a5', name: '威胁狩猎', calls: 3100, change: 4.1 },
+  { rank: 4, id: 'a2', name: 'K8s 操作', calls: 765, change: 15.3 },
+  { rank: 5, id: 'a3', name: '变更辅助', calls: 550, change: 22.1 },
+  { rank: 6, id: 'a7', name: '漏洞修复', calls: 12, change: -5.0 },
+  { rank: 7, id: 'a8', name: '合规审计', calls: 46, change: 0 },
+  { rank: 8, id: 'a4', name: '容量预测', calls: 6, change: 0 },
+];
 
 export const mockAgents: Agent[] = [
   { id: 'a1', name: 'Redis 故障自愈', category: 'AIOps', description: 'redis-cli · MONITOR · CONFIG 自动恢复', version: '1.4.2', status: 'installed', rating: 4.8, installCount: 1240, cacheHitRate: 0.32, p95Ms: 580, tools: ['redis-cli', 'MONITOR'], isStarred: true },
@@ -86,8 +125,8 @@ export const mockAgents: Agent[] = [
   { id: 'a6', name: '告警降噪', category: 'SecOps', description: '误报识别 + 规则合并', version: '1.3.2', status: 'installed', rating: 4.7, installCount: 380, p95Ms: 420, tools: ['siem'] },
   { id: 'a7', name: '漏洞修复', category: 'SecOps', description: 'CVE → 资产 → 工单', version: '2.0.1', status: 'installed', rating: 4.8, installCount: 320, p95Ms: 1500, tools: ['cmdb', 'jira'] },
   { id: 'a8', name: '合规审计', category: 'SecOps', description: '等保 3 / SOX 自动核查', version: '1.1.0', status: 'installed', rating: 4.6, installCount: 210, p95Ms: 3200, tools: ['audit'] },
-  { id: 'a9', name: 'PromQL 生成', category: 'AIOps', description: '自然语言转 PromQL', version: '1.0.0', status: 'available', rating: 4.4, installCount: 120, price: '免费', tools: ['prometheus'] },
-  { id: 'a10', name: '日志查询', category: 'AIOps', description: 'Loki · ES · S3 统一查询', version: '2.3.0', status: 'available', rating: 4.7, installCount: 880, price: '免费', tools: ['loki', 'opensearch'] },
+  { id: 'a9', name: 'PromQL 生成', category: 'AIOps', description: '自然语言转 PromQL', version: '1.0.0', status: 'available', rating: 4.4, installCount: 120, tools: ['prometheus'] },
+  { id: 'a10', name: '日志查询', category: 'AIOps', description: 'Loki · ES · S3 统一查询', version: '2.3.0', status: 'available', rating: 4.7, installCount: 880, tools: ['loki', 'opensearch'] },
 ];
 
 export const mockWorkflow: Workflow = {
@@ -117,10 +156,8 @@ export const mockWorkflow: Workflow = {
     { id: 'e7', source: 'n7', target: 'n8' },
   ],
 };
-
-export const mockKnowledgeDocs: KnowledgeDoc[] = [
+  export const mockKnowledgeDocs: KnowledgeDoc[] = [
   { id: 'k1', title: 'Redis 故障 Runbook v3.2', source: 'Runbook', sizeKb: 128, chunks: 86, citeCount: 320, status: 'ready', updatedAt: '2026-07-10T00:00:00Z' },
-  { id: 'k2', title: 'CMDB 全量资产清单', source: 'CMDB', sizeKb: 2400, chunks: 1280, citeCount: 1280, status: 'ready', updatedAt: '2026-07-08T00:00:00Z' },
   { id: 'k3', title: 'CVE-2026 漏洞库', source: 'CVE', sizeKb: 840, chunks: 620, citeCount: 88, status: 'ready', updatedAt: '2026-07-12T00:00:00Z' },
   { id: 'k4', title: 'K8s 节点运维手册', source: 'Runbook', sizeKb: 320, chunks: 210, citeCount: 156, status: 'ready', updatedAt: '2026-07-05T00:00:00Z' },
   { id: 'k5', title: '等保 3 合规白皮书', source: '合规', sizeKb: 1240, chunks: 580, citeCount: 240, status: 'ready', updatedAt: '2026-06-28T00:00:00Z' },
@@ -406,6 +443,15 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 智能体
   if (path === '/api/agents') return mockAgents;
+  if (path.startsWith('/api/agents/') && path.endsWith('/versions')) {
+    const id = path.split('/')[3];
+    return mockAgentVersions[id] ?? [];
+  }
+  if (path.startsWith('/api/agents/') && path.endsWith('/trend')) {
+    const id = path.split('/')[3];
+    return mockCallTrends[id] ?? [];
+  }
+  if (path === '/api/agents/rank') return mockAgentRank;
 
   // 工作流
   if (path === '/api/workflows') return [mockWorkflow];
