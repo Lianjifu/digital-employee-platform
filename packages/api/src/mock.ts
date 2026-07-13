@@ -359,6 +359,34 @@ export const mockRoutes: ModelRoute[] = [
   { level: 'audit', primary: '审计专用通道', fallback1: '—', crossBorder: false },
 ];
 
+// ============ P10 渠道扩展数据 ============
+
+export const mockChannelHealth = {
+  c1: { status: 'healthy', latency: 120, success: 99.8, errorCount24h: 2 },
+  c2: { status: 'healthy', latency: 95, success: 99.2, errorCount24h: 8 },
+  c3: { status: 'healthy', latency: 110, success: 98.5, errorCount24h: 12 },
+  c4: { status: 'disabled', latency: 0, success: 0, errorCount24h: 0 },
+  c5: { status: 'healthy', latency: 280, success: 97.8, errorCount24h: 24 },
+  c6: { status: 'healthy', latency: 45, success: 99.5, errorCount24h: 3 },
+};
+
+export const mockMessageStream = [
+  { id: 'm1', time: '14:32:01', channel: '飞书', target: '王昊', content: '[P0] Redis OOM 告警已恢复', status: 'delivered', tone: 'success' as const },
+  { id: 'm2', time: '14:30:18', channel: '企微', target: 'SRE 组', content: 'K8s 节点扩容审批通过', status: 'delivered', tone: 'success' as const },
+  { id: 'm3', time: '14:28:45', channel: '飞书', target: '张睿', content: 'CVE-2026-3321 修复建议', status: 'delivered', tone: 'info' as const },
+  { id: 'm4', time: '14:25:12', channel: '邮件', target: 'admin@acme.com', content: '本月合规审计报告 (94/94)', status: 'delivered', tone: 'success' as const },
+  { id: 'm5', time: '14:18:32', channel: 'Webhook', target: 'SIEM', content: '告警降噪合并 23 条', status: 'failed', tone: 'warning' as const },
+];
+
+export const mockChannelConfig = {
+  c1: {
+    rateLimit: { qps: 50, daily: 10000 },
+    retry: { max: 3, backoff: 'exponential' },
+    silent: { start: '22:00', end: '08:00' },
+    mergeWindow: '5 min',
+  },
+};
+
 export const mockChannels: Channel[] = [
   { id: 'c1', name: '飞书', kind: 'feishu', enabled: true, monthlySent: 480, successRate: 0.998 },
   { id: 'c2', name: '企业微信', kind: 'wecom', enabled: true, monthlySent: 280, successRate: 0.992 },
@@ -657,6 +685,9 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 渠道
   if (path === '/api/channels') return mockChannels;
+  if (path === '/api/channel-health') return mockChannelHealth;
+  if (path === '/api/message-stream') return mockMessageStream;
+  if (path === '/api/channel-config') return mockChannelConfig;
 
   // 设置
   if (path === '/api/audits') return mockAudits;

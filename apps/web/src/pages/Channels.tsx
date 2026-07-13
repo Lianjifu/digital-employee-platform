@@ -1,13 +1,25 @@
 /**
- * P10 渠道 · 消息推送
- * 1:1 对齐 docs/01-product/mockups/p10-channels.html
+ * P10 渠道（企业级优化版）
+ * Todo 1-10:
+ *  1. 渠道健康度监控
+ *  2. 消息发送实时流
+ *  3. Adaptive Card 可视化编辑器（4 模板）
+ *  4. 路由策略配置
+ *  5. 失败重试配置 + 告警
+ *  6. 静默期 / 合并窗口配置
+ *  7. 消息统计图表
+ *  8. 渠道测试器
+ *  9. 多语言模板
+ * 10. 黑名单 / 频率限制
  */
 import { useState } from 'react';
 import { useApiQuery } from '@/services/query';
 import { Badge, Button, Tabs } from '@de/web-ui';
 import {
   Send, MessageSquare, Mail, Webhook, Phone, AlertCircle, FileText,
-  ShieldCheck, Plus, CheckCircle2, ArrowUp, Activity, ChevronRight,
+  ShieldCheck, Plus, CheckCircle2, ArrowRight, Activity, Clock,
+  Volume2, History, Edit3, AlertTriangle, Clock3, Globe, Ban,
+  Send as SendIcon, PhoneCall,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import type { Channel, ChannelKind } from '@de/web-types';
@@ -16,15 +28,6 @@ const ICONS: Record<ChannelKind, any> = {
   feishu: MessageSquare, wecom: MessageSquare, dingtalk: MessageSquare, slack: MessageSquare,
   email: Mail, webhook: Webhook, sms: Phone, phone: Phone,
 };
-
-const CHANNELS = [
-  { id: 'c1', kind: 'feishu' as const, name: '飞书', enabled: true, monthly: 480, rate: 0.998, group: '国内 IM' },
-  { id: 'c2', kind: 'wecom' as const, name: '企业微信', enabled: true, monthly: 280, rate: 0.992, group: '国内 IM' },
-  { id: 'c3', kind: 'dingtalk' as const, name: '钉钉', enabled: true, monthly: 120, rate: 0.985, group: '国内 IM' },
-  { id: 'c4', kind: 'slack' as const, name: 'Slack', enabled: false, monthly: 0, rate: 0, group: '国外 IM' },
-  { id: 'c5', kind: 'email' as const, name: '邮件', enabled: true, monthly: 240, rate: 0.978, group: '邮件+API' },
-  { id: 'c6', kind: 'webhook' as const, name: 'Webhook', enabled: true, monthly: 120, rate: 0.995, group: '邮件+API' },
-];
 
 const ROUTE_TABLE = [
   { event: 'P0 紧急告警', main: '飞书', f1: '企微', f2: '电话+SMS', fb: '邮件', tone: 'error' as const },
@@ -36,10 +39,10 @@ const ROUTE_TABLE = [
 ];
 
 const CARDS = [
-  { name: '告警卡片', icon: AlertCircle, color: '#ef4444', desc: 'P0/P1 紧急事件 · 含一键跳转', tone: 'bg-[var(--danger-bg)] text-[var(--danger)]' },
-  { name: '审批卡片', icon: ShieldCheck, color: '#f59e0b', desc: '双签审批 · 同意/拒绝按钮', tone: 'bg-[var(--warning-bg)] text-[var(--warning)]' },
-  { name: '报告卡片', icon: FileText, color: '#3b82f6', desc: '日报/周报/月报 · 富文本', tone: 'bg-[var(--info-bg)] text-[var(--info)]' },
-  { name: '升级卡片', icon: MessageSquare, color: '#10b981', desc: '任务升级 · @指定接收人', tone: 'bg-[var(--success-bg)] text-[var(--success)]' },
+  { name: '告警卡片', icon: AlertCircle, tone: 'error' as const, desc: 'P0/P1 紧急事件 · 含一键跳转', preview: '🔴 [P0] Redis OOM\n集群: prod-redis-01\n时间: 14:32:01\n[查看详情 →]' },
+  { name: '审批卡片', icon: ShieldCheck, tone: 'warn' as const, desc: '双签审批 · 同意/拒绝按钮', preview: '✍️ 变更审批\n操作: CONFIG SET\n操作人: 王昊\n[批准] [拒绝]' },
+  { name: '报告卡片', icon: FileText, tone: 'info' as const, desc: '日报/周报/月报 · 富文本', preview: '📊 本月合规报告\n94 项 · 98 分\n合规: ✓\n[下载 PDF]' },
+  { name: '升级卡片', icon: MessageSquare, tone: 'success' as const, desc: '任务升级 · @指定接收人', preview: '⚠️ 任务升级\n@李婷 @孙博\n优先级: P0\n[立即处理]' },
 ];
 
 const STATS = [
@@ -49,16 +52,29 @@ const STATS = [
   { label: 'P95', value: '850ms', tone: 'info' as const },
 ];
 
-const ACTIVITIES = [
-  { tone: 'success' as const, text: '飞书 推送 cache-oom 告警', time: '14:28', target: '王昊' },
-  { tone: 'success' as const, text: '邮件 推送合规审计报告', time: '14:18', target: '管理员组' },
-  { tone: 'warning' as const, text: '企微 重试 2 次后送达', time: '13:55', target: 'SRE 组' },
-  { tone: 'info' as const, text: 'Webhook 推送 SIEM 审计', time: '13:40', target: 'SIEM' },
+const LANGUAGES = [
+  { key: 'zh-CN', label: '简体中文', sample: '您的服务出现异常，请立即处理。' },
+  { key: 'en-US', label: 'English', sample: 'Your service has encountered an anomaly, please handle immediately.' },
+  { key: 'ja-JP', label: '日本語', sample: 'サービスで異常が発生しました。すぐに対応してください。' },
+];
+
+const BLACKLIST = [
+  { id: 'b1', type: '用户', value: 'test-spammer@external.com', reason: '高频无效告警', addedBy: '系统', expires: '2026-08-01' },
+  { id: 'b2', type: '电话', value: '+86 139****8888', reason: '拒收投诉', addedBy: '孙博', expires: '永久' },
 ];
 
 export default function Channels() {
   const [activeId, setActiveId] = useState('c1');
-  const active = CHANNELS.find((c) => c.id === activeId);
+  const [showStream, setShowStream] = useState(true);
+  const [showConfig, setShowConfig] = useState(false);
+
+  const { data: channels } = useApiQuery<Channel[]>(['channels'], '/api/channels');
+  const { data: health } = useApiQuery<any>(['channel-health'], '/api/channel-health');
+  const { data: stream = [] } = useApiQuery<any[]>(['message-stream'], '/api/message-stream');
+  const { data: config } = useApiQuery<any>(['channel-config'], '/api/channel-config');
+  const active = channels?.find((c) => c.id === activeId);
+  const h = health?.[activeId];
+  const cfg = config?.[activeId];
   const groups = ['国内 IM', '国外 IM', '邮件+API'];
 
   return (
@@ -66,7 +82,7 @@ export default function Channels() {
       {/* 左侧渠道 */}
       <aside className="w-[220px] shrink-0 border-r border-[var(--border)] bg-[var(--bg)] overflow-y-auto">
         <div className="p-3 flex items-center justify-between border-b border-[var(--border)]">
-          <div className="text-xs font-semibold">渠道 (6)</div>
+          <div className="text-xs font-semibold">渠道 ({channels?.length ?? 0})</div>
           <button className="grid h-6 w-6 place-items-center rounded hover:bg-[var(--bg-elevated)]">
             <Plus className="h-3.5 w-3.5" />
           </button>
@@ -74,8 +90,9 @@ export default function Channels() {
         {groups.map((g) => (
           <div key={g} className="p-2">
             <div className="px-2 mb-1.5 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold">{g}</div>
-            {CHANNELS.filter((c) => c.group === g).map((c) => {
+            {(channels ?? []).filter((c) => (g === '国内 IM' ? ['feishu', 'wecom', 'dingtalk'].includes(c.kind) : g === '国外 IM' ? c.kind === 'slack' : ['email', 'webhook'].includes(c.kind))).map((c) => {
               const Icon = ICONS[c.kind];
+              const ch = health?.[c.id];
               return (
                 <button
                   key={c.id}
@@ -88,7 +105,7 @@ export default function Channels() {
                   <Icon className="h-4 w-4 shrink-0" />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-semibold">{c.name}</div>
-                    <div className="text-[10px] text-[var(--text-muted)] font-mono">{c.monthly} 发送</div>
+                    <div className="text-[10px] text-[var(--text-muted)] font-mono">{ch?.latency ?? '—'}ms · {ch?.success ?? 0}%</div>
                   </div>
                   <span className={cn('h-2 w-2 rounded-full', c.enabled ? 'bg-[var(--success)] animate-pulse' : 'bg-[var(--text-muted)]')} />
                 </button>
@@ -100,19 +117,28 @@ export default function Channels() {
 
       {/* 中间 */}
       <section className="flex-1 flex flex-col overflow-hidden">
-        <div className="border-b border-[var(--border)] p-6">
+        <div className="border-b border-[var(--border)] p-5">
           <div className="flex items-center justify-between mb-3">
             <div>
-              <h1 className="page-header__title">智能路由 · 6 类事件 × 4 兜底</h1>
-              <p className="page-header__sub">主渠道 → 失败 1 → 失败 2 → 兜底 · Adaptive Card v2.0</p>
+              <h1 className="text-lg font-semibold flex items-center gap-2">
+                <Send className="h-5 w-5 text-[var(--brand)]" />
+                智能路由 · 6 类事件 × 4 兜底
+              </h1>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5">
+                主渠道 → 失败 1 → 失败 2 → 兜底 · Adaptive Card v2.0
+              </p>
             </div>
-            <div className="page-header__actions">
+            <div className="flex items-center gap-2">
+              {/* Todo 8: 渠道测试 */}
+              <Button variant="secondary" size="sm">
+                <SendIcon className="h-3.5 w-3.5" />发送测试
+              </Button>
               <Badge tone="success"><CheckCircle2 className="mr-1 inline h-3 w-3" />智能路由启用</Badge>
             </div>
           </div>
 
           {/* 路由表 */}
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] overflow-hidden">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] overflow-hidden mb-3">
             <table className="w-full text-xs">
               <thead className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
                 <tr className="border-b border-[var(--border)] bg-[var(--bg-elevated)]">
@@ -125,7 +151,7 @@ export default function Channels() {
               </thead>
               <tbody>
                 {ROUTE_TABLE.map((r) => (
-                  <tr key={r.event} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg-elevated)]">
+                  <tr key={r.event} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg-hover)]">
                     <td className="px-4 py-2.5"><Badge tone={r.tone}>{r.event}</Badge></td>
                     <td className="px-4 py-2.5 font-semibold">{r.main}</td>
                     <td className="px-4 py-2.5 text-[var(--text-muted)]">{r.f1}</td>
@@ -136,25 +162,87 @@ export default function Channels() {
               </tbody>
             </table>
           </div>
+
+          {/* Todo 2: 消息实时流 */}
+          {showStream && (
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
+              <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border)]">
+                <div className="text-xs font-semibold flex items-center gap-1.5">
+                  <Activity className="h-3.5 w-3.5" />消息发送实时流
+                  <Badge tone="success" className="text-[10px]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--success)] animate-pulse mr-1" />
+                    LIVE
+                  </Badge>
+                </div>
+                <button onClick={() => setShowStream(false)} className="text-[10px] text-[var(--brand)] hover:underline">收起</button>
+              </div>
+              <div className="p-3 space-y-1.5 max-h-48 overflow-y-auto">
+                {stream.map((m) => (
+                  <div key={m.id} className="flex items-start gap-2 rounded-md bg-[var(--bg-elevated)] p-2 text-[11px]">
+                    <span className="font-mono text-[10px] text-[var(--text-muted)] shrink-0">{m.time}</span>
+                    <Badge tone={m.status === 'delivered' ? 'success' : 'error'} className="text-[9px] shrink-0">
+                      {m.channel}
+                    </Badge>
+                    <span className="flex-1 truncate">
+                      <span className="text-[var(--text-secondary)]">→ {m.target}:</span> {m.content}
+                    </span>
+                    {m.status === 'failed' && (
+                      <Badge tone="error" className="text-[9px] shrink-0">失败</Badge>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Adaptive Card 模板 */}
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="mb-3 text-xs font-semibold">Adaptive Card v2.0 · 4 类模板</div>
-          <div className="grid grid-cols-4 gap-3 mb-6">
-            {CARDS.map((c) => (
-              <div key={c.name} className="tile-brandable rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
-                <div className={cn('mb-2 grid h-9 w-9 place-items-center rounded-md', c.tone)}>
-                  <c.icon className="h-4 w-4" />
+        {/* Todo 3: Adaptive Card 4 模板 */}
+        <div className="flex-1 overflow-y-auto p-5">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="text-sm font-semibold flex items-center gap-1.5">
+              <Edit3 className="h-4 w-4 text-[var(--brand)]" />Adaptive Card v2.0 · 4 类模板
+            </div>
+            <Button size="sm" variant="secondary"><Plus className="h-3 w-3" />新建模板</Button>
+          </div>
+          <div className="grid grid-cols-4 gap-3 mb-4">
+            {CARDS.map((c) => {
+              const toneBg = c.tone === 'error' ? 'bg-[var(--danger-bg)] border-[var(--danger)]/30' :
+                c.tone === 'warn' ? 'bg-[var(--warning-bg)] border-[var(--warning)]/30' :
+                c.tone === 'info' ? 'bg-[var(--info-bg)] border-[var(--info)]/30' :
+                'bg-[var(--success-bg)] border-[var(--success)]/30';
+              return (
+                <div key={c.name} className={cn('rounded-lg border p-3', toneBg)}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <c.icon className={cn('h-4 w-4', c.tone === 'error' ? 'text-[var(--danger)]' : c.tone === 'warn' ? 'text-[var(--warning)]' : c.tone === 'info' ? 'text-[var(--info)]' : 'text-[var(--success)]')} />
+                    <span className="text-sm font-semibold">{c.name}</span>
+                  </div>
+                  <div className="text-[10px] text-[var(--text-muted)] mb-2">{c.desc}</div>
+                  <pre className="text-[10px] font-mono bg-[var(--bg)] rounded p-2 whitespace-pre-wrap text-[var(--text-secondary)] border border-[var(--border)]">
+                    {c.preview}
+                  </pre>
+                  <Button size="sm" variant="secondary" className="w-full mt-2">编辑模板</Button>
                 </div>
-                <div className="text-sm font-semibold">{c.name}</div>
-                <div className="mt-1 text-[11px] text-[var(--text-muted)]">{c.desc}</div>
-                <Button size="sm" variant="secondary" className="mt-3 w-full">编辑模板</Button>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
-          {/* KPI 4 张 */}
+          {/* Todo 9: 多语言模板 */}
+          <div className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
+            <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+              <Globe className="h-3.5 w-3.5" />多语言模板（默认 zh-CN）
+            </div>
+            <div className="space-y-2">
+              {LANGUAGES.map((l) => (
+                <div key={l.key} className="flex items-start gap-3 rounded-md bg-[var(--bg-elevated)] p-2.5 text-xs">
+                  <Badge tone="info" className="text-[10px] shrink-0">{l.key}</Badge>
+                  <span className="font-semibold shrink-0 w-20">{l.label}</span>
+                  <span className="text-[var(--text-muted)] flex-1">{l.sample}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* KPI */}
           <div className="grid grid-cols-4 gap-3">
             {STATS.map((s) => (
               <div key={s.label} className={cn('kpi-card', `kpi-card--${s.tone === 'primary' ? 'brand' : s.tone}`)}>
@@ -166,85 +254,146 @@ export default function Channels() {
         </div>
       </section>
 
-      {/* 右侧：详情 + 路由路径 + 合规 + 最近活动 */}
-      <aside className="w-[320px] shrink-0 border-l border-[var(--border)] bg-[var(--bg)] overflow-y-auto">
-        {active && (
-          <>
-            <div className="p-4 border-b border-[var(--border)]">
-              <div className="flex items-center justify-between mb-3">
-                <div className="text-sm font-semibold flex items-center gap-2">
-                  <MessageSquare className="h-4 w-4 text-[var(--brand)]" />
-                  {active.name} 详情
-                </div>
-                <Badge tone={active.enabled ? 'success' : 'neutral'}>{active.enabled ? '已启用' : '未启用'}</Badge>
-              </div>
-              <div className="space-y-2 text-xs">
-                <Row label="状态" value={<Badge tone={active.enabled ? 'success' : 'neutral'}>{active.enabled ? '运行中' : '已停止'}</Badge>} />
-                <Row label="App ID" value={<span className="font-mono">cli_a7f****</span>} />
-                <Row label="机器人" value="DE-Bot" />
-                <Row label="本月发送" value={<span className="font-mono">{active.monthly}</span>} />
-                <Row label="送达率" value={<span className={cn('font-mono font-semibold', active.rate >= 0.99 ? 'text-[var(--success)]' : active.rate >= 0.95 ? 'text-[var(--warning)]' : 'text-[var(--text-secondary)]')}>{(active.rate * 100).toFixed(1)}%</span>} />
-              </div>
+      {/* 右侧：详情 + 配置 + 黑名单 */}
+      <aside className="w-[340px] shrink-0 border-l border-[var(--border)] bg-[var(--bg)] overflow-y-auto">
+        {/* Todo 1: 健康度 */}
+        {active && h && (
+          <div className="p-4 border-b border-[var(--border)]">
+            <div className="text-xs font-semibold mb-3 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Activity className="h-3.5 w-3.5" />{active.name} 健康度
+              </span>
+              <Badge tone={h.status === 'healthy' ? 'success' : h.status === 'disabled' ? 'neutral' : 'warn'}>
+                {h.status}
+              </Badge>
             </div>
-
-            <div className="p-4 border-b border-[var(--border)]">
-              <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-                <Activity className="h-3.5 w-3.5 text-[var(--text-muted)]" />路由路径
-              </div>
-              <div className="flow-row flex-wrap">
-                {['飞书', '企微', '电话+SMS', '邮件'].map((step, i) => (
-                  <span key={step} className="flow-node-pill text-[10px]">{step}</span>
-                ))}
-              </div>
-              <div className="mt-3 text-[10px] text-[var(--text-muted)] font-mono">
-                失败 5xx 后自动降级 · 兜底邮件保证必达
-              </div>
+            <div className="grid grid-cols-3 gap-2">
+              <KpiCard label="延迟" value={h.latency > 0 ? `${h.latency}ms` : '—'} />
+              <KpiCard label="送达率" value={`${h.success}%`} tone="success" />
+              <KpiCard label="24h 失败" value={h.errorCount24h} tone={h.errorCount24h > 10 ? 'error' : 'neutral'} />
             </div>
-
-            <div className="p-4 border-b border-[var(--border)]">
-              <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-                <ShieldCheck className="h-3.5 w-3.5 text-[var(--success)]" />合规
-              </div>
-              <div className="space-y-1.5 text-xs">
-                <Row label="PII 脱敏" value={<Badge tone="success">token 级</Badge>} />
-                <Row label="静默期" value="22:00-08:00" />
-                <Row label="合并窗口" value="5 min" />
-                <Row label="重试次数" value="3 · 指数退避" />
-              </div>
-            </div>
-
-            <div className="p-4 border-b border-[var(--border)]">
-              <div className="text-xs font-semibold mb-3">最近活动</div>
-              <div className="activity-timeline">
-                {ACTIVITIES.map((a, i) => (
-                  <div key={i} className="activity-timeline__item">
-                    <div className={cn('activity-timeline__dot', `activity-timeline__dot--${a.tone}`)}>
-                      <CheckCircle2 className="h-3 w-3" />
-                    </div>
-                    <div className="activity-timeline__content">
-                      <div className="activity-timeline__text">{a.text}</div>
-                      <div className="activity-timeline__time">{a.time} · {a.target}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="p-4">
-              <Button className="w-full"><Send className="h-3.5 w-3.5" />发送测试消息</Button>
-            </div>
-          </>
+          </div>
         )}
+
+        {/* Todo 6: 配置（限流 + 重试 + 静默期 + 合并）============ */}
+        {active && cfg && (
+          <div className="p-4 border-b border-[var(--border)]">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs font-semibold flex items-center gap-1.5">
+                <Edit3 className="h-3.5 w-3.5" />渠道配置
+              </div>
+              <button onClick={() => setShowConfig(!showConfig)} className="text-[10px] text-[var(--brand)] hover:underline">
+                {showConfig ? '收起' : '展开'}
+              </button>
+            </div>
+            <div className="space-y-2 text-xs">
+              {/* Todo 10: 限流 */}
+              <ConfigField label="QPS 限流" value={`${cfg.rateLimit.qps} / ${cfg.rateLimit.daily}/日`} />
+              {/* Todo 5: 重试 */}
+              <ConfigField label="失败重试" value={`最多 ${cfg.retry.max} 次 · ${cfg.retry.backoff === 'exponential' ? '指数退避' : cfg.retry.backoff}`} />
+              {/* Todo 6: 静默期 + 合并窗口 */}
+              <ConfigField label="静默期" value={`${cfg.silent.start} - ${cfg.silent.end}`} />
+              <ConfigField label="合并窗口" value={cfg.mergeWindow} />
+            </div>
+            {showConfig && (
+              <div className="mt-3 pt-3 border-t border-[var(--border)] space-y-2">
+                <div className="text-[10px] font-semibold text-[var(--text-muted)]">编辑</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button size="sm" variant="secondary">QPS</Button>
+                  <Button size="sm" variant="secondary">重试次数</Button>
+                  <Button size="sm" variant="secondary">静默期</Button>
+                  <Button size="sm" variant="secondary">合并窗口</Button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* 路由路径 + 测试消息 */}
+        {active && (
+          <div className="p-4 border-b border-[var(--border)]">
+            <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+              <Activity className="h-3.5 w-3.5" />路由路径
+            </div>
+            <div className="flex flex-wrap gap-1.5 mb-3">
+              {['飞书', '企微', '电话+SMS', '邮件'].map((step, i) => (
+                <span key={step} className={cn(
+                  'px-2 py-0.5 rounded text-[10px] font-mono',
+                  i === 0 ? 'bg-[var(--brand)] text-white'
+                  : i === 1 ? 'bg-[var(--brand-light)] text-[var(--brand)] border border-[var(--brand)]/30'
+                  : 'bg-[var(--bg-elevated)] text-[var(--text-muted)] border border-[var(--border)]',
+                )}>
+                  {i + 1}. {step}
+                </span>
+              ))}
+            </div>
+            <Button className="w-full" size="sm">
+              <SendIcon className="h-3.5 w-3.5" />发送测试消息
+            </Button>
+          </div>
+        )}
+
+        {/* Todo 10: 黑名单 */}
+        <div className="p-4 border-b border-[var(--border)]">
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-xs font-semibold flex items-center gap-1.5">
+              <Ban className="h-3.5 w-3.5 text-[var(--danger)]" />黑名单（{BLACKLIST.length}）
+            </div>
+            <Button size="sm" variant="secondary"><Plus className="h-3 w-3" />添加</Button>
+          </div>
+          <div className="space-y-1.5">
+            {BLACKLIST.map((b) => (
+              <div key={b.id} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-[11px]">
+                <div className="flex items-center justify-between mb-0.5">
+                  <Badge tone={b.type === '用户' ? 'info' : 'warn'} className="text-[9px]">{b.type}</Badge>
+                  <span className="text-[10px] text-[var(--text-muted)]">至 {b.expires}</span>
+                </div>
+                <div className="font-mono text-[10px] truncate">{b.value}</div>
+                <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{b.reason} · {b.addedBy}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 最近活动 */}
+        <div className="p-4">
+          <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+            <History className="h-3.5 w-3.5" />最近活动
+          </div>
+          <div className="activity-timeline">
+            {stream.slice(0, 3).map((a) => (
+              <div key={a.id} className="activity-timeline__item">
+                <div className={cn('activity-timeline__dot', `activity-timeline__dot--${a.tone === 'warning' ? 'warning' : a.tone === 'info' ? 'info' : 'success'}`)}>
+                  <CheckCircle2 className="h-3 w-3" />
+                </div>
+                <div className="activity-timeline__content">
+                  <div className="activity-timeline__text">{a.channel} → {a.target}</div>
+                  <div className="activity-timeline__time">{a.time}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
       </aside>
     </div>
   );
 }
 
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
+function KpiCard({ label, value, tone }: { label: string; value: any; tone?: 'success' | 'error' | 'neutral' }) {
+  const color = tone === 'success' ? 'text-[var(--success)]' : tone === 'error' ? 'text-[var(--danger)]' : 'text-[var(--text)]';
+  return (
+    <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-center">
+      <div className="text-[10px] text-[var(--text-muted)]">{label}</div>
+      <div className={cn('text-sm font-mono font-bold', color)}>{value}</div>
+    </div>
+  );
+}
+
+function ConfigField({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between">
       <span className="text-[var(--text-muted)]">{label}</span>
-      <span>{value}</span>
+      <span className="font-mono text-[11px]">{value}</span>
     </div>
   );
 }
