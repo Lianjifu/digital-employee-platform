@@ -1,246 +1,522 @@
 /**
- * P4 工作区
- * 1:1 对齐 docs/01-product/mockups/p4-workspace.html
+ * P4 工作区（企业级优化版）
+ * Todo 1-10:
+ *  1. 工作区切换器（4 工作区 + 增强）
+ *  2. 工作区卡片：合规分/区域/成员
+ *  3. 顶部 4 KPI（工作区/成员/Agent/工具）
+ *  4. 成员表格：4 角色 + 双签权限
+ *  5. Agent 关联（独立 Agent 列表）
+ *  6. 工具矩阵（每个工作区启用）
+ *  7. 创建向导（多步表单）
+ *  8. 切换实时数据更新
+ *  9. 跨工作区切换历史
+ * 10. 合规基线检查
  */
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useApiQuery } from '@/services/query';
-import { Badge, Button, Avatar } from '@de/web-ui';
+import { Badge, Button, Progress, Avatar } from '@de/web-ui';
 import {
   Building2, ShieldCheck, Plus, Users, Bot, Wrench, Activity, FileText,
-  ArrowUp, CheckCircle2, Globe, Lock, CreditCard, Database, Bell,
+  ChevronRight, History, Sparkles, Lock, CheckCircle2, AlertTriangle,
+  Database, Settings, ArrowRight, Layers,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import type { Workspace } from '@de/web-types';
 
-const KPI_DATA = [
-  { tone: 'brand' as const, label: '工作区', value: '8', sub: '/ 12 已用', trend: { dir: 'up' as const, v: '+1' } },
-  { tone: 'purple' as const, label: '成员', value: '18', sub: '人 · 4 角色', trend: { dir: 'up' as const, v: '+2' } },
-  { tone: 'success' as const, label: '智能体', value: '8', sub: '已启用', trend: { dir: 'flat' as const } },
-  { tone: 'warning' as const, label: '技能调用', value: '8.2k', sub: '次/日' },
-  { tone: 'danger' as const, label: '待办积压', value: '3', sub: '件 · 临近' },
-  { tone: 'success' as const, label: '合规评分', value: '98', sub: '/ 100 等保 3' },
-  { tone: 'primary' as const, label: '月用量', value: '$1.24k', sub: '/ $5.0k (24%)' },
-  { tone: 'info' as const, label: '审计', value: '242', sub: '条/24h' },
-];
-
-const ROLE_MATRIX = [
-  { role: 'Admin', count: 2, color: 'bg-[var(--danger)]', perms: '所有模块 · 双签 · Admin', write: '✔' },
-  { role: 'SRE', count: 4, color: 'bg-[var(--brand)]', perms: 'AIOps / RAG / MCP / 写(复核)', write: '✔ (复核)' },
-  { role: 'Sec', count: 3, color: 'bg-[var(--warning)]', perms: 'SecOps / 审计 / 数据出境', write: '✔ (复核)' },
-  { role: 'View', count: 9, color: 'bg-[var(--text-muted)]', perms: '只读 · 检索 · 报表', write: '✗' },
-];
-
-const DETAIL_CARDS = [
-  { icon: Users, title: '成员', value: '18 人 · 4 角色 · MFA 100%', accent: 'list-card-accent--success' },
-  { icon: Bot, title: '智能体', value: '8 已启用 · 24 商店 · 2 企业包', accent: 'list-card-accent' },
-  { icon: Wrench, title: '工具', value: '24 启用 · 8 MCP · 8.2k/日', accent: 'list-card-accent--warning' },
-  { icon: ShieldCheck, title: '合规', value: '等保 3 + ISO 27001 · 98/100', accent: 'list-card-accent--success' },
-  { icon: Activity, title: '用量', value: '12.4M token · $1.24k / $5k', accent: 'list-card-accent--purple' },
-  { icon: FileText, title: '审计', value: '242 条/24h · SignedLog', accent: 'list-card-accent' },
-];
-
-const RIGHT_MENU = [
-  { key: 'tenant', label: '租户信息', icon: Building2 },
-  { key: 'members', label: '成员 & 权限', icon: Users },
-  { key: 'security', label: '安全 & 认证', icon: ShieldCheck },
-  { key: 'audit', label: '审计 & 监控', icon: FileText },
-  { key: 'compliance', label: '数据合规', icon: Lock },
-  { key: 'notify', label: '通知 & 告警', icon: Bell },
-  { key: 'billing', label: '租户 & 计费', icon: CreditCard },
-  { key: 'backup', label: '备份 & 恢复', icon: Database },
+const COMPLIANCE_BAR = [
+  { label: '数据出境', status: 'pass' },
+  { label: '双签复核', status: 'pass' },
+  { label: '字段脱敏', status: 'pass' },
+  { label: 'Key 轮转', status: 'pass' },
+  { label: 'MFA', status: 'pass' },
+  { label: 'SignedLog', status: 'pass' },
+  { label: 'gVisor 沙箱', status: 'pass' },
 ];
 
 export default function Workspaces() {
+  const [activeWs, setActiveWs] = useState('w1');
+  const [showWizard, setShowWizard] = useState(false);
+  const [tab, setTab] = useState<'overview' | 'members' | 'agents' | 'tools' | 'compliance'>('overview');
+
   const { data: list } = useApiQuery<Workspace[]>(['workspaces'], '/api/workspaces');
-  const active = list?.[0];
+  const { data: members = [] } = useApiQuery<any[]>(['ws', activeWs, 'members'], `/api/workspaces/${activeWs}/members`);
+  const { data: agents = [] } = useApiQuery<string[]>(['ws', activeWs, 'agents'], `/api/workspaces/${activeWs}/agents`);
+  const { data: tools } = useApiQuery<any>(['ws', activeWs, 'tools'], `/api/workspaces/${activeWs}/tools`);
+  const { data: switchHistory = [] } = useApiQuery<any[]>(['ws-switch-history'], '/api/workspace-switch-history');
+
+  const active = list?.find((w) => w.id === activeWs);
+
+  // KPI 计算
+  const kpis = useMemo(() => {
+    const totalAgents = list?.reduce((s, w) => s + w.memberCount, 0) ?? 0;
+    const onlineAgents = (list ?? []).filter((w) => w.plan !== 'standard').length;
+    return [
+      { label: '工作区', value: `${list?.length ?? 0}/${list?.[0]?.plan ? '12' : '0'}`, sub: `${onlineAgents} 在线`, tone: 'brand' as const },
+      { label: '成员', value: String(totalAgents), sub: '4 角色', tone: 'purple' as const },
+      { label: '智能体', value: '8', sub: '已启用', tone: 'success' as const },
+      { label: '技能调用', value: '8.2k', sub: '次/日', tone: 'warning' as const },
+    ];
+  }, [list]);
 
   return (
-    <div className="flex h-full">
-      {/* 左侧：4 工作区列表 */}
-      <aside className="w-[240px] shrink-0 border-r border-[var(--border)] bg-[var(--bg)] overflow-y-auto">
-        <div className="p-4 border-b border-[var(--border)]">
-          <div className="flex items-center justify-between">
-            <div className="text-xs font-semibold">工作区</div>
-            <button className="grid h-6 w-6 place-items-center rounded hover:bg-[var(--bg-elevated)]">
-              <Plus className="h-3.5 w-3.5" />
-            </button>
+    <div className="flex flex-col h-full overflow-y-auto">
+      {/* Header */}
+      <div className="px-6 pt-5">
+        <div className="flex items-start justify-between mb-5">
+          <div>
+            <h1 className="page-header__title">工作区 · 多租户管理</h1>
+            <p className="page-header__sub">
+              {list?.length ?? 0} 个工作区 · 跨团队隔离 · 独立 Agent/知识/工具
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="md">
+              <Settings className="h-3.5 w-3.5" />组织设置
+            </Button>
+            <Button size="md" onClick={() => setShowWizard(true)}>
+              <Plus className="h-3.5 w-3.5" />新建工作区
+            </Button>
           </div>
         </div>
-        <div className="p-2">
-          {(list ?? []).map((w) => (
-            <div
-              key={w.id}
-              className={cn(
-                'flex items-center gap-3 rounded-md p-3 cursor-pointer transition-all',
-                w.id === active?.id
-                  ? 'card-active'
-                  : 'hover:bg-[var(--bg-elevated)] border border-transparent',
-              )}
-            >
-              <div className="grid h-9 w-9 place-items-center rounded-md bg-gradient-to-br from-[var(--brand-light)] to-[var(--purple-bg)] text-[var(--brand)]">
-                <Building2 className="h-4 w-4" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-semibold">{w.name}</div>
-                <div className="text-[10px] text-[var(--text-muted)] font-mono">{w.region} · {w.plan}</div>
-              </div>
-              <Badge tone={w.complianceScore >= 95 ? 'success' : 'warn'} className="font-mono">{w.complianceScore}</Badge>
+
+        {/* Todo 3: 4 KPI */}
+        <div className="grid grid-cols-4 gap-3 mb-5">
+          {kpis.map((k) => (
+            <div key={k.label} className={cn('kpi-card', `kpi-card--${k.tone}`)}>
+              <div className="kpi-card__label">{k.label}</div>
+              <div className="kpi-card__value">{k.value}</div>
+              <div className="kpi-card__sub">{k.sub}</div>
             </div>
           ))}
         </div>
+      </div>
 
-        {/* 创建向导 */}
-        <div className="m-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
-          <div className="text-xs font-semibold flex items-center gap-1.5">
-            <Plus className="h-3 w-3" />创建新工作区
-          </div>
-          <div className="mt-1 text-[11px] text-[var(--text-muted)]">多租户隔离 · 独立 Agent/知识/工具</div>
-          <Button size="sm" className="mt-2 w-full">
-            <Plus className="h-3 w-3" />立即创建
-          </Button>
-        </div>
-      </aside>
-
-      {/* 中间 */}
-      <section className="flex-1 overflow-y-auto p-6">
-        {active && (
-          <>
-            {/* Header */}
-            <div className="mb-6 flex items-start justify-between">
-              <div>
-                <h1 className="page-header__title">{active.name}</h1>
-                <p className="page-header__sub">
-                  {active.plan} · {active.region} · 创建于 {active.createdAt.slice(0, 10)}
-                </p>
-              </div>
-              <div className="page-header__actions">
-                <Button variant="secondary" size="sm">
-                  <Globe className="h-3.5 w-3.5" />切换
-                </Button>
-                <Button size="sm">编辑设置</Button>
-              </div>
+      {/* 主体 3 列 */}
+      <div className="px-6 pb-6 grid grid-cols-[280px_1fr_300px] gap-4 flex-1">
+        {/* Todo 1: 左侧 4 工作区切换器 */}
+        <aside className="space-y-3 overflow-y-auto">
+          <div>
+            <div className="text-xs font-semibold mb-2 flex items-center gap-1.5">
+              <Building2 className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+              我的工作区 ({list?.length ?? 0})
             </div>
-
-            {/* KPI 8 卡 */}
-            <div className="mb-6 grid grid-cols-4 gap-3">
-              {KPI_DATA.map((k) => (
-                <div key={k.label} className={cn('kpi-card', `kpi-card--${k.tone === 'primary' ? 'brand' : k.tone}`)}>
-                  <div className="kpi-card__label">{k.label}</div>
-                  <div className="kpi-card__value">
-                    {k.value}
-                    {k.trend && (
-                      <span className={cn('kpi-card__trend', `kpi-card__trend--${k.trend.dir}`)}>
-                        {k.trend.dir === 'up' && <ArrowUp className="h-3 w-3" />}
-                        {k.trend.v ?? '—'}
-                      </span>
-                    )}
+            <div className="space-y-2">
+              {(list ?? []).map((w) => (
+                <button
+                  key={w.id}
+                  onClick={() => setActiveWs(w.id)}
+                  className={cn(
+                    'block w-full rounded-lg border p-3 text-left transition-all',
+                    w.id === activeWs ? 'card-active' : 'border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)]',
+                  )}
+                >
+                  <div className="flex items-start gap-2">
+                    <div className={cn(
+                      'grid h-9 w-9 place-items-center rounded-md shrink-0',
+                      w.plan === 'enterprise_plus' ? 'bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white' :
+                      w.plan === 'enterprise' ? 'bg-[var(--brand-light)] text-[var(--brand)]' :
+                      'bg-[var(--bg-elevated)] text-[var(--text-muted)]',
+                    )}>
+                      <Building2 className="h-4 w-4" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold truncate">{w.name}</div>
+                      <div className="text-[10px] text-[var(--text-muted)] font-mono">{w.region}</div>
+                      <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                        <Badge tone={w.complianceScore >= 95 ? 'success' : 'warn'} className="text-[9px]">
+                          合规 {w.complianceScore}
+                        </Badge>
+                        <span className="text-[10px] text-[var(--text-muted)]">·</span>
+                        <span className="text-[10px] text-[var(--text-muted)]">{w.memberCount} 人</span>
+                      </div>
+                    </div>
                   </div>
-                  <div className="kpi-card__sub">{k.sub}</div>
-                </div>
+                </button>
               ))}
             </div>
+          </div>
 
-            {/* 4 角色权限矩阵 */}
-            <div className="mb-6 rounded-lg border border-[var(--border)] bg-[var(--bg)]">
-              <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-                <div className="text-sm font-semibold flex items-center gap-2">
-                  <Users className="h-4 w-4 text-[var(--text-muted)]" />
-                  4 角色权限矩阵
-                </div>
-                <Badge tone="brand">RBAC + 字段级</Badge>
-              </div>
-              <table className="w-full text-xs">
-                <thead className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
-                  <tr className="border-b border-[var(--border)] bg-[var(--bg-elevated)]">
-                    <th className="text-left px-4 py-2 font-semibold">角色</th>
-                    <th className="text-left px-4 py-2 font-semibold">人数</th>
-                    <th className="text-left px-4 py-2 font-semibold">主要权限</th>
-                    <th className="text-left px-4 py-2 font-semibold">写动作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ROLE_MATRIX.map((r) => (
-                    <tr key={r.role} className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg-elevated)]">
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <span className={cn('h-2 w-2 rounded-full', r.color)} />
-                          <span className="font-semibold">{r.role}</span>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3 font-mono">{r.count}</td>
-                      <td className="px-4 py-3 text-[var(--text-muted)]">{r.perms}</td>
-                      <td className="px-4 py-3">
-                        {r.write === '✔' ? <Badge tone="success">✔</Badge> : <Badge tone="warn">{r.write}</Badge>}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+          {/* Todo 7: 创建向导入口 */}
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3">
+            <div className="text-xs font-semibold mb-2 flex items-center gap-1.5">
+              <Sparkles className="h-3.5 w-3.5 text-[var(--brand)]" />
+              快速创建
             </div>
+            <Button size="sm" variant="secondary" className="w-full" onClick={() => setShowWizard(true)}>
+              <Plus className="h-3 w-3" />工作区向导
+            </Button>
+            <div className="mt-2 text-[10px] text-[var(--text-muted)] leading-relaxed">
+              3 步创建：基本信息 → 资源配额 → 合规基线
+            </div>
+          </div>
+        </aside>
 
-            {/* 6 详情卡 */}
-            <div className="grid grid-cols-3 gap-3">
-              {DETAIL_CARDS.map((c) => (
-                <div key={c.title} className={cn('list-card list-card-accent relative pl-5', c.accent)}>
-                  <div className="flex items-start gap-3">
-                    <div className="grid h-9 w-9 place-items-center rounded-md bg-[var(--brand-light)] text-[var(--brand)]">
-                      <c.icon className="h-4 w-4" />
+        {/* 中间：当前工作区详情 + Tabs */}
+        <section className="rounded-lg border border-[var(--border)] bg-[var(--bg)] flex flex-col overflow-hidden">
+          {active && (
+            <>
+              <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-base font-semibold">{active.name}</h2>
+                    <Badge tone="brand">{active.plan.replace('_', ' ')}</Badge>
+                    <Badge tone={active.complianceScore >= 95 ? 'success' : 'warn'}>
+                      合规 {active.complianceScore}
+                    </Badge>
+                  </div>
+                  <div className="mt-0.5 text-xs text-[var(--text-muted)]">
+                    {active.region} · 创建于 {active.createdAt.slice(0, 10)} · {active.memberCount} 成员
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="flex rounded-md border border-[var(--border)] overflow-hidden">
+                    {(['overview', 'members', 'agents', 'tools', 'compliance'] as const).map((t) => (
+                      <button
+                        key={t}
+                        onClick={() => setTab(t)}
+                        className={cn(
+                          'px-2.5 py-1 text-[11px]',
+                          tab === t ? 'bg-[var(--brand)] text-white' : 'hover:bg-[var(--bg-hover)] text-[var(--text-muted)]',
+                        )}
+                      >
+                        {t === 'overview' ? '概览' : t === 'members' ? '成员' : t === 'agents' ? 'Agent' : t === 'tools' ? '工具' : '合规'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-5">
+                {/* Tab: 概览 */}
+                {tab === 'overview' && (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-3 gap-3">
+                      <KpiInline label="成员" value={`${active.memberCount}`} sub="4 角色" />
+                      <KpiInline label="智能体" value={`${agents.length}`} sub="已启用" tone="brand" />
+                      <KpiInline label="技能" value={`${tools?.enabled ?? 0}/${tools?.total ?? 0}`} sub="已启用" tone="success" />
                     </div>
                     <div>
-                      <div className="text-sm font-semibold">{c.title}</div>
-                      <div className="mt-0.5 text-[11px] text-[var(--text-muted)]">{c.value}</div>
+                      <div className="text-xs font-semibold mb-2 flex items-center gap-1.5">
+                        <ShieldCheck className="h-3.5 w-3.5" />合规基线（7 项）
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {COMPLIANCE_BAR.map((c) => (
+                          <div key={c.label} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-xs">
+                            <span>{c.label}</span>
+                            <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-xs font-semibold mb-2 flex items-center gap-1.5">
+                        <Activity className="h-3.5 w-3.5" />本月指标
+                      </div>
+                      <div className="grid grid-cols-4 gap-3">
+                        <Mini label="调用" value="8.2k/日" />
+                        <Mini label="缓存命中" value="32%" tone="success" />
+                        <Mini label="P95" value="680ms" />
+                        <Mini label="成本" value="$1.24k" tone="primary" />
+                      </div>
                     </div>
                   </div>
+                )}
+
+                {/* Tab: 成员 */}
+                {tab === 'members' && (
+                  <div className="rounded-md border border-[var(--border)] overflow-hidden">
+                    <table className="w-full text-xs">
+                      <thead className="text-[10px] uppercase tracking-wide text-[var(--text-muted)] bg-[var(--bg-elevated)]">
+                        <tr>
+                          <th className="text-left px-3 py-2 font-semibold">成员</th>
+                          <th className="text-left px-3 py-2 font-semibold">角色</th>
+                          <th className="text-left px-3 py-2 font-semibold">邮箱</th>
+                          <th className="text-center px-3 py-2 font-semibold">MFA</th>
+                          <th className="text-left px-3 py-2 font-semibold">最后活跃</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {members.map((m: any) => (
+                          <tr key={m.id} className="border-t border-[var(--border)] hover:bg-[var(--bg-hover)]">
+                            <td className="px-3 py-2">
+                              <div className="flex items-center gap-2">
+                                <Avatar name={m.name} size={20} />
+                                <span className="font-semibold">{m.name}</span>
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              <Badge tone={
+                                m.role === 'Admin' ? 'error' :
+                                m.role === 'SRE' ? 'brand' :
+                                m.role === 'Sec' ? 'warn' : 'neutral'
+                              }>{m.role}</Badge>
+                            </td>
+                            <td className="px-3 py-2 font-mono text-[var(--text-muted)]">{m.email}</td>
+                            <td className="px-3 py-2 text-center">
+                              {m.mfa ? <CheckCircle2 className="inline h-3.5 w-3.5 text-[var(--success)]" /> : <AlertTriangle className="inline h-3.5 w-3.5 text-[var(--warning)]" />}
+                            </td>
+                            <td className="px-3 py-2 text-[var(--text-muted)]">{m.lastActive}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Tab: Agent */}
+                {tab === 'agents' && (
+                  <div>
+                    <div className="mb-2 text-xs font-semibold flex items-center justify-between">
+                      <span>已启用 Agent ({agents.length})</span>
+                      <Button size="sm" variant="secondary"><Plus className="h-3 w-3" />添加</Button>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      {agents.map((a: string) => (
+                        <div key={a} className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 flex items-center gap-2.5">
+                          <div className="grid h-9 w-9 place-items-center rounded-md bg-[var(--brand-light)] text-[var(--brand)] shrink-0">
+                            <Bot className="h-4 w-4" />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs font-semibold">{a}</div>
+                            <div className="text-[10px] text-[var(--text-muted)]">v1.x · 4.5+ · 已启用</div>
+                          </div>
+                          <Button size="sm" variant="secondary"><Settings className="h-3 w-3" /></Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Tab: 工具 */}
+                {tab === 'tools' && tools && (
+                  <div>
+                    <div className="mb-3 flex items-center justify-between">
+                      <div className="text-xs font-semibold flex items-center gap-1.5">
+                        <Wrench className="h-3.5 w-3.5" />
+                        工具矩阵
+                        <Badge tone="brand" className="text-[10px]">{tools.enabled}/{tools.total}</Badge>
+                      </div>
+                      <Progress value={(tools.enabled / tools.total) * 100} tone="success" />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['redis-cli', 'kubectl', 'loki-query', 'prometheus-mcp', 'cmdb-tool', 'jira-tool'].map((t, i) => (
+                        <div key={t} className={cn(
+                          'rounded-md border p-2.5',
+                          i < tools.enabled ? 'border-[var(--success)]/30 bg-[var(--success-bg)]' : 'border-[var(--border)] bg-[var(--bg-elevated)]',
+                        )}>
+                          <div className="flex items-center justify-between">
+                            <span className="font-mono text-xs">{t}</span>
+                            {i < tools.enabled ? (
+                              <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" />
+                            ) : (
+                              <Lock className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Tab: 合规 */}
+                {tab === 'compliance' && (
+                  <div className="space-y-3">
+                    <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-4">
+                      <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+                        <ShieldCheck className="h-3.5 w-3.5 text-[var(--success)]" />
+                        合规评分 {active.complianceScore}/100
+                      </div>
+                      <Progress value={active.complianceScore} tone="success" />
+                      <div className="mt-2 text-[11px] text-[var(--text-muted)]">
+                        等保 3 · ISO 27001 · GDPR 兼容 · 94 项自评通过
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { name: '等保 3.0', status: 'pass', desc: '94 项 / 91 通过' },
+                        { name: 'ISO 27001', status: 'pass', desc: '有效至 2027-03' },
+                        { name: '数据出境', status: 'pass', desc: '境内 94% / 出境 6%' },
+                        { name: 'GDPR', status: 'warn', desc: '需补充协议' },
+                      ].map((c) => (
+                        <div key={c.name} className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-3 text-xs">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="font-semibold">{c.name}</span>
+                            <Badge tone={c.status === 'pass' ? 'success' : 'warn'}>{c.status === 'pass' ? '通过' : '改善'}</Badge>
+                          </div>
+                          <div className="text-[10px] text-[var(--text-muted)]">{c.desc}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </section>
+
+        {/* 右侧：Todo 9 切换历史 + 系统状态 */}
+        <aside className="space-y-3 overflow-y-auto">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
+            <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+              <History className="h-3.5 w-3.5" />工作区切换历史
+            </div>
+            <div className="space-y-2">
+              {switchHistory.map((h) => (
+                <div key={h.id} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-[11px]">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-mono text-[10px] text-[var(--text-muted)]">{h.time}</span>
+                    <span className="text-[10px] font-mono">{h.user}</span>
+                  </div>
+                  <div className="flex items-center gap-1 text-[11px]">
+                    <span>{h.from}</span>
+                    <ArrowRight className="h-3 w-3 text-[var(--text-muted)]" />
+                    <span className="font-semibold text-[var(--brand)]">{h.to}</span>
+                  </div>
+                  <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{h.reason}</div>
                 </div>
               ))}
             </div>
-          </>
-        )}
-      </section>
+          </div>
 
-      {/* 右侧：8 模块菜单 + 合规基线 + 事件 */}
-      <aside className="w-[280px] shrink-0 border-l border-[var(--border)] bg-[var(--bg)] overflow-y-auto">
-        <div className="p-4 border-b border-[var(--border)]">
-          <div className="text-xs font-semibold mb-3 uppercase tracking-wide text-[var(--text-muted)]">企业管理</div>
-          <div className="space-y-0.5">
-            {RIGHT_MENU.map((m) => (
-              <button
-                key={m.key}
-                className="flex w-full items-center gap-2.5 rounded-md p-2 text-left text-xs hover:bg-[var(--bg-elevated)] transition-colors"
-              >
-                <m.icon className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-                <span>{m.label}</span>
-              </button>
-            ))}
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
+            <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+              <Layers className="h-3.5 w-3.5" />系统状态
+            </div>
+            <div className="space-y-1.5 text-xs">
+              {[
+                { label: 'API 服务', status: 'healthy' },
+                { label: '数据库', status: 'healthy' },
+                { label: 'Milvus', status: 'healthy' },
+                { label: 'OpenSearch', status: 'healthy' },
+              ].map((s) => (
+                <div key={s.label} className="flex items-center justify-between">
+                  <span className="text-[var(--text-muted)]">{s.label}</span>
+                  <Badge tone="success" className="text-[9px]">
+                    <span className="h-1 w-1 rounded-full bg-[var(--success)] animate-pulse mr-0.5" />
+                    正常
+                  </Badge>
+                </div>
+              ))}
+            </div>
           </div>
+        </aside>
+      </div>
+
+      {/* Todo 7: 创建向导 Modal */}
+      {showWizard && <CreateWizard onClose={() => setShowWizard(false)} />}
+    </div>
+  );
+}
+
+function KpiInline({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: 'brand' | 'success' }) {
+  const color = tone === 'brand' ? 'text-[var(--brand)]' : tone === 'success' ? 'text-[var(--success)]' : 'text-[var(--text)]';
+  return (
+    <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
+      <div className="text-[10px] text-[var(--text-muted)]">{label}</div>
+      <div className={cn('text-xl font-bold font-mono', color)}>{value}</div>
+      {sub && <div className="text-[10px] text-[var(--text-muted)]">{sub}</div>}
+    </div>
+  );
+}
+
+function Mini({ label, value, tone }: { label: string; value: string; tone?: 'success' | 'primary' }) {
+  const color = tone === 'success' ? 'text-[var(--success)]' : tone === 'primary' ? 'text-[var(--brand)]' : 'text-[var(--text)]';
+  return (
+    <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-2">
+      <div className="text-[10px] text-[var(--text-muted)]">{label}</div>
+      <div className={cn('text-sm font-mono font-bold', color)}>{value}</div>
+    </div>
+  );
+}
+
+function CreateWizard({ onClose }: { onClose: () => void }) {
+  const [step, setStep] = useState(1);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div className="rounded-xl bg-[var(--surface-1)] border border-[var(--border)] shadow-xl w-[560px]" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
+          <div className="text-sm font-semibold">新建工作区向导</div>
+          <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text)]">✕</button>
         </div>
-        <div className="p-4 border-b border-[var(--border)]">
-          <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-            <ShieldCheck className="h-3.5 w-3.5 text-[var(--success)]" />
-            合规基线
-          </div>
-          <div className="space-y-2 text-xs">
-            <div className="flex items-center justify-between"><span>数据出境</span><Badge tone="success">境内</Badge></div>
-            <div className="flex items-center justify-between"><span>双签复核</span><Badge tone="success">已启用</Badge></div>
-            <div className="flex items-center justify-between"><span>字段脱敏</span><Badge tone="success">token 级</Badge></div>
-            <div className="flex items-center justify-between"><span>Key 轮转</span><Badge tone="success">30d</Badge></div>
-          </div>
-        </div>
-        <div className="p-4">
-          <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-            <Activity className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-            最近管理事件
-          </div>
-          <div className="space-y-1.5 text-xs">
-            {['新增成员 张睿', '升级 Enterprise Plus', '完成等保 3 审计', '新增工作区 安全'].map((e, i) => (
-              <div key={i} className="flex items-center gap-2 rounded bg-[var(--bg-elevated)] px-2 py-1.5">
-                <CheckCircle2 className="h-3 w-3 text-[var(--success)]" />
-                <span className="text-[var(--text-secondary)]">{e}</span>
+        <div className="p-5 space-y-4">
+          {/* Stepper */}
+          <div className="flex items-center gap-2">
+            {['基本信息', '资源配额', '合规基线'].map((s, i) => (
+              <div key={s} className="flex items-center gap-2 flex-1">
+                <div className={cn(
+                  'h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0',
+                  i + 1 <= step ? 'bg-[var(--brand)] text-white' : 'bg-[var(--bg-hover)] text-[var(--text-muted)]',
+                )}>{i + 1}</div>
+                <span className={cn('text-xs', i + 1 === step ? 'font-semibold' : 'text-[var(--text-muted)]')}>{s}</span>
+                {i < 2 && <div className="flex-1 h-px bg-[var(--border)]" />}
               </div>
             ))}
           </div>
+
+          {step === 1 && (
+            <div className="space-y-3">
+              <Field label="工作区名称" placeholder="例如 ACME 预发" />
+              <Field label="区域" placeholder="cn-east-1" mono />
+              <Field label="订阅" placeholder="Enterprise" />
+            </div>
+          )}
+          {step === 2 && (
+            <div className="space-y-3 text-xs">
+              <Limiter label="席位" value="10" max="50" />
+              <Limiter label="智能体" value="5" max="20" />
+              <Limiter label="Token / 月" value="1M" max="50M" />
+            </div>
+          )}
+          {step === 3 && (
+            <div className="space-y-2 text-xs">
+              <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
+                <label className="flex items-center gap-2"><input type="checkbox" defaultChecked className="accent-[var(--brand)]" />数据出境（境内）</label>
+              </div>
+              <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
+                <label className="flex items-center gap-2"><input type="checkbox" defaultChecked className="accent-[var(--brand)]" />双签复核（写动作 100%）</label>
+              </div>
+              <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
+                <label className="flex items-center gap-2"><input type="checkbox" defaultChecked className="accent-[var(--brand)]" />SignedLog 审计</label>
+              </div>
+            </div>
+          )}
         </div>
-      </aside>
+        <div className="flex items-center justify-between border-t border-[var(--border)] px-5 py-3">
+          <Button size="sm" variant="secondary" onClick={() => step > 1 ? setStep(step - 1) : onClose()}>
+            {step > 1 ? '上一步' : '取消'}
+          </Button>
+          <Button size="sm" onClick={() => step < 3 ? setStep(step + 1) : onClose()}>
+            {step < 3 ? '下一步' : '完成创建'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, placeholder, mono }: { label: string; placeholder: string; mono?: boolean }) {
+  return (
+    <div>
+      <div className="text-[10px] text-[var(--text-muted)] mb-1">{label}</div>
+      <input
+        type="text"
+        placeholder={placeholder}
+        className={cn('h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 text-sm', mono && 'font-mono')}
+      />
+    </div>
+  );
+}
+
+function Limiter({ label, value, max }: { label: string; value: string; max: string }) {
+  return (
+    <div>
+      <div className="flex justify-between text-[10px] mb-1">
+        <span className="text-[var(--text-muted)]">{label}</span>
+        <span className="font-mono">{value} / {max}</span>
+      </div>
+      <div className="h-1.5 bg-[var(--bg-hover)] rounded overflow-hidden">
+        <div className="h-full bg-[var(--brand)]" style={{ width: '20%' }} />
+      </div>
     </div>
   );
 }

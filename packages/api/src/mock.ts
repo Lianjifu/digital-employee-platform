@@ -20,6 +20,52 @@ import { sleep } from '@de/web-utils';
 
 // ============ 静态 Mock 数据（来自功能模块文档） ============
 
+// ============ P4 工作区扩展数据 ============
+
+export const mockWorkspaceAgents = {
+  w1: ['故障自愈', 'K8s 操作', '告警降噪', '容量预测', '合规审计', '客户支持'], // 6 Agent
+  w2: ['K8s 操作', '故障自愈', '容量预测'], // 3
+  w3: ['威胁狩猎', '漏洞修复', '合规审计', '告警降噪'], // 4
+  w4: ['客户支持'], // 1
+};
+
+export const mockWorkspaceTools = {
+  w1: { enabled: 18, total: 24, list: ['redis-cli', 'kubectl', 'loki-query', 'prometheus-mcp', 'cmdb-tool', 'jira-tool', '...'] },
+  w2: { enabled: 12, total: 24, list: ['kubectl', 'redis-cli', '...'] },
+  w3: { enabled: 14, total: 24, list: ['siem-mcp', 'cve-tool', '...'] },
+  w4: { enabled: 3, total: 24, list: ['email-tool'] },
+};
+
+export const mockWorkspaceMembers = {
+  w1: [
+    { id: 'u1', name: '王昊', role: 'Admin', email: 'wanghao@acme.com', mfa: true, lastActive: '刚刚' },
+    { id: 'u2', name: '李婷', role: 'SRE', email: 'liting@acme.com', mfa: true, lastActive: '5min 前' },
+    { id: 'u3', name: '张睿', role: 'Sec', email: 'zhangrui@acme.com', mfa: true, lastActive: '12min 前' },
+    { id: 'u4', name: '孙博', role: 'Admin', email: 'sunbo@acme.com', mfa: true, lastActive: '32min 前' },
+    { id: 'u5', name: '周慧', role: 'View', email: 'zhouhui@acme.com', mfa: false, lastActive: '1h 前' },
+  ],
+  w2: [
+    { id: 'u6', name: '赵明', role: 'SRE', email: 'zhaoming@acme.com', mfa: true, lastActive: '8min 前' },
+    { id: 'u7', name: '陈雪', role: 'SRE', email: 'chenxue@acme.com', mfa: true, lastActive: '15min 前' },
+  ],
+  w3: [
+    { id: 'u8', name: '李雷', role: 'Sec', email: 'lilei@acme.com', mfa: true, lastActive: '2min 前' },
+    { id: 'u9', name: '韩梅梅', role: 'Sec', email: 'hanmeimei@acme.com', mfa: true, lastActive: '20min 前' },
+    { id: 'u10', name: 'Lucy', role: 'View', email: 'lucy@acme.com', mfa: true, lastActive: '45min 前' },
+  ],
+  w4: [
+    { id: 'u11', name: '外协 A', role: 'View', email: 'partner-a@external.com', mfa: true, lastActive: '1d 前' },
+    { id: 'u12', name: '外协 B', role: 'View', email: 'partner-b@external.com', mfa: true, lastActive: '3d 前' },
+  ],
+};
+
+export const mockWorkspaceSwitchHistory = [
+  { id: 's1', time: '14:32', user: '王昊', from: 'ACME 预发', to: 'ACME 生产', reason: '故障处理' },
+  { id: 's2', time: '12:15', user: '张睿', from: 'ACME 安全', to: 'ACME 生产', reason: '审计报告' },
+  { id: 's3', time: '09:30', user: '李婷', from: 'ACME 生产', to: 'ACME 预发', reason: '测试部署' },
+  { id: 's4', time: '昨天 17:20', user: '孙博', from: '外协沙箱', to: 'ACME 生产', reason: '代码合并' },
+];
+
 export const mockWorkspaces: Workspace[] = [
   { id: 'w1', name: 'ACME 生产', region: 'cn-east-1', plan: 'enterprise_plus', memberCount: 18, complianceScore: 98, createdAt: '2024-03-12T00:00:00Z' },
   { id: 'w2', name: 'ACME 预发', region: 'cn-east-1', plan: 'enterprise', memberCount: 6, complianceScore: 92, createdAt: '2024-05-08T00:00:00Z' },
@@ -624,6 +670,19 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 工作区
   if (path === '/api/workspaces') return mockWorkspaces;
+  if (path.startsWith('/api/workspaces/') && path.endsWith('/agents')) {
+    const id = path.split('/')[3];
+    return mockWorkspaceAgents[id as keyof typeof mockWorkspaceAgents] ?? [];
+  }
+  if (path.startsWith('/api/workspaces/') && path.endsWith('/tools')) {
+    const id = path.split('/')[3];
+    return mockWorkspaceTools[id as keyof typeof mockWorkspaceTools] ?? null;
+  }
+  if (path.startsWith('/api/workspaces/') && path.endsWith('/members')) {
+    const id = path.split('/')[3];
+    return mockWorkspaceMembers[id as keyof typeof mockWorkspaceMembers] ?? [];
+  }
+  if (path === '/api/workspace-switch-history') return mockWorkspaceSwitchHistory;
 
   // 任务
   if (path === '/api/tasks') return mockTasks;
