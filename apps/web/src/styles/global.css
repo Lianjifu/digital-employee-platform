@@ -577,6 +577,170 @@ body {
 }
 .wf-node.failed { border-color: var(--danger); }
 
+/* ============ 企业级用户菜单 ============ */
+.user-menu {
+  width: 280px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface-1);
+  box-shadow: var(--shadow-xl);
+  padding: 6px;
+  overflow: hidden;
+}
+
+.user-menu__group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  position: relative;
+}
+.user-menu__group-title::before {
+  content: '';
+  width: 3px;
+  height: 12px;
+  background: var(--brand);
+  border-radius: 2px;
+}
+
+.user-menu__item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  font-size: 13.5px;
+  color: var(--text);
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  text-align: left;
+}
+.user-menu__item:hover { background: var(--bg-hover); }
+.user-menu__item:active { background: var(--brand-light); }
+
+.user-menu__icon-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  transition: all 0.12s ease;
+}
+.user-menu__item:hover .user-menu__icon-box {
+  background: var(--brand-light);
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.user-menu__label {
+  flex: 1;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-menu__shortcut {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+}
+
+.user-menu__value {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.user-menu__divider {
+  margin: 6px 12px;
+  height: 1px;
+  background: var(--border);
+}
+
+.user-menu__item--danger { color: var(--danger); }
+.user-menu__item--danger:hover { background: var(--danger-bg); }
+.user-menu__item--danger:hover .user-menu__icon-box {
+  background: var(--danger-bg);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.user-menu__item--promo .user-menu__icon-box {
+  background: var(--purple-bg);
+  border-color: var(--purple);
+  color: var(--purple);
+}
+.user-menu__item--promo:hover .user-menu__icon-box {
+  background: var(--purple);
+  color: white;
+  border-color: var(--purple);
+}
+
+/* 用户触发器（侧栏左下角） ============ */
+.user-trigger {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 12px;
+  background: transparent;
+  border: 0;
+  border-top: 1px solid var(--border);
+  cursor: pointer;
+  transition: background 0.12s ease;
+  text-align: left;
+}
+.user-trigger:hover { background: var(--bg-hover); }
+.user-trigger--open { background: var(--bg-hover); }
+
+.user-trigger__info {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.25;
+}
+.user-trigger__name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.user-trigger__meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.user-trigger__chevron {
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+.user-trigger__chevron--open { transform: rotate(180deg); }
+
 /* ============ 列表卡增强（PSSP）============ */
 .list-card-accent {
   position: relative;

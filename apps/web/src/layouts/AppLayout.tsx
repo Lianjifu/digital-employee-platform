@@ -217,67 +217,66 @@ export function AppLayout() {
 
         {/* ============ 左下角：用户触发器 + 菜单 ============ */}
         {user && (
-          <div ref={userMenuRef} className={cn('relative mt-auto border-t border-[var(--border)] bg-[var(--bg)]', sidebarCollapsed ? 'w-full' : '')}>
+          <div ref={userMenuRef} className={cn('relative mt-auto', sidebarCollapsed ? 'w-full' : '')}>
             {sidebarCollapsed ? (
               // 收起态：纯圆形头像
               <button
                 onClick={() => setUserMenuOpen((v) => !v)}
-                className="grid h-14 w-full place-items-center hover:bg-[var(--bg-hover)] transition-colors"
+                className={cn(
+                  'user-trigger justify-center h-14',
+                  userMenuOpen && 'user-trigger--open',
+                )}
                 title={user.name}
               >
-                <Avatar name={user.name} size={28} />
+                <Avatar name={user.name} size={30} />
               </button>
             ) : (
-              // 展开态：用户名 + 角色 + chevron
+              // 展开态：32px 头像 + 双行 + chevron
               <button
                 onClick={() => setUserMenuOpen((v) => !v)}
-                className={cn(
-                  'flex w-full items-center gap-3 px-3 py-3 text-left transition-colors',
-                  userMenuOpen ? 'bg-[var(--bg-hover)]' : 'hover:bg-[var(--bg-hover)]',
-                )}
+                className={cn('user-trigger', userMenuOpen && 'user-trigger--open')}
               >
-                <Avatar name={user.name} size={28} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold text-[var(--text)]">{user.name}</div>
-                  <div className="truncate text-[10px] text-[var(--text-muted)] font-mono uppercase tracking-wide">
-                    {user.role} · {current?.name ?? 'ACME'}
+                <Avatar name={user.name} size={32} />
+                <div className="user-trigger__info">
+                  <div className="user-trigger__name">{user.name}</div>
+                  <div className="user-trigger__meta">
+                    {user.role.toUpperCase()} · {current?.name ?? 'ACME 生产'}
                   </div>
                 </div>
                 <ChevronDown
                   className={cn(
-                    'h-3.5 w-3.5 text-[var(--text-muted)] transition-transform shrink-0',
-                    userMenuOpen && 'rotate-180',
+                    'user-trigger__chevron h-4 w-4',
+                    userMenuOpen && 'user-trigger__chevron--open',
                   )}
                 />
               </button>
             )}
 
-            {/* ============ 用户菜单（Claude 风格 3 组）============ */}
+            {/* ============ 用户菜单（企业级 3 组）============ */}
             {userMenuOpen && (
               <div
                 className={cn(
-                  'absolute z-50 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl py-1.5',
+                  'user-menu absolute z-50',
                   sidebarCollapsed
-                    ? 'left-full ml-2 bottom-0 w-[260px]'
+                    ? 'left-full ml-2 bottom-0'
                     : 'left-2 right-2 bottom-full mb-2',
                 )}
                 style={sidebarCollapsed ? { bottom: 0 } : undefined}
               >
                 {/* 组 1：Gateway */}
-                <div className="px-3 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                  Gateway
-                </div>
+                <div className="user-menu__group-title">GATEWAY</div>
                 <UserMenuItem
                   icon={Settings2}
                   label="Settings"
                   onClick={() => { setUserMenuOpen(false); navigate('/settings'); }}
                 />
-                <UserMenuItem
-                  icon={Languages}
-                  label="Language"
-                  shortcut="⌘,"
-                  trailing={<>简<ChevronDown className="h-3 w-3 ml-auto text-[var(--text-muted)]" /></>}
-                />
+                <button className="user-menu__item">
+                  <span className="user-menu__icon-box"><Languages className="h-3.5 w-3.5" /></span>
+                  <span className="user-menu__label">Language</span>
+                  <kbd className="user-menu__shortcut">⌘,</kbd>
+                  <span className="user-menu__value">简体中文</span>
+                  <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                </button>
                 <UserMenuItem
                   icon={Cpu}
                   label="Inference configuration"
@@ -285,43 +284,40 @@ export function AppLayout() {
                 />
 
                 {/* 分隔 */}
-                <div className="my-1.5 mx-3 h-px bg-[var(--border)]" />
+                <div className="user-menu__divider" />
 
                 {/* 组 2：资源 */}
-                <UserMenuItem
-                  icon={History}
-                  label="View changelog"
-                  trailing={<ChevronDown className="h-3 w-3 ml-auto text-[var(--text-muted)] -rotate-90" />}
-                />
-                <UserMenuItem
-                  icon={BookOpenCheck}
-                  label="Learn more"
-                  trailing={<ChevronDown className="h-3 w-3 ml-auto text-[var(--text-muted)] -rotate-90" />}
-                />
-
-                {/* 分隔 */}
-                <div className="my-1.5 mx-3 h-px bg-[var(--border)]" />
-
-                {/* 组 3：账户 */}
-                <button
-                  onClick={() => { setUserMenuOpen(false); navigate('/settings'); }}
-                  className="flex w-full items-center gap-2.5 px-3 py-1.5 text-[13px] text-[var(--text)] hover:bg-[var(--bg-hover)] transition-colors text-left"
-                >
-                  <Sparkles className="h-3.5 w-3.5 text-[var(--purple)]" />
-                  <span>升级到 Enterprise Plus</span>
-                  <Badge tone="brand" className="ml-auto text-[10px]">新</Badge>
+                <button className="user-menu__item">
+                  <span className="user-menu__icon-box"><History className="h-3.5 w-3.5" /></span>
+                  <span className="user-menu__label">View changelog</span>
+                  <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)] -rotate-90" />
+                </button>
+                <button className="user-menu__item">
+                  <span className="user-menu__icon-box"><BookOpenCheck className="h-3.5 w-3.5" /></span>
+                  <span className="user-menu__label">Learn more</span>
+                  <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)] -rotate-90" />
                 </button>
 
                 {/* 分隔 */}
-                <div className="my-1.5 mx-3 h-px bg-[var(--border)]" />
+                <div className="user-menu__divider" />
+
+                {/* 组 3：促销 */}
+                <button
+                  className="user-menu__item user-menu__item--promo"
+                  onClick={() => { setUserMenuOpen(false); navigate('/settings'); }}
+                >
+                  <span className="user-menu__icon-box"><Sparkles className="h-3.5 w-3.5" /></span>
+                  <span className="user-menu__label">升级到 Enterprise Plus</span>
+                  <Badge tone="brand" className="text-[10px]">新</Badge>
+                </button>
+
+                {/* 分隔 */}
+                <div className="user-menu__divider" />
 
                 {/* Sign out (红) */}
-                <button
-                  onClick={onLogout}
-                  className="flex w-full items-center gap-2.5 px-3 py-1.5 text-[13px] text-[var(--danger)] hover:bg-[var(--danger-bg)] transition-colors text-left"
-                >
-                  <LogOut className="h-3.5 w-3.5" />
-                  <span>Sign out</span>
+                <button onClick={onLogout} className="user-menu__item user-menu__item--danger">
+                  <span className="user-menu__icon-box"><LogOut className="h-3.5 w-3.5" /></span>
+                  <span className="user-menu__label">Sign out</span>
                 </button>
               </div>
             )}
@@ -337,27 +333,22 @@ export function AppLayout() {
   );
 }
 
-// ============ 菜单项 ============
+// ============ 菜单项（带 icon-box） ============
 function UserMenuItem({
-  icon: Icon, label, shortcut, trailing, onClick,
+  icon: Icon, label, shortcut, onClick,
 }: {
   icon: any;
   label: string;
   shortcut?: string;
-  trailing?: React.ReactNode;
   onClick?: () => void;
 }) {
   return (
-    <button
-      onClick={onClick}
-      className="flex w-full items-center gap-2.5 px-3 py-1.5 text-[13px] text-[var(--text)] hover:bg-[var(--bg-hover)] transition-colors text-left"
-    >
-      <Icon className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-      <span className="flex-1 truncate">{label}</span>
-      {shortcut && (
-        <kbd className="font-mono text-[10px] text-[var(--text-muted)]">{shortcut}</kbd>
-      )}
-      {trailing}
+    <button onClick={onClick} className="user-menu__item">
+      <span className="user-menu__icon-box">
+        <Icon className="h-3.5 w-3.5" />
+      </span>
+      <span className="user-menu__label">{label}</span>
+      {shortcut && <kbd className="user-menu__shortcut">{shortcut}</kbd>}
     </button>
   );
 }
