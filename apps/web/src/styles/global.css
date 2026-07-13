@@ -1,0 +1,121 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== 主题变量（深色优先，企业级冷色调） ===== */
+:root {
+  --color-bg: #0b1220;
+  --color-surface-1: #111a2e;
+  --color-surface-2: #1a2540;
+  --color-surface-3: #243154;
+  --color-border: #2a3a64;
+  --color-text: #e6edf7;
+  --color-text-muted: #8a9bc4;
+
+  --color-primary: #3b82f6;
+  --color-primary-hover: #2563eb;
+  --color-success: #10b981;
+  --color-warn: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #38bdf8;
+
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.2), 0 1px 2px -1px rgb(0 0 0 / 0.18);
+}
+
+/* 浅色主题（未启用，预留） */
+:root.light {
+  --color-bg: #f6f8fb;
+  --color-surface-1: #ffffff;
+  --color-surface-2: #f1f5f9;
+  --color-surface-3: #e2e8f0;
+  --color-border: #d6dee9;
+  --color-text: #0f172a;
+  --color-text-muted: #64748b;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 14px;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* ===== 滚动条 ===== */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-surface-3);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border);
+}
+
+/* ===== 公共类 ===== */
+.glass {
+  background: rgba(17, 26, 46, 0.65);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.text-gradient {
+  background: linear-gradient(90deg, #60a5fa, #a78bfa);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* ===== ReactFlow 主题适配 ===== */
+.react-flow__edge-path {
+  stroke: var(--color-border);
+  stroke-width: 1.5;
+}
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--color-primary);
+}
+.react-flow__controls {
+  background: var(--color-surface-2) !important;
+  border: 1px solid var(--color-border) !important;
+}
+.react-flow__controls-button {
+  background: var(--color-surface-2) !important;
+  color: var(--color-text) !important;
+  border-bottom: 1px solid var(--color-border) !important;
+}
+.react-flow__attribution {
+  display: none;
+}
+.react-flow__handle {
+  background: var(--color-primary) !important;
+  border: 1px solid var(--color-bg) !important;
+}
+
+/* ===== 工作流节点卡片 ===== */
+.wf-node {
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 10px 14px;
+  min-width: 120px;
+  text-align: center;
+  box-shadow: var(--shadow-card);
+}
+.wf-node.success {
+  border-color: rgba(16, 185, 129, 0.5);
+}
+.wf-node.running {
+  border-color: rgba(59, 130, 246, 0.5);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+.wf-node.failed {
+  border-color: rgba(239, 68, 68, 0.5);
+}

@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["vite/client", "node"],
+    "baseUrl": "../..",
+    "paths": {
+      "@/*": ["apps/web/src/*"],
+      "@de/web-ui": ["packages/ui/src/index.tsx"],
+      "@de/web-api": ["packages/api/src/index.ts"],
+      "@de/web-types": ["packages/types/src/index.ts"],
+      "@de/web-hooks": ["packages/hooks/src/index.ts"],
+      "@de/web-utils": ["packages/utils/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*", "vite.config.ts"]
+}
