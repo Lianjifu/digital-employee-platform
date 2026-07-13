@@ -9,8 +9,8 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Home, MessageSquare, ListChecks, Building2, Bot, Workflow,
   BookOpen, Wrench, Brain, Send, Settings as SettingsIcon,
-  Search, Bell, Sun, Moon, Menu, Settings2, Languages, Cpu,
-  History, BookOpenCheck, LogOut, ChevronDown, Sparkles,
+  Search, Bell, Sun, Moon, Menu, Settings2, Languages,
+  LogOut, ChevronDown,
 } from 'lucide-react';
 import { useUiStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -252,7 +252,7 @@ export function AppLayout() {
               </button>
             )}
 
-            {/* ============ 用户菜单（企业级 3 组）============ */}
+            {/* ============ 用户菜单（精简 5 项）============ */}
             {userMenuOpen && (
               <div
                 className={cn(
@@ -263,52 +263,44 @@ export function AppLayout() {
                 )}
                 style={sidebarCollapsed ? { bottom: 0 } : undefined}
               >
-                {/* 组 1：Gateway */}
-                <div className="user-menu__group-title">GATEWAY</div>
+                {/* 组 1：配置 */}
+                <div className="user-menu__group-title">设置</div>
                 <UserMenuItem
                   icon={Settings2}
                   label="Settings"
+                  shortcut="⌘,"
                   onClick={() => { setUserMenuOpen(false); navigate('/settings'); }}
                 />
+                <button
+                  className="user-menu__item"
+                  onClick={() => { setUserMenuOpen(false); navigate('/workspaces'); }}
+                >
+                  <span className="user-menu__icon-box"><Building2 className="h-3.5 w-3.5" /></span>
+                  <span className="user-menu__label">Workspace</span>
+                  <span className="user-menu__value">{current?.name ?? 'ACME'}</span>
+                  <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                </button>
                 <button className="user-menu__item">
                   <span className="user-menu__icon-box"><Languages className="h-3.5 w-3.5" /></span>
                   <span className="user-menu__label">Language</span>
-                  <kbd className="user-menu__shortcut">⌘,</kbd>
                   <span className="user-menu__value">简体中文</span>
                   <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                 </button>
-                <UserMenuItem
-                  icon={Cpu}
-                  label="Inference configuration"
-                  onClick={() => { setUserMenuOpen(false); navigate('/models'); }}
-                />
 
                 {/* 分隔 */}
                 <div className="user-menu__divider" />
 
-                {/* 组 2：资源 */}
-                <button className="user-menu__item">
-                  <span className="user-menu__icon-box"><History className="h-3.5 w-3.5" /></span>
-                  <span className="user-menu__label">View changelog</span>
-                  <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)] -rotate-90" />
-                </button>
-                <button className="user-menu__item">
-                  <span className="user-menu__icon-box"><BookOpenCheck className="h-3.5 w-3.5" /></span>
-                  <span className="user-menu__label">Learn more</span>
-                  <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)] -rotate-90" />
-                </button>
-
-                {/* 分隔 */}
-                <div className="user-menu__divider" />
-
-                {/* 组 3：促销 */}
+                {/* 组 2：偏好（主题） */}
                 <button
-                  className="user-menu__item user-menu__item--promo"
-                  onClick={() => { setUserMenuOpen(false); navigate('/settings'); }}
+                  className="user-menu__item"
+                  onClick={() => { toggleTheme(); setUserMenuOpen(false); }}
                 >
-                  <span className="user-menu__icon-box"><Sparkles className="h-3.5 w-3.5" /></span>
-                  <span className="user-menu__label">升级到 Enterprise Plus</span>
-                  <Badge tone="brand" className="text-[10px]">新</Badge>
+                  <span className="user-menu__icon-box">
+                    {theme === 'light' ? <Moon className="h-3.5 w-3.5" /> : <Sun className="h-3.5 w-3.5" />}
+                  </span>
+                  <span className="user-menu__label">主题</span>
+                  <span className="user-menu__value">{theme === 'light' ? '浅色' : '深色'}</span>
+                  <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                 </button>
 
                 {/* 分隔 */}
