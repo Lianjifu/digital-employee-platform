@@ -1,121 +1,578 @@
+/* PSSP 数字员工平台 · 设计系统 v2.0
+   11 模块统一风格 · 双主题（默认浅色 / .dark 暗色） */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* ===== 主题变量（深色优先，企业级冷色调） ===== */
+/* ============ Light (默认) ============ */
 :root {
-  --color-bg: #0b1220;
-  --color-surface-1: #111a2e;
-  --color-surface-2: #1a2540;
-  --color-surface-3: #243154;
-  --color-border: #2a3a64;
-  --color-text: #e6edf7;
-  --color-text-muted: #8a9bc4;
+  /* 主色 — 蓝紫渐变 */
+  --brand: #4f46e5;
+  --brand-light: #eef2ff;
+  --brand-hover: #4338ca;
+  --brand-active: #3730a3;
 
-  --color-primary: #3b82f6;
-  --color-primary-hover: #2563eb;
-  --color-success: #10b981;
-  --color-warn: #f59e0b;
-  --color-danger: #ef4444;
-  --color-info: #38bdf8;
+  /* 中性 */
+  --bg: #ffffff;
+  --bg-elevated: #f8fafc;
+  --bg-hover: #f1f5f9;
+  --surface-1: #ffffff;
+  --surface-2: #f8fafc;
+  --surface-3: #f1f5f9;
+  --border: #e2e8f0;
+  --border-strong: #cbd5e1;
+  --text: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
 
-  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.2), 0 1px 2px -1px rgb(0 0 0 / 0.18);
+  /* 状态 */
+  --success: #10b981;
+  --success-bg: #d1fae5;
+  --warning: #f59e0b;
+  --warning-bg: #fef3c7;
+  --danger: #ef4444;
+  --danger-bg: #fee2e2;
+  --info: #0ea5e9;
+  --info-bg: #e0f2fe;
+  --purple: #8b5cf6;
+  --purple-bg: #ede9fe;
+
+  /* 字体 */
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Monaco, Consolas, monospace;
+
+  /* 阴影 */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -1px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 10px 10px -5px rgba(0, 0, 0, 0.03);
+
+  /* 圆角 */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
 }
 
-/* 浅色主题（未启用，预留） */
-:root.light {
-  --color-bg: #f6f8fb;
-  --color-surface-1: #ffffff;
-  --color-surface-2: #f1f5f9;
-  --color-surface-3: #e2e8f0;
-  --color-border: #d6dee9;
-  --color-text: #0f172a;
-  --color-text-muted: #64748b;
+/* ============ Dark ============ */
+:root.dark {
+  --brand: #6366f1;
+  --brand-light: rgba(99, 102, 241, 0.15);
+  --brand-hover: #4f46e5;
+  --brand-active: #4338ca;
+
+  --bg: #0a0e1a;
+  --bg-elevated: #0f1525;
+  --bg-hover: #1a2138;
+  --surface-1: #131a2d;
+  --surface-2: #1a2138;
+  --surface-3: #232c47;
+  --border: #2a3654;
+  --border-strong: #3a4870;
+  --text: #e8edf7;
+  --text-secondary: #c0c9de;
+  --text-muted: #8896b3;
+
+  --success: #10b981;
+  --success-bg: rgba(16, 185, 129, 0.15);
+  --warning: #f59e0b;
+  --warning-bg: rgba(245, 158, 11, 0.15);
+  --danger: #f87171;
+  --danger-bg: rgba(248, 113, 113, 0.15);
+  --info: #38bdf8;
+  --info-bg: rgba(56, 189, 248, 0.15);
+  --purple: #a78bfa;
+  --purple-bg: rgba(167, 139, 250, 0.15);
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.3);
 }
 
-html, body, #root {
-  height: 100%;
-}
+html, body, #root { height: 100%; }
 
 body {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-family: var(--font-sans);
   font-size: 14px;
-  background: var(--color-bg);
-  color: var(--color-text);
+  color: var(--text);
+  background: var(--bg-elevated);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.2s, color 0.2s;
 }
 
-/* ===== 滚动条 ===== */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+* { box-sizing: border-box; }
+
+/* ============ 滚动条 ============ */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ============ 工具类（来自 PSSP）============ */
+.text-muted { color: var(--text-muted); }
+.text-sm { font-size: 13px; }
+.text-mono { font-family: var(--font-mono); }
+.text-bold { font-weight: 600; }
+
+.flex { display: flex; }
+.flex-1 { flex: 1; }
+.flex-between { display: flex; justify-content: space-between; align-items: center; }
+.flex-end { display: flex; justify-content: flex-end; gap: 10px; }
+.gap-2 { gap: 8px; }
+.gap-3 { gap: 12px; }
+.gap-4 { gap: 16px; }
+.mt-2 { margin-top: 8px; }
+.mt-3 { margin-top: 12px; }
+.mt-4 { margin-top: 16px; }
+.mb-2 { margin-bottom: 8px; }
+.mb-3 { margin-bottom: 12px; }
+.mb-4 { margin-bottom: 16px; }
+
+.divider { height: 1px; background: var(--border); margin: 16px 0; }
+
+/* ============ Page header（PSSP）============ */
+.page-header { margin-bottom: 24px; }
+.page-header__title {
+  font-size: 28px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--text);
+  letter-spacing: -0.5px;
 }
-::-webkit-scrollbar-track {
+.page-header__sub {
+  color: var(--text-muted);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0;
+}
+.page-header__sub span { margin: 0 8px; }
+.page-header__actions { display: flex; gap: 10px; }
+
+/* ============ KPI Card（PSSP 原型 1:1）============ */
+.kpi-card {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  transition: all 0.2s;
+}
+.kpi-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+.kpi-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 4px; height: 100%;
+  transition: width 0.2s;
+}
+.kpi-card:hover::before { width: 6px; }
+.kpi-card--brand::before { background: var(--brand); }
+.kpi-card--success::before { background: var(--success); }
+.kpi-card--warning::before { background: var(--warning); }
+.kpi-card--danger::before { background: var(--danger); }
+.kpi-card--purple::before { background: var(--purple); }
+
+.kpi-card__label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+.kpi-card__value {
+  font-size: 28px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--text);
+  letter-spacing: -1px;
+  margin-bottom: 6px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.kpi-card__sub { font-size: 12px; color: var(--text-muted); }
+.kpi-card__trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.kpi-card__trend--up { color: var(--success); }
+.kpi-card__trend--down { color: var(--danger); }
+.kpi-card__trend--flat { color: var(--text-muted); }
+
+/* ============ Quick Entry（PSSP 4 张快捷入口）============ */
+.quick-entry {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-top: 24px;
+}
+.quick-entry__item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+  width: 100%;
+}
+.quick-entry__item:hover {
+  border-color: var(--brand);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+.quick-entry__icon {
+  width: 44px; height: 44px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.quick-entry__icon--brand { background: var(--brand-light); color: var(--brand); }
+.quick-entry__icon--success { background: var(--success-bg); color: var(--success); }
+.quick-entry__icon--warning { background: var(--warning-bg); color: var(--warning); }
+.quick-entry__icon--danger { background: var(--danger-bg); color: var(--danger); }
+.quick-entry__content { flex: 1; min-width: 0; }
+.quick-entry__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.quick-entry__desc {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.quick-entry__arrow {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ============ Chart Card（PSSP）============ */
+.chart-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+.chart-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+.chart-card__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.chart-card__action {
+  font-size: 13px;
+  color: var(--brand);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
   background: transparent;
+  border: 0;
 }
-::-webkit-scrollbar-thumb {
-  background: var(--color-surface-3);
-  border-radius: 4px;
+.chart-card__action:hover { color: var(--brand-hover); }
+.chart-content { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.chart-section__label {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border);
+.chart-section__value {
+  font-size: 14px;
+  font-family: var(--font-mono);
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.chart-bars {
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+  height: 70px;
+}
+.chart-bar {
+  flex: 1;
+  border-radius: 4px 4px 0 0;
+  transition: all 0.2s;
+  cursor: pointer;
+  min-width: 0;
+}
+.chart-bar:hover { opacity: 0.8; transform: scaleY(1.02); transform-origin: bottom; }
+
+/* ============ Agent Status List（PSSP）============ */
+.agent-status__item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.agent-status__item:last-child { border-bottom: none; }
+.agent-status__info { display: flex; align-items: center; gap: 10px; }
+.agent-status__name { font-size: 13px; font-weight: 500; color: var(--text); }
+.agent-status__count { font-size: 12px; font-family: var(--font-mono); color: var(--text-muted); }
+
+/* ============ List Card（PSSP 底部 3 列）============ */
+.list-card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+}
+.list-card__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+.list-card__title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-/* ===== 公共类 ===== */
-.glass {
-  background: rgba(17, 26, 46, 0.65);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+/* ============ Task List Item（PSSP）============ */
+.task-list__item {
+  padding: 14px;
+  background: var(--bg-elevated);
+  border-radius: var(--radius-md);
+  margin-bottom: 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+  border: 1px solid transparent;
+}
+.task-list__item:last-child { margin-bottom: 0; }
+.task-list__item:hover {
+  border-color: var(--brand);
+  box-shadow: var(--shadow-sm);
+}
+.task-list__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.task-list__id {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+.task-list__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 8px;
+}
+.task-list__meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+.task-list__meta-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.task-list__progress { margin-top: 10px; }
+.task-list__progress-bar {
+  height: 4px;
+  background: var(--bg-hover);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.task-list__progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--brand), var(--purple));
+  border-radius: 2px;
+}
+.task-list__progress-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 4px;
 }
 
+/* ============ Activity Timeline（PSSP）============ */
+.activity-timeline { position: relative; }
+.activity-timeline__item {
+  display: flex;
+  gap: 12px;
+  padding: 10px 0;
+  position: relative;
+}
+.activity-timeline__item:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 11px;
+  top: 28px;
+  bottom: 0;
+  width: 2px;
+  background: var(--border);
+}
+.activity-timeline__dot {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: var(--bg-elevated);
+  border: 2px solid var(--border);
+  color: var(--text-muted);
+}
+.activity-timeline__dot--success {
+  background: var(--success-bg);
+  border-color: var(--success);
+  color: var(--success);
+}
+.activity-timeline__dot--warning {
+  background: var(--warning-bg);
+  border-color: var(--warning);
+  color: var(--warning);
+}
+.activity-timeline__dot--info {
+  background: var(--info-bg);
+  border-color: var(--info);
+  color: var(--info);
+}
+.activity-timeline__content { flex: 1; min-width: 0; }
+.activity-timeline__text { font-size: 13px; color: var(--text); }
+.activity-timeline__time {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  font-family: var(--font-mono);
+}
+
+/* ============ Alert List（PSSP）============ */
+.alert-list__item {
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  margin-bottom: 10px;
+  border-left: 3px solid;
+}
+.alert-list__item:last-child { margin-bottom: 0; }
+.alert-list__item--danger { background: var(--danger-bg); border-left-color: var(--danger); }
+.alert-list__item--warning { background: var(--warning-bg); border-left-color: var(--warning); }
+.alert-list__item--info { background: var(--info-bg); border-left-color: var(--info); }
+.alert-list__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.alert-list__meta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* ============ Tabs（PSSP 风格）============ */
+.pssp-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+  gap: 4px;
+}
+.pssp-tab {
+  padding: 12px 20px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: all 0.2s;
+  font-weight: 500;
+  background: transparent;
+  border-top: 0; border-left: 0; border-right: 0;
+}
+.pssp-tab:hover { color: var(--text); background: var(--bg-elevated); }
+.pssp-tab--active { color: var(--brand); border-bottom-color: var(--brand); font-weight: 600; }
+
+/* ============ 渐变文本 ============ */
 .text-gradient {
-  background: linear-gradient(90deg, #60a5fa, #a78bfa);
+  background: linear-gradient(135deg, var(--brand) 0%, var(--purple) 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
-/* ===== ReactFlow 主题适配 ===== */
-.react-flow__edge-path {
-  stroke: var(--color-border);
-  stroke-width: 1.5;
+/* ============ 响应式 ============ */
+@media (max-width: 1400px) {
+  .quick-entry { grid-template-columns: repeat(4, 1fr); }
 }
-.react-flow__edge.selected .react-flow__edge-path {
-  stroke: var(--color-primary);
-}
-.react-flow__controls {
-  background: var(--color-surface-2) !important;
-  border: 1px solid var(--color-border) !important;
-}
-.react-flow__controls-button {
-  background: var(--color-surface-2) !important;
-  color: var(--color-text) !important;
-  border-bottom: 1px solid var(--color-border) !important;
-}
-.react-flow__attribution {
-  display: none;
-}
-.react-flow__handle {
-  background: var(--color-primary) !important;
-  border: 1px solid var(--color-bg) !important;
+@media (max-width: 1200px) {
+  .quick-entry { grid-template-columns: repeat(2, 1fr); }
 }
 
-/* ===== 工作流节点卡片 ===== */
+/* ============ ReactFlow 主题适配 ============ */
+.react-flow__edge-path {
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+.react-flow__edge.selected .react-flow__edge-path { stroke: var(--brand); }
+.react-flow__controls {
+  background: var(--surface-2) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: var(--radius-md) !important;
+}
+.react-flow__controls-button {
+  background: var(--surface-2) !important;
+  color: var(--text) !important;
+  border-bottom: 1px solid var(--border) !important;
+}
+.react-flow__controls-button:hover { background: var(--surface-3) !important; }
+.react-flow__attribution { display: none; }
+.react-flow__handle {
+  background: var(--brand) !important;
+  border: 1px solid var(--bg) !important;
+}
+.react-flow__node { font-family: var(--font-sans); }
+
+/* ============ 工作流节点（自定义）============ */
 .wf-node {
-  background: var(--color-surface-2);
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
   padding: 10px 14px;
   min-width: 120px;
   text-align: center;
-  box-shadow: var(--shadow-card);
+  box-shadow: var(--shadow-sm);
 }
-.wf-node.success {
-  border-color: rgba(16, 185, 129, 0.5);
-}
+.wf-node.success { border-color: var(--success); }
 .wf-node.running {
-  border-color: rgba(59, 130, 246, 0.5);
-  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px var(--brand-light);
 }
-.wf-node.failed {
-  border-color: rgba(239, 68, 68, 0.5);
-}
+.wf-node.failed { border-color: var(--danger); }

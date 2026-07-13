@@ -1,245 +1,336 @@
+/**
+ * P1 首页 · 业务总览
+ * 1:1 对齐 docs/01-product/mockups/p1-home.html
+ */
+import { Link } from 'react-router-dom';
 import { useApiQuery } from '@/services/query';
-import { Card, CardHeader, CardTitle, CardBody, Badge } from '@de/web-ui';
-import { TrendingUp, TrendingDown, Minus, Activity, AlertTriangle, CheckCircle2, Zap, ShieldCheck } from 'lucide-react';
-import { cn, relativeTime } from '@de/web-utils';
+import { Button, Badge, Dot } from '@de/web-ui';
 import {
-  AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip,
-  PieChart, Pie, Cell, BarChart, Bar, CartesianGrid,
-} from 'recharts';
-import type { KpiCard as Kpi } from '@de/web-types';
+  Pause, BarChart3, Plus, MessageSquare, ListChecks, Bot, AlertTriangle,
+  ArrowRight, TrendingUp, Activity, Bell, CheckCircle2, FileText, Clock,
+  User as UserIcon, ArrowUp, Volume2, Wrench,
+} from 'lucide-react';
+import type { KpiCard as Kpi, Task } from '@de/web-types';
+import { cn } from '@de/web-utils';
 
-const TONE: Record<string, string> = {
-  ok: 'text-emerald-500',
-  warn: 'text-amber-500',
-  error: 'text-rose-500',
-};
-
-function KpiTile({ k }: { k: Kpi }) {
-  const TrendIcon = k.delta?.trend === 'up' ? TrendingUp : k.delta?.trend === 'down' ? TrendingDown : Minus;
-  return (
-    <Card>
-      <CardBody className="space-y-2">
-        <div className="flex items-center justify-between">
-          <div className="text-xs text-[var(--text-muted)]">{k.label}</div>
-          {k.status === 'warn' && <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />}
-          {k.status === 'error' && <AlertTriangle className="h-3.5 w-3.5 text-rose-500" />}
-        </div>
-        <div className="flex items-baseline gap-1.5">
-          <div className={cn('text-2xl font-semibold', TONE[k.status ?? 'ok'])}>{k.value}</div>
-          {k.unit && <div className="text-xs text-[var(--text-muted)]">{k.unit}</div>}
-        </div>
-        {k.delta && (
-          <div className={cn('flex items-center gap-1 text-xs', k.delta.trend === 'up' ? 'text-emerald-500' : k.delta.trend === 'down' ? 'text-rose-500' : 'text-[var(--text-muted)]')}>
-            <TrendIcon className="h-3 w-3" />
-            <span>较昨日 {k.delta.value > 0 ? '+' : ''}{k.delta.value}{k.unit ?? ''}</span>
-          </div>
-        )}
-      </CardBody>
-    </Card>
-  );
-}
-
-const ACTIVITY_DATA = [
-  { time: '00', active: 12, review: 3, done: 28 },
-  { time: '04', active: 8, review: 2, done: 14 },
-  { time: '08', active: 24, review: 6, done: 32 },
-  { time: '12', active: 38, review: 5, done: 41 },
-  { time: '16', active: 32, review: 8, done: 38 },
-  { time: '20', active: 18, review: 4, done: 22 },
+// ============ Quick Entries ============
+const QUICK_ENTRIES = [
+  { to: '/copilot', icon: MessageSquare, iconClass: 'quick-entry__icon--brand' as const, title: '发起会话', desc: '与数字员工对话' },
+  { to: '/tasks', icon: ListChecks, iconClass: 'quick-entry__icon--success' as const, title: '查看任务', desc: '14 个进行中' },
+  { to: '/agents', icon: Bot, iconClass: 'quick-entry__icon--warning' as const, title: '管理 Agent', desc: '8 个在线' },
+  { to: '/tasks', icon: AlertTriangle, iconClass: 'quick-entry__icon--danger' as const, title: '告警中心', desc: '3 条待处理' },
 ];
 
-const PROVIDER_PIE = [
-  { name: 'Anthropic', value: 68, color: '#3b82f6' },
-  { name: 'Qwen2.5', value: 26, color: '#10b981' },
-  { name: 'DeepSeek', value: 4, color: '#a78bfa' },
-  { name: 'Other', value: 2, color: '#64748b' },
+// ============ KPI Cards（PSSP 6 列）============
+const KPIS = [
+  { tone: 'brand' as const, label: '任务进行中', value: 14, trend: { v: 3, dir: 'up' as const }, sub: 'P0 × 2 · P1 × 5' },
+  { tone: 'warning' as const, label: '待复核', value: 5, sub: '较昨日 +1' },
+  { tone: 'success' as const, label: '今日完成', value: 18, trend: { v: 5, dir: 'up' as const }, sub: 'SLA 达成 96.8%' },
+  { tone: 'danger' as const, label: 'SLA 临近超时', value: 3, sub: '30 min 内超时' },
+  { tone: 'purple' as const, label: '月 Token 用量', value: '12.4M', sub: '预算 25% · ¥1,240' },
+  { tone: 'success' as const, label: '合规评分', value: 98, sub: '等保 3 · 94/94' },
+];
+
+// ============ 健康度柱状图（API P95）============
+const API_BARS = [
+  { h: 40, tone: 'success' as const },
+  { h: 50, tone: 'success' as const },
+  { h: 35, tone: 'success' as const },
+  { h: 55, tone: 'success' as const },
+  { h: 45, tone: 'success' as const },
+  { h: 60, tone: 'warning' as const },
+  { h: 50, tone: 'success' as const },
+  { h: 65, tone: 'warning' as const },
+];
+const TASK_BARS = [
+  { h: 60, tone: 'success' as const },
+  { h: 70, tone: 'success' as const },
+  { h: 65, tone: 'success' as const },
+  { h: 75, tone: 'success' as const },
+  { h: 80, tone: 'success' as const },
+  { h: 85, tone: 'success' as const },
+  { h: 95, tone: 'success' as const },
+  { h: 100, tone: 'success' as const },
+];
+
+// ============ 8 类 Agent ============
+const AGENTS = [
+  { name: '故障自愈', count: '1.2k/日', status: 'success' as const },
+  { name: '变更辅助', count: '124/日', status: 'success' as const },
+  { name: '告警降噪', count: '823/日', status: 'success' as const },
+  { name: '容量预测', count: '2/日', status: 'success' as const },
+  { name: '知识答疑', count: '412/日', status: 'success' as const },
+  { name: '漏洞修复', count: '3/日', status: 'warning' as const },
+  { name: '合规审计', count: '7/日', status: 'success' as const },
+  { name: '客户支持', count: '0/日', status: 'idle' as const },
+];
+
+// ============ Activity Timeline ============
+const ACTIVITIES = [
+  { dot: 'success' as const, icon: CheckCircle2, text: '故障自愈 · INC-019 处理完成', time: '14:32' },
+  { dot: 'info' as const, icon: FileText, text: 'CVE 周报生成完成', time: '14:18' },
+  { dot: 'warning' as const, icon: BarChart3, text: '容量预测报告已生成', time: '13:55' },
+  { dot: 'success' as const, icon: CheckCircle2, text: '变更辅助 · 配置变更完成', time: '13:40' },
+  { dot: 'info' as const, icon: Volume2, text: '告警降噪 · 合并 23 条告警', time: '12:55' },
+];
+
+// ============ Alerts ============
+const ALERTS = [
+  { tone: 'danger' as const, title: 'P0 · Redis cache-oom 临近超时', meta: '8 min 前 · 关联 INC-019' },
+  { tone: 'warning' as const, title: 'P1 · 升级窗口确认', meta: '15 min 前 · 需确认' },
+  { tone: 'info' as const, title: '提示 · 月度报表就绪', meta: '2h 前 · 可下载' },
 ];
 
 export default function Home() {
-  const { data: kpis } = useApiQuery<Kpi[]>(['home', 'kpis'], '/api/home/kpis');
-  const { data: events } = useApiQuery<any[]>(['home', 'events'], '/api/home/events');
-  const { data: tasks } = useApiQuery<any[]>(['home', 'tasks'], '/api/tasks');
-
-  const inProgress = (tasks ?? []).filter((t) => t.status === 'in_progress');
-  const review = (tasks ?? []).filter((t) => t.status === 'review');
-  const completed = (tasks ?? []).filter((t) => t.status === 'completed');
+  const { data: tasks } = useApiQuery<Task[]>(['home', 'tasks'], '/api/tasks');
+  const inProgress = (tasks ?? []).filter((t) => t.status === 'in_progress').slice(0, 3);
 
   return (
-    <div className="h-full overflow-y-auto p-6">
-      {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">系统总览</h1>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">实时刷新 · 数据来源：P3 任务 · P5 智能体 · P9 模型 · P11 合规</p>
+    <div className="flex flex-col h-full overflow-y-auto">
+      {/* ============ Page Header ============ */}
+      <div className="px-8 pt-6">
+        <div className="flex items-start justify-between mb-6">
+          <div>
+            <h1 className="page-header__title">业务总览</h1>
+            <p className="page-header__sub">
+              ACME 生产环境
+              <span>·</span>
+              11 模块运行中
+              <span>·</span>
+              18 个 Agent 已启用
+            </p>
+          </div>
+          <div className="page-header__actions">
+            <Button variant="secondary" size="md">
+              <Pause className="h-3.5 w-3.5" />暂停服务
+            </Button>
+            <Button variant="secondary" size="md">
+              <BarChart3 className="h-3.5 w-3.5" />查看报表
+            </Button>
+            <Button variant="primary" size="md">
+              <Plus className="h-3.5 w-3.5" />新建任务
+            </Button>
+          </div>
         </div>
-        <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-          <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
-          最后更新：刚刚
+
+        {/* ============ Quick Entry（4 张）============ */}
+        <div className="quick-entry">
+          {QUICK_ENTRIES.map((q) => (
+            <Link to={q.to} key={q.title} className="quick-entry__item">
+              <div className={cn('quick-entry__icon', q.iconClass)}>
+                <q.icon className="h-5 w-5" />
+              </div>
+              <div className="quick-entry__content">
+                <div className="quick-entry__title">{q.title}</div>
+                <div className="quick-entry__desc">{q.desc}</div>
+              </div>
+              <ArrowRight className="quick-entry__arrow h-4 w-4" />
+            </Link>
+          ))}
         </div>
       </div>
 
-      {/* 8 KPI */}
-      <div className="mb-6 grid grid-cols-4 gap-4">
-        {(kpis ?? []).map((k) => (
-          <KpiTile key={k.id} k={k} />
-        ))}
-      </div>
+      {/* ============ Main Content ============ */}
+      <div className="px-8 py-6 space-y-6">
 
-      {/* 4 块活动区 */}
-      <div className="mb-6 grid grid-cols-3 gap-4">
-        {/* 进行中任务 */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Activity className="h-4 w-4 text-[var(--brand)]" />
-              进行中任务
-              <Badge tone="brand">{inProgress.length}</Badge>
-            </CardTitle>
-            <a className="text-xs text-[var(--brand)] hover:underline" href="/tasks">查看全部</a>
-          </CardHeader>
-          <CardBody className="space-y-2">
-            {inProgress.slice(0, 4).map((t: any) => (
-              <div key={t.id} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2 text-xs">
-                <div className="flex-1 truncate">
-                  <div className="truncate font-medium">{t.title}</div>
-                  <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{t.code} · {t.assignee}</div>
-                </div>
-                <Badge tone={t.priority === 'P0' ? 'error' : t.priority === 'P1' ? 'warn' : 'info'}>{t.priority}</Badge>
+        {/* KPI 6 列 */}
+        <div className="grid grid-cols-6 gap-4">
+          {KPIS.map((k) => (
+            <div key={k.label} className={cn('kpi-card', `kpi-card--${k.tone}`)}>
+              <div className="kpi-card__label">{k.label}</div>
+              <div className="kpi-card__value">
+                {k.value}
+                {'trend' in k && k.trend && (
+                  <span className={cn('kpi-card__trend', `kpi-card__trend--${k.trend.dir}`)}>
+                    {k.trend.dir === 'up' ? <ArrowUp className="h-3 w-3" /> : null}
+                    +{k.trend.v}
+                  </span>
+                )}
               </div>
-            ))}
-          </CardBody>
-        </Card>
-
-        {/* 待复核 */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4 text-amber-500" />
-              待双签复核
-              <Badge tone="warn">{review.length}</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardBody className="space-y-2">
-            {review.slice(0, 4).map((t: any) => (
-              <div key={t.id} className="flex items-center justify-between rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
-                <div className="flex-1 truncate">
-                  <div className="truncate font-medium">{t.title}</div>
-                  <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{t.code}</div>
-                </div>
-                <Badge tone="warn">双签</Badge>
-              </div>
-            ))}
-          </CardBody>
-        </Card>
-
-        {/* 今日完成 */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-              今日完成
-              <Badge tone="success">{completed.length}</Badge>
-            </CardTitle>
-          </CardHeader>
-          <CardBody className="space-y-2">
-            {completed.slice(0, 4).map((t: any) => (
-              <div key={t.id} className="flex items-center justify-between rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2 text-xs">
-                <div className="flex-1 truncate">
-                  <div className="truncate font-medium">{t.title}</div>
-                  <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{relativeTime(t.updatedAt)}</div>
-                </div>
-                <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-              </div>
-            ))}
-          </CardBody>
-        </Card>
-      </div>
-
-      {/* 图表区 */}
-      <div className="grid grid-cols-3 gap-4">
-        <Card className="col-span-2">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Zap className="h-4 w-4 text-[var(--brand)]" />
-              24h 任务活动
-            </CardTitle>
-            <div className="flex gap-3 text-[10px] text-[var(--text-muted)]">
-              <span>● 进行中</span>
-              <span className="text-amber-500">● 待复核</span>
-              <span className="text-emerald-500">● 已完成</span>
+              <div className="kpi-card__sub">{k.sub}</div>
             </div>
-          </CardHeader>
-          <CardBody className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={ACTIVITY_DATA}>
-                <defs>
-                  <linearGradient id="g1" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.6} />
-                    <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="g2" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.6} />
-                    <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke="#1a2540" strokeDasharray="3 3" />
-                <XAxis dataKey="time" stroke="#8a9bc4" fontSize={10} />
-                <YAxis stroke="#8a9bc4" fontSize={10} />
-                <Tooltip contentStyle={{ background: '#111a2e', border: '1px solid #2a3a64', borderRadius: 6 }} />
-                <Area type="monotone" dataKey="active" stroke="#3b82f6" fill="url(#g1)" />
-                <Area type="monotone" dataKey="done" stroke="#10b981" fill="url(#g2)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </CardBody>
-        </Card>
+          ))}
+        </div>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Token 用量分布</CardTitle>
-            <span className="text-xs text-[var(--text-muted)]">本月 12.4M</span>
-          </CardHeader>
-          <CardBody className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={PROVIDER_PIE} dataKey="value" innerRadius={50} outerRadius={80}>
-                  {PROVIDER_PIE.map((p) => (
-                    <Cell key={p.name} fill={p.color} />
+        {/* 图表行：左 2/3 健康度 · 右 1/3 Agent 状态 */}
+        <div className="grid grid-cols-3 gap-5">
+          {/* 系统健康度 */}
+          <div className="chart-card col-span-2">
+            <div className="chart-card__header">
+              <div className="chart-card__title">
+                <Activity className="h-4 w-4 text-[var(--text-muted)]" />
+                系统健康度
+              </div>
+              <Link to="/tasks" className="chart-card__action">
+                查看详情 <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+            <div className="chart-content">
+              {/* 左：API P95 */}
+              <div>
+                <div className="chart-section__label">API 服务 P95 响应时间</div>
+                <div className="chart-section__value">680ms · 96.8% SLA</div>
+                <div className="chart-bars">
+                  {API_BARS.map((b, i) => (
+                    <div
+                      key={i}
+                      className="chart-bar"
+                      style={{ height: `${b.h}%`, background: `var(--${b.tone})` }}
+                    />
                   ))}
-                </Pie>
-                <Tooltip contentStyle={{ background: '#111a2e', border: '1px solid #2a3a64', borderRadius: 6 }} />
-              </PieChart>
-            </ResponsiveContainer>
-            <div className="mt-2 grid grid-cols-2 gap-1 text-[10px]">
-              {PROVIDER_PIE.map((p) => (
-                <div key={p.name} className="flex items-center gap-1.5">
-                  <span className="h-2 w-2 rounded-sm" style={{ background: p.color }} />
-                  <span className="text-[var(--text-muted)]">{p.name}</span>
-                  <span className="ml-auto">{p.value}%</span>
+                </div>
+              </div>
+              {/* 右：任务完成率 */}
+              <div>
+                <div className="chart-section__label">任务完成率（7 天）</div>
+                <div className="chart-section__value">
+                  97.4% <span className="text-[var(--success)]">↑ 2.1%</span>
+                </div>
+                <div className="chart-bars">
+                  {TASK_BARS.map((b, i) => (
+                    <div
+                      key={i}
+                      className="chart-bar"
+                      style={{ height: `${b.h}%`, background: `var(--${b.tone})` }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* 8 类 Agent */}
+          <div className="chart-card">
+            <div className="chart-card__header">
+              <div className="chart-card__title">
+                <Bot className="h-4 w-4 text-[var(--text-muted)]" />
+                8 类 Agent
+              </div>
+              <Link to="/agents" className="chart-card__action">
+                管理 <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+            <div className="agent-status">
+              {AGENTS.map((a) => (
+                <div key={a.name} className="agent-status__item">
+                  <div className="agent-status__info">
+                    <Dot tone={a.status} />
+                    <span className="agent-status__name">{a.name}</span>
+                  </div>
+                  <span className="agent-status__count">{a.count}</span>
                 </div>
               ))}
             </div>
-          </CardBody>
-        </Card>
-      </div>
+          </div>
+        </div>
 
-      {/* 最近事件 */}
-      <Card className="mt-4">
-        <CardHeader>
-          <CardTitle>最近 5 次事件</CardTitle>
-          <a className="text-xs text-[var(--brand)] hover:underline" href="#">查看全部</a>
-        </CardHeader>
-        <CardBody className="divide-y divide-[var(--border)]">
-          {(events ?? []).map((e: any) => (
-            <div key={e.id} className="flex items-center justify-between py-2 text-xs">
-              <div className="flex items-center gap-2">
-                <Badge tone={e.type.startsWith('sla') ? 'warn' : e.type.includes('completed') ? 'success' : 'info'}>{e.type.split('.')[0]}</Badge>
-                <span>{e.text}</span>
+        {/* 底部 3 列 */}
+        <div className="grid grid-cols-3 gap-5">
+
+          {/* 进行中任务 */}
+          <div className="list-card">
+            <div className="list-card__header">
+              <div className="list-card__title">
+                <Clock className="h-4 w-4 text-[var(--text-muted)]" />
+                进行中任务
               </div>
-              <span className="text-[var(--text-muted)]">{relativeTime(e.time)}</span>
+              <Link to="/tasks" className="chart-card__action">
+                查看全部 <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
             </div>
-          ))}
-        </CardBody>
-      </Card>
+
+            <div>
+              {inProgress.length === 0 ? (
+                <div className="text-center text-xs text-[var(--text-muted)] py-6">暂无进行中任务</div>
+              ) : (
+                inProgress.map((t) => {
+                  const pct = Math.round((t.progress.done / t.progress.total) * 100);
+                  const slaWarn = t.slaRemainingMin !== undefined && t.slaRemainingMin < 0;
+                  return (
+                    <div key={t.id} className="task-list__item">
+                      <div className="task-list__header">
+                        <span className="task-list__id">{t.code}</span>
+                        <Badge tone={t.priority === 'P0' ? 'error' : t.priority === 'P1' ? 'warn' : 'info'}>
+                          {t.priority}
+                        </Badge>
+                      </div>
+                      <div className="task-list__title">{t.title}</div>
+                      <div className="task-list__meta">
+                        <span className="task-list__meta-item">
+                          <UserIcon className="h-3 w-3" />
+                          {t.assignee}
+                        </span>
+                        <span className="task-list__meta-item">
+                          <Wrench className="h-3 w-3" />
+                          {t.tags[0] ?? 'general'}
+                        </span>
+                        {t.slaRemainingMin !== undefined && (
+                          <span
+                            className="task-list__meta-item"
+                            style={{ color: slaWarn ? 'var(--danger)' : slaWarn === false && t.slaRemainingMin < 60 ? 'var(--warning)' : 'var(--success)' }}
+                          >
+                            <Clock className="h-3 w-3" />
+                            {slaWarn ? `${Math.abs(t.slaRemainingMin)}min 超时` : `${t.slaRemainingMin}min`}
+                          </span>
+                        )}
+                      </div>
+                      <div className="task-list__progress">
+                        <div className="task-list__progress-bar">
+                          <div className="task-list__progress-fill" style={{ width: `${pct}%` }} />
+                        </div>
+                        <div className="task-list__progress-text">
+                          {t.progress.done}/{t.progress.total} 步 · {pct}%
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* 最近活动 timeline */}
+          <div className="list-card">
+            <div className="list-card__header">
+              <div className="list-card__title">
+                <Bell className="h-4 w-4 text-[var(--text-muted)]" />
+                最近活动
+              </div>
+            </div>
+            <div className="activity-timeline">
+              {ACTIVITIES.map((a, i) => (
+                <div key={i} className="activity-timeline__item">
+                  <div className={cn('activity-timeline__dot', `activity-timeline__dot--${a.dot}`)}>
+                    <a.icon className="h-3 w-3" strokeWidth={a.dot === 'success' ? 3 : 2} />
+                  </div>
+                  <div className="activity-timeline__content">
+                    <div className="activity-timeline__text">{a.text}</div>
+                    <div className="activity-timeline__time">{a.time}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 告警中心 */}
+          <div className="list-card">
+            <div className="list-card__header">
+              <div className="list-card__title">
+                <Bell className="h-4 w-4 text-[var(--text-muted)]" />
+                告警中心
+              </div>
+            </div>
+            <div>
+              {ALERTS.map((al, i) => (
+                <div key={i} className={cn('alert-list__item', `alert-list__item--${al.tone}`)}>
+                  <div className="alert-list__title">{al.title}</div>
+                  <div className="alert-list__meta">{al.meta}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
