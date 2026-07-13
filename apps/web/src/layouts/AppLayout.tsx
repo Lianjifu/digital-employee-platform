@@ -1,15 +1,16 @@
 /**
- * PSSP 风格主布局
- * - 顶部 60px Topbar（Logo + Breadcrumb + Search + Status + Theme Toggle + Avatar）
- * - 左侧 260px Sidebar（11 模块分组导航）
- * - Main 流式内容
+ * PSSP 主布局
+ * - 顶部 60px Topbar（Logo + Breadcrumb + Search + Status + Theme + Notification）
+ * - 左侧 260px Sidebar（11 模块导航 + 工作区切换 + 用户菜单）
+ * - 用户信息移到左下角，菜单按 Claude 风格分 3 组
  */
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Home, MessageSquare, ListChecks, Building2, Bot, Workflow,
   BookOpen, Wrench, Brain, Send, Settings as SettingsIcon,
-  Search, Bell, ChevronDown, LogOut, Sun, Moon, Menu,
+  Search, Bell, Sun, Moon, Menu, Settings2, Languages, Cpu,
+  History, BookOpenCheck, LogOut, ChevronDown, Sparkles,
 } from 'lucide-react';
 import { useUiStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -41,6 +42,8 @@ export function AppLayout() {
   const { sidebarCollapsed, toggleSidebar, theme, toggleTheme } = useUiStore();
   const { user, logout } = useAuthStore();
   const { current, setCurrent, setList } = useWorkspaceStore();
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   const { data: workspaces } = useApiQuery<Workspace[]>(['workspaces'], '/api/workspaces');
   useEffect(() => {
@@ -50,7 +53,19 @@ export function AppLayout() {
     }
   }, [workspaces, current, setCurrent, setList]);
 
+  // 点击外部关闭用户菜单
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    if (userMenuOpen) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [userMenuOpen]);
+
   const onLogout = () => {
+    setUserMenuOpen(false);
     logout();
     navigate('/login', { replace: true });
   };
@@ -84,14 +99,16 @@ export function AppLayout() {
           <div className="grid h-9 w-9 place-items-center rounded-md bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-sm font-bold text-white shadow-[0_2px_8px_rgba(79,70,229,0.3)]">
             DE
           </div>
-          <span>数字员工平台</span>
+          {!sidebarCollapsed && <span>数字员工平台</span>}
         </NavLink>
 
         {/* Breadcrumb */}
-        <div className="flex items-center gap-2 text-[13px] text-[var(--text-muted)]">
-          <span>·</span>
-          <span className="text-[var(--text-secondary)]">{activeNav?.label ?? '首页'}</span>
-        </div>
+        {!sidebarCollapsed && (
+          <div className="flex items-center gap-2 text-[13px] text-[var(--text-muted)]">
+            <span>·</span>
+            <span className="text-[var(--text-secondary)]">{activeNav?.label ?? '首页'}</span>
+          </div>
+        )}
 
         {/* Search */}
         <div className="relative flex-1 max-w-md">
@@ -127,20 +144,6 @@ export function AppLayout() {
             <Bell className="h-4 w-4" />
             <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--danger)]" />
           </button>
-
-          {/* 用户 */}
-          {user && (
-            <div className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1">
-              <Avatar name={user.name} size={26} />
-              <div className="text-xs">
-                <div className="font-semibold leading-tight">{user.name}</div>
-                <div className="text-[10px] text-[var(--text-muted)] font-mono uppercase tracking-wide">{user.role}</div>
-              </div>
-              <button onClick={onLogout} className="ml-1 text-[var(--text-muted)] hover:text-[var(--danger)]" title="退出">
-                <LogOut className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          )}
         </div>
       </header>
 
@@ -153,61 +156,175 @@ export function AppLayout() {
       >
         {/* 工作区选择器 */}
         {!sidebarCollapsed && current && (
-          <div className="m-3">
-            <button className="flex w-full items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-left hover:bg-[var(--bg-hover)]">
-              <Building2 className="h-3.5 w-3.5 text-[var(--brand)]" />
+          <div className="p-3 pb-1">
+            <button className="flex w-full items-center gap-2.5 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-left hover:bg-[var(--bg-hover)] transition-colors">
+              <Building2 className="h-3.5 w-3.5 text-[var(--brand)] shrink-0" />
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-medium">{current.name}</div>
                 <div className="text-[10px] text-[var(--text-muted)] font-mono">{current.region}</div>
               </div>
-              <Badge tone="brand">{current.plan.replace('_', ' ')}</Badge>
+              <Badge tone="brand" className="text-[10px]">{current.plan.replace('_', ' ')}</Badge>
               <ChevronDown className="h-3 w-3 text-[var(--text-muted)]" />
             </button>
           </div>
         )}
 
-        {groups.map((g) => (
-          <div key={g.key} className={cn('mb-5', sidebarCollapsed ? 'w-full' : 'px-3')}>
-            {!sidebarCollapsed && (
-              <div className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                {GROUP_LABEL[g.key]}
+        {/* 主导航 */}
+        <nav className="flex-1 px-3 pb-3 space-y-4 overflow-y-auto">
+          {groups.map((g) => (
+            <div key={g.key}>
+              {!sidebarCollapsed && (
+                <div className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  {GROUP_LABEL[g.key]}
+                </div>
+              )}
+              <div className="space-y-0.5">
+                {g.items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={({ isActive }) =>
+                      cn(
+                        'group flex items-center gap-3 rounded-md text-[13px] transition-all duration-150',
+                        sidebarCollapsed ? 'h-10 w-10 justify-center mx-auto' : 'px-3 py-2',
+                        isActive
+                          ? 'bg-[var(--brand-light)] text-[var(--brand)] font-semibold'
+                          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]',
+                      )
+                    }
+                    title={sidebarCollapsed ? `${item.code} · ${item.label}` : undefined}
+                  >
+                    <item.icon
+                      className={cn(
+                        'h-4 w-4 shrink-0 transition-colors',
+                        'group-hover:text-[var(--brand)]',
+                      )}
+                    />
+                    {!sidebarCollapsed && (
+                      <>
+                        <span className="flex-1 truncate">{item.label}</span>
+                        <span className="text-[10px] font-mono text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]">
+                          {item.code}
+                        </span>
+                      </>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          ))}
+        </nav>
+
+        {/* ============ 左下角：用户触发器 + 菜单 ============ */}
+        {user && (
+          <div ref={userMenuRef} className={cn('relative mt-auto border-t border-[var(--border)] bg-[var(--bg)]', sidebarCollapsed ? 'w-full' : '')}>
+            {sidebarCollapsed ? (
+              // 收起态：纯圆形头像
+              <button
+                onClick={() => setUserMenuOpen((v) => !v)}
+                className="grid h-14 w-full place-items-center hover:bg-[var(--bg-hover)] transition-colors"
+                title={user.name}
+              >
+                <Avatar name={user.name} size={28} />
+              </button>
+            ) : (
+              // 展开态：用户名 + 角色 + chevron
+              <button
+                onClick={() => setUserMenuOpen((v) => !v)}
+                className={cn(
+                  'flex w-full items-center gap-3 px-3 py-3 text-left transition-colors',
+                  userMenuOpen ? 'bg-[var(--bg-hover)]' : 'hover:bg-[var(--bg-hover)]',
+                )}
+              >
+                <Avatar name={user.name} size={28} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold text-[var(--text)]">{user.name}</div>
+                  <div className="truncate text-[10px] text-[var(--text-muted)] font-mono uppercase tracking-wide">
+                    {user.role} · {current?.name ?? 'ACME'}
+                  </div>
+                </div>
+                <ChevronDown
+                  className={cn(
+                    'h-3.5 w-3.5 text-[var(--text-muted)] transition-transform shrink-0',
+                    userMenuOpen && 'rotate-180',
+                  )}
+                />
+              </button>
+            )}
+
+            {/* ============ 用户菜单（Claude 风格 3 组）============ */}
+            {userMenuOpen && (
+              <div
+                className={cn(
+                  'absolute z-50 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl py-1.5',
+                  sidebarCollapsed
+                    ? 'left-full ml-2 bottom-0 w-[260px]'
+                    : 'left-2 right-2 bottom-full mb-2',
+                )}
+                style={sidebarCollapsed ? { bottom: 0 } : undefined}
+              >
+                {/* 组 1：Gateway */}
+                <div className="px-3 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  Gateway
+                </div>
+                <UserMenuItem
+                  icon={Settings2}
+                  label="Settings"
+                  onClick={() => { setUserMenuOpen(false); navigate('/settings'); }}
+                />
+                <UserMenuItem
+                  icon={Languages}
+                  label="Language"
+                  shortcut="⌘,"
+                  trailing={<>简<ChevronDown className="h-3 w-3 ml-auto text-[var(--text-muted)]" /></>}
+                />
+                <UserMenuItem
+                  icon={Cpu}
+                  label="Inference configuration"
+                  onClick={() => { setUserMenuOpen(false); navigate('/models'); }}
+                />
+
+                {/* 分隔 */}
+                <div className="my-1.5 mx-3 h-px bg-[var(--border)]" />
+
+                {/* 组 2：资源 */}
+                <UserMenuItem
+                  icon={History}
+                  label="View changelog"
+                  trailing={<ChevronDown className="h-3 w-3 ml-auto text-[var(--text-muted)] -rotate-90" />}
+                />
+                <UserMenuItem
+                  icon={BookOpenCheck}
+                  label="Learn more"
+                  trailing={<ChevronDown className="h-3 w-3 ml-auto text-[var(--text-muted)] -rotate-90" />}
+                />
+
+                {/* 分隔 */}
+                <div className="my-1.5 mx-3 h-px bg-[var(--border)]" />
+
+                {/* 组 3：账户 */}
+                <button
+                  onClick={() => { setUserMenuOpen(false); navigate('/settings'); }}
+                  className="flex w-full items-center gap-2.5 px-3 py-1.5 text-[13px] text-[var(--text)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-[var(--purple)]" />
+                  <span>升级到 Enterprise Plus</span>
+                  <Badge tone="brand" className="ml-auto text-[10px]">新</Badge>
+                </button>
+
+                {/* 分隔 */}
+                <div className="my-1.5 mx-3 h-px bg-[var(--border)]" />
+
+                {/* Sign out (红) */}
+                <button
+                  onClick={onLogout}
+                  className="flex w-full items-center gap-2.5 px-3 py-1.5 text-[13px] text-[var(--danger)] hover:bg-[var(--danger-bg)] transition-colors text-left"
+                >
+                  <LogOut className="h-3.5 w-3.5" />
+                  <span>Sign out</span>
+                </button>
               </div>
             )}
-            <div className="space-y-0.5">
-              {g.items.map((item) => (
-                <NavLink
-                  key={item.to}
-                  to={item.to}
-                  className={({ isActive }) =>
-                    cn(
-                      'flex items-center gap-3 rounded-md text-[13px] transition-all duration-200',
-                      sidebarCollapsed ? 'h-10 w-10 justify-center mx-auto' : 'px-3 py-2.5',
-                      isActive
-                        ? 'bg-[var(--brand-light)] text-[var(--brand)] font-semibold'
-                        : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]',
-                    )
-                  }
-                  title={sidebarCollapsed ? `${item.code} · ${item.label}` : undefined}
-                >
-                  <item.icon className="h-4 w-4 shrink-0" />
-                  {!sidebarCollapsed && (
-                    <>
-                      <span className="flex-1 truncate">{item.label}</span>
-                      <span className="text-[10px] font-mono text-[var(--text-muted)]">{item.code}</span>
-                    </>
-                  )}
-                </NavLink>
-              ))}
-            </div>
-          </div>
-        ))}
-
-        {!sidebarCollapsed && (
-          <div className="mt-auto m-3 rounded-md border border-[var(--border)] bg-gradient-to-br from-[var(--brand-light)] to-[var(--purple-bg)] p-3">
-            <div className="text-[11px] font-semibold text-[var(--text)]">💡 提示</div>
-            <div className="mt-1 text-[10px] text-[var(--text-muted)] leading-relaxed">
-              所有写操作触发等保 3 双签 · 数据境内合规
-            </div>
           </div>
         )}
       </aside>
@@ -217,5 +334,30 @@ export function AppLayout() {
         <Outlet />
       </main>
     </div>
+  );
+}
+
+// ============ 菜单项 ============
+function UserMenuItem({
+  icon: Icon, label, shortcut, trailing, onClick,
+}: {
+  icon: any;
+  label: string;
+  shortcut?: string;
+  trailing?: React.ReactNode;
+  onClick?: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex w-full items-center gap-2.5 px-3 py-1.5 text-[13px] text-[var(--text)] hover:bg-[var(--bg-hover)] transition-colors text-left"
+    >
+      <Icon className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+      <span className="flex-1 truncate">{label}</span>
+      {shortcut && (
+        <kbd className="font-mono text-[10px] text-[var(--text-muted)]">{shortcut}</kbd>
+      )}
+      {trailing}
+    </button>
   );
 }
