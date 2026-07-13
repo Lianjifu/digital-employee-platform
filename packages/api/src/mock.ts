@@ -184,6 +184,161 @@ export const mockAudits: AuditItem[] = [
   { id: 'a13', name: '灰度发布', category: 'compliance', status: 'warn', updatedAt: '2026-07-12T00:00:00Z' },
 ];
 
+// ============ P2 会话扩展数据 ============
+
+export interface AgentMeta {
+  id: string;
+  name: string;
+  category: string;
+  version: string;
+  description: string;
+  rating: number;
+  ratingCount: number;
+  lastActive: string;
+  installCount: number;
+  responseP95: number;
+  totalTokens: number;
+}
+
+export const mockAgentMeta: AgentMeta = {
+  id: 'a1',
+  name: '故障自愈',
+  category: 'AIOps',
+  version: '1.4.2',
+  description: '基于 Runbook 的自动故障定位与恢复 · 内置 8 个 Skill',
+  rating: 4.8,
+  ratingCount: 1240,
+  lastActive: '14:32',
+  installCount: 1240,
+  responseP95: 580,
+  totalTokens: 1240000,
+};
+
+export interface ChatMessageEx {
+  id: string;
+  role: 'user' | 'assistant' | 'tool' | 'system';
+  content: string;
+  agentId?: string;
+  agentName?: string;
+  citations?: { id: string; docId: string; text: string; score: number; source: string; page?: number }[];
+  toolCalls?: { id: string; name: string; args: Record<string, unknown>; result?: string; status: 'pending' | 'running' | 'success' | 'failed'; durationMs?: number }[];
+  codeBlock?: { lang: string; code: string };
+  attachment?: { name: string; size: string; type: 'file' | 'image' };
+  thinking?: string;
+  approvalRequest?: { action: string; approver?: string; status: 'pending' | 'approved' | 'rejected' };
+  createdAt: string;
+}
+
+export const mockConversationEx = {
+  agent: mockAgentMeta,
+  messages: [
+    {
+      id: 'm1',
+      role: 'user' as const,
+      content: 'prod-redis-01 OOM 了，怎么处理？',
+      createdAt: '2026-07-13T14:25:00Z',
+    },
+    {
+      id: 'm2',
+      role: 'assistant' as const,
+      agentId: 'a1',
+      agentName: '故障自愈',
+      thinking: '用户问 OOM，我需要先查 Redis 指标 + 最近变更 + Runbook ...',
+      content: '检测到 prod-redis-01 在 14:25 触发 maxmemory 限制（used_memory 7.2G / maxmemory 8G）。我已检索相关 Runbook 与最近变更记录，建议执行以下步骤：',
+      citations: [
+        { id: 'c1', docId: 'k1', text: '当触发 OOM 时，优先检查 maxmemory-policy 与最近写入速率...', score: 0.92, source: 'Redis 故障 Runbook v3.2', page: 12 },
+        { id: 'c2', docId: 'k2', text: 'prod-redis-01 资产编号 PRD-CACHE-019，归属 ACME 生产集群 cn-east-1 区...', score: 0.78, source: 'CMDB 全量资产清单' },
+      ],
+      createdAt: '2026-07-13T14:25:08Z',
+    },
+    {
+      id: 'm3',
+      role: 'tool' as const,
+      content: 'execute_k8s_resource',
+      toolCalls: [
+        { id: 't1', name: 'redis-cli INFO memory', args: { host: 'prod-redis-01' }, result: 'used_memory_human: 7.2G · maxmemory_human: 8G · maxmemory_policy: noeviction', status: 'success' as const, durationMs: 120 },
+        { id: 't2', name: 'redis-cli CONFIG GET maxmemory*', args: {}, result: 'maxmemory 8589934592 · maxmemory-policy noeviction', status: 'success' as const, durationMs: 80 },
+      ],
+      createdAt: '2026-07-13T14:25:30Z',
+    },
+    {
+      id: 'm4',
+      role: 'user' as const,
+      content: '把 maxmemory 提到 16GB，并改成 volatile-lru',
+      createdAt: '2026-07-13T14:26:12Z',
+    },
+    {
+      id: 'm5',
+      role: 'assistant' as const,
+      agentId: 'a1',
+      agentName: '故障自愈',
+      content: '需要写操作，触发双签审批（等保 3）：',
+      approvalRequest: { action: 'CONFIG SET maxmemory 16GB + volatile-lru', status: 'pending' as const },
+      createdAt: '2026-07-13T14:26:18Z',
+    },
+    {
+      id: 'm6',
+      role: 'assistant' as const,
+      agentId: 'a1',
+      agentName: '故障自愈',
+      content: '审批通过，已执行：',
+      toolCalls: [
+        { id: 't3', name: 'redis-cli CONFIG SET', args: { maxmemory: '16GB', 'maxmemory-policy': 'volatile-lru' }, result: 'OK', status: 'success' as const, durationMs: 45 },
+      ],
+      codeBlock: { lang: 'bash', code: '$ kubectl exec -it prod-redis-01 -- redis-cli CONFIG SET maxmemory 16GB\nOK\n$ kubectl exec -it prod-redis-01 -- redis-cli CONFIG SET maxmemory-policy volatile-lru\nOK' },
+      createdAt: '2026-07-13T14:28:00Z',
+    },
+    {
+      id: 'm7',
+      role: 'user' as const,
+      content: '给我看下当前的内存使用曲线',
+      attachment: { name: 'redis-mem-curve.png', size: '124 KB', type: 'image' },
+      createdAt: '2026-07-13T14:30:00Z',
+    },
+    {
+      id: 'm8',
+      role: 'assistant' as const,
+      agentId: 'a1',
+      agentName: '故障自愈',
+      content: '根据你的截图，14:00-14:25 内存从 4.8G 涨到 7.2G（斜率 13%/15min），这是异常写入。已识别 3 个大 Key：\n\n• session:user:8a3f:1.4GB\n• cache:render:html:5e2:1.1GB\n• analytics:event:raw:2026-07-13:0.9GB\n\n建议：\n1. volatile-lru 已生效（最近 5min 释放 800MB）\n2. 大 Key 拆分（运维窗口执行）\n3. 加监控告警：内存 > 70% 持续 5min',
+      createdAt: '2026-07-13T14:30:20Z',
+    },
+  ] as ChatMessageEx[],
+};
+
+// 会话按时间分组（侧栏）
+export interface SessionItem {
+  id: string;
+  title: string;
+  preview: string;
+  agent: string;
+  status: 'active' | 'done';
+  group: 'today' | 'yesterday' | 'week';
+  time: string;
+  pinned?: boolean;
+}
+
+export const mockSessions: SessionItem[] = [
+  { id: 's1', title: 'Redis OOM 处理', preview: '已扩容到 16GB + volatile-lru', agent: '故障自愈', status: 'active', group: 'today', time: '14:32', pinned: true },
+  { id: 's2', title: '合规审计报告生成', preview: '本月 94 项审计已生成 PDF', agent: '合规审计', status: 'done', group: 'today', time: '11:20' },
+  { id: 's3', title: 'K8s 节点扩容申请', preview: '需要 2 个 c5.2xlarge，预计影响 5 个服务', agent: '变更辅助', status: 'active', group: 'today', time: '10:15' },
+  { id: 's4', title: 'CVE 周报', preview: '本周 12 个新漏洞，建议优先修复 CVE-2026-3321', agent: '漏洞修复', status: 'done', group: 'yesterday', time: '昨天 17:45' },
+  { id: 's5', title: '告警降噪规则', preview: '合并 23 条重复 SIEM 告警', agent: '告警降噪', status: 'done', group: 'yesterday', time: '昨天 14:30' },
+  { id: 's6', title: '客户咨询 · 价格问题', preview: '关于 Enterprise Plus 升级方案', agent: '客户支持', status: 'done', group: 'week', time: '7月10日' },
+  { id: 's7', title: '容量预测 · Q3', preview: '预计增长 24%，建议提前扩容', agent: '容量预测', status: 'done', group: 'week', time: '7月9日' },
+];
+
+// Slash 命令面板
+export const mockSlashCommands = [
+  { cmd: '/agent', desc: '切换 Agent', icon: 'Bot' },
+  { cmd: '/search', desc: '检索知识库', icon: 'Search' },
+  { cmd: '/task', desc: '创建任务', icon: 'ListChecks' },
+  { cmd: '/skill', desc: '调用技能', icon: 'Wrench' },
+  { cmd: '/workflow', desc: '触发工作流', icon: 'Workflow' },
+  { cmd: '/model', desc: '切换模型', icon: 'Brain' },
+  { cmd: '/help', desc: '显示所有命令', icon: 'Sparkles' },
+];
+
 export const mockConversation: Conversation = {
   id: 'cv1',
   agentId: 'a1',
@@ -276,6 +431,10 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 会话
   if (path === '/api/conversations/cv1') return mockConversation;
+  if (path === '/api/conversations/cv1/ex') return mockConversationEx;
+  if (path === '/api/sessions') return mockSessions;
+  if (path === '/api/slash-commands') return mockSlashCommands;
+  if (path.startsWith('/api/agents/') && path.endsWith('/meta')) return mockAgentMeta;
 
   // 登录
   if (path === '/api/auth/login') {
