@@ -27,6 +27,35 @@ export const mockWorkspaces: Workspace[] = [
   { id: 'w4', name: '外协沙箱', region: 'cn-south-1', plan: 'standard', memberCount: 2, complianceScore: 85, createdAt: '2025-01-15T00:00:00Z' },
 ];
 
+// ============ 首页扩展数据（healthTrend/team/activities）============
+export interface HomeExtra {
+  healthTrend24h: number[];
+  teamMembers: { id: string; name: string; role: string; online: boolean }[];
+  recentActivities: { id: string; type: string; tone: 'success' | 'warning' | 'info' | 'danger'; text: string; actor: string; resource: string; time: string }[];
+  agentCallSummary: { total: number; healthy: number; warning: number; offline: number };
+}
+
+export const mockHomeExtra: HomeExtra = {
+  healthTrend24h: [92, 94, 95, 93, 96, 98, 97, 96, 98, 99, 98, 97, 99, 100, 99, 98, 97, 96, 98, 99, 98, 99, 100, 99],
+  teamMembers: [
+    { id: 'u1', name: '王昊', role: 'SRE', online: true },
+    { id: 'u2', name: '李婷', role: 'SRE', online: true },
+    { id: 'u3', name: '张睿', role: 'Sec', online: true },
+    { id: 'u4', name: '陈雪', role: 'SRE', online: false },
+    { id: 'u5', name: '赵明', role: 'Sec', online: true },
+    { id: 'u6', name: '孙博', role: 'Admin', online: false },
+    { id: 'u7', name: '周慧', role: 'View', online: true },
+  ],
+  recentActivities: [
+    { id: 'a1', type: 'task.completed', tone: 'success', text: '故障自愈 · INC-019 处理完成', actor: '王昊', resource: 'prod-redis-01', time: '14:32' },
+    { id: 'a2', type: 'cve.report', tone: 'info', text: 'CVE 周报生成完成（12 个新漏洞）', actor: '张睿', resource: 'CVE-2026-W30', time: '14:18' },
+    { id: 'a3', type: 'capacity.report', tone: 'warning', text: '容量预测报告已生成（Q3 增长 24%）', actor: '周慧', resource: '容量预测', time: '13:55' },
+    { id: 'a4', type: 'change.deploy', tone: 'success', text: '变更辅助 · 网关灰度配置变更完成', actor: '孙博', resource: 'gateway-prod', time: '13:40' },
+    { id: 'a5', type: 'alert.merge', tone: 'info', text: '告警降噪 · 合并 23 条重复告警', actor: '李婷', resource: 'SIEM', time: '12:55' },
+  ],
+  agentCallSummary: { total: 8420, healthy: 6, warning: 1, offline: 1 },
+};
+
 export const mockKpis: KpiCard[] = [
   { id: 'k1', label: '今日任务', value: 38, delta: { value: 12, trend: 'up' }, status: 'ok' },
   { id: 'k2', label: '系统健康度', value: '98.4', unit: '%', delta: { value: 0.3, trend: 'up' }, status: 'ok' },
@@ -196,13 +225,17 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 首页 KPI
   if (path === '/api/home/kpis') return mockKpis;
-  if (path === '/api/home/events') {
+  if (path === '/api/home/events') return mockHomeExtra.recentActivities;
+  if (path === '/api/home/extra') return mockHomeExtra;
+  if (path === '/api/home/team') return mockHomeExtra.teamMembers;
+  if (path === '/api/home/alerts') {
     return [
-      { id: 'e1', type: 'task.completed', text: '变更辅助 - 网关灰度 已完成', time: '2026-07-13T08:24:00Z' },
-      { id: 'e2', type: 'task.created', text: '新建任务: Redis 集群 OOM 自愈 (P0)', time: '2026-07-13T08:12:00Z' },
-      { id: 'e3', type: 'sla.warn', text: 'K8s 节点扩容审批 SLA 临近', time: '2026-07-13T07:55:00Z' },
-      { id: 'e4', type: 'agent.installed', text: '合规审计 v1.1.0 安装完成', time: '2026-07-13T07:30:00Z' },
-      { id: 'e5', type: 'audit.pass', text: '94 项安全检查全部通过', time: '2026-07-13T07:00:00Z' },
+      { id: 'al1', severity: 'P0', tone: 'danger' as const, title: 'P0 · Redis cache-oom 临近超时', meta: '8 min 前 · 王昊 · INC-019', taskCode: 'TSK-20260713-001' },
+      { id: 'al2', severity: 'P1', tone: 'warning' as const, title: 'P1 · 升级窗口确认', meta: '15 min 前 · 李婷 · 需确认', taskCode: 'TSK-20260713-002' },
+      { id: 'al3', severity: 'P1', tone: 'warning' as const, title: 'P1 · CVE-2026-3321 待修复', meta: '32 min 前 · 张睿', taskCode: 'TSK-20260712-019' },
+      { id: 'al4', severity: 'P2', tone: 'info' as const, title: 'P2 · K8s 节点扩容申请', meta: '1h 前 · 王昊', taskCode: 'TSK-20260713-004' },
+      { id: 'al5', severity: 'P3', tone: 'info' as const, title: 'P3 · 月度报表就绪', meta: '2h 前 · 系统 · 可下载' },
+      { id: 'al6', severity: 'P2', tone: 'info' as const, title: 'P2 · Log4j 检测告警', meta: '3h 前 · SIEM · 已合并' },
     ];
   }
 
