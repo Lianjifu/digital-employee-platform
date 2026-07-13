@@ -48,7 +48,7 @@ function CustomNode({ data }: { data: any }) {
       </div>
       <div className="text-xs font-semibold">{NODE_LABELS[data.kind as WorkflowNodeKind]}</div>
       {data.durationMs !== undefined && (
-        <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{data.durationMs}ms</div>
+        <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{data.durationMs}ms</div>
       )}
       {data.status && (
         <div className={cn('mt-1 text-[10px]', data.status === 'success' ? 'text-emerald-500' : 'text-amber-500')}>
@@ -91,10 +91,10 @@ export default function Workflows() {
   return (
     <div className="grid h-full grid-rows-[auto_1fr_180px]">
       {/* 顶部工具栏 */}
-      <div className="flex items-center justify-between border-b border-[var(--color-border)] p-3">
+      <div className="flex items-center justify-between border-b border-[var(--border)] p-3">
         <div>
           <h1 className="text-sm font-semibold">{wf?.name ?? '加载中...'}</h1>
-          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-[var(--color-text-muted)]">
+          <div className="mt-0.5 flex items-center gap-2 text-[10px] text-[var(--text-muted)]">
             <Badge tone="success">运行中</Badge>
             <span>{wf?.nodes.length} 节点</span>
             <span>· 平均 {wf?.avgDurationSec}s</span>
@@ -130,14 +130,14 @@ export default function Workflows() {
       </div>
 
       {/* 底部节点库 + 统计 */}
-      <div className="grid grid-cols-[1fr_320px] divide-x divide-[var(--color-border)] border-t border-[var(--color-border)]">
+      <div className="grid grid-cols-[1fr_320px] divide-x divide-[var(--border)] border-t border-[var(--border)]">
         <div className="overflow-y-auto p-3">
           <div className="mb-2 text-xs font-semibold">节点库（拖拽到画布）</div>
           <div className="grid grid-cols-8 gap-2">
             {(Object.keys(NODE_LABELS) as WorkflowNodeKind[]).map((k) => {
               const Icon = NODE_ICONS[k];
               return (
-                <div key={k} className="flex cursor-grab items-center gap-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 hover:border-[var(--color-primary)]">
+                <div key={k} className="flex cursor-grab items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2 hover:border-[var(--brand)]">
                   <Icon className="h-3.5 w-3.5" style={{ color: NODE_COLORS[k] }} />
                   <span className="text-[11px]">{NODE_LABELS[k]}</span>
                 </div>
@@ -147,15 +147,15 @@ export default function Workflows() {
         </div>
         <div className="grid grid-cols-2 gap-2 p-3">
           {[
-            { label: '触发', value: stats.trigger, icon: Zap, color: 'text-[var(--color-primary)]' },
+            { label: '触发', value: stats.trigger, icon: Zap, color: 'text-[var(--brand)]' },
             { label: '成功率', value: `${stats.success}%`, icon: ShieldCheck, color: 'text-emerald-500' },
-            { label: '平均完成', value: `${stats.avgMs / 1000}s`, icon: Play, color: 'text-[var(--color-primary)]' },
+            { label: '平均完成', value: `${stats.avgMs / 1000}s`, icon: Play, color: 'text-[var(--brand)]' },
             { label: 'MTTR 降低', value: `${stats.mttr}%`, icon: Filter, color: 'text-emerald-500' },
           ].map((s) => (
             <Card key={s.label}>
               <CardBody className="flex items-center justify-between">
                 <div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">{s.label}</div>
+                  <div className="text-[10px] text-[var(--text-muted)]">{s.label}</div>
                   <div className={cn('mt-0.5 text-lg font-semibold', s.color)}>{s.value}</div>
                 </div>
                 <s.icon className={cn('h-4 w-4', s.color)} />

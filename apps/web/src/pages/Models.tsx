@@ -15,19 +15,19 @@ export default function Models() {
   const active = providers?.find((p) => p.id === activeId);
 
   return (
-    <div className="grid h-full grid-cols-[260px_1fr_320px] divide-x divide-[var(--color-border)]">
+    <div className="grid h-full grid-cols-[260px_1fr_320px] divide-x divide-[var(--border)]">
       {/* 左侧 Provider */}
       <aside className="overflow-y-auto p-3">
         <div className="mb-2 flex items-center justify-between">
           <div className="text-xs font-semibold">Provider (8)</div>
-          <button className="grid h-6 w-6 place-items-center rounded hover:bg-[var(--color-surface-2)]">
+          <button className="grid h-6 w-6 place-items-center rounded hover:bg-[var(--surface-2)]">
             <Plus className="h-3.5 w-3.5" />
           </button>
         </div>
 
         {(['official', 'self_hosted', 'connectable'] as ProviderTier[]).map((tier) => (
           <div key={tier} className="mb-3">
-            <div className="mb-1 px-1 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">{TIER_LABEL[tier]}</div>
+            <div className="mb-1 px-1 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{TIER_LABEL[tier]}</div>
             {(providers ?? []).filter((p) => p.tier === tier).map((p) => {
               const Icon = TIER_ICON[p.tier];
               return (
@@ -35,14 +35,14 @@ export default function Models() {
                   key={p.id}
                   onClick={() => setActiveId(p.id)}
                   className={cn(
-                    'flex w-full items-center gap-2 rounded-md p-2 text-left text-xs hover:bg-[var(--color-surface-2)]',
-                    activeId === p.id && 'bg-[var(--color-primary)]/15',
+                    'flex w-full items-center gap-2 rounded-md p-2 text-left text-xs hover:bg-[var(--surface-2)]',
+                    activeId === p.id && 'bg-[var(--brand)]/15',
                   )}
                 >
-                  <Icon className="h-3.5 w-3.5 text-[var(--color-primary)]" />
+                  <Icon className="h-3.5 w-3.5 text-[var(--brand)]" />
                   <div className="min-w-0 flex-1">
                     <div className="truncate font-medium">{p.name}</div>
-                    <div className="text-[10px] text-[var(--color-text-muted)]">{p.models[0]}</div>
+                    <div className="text-[10px] text-[var(--text-muted)]">{p.models[0]}</div>
                   </div>
                   <Badge tone={p.status === 'active' ? 'success' : p.status === 'standby' ? 'warn' : 'neutral'}>{p.status}</Badge>
                 </button>
@@ -54,14 +54,14 @@ export default function Models() {
 
       {/* 中间：路由表 + 配置 */}
       <section className="flex h-full flex-col overflow-hidden">
-        <div className="border-b border-[var(--color-border)] p-4">
+        <div className="border-b border-[var(--border)] p-4">
           <div className="mb-3 flex items-center justify-between">
             <h1 className="text-sm font-semibold">模型路由 · 5 等级自动切换</h1>
             <Badge tone="success"><Activity className="mr-1 inline h-3 w-3" />自动映射已启用</Badge>
           </div>
           <table className="w-full text-xs">
-            <thead className="text-[10px] uppercase text-[var(--color-text-muted)]">
-              <tr className="border-b border-[var(--color-border)]">
+            <thead className="text-[10px] uppercase text-[var(--text-muted)]">
+              <tr className="border-b border-[var(--border)]">
                 <th className="py-2 text-left">等级</th>
                 <th className="py-2 text-left">主路由</th>
                 <th className="py-2 text-left">降级 1</th>
@@ -71,11 +71,11 @@ export default function Models() {
             </thead>
             <tbody>
               {(routes ?? []).map((r) => (
-                <tr key={r.level} className="border-b border-[var(--color-border)] last:border-0">
+                <tr key={r.level} className="border-b border-[var(--border)] last:border-0">
                   <td className="py-2.5"><Badge tone={r.level === 'P0' ? 'error' : r.level === 'P1' ? 'warn' : r.level === 'audit' ? 'neutral' : 'info'}>{r.level}</Badge></td>
                   <td className="py-2.5 font-mono">{r.primary}</td>
-                  <td className="py-2.5 font-mono text-[var(--color-text-muted)]">{r.fallback1}</td>
-                  <td className="py-2.5 font-mono text-[var(--color-text-muted)]">{r.fallback2 ?? '—'}</td>
+                  <td className="py-2.5 font-mono text-[var(--text-muted)]">{r.fallback1}</td>
+                  <td className="py-2.5 font-mono text-[var(--text-muted)]">{r.fallback2 ?? '—'}</td>
                   <td className="py-2.5">{r.crossBorder ? <Badge tone="warn">出境</Badge> : <Badge tone="success">境内</Badge>}</td>
                 </tr>
               ))}
@@ -109,7 +109,7 @@ export default function Models() {
               <Field label="模型" value={
                 <div className="flex flex-wrap gap-1">
                   {active?.models.map((m) => (
-                    <Badge key={m} tone="primary">{m}</Badge>
+                    <Badge key={m} tone="brand">{m}</Badge>
                   ))}
                 </div>
               } />
@@ -133,7 +133,7 @@ export default function Models() {
           <CardBody className="space-y-2 text-xs">
             <div className="flex items-center justify-between"><span>输入</span><span className="font-mono">8.4M (68%)</span></div>
             <div className="flex items-center justify-between"><span>输出</span><span className="font-mono">2.8M (32%)</span></div>
-            <div className="flex items-center justify-between border-t border-[var(--color-border)] pt-2 font-semibold">
+            <div className="flex items-center justify-between border-t border-[var(--border)] pt-2 font-semibold">
               <span>合计</span><span>12.4M</span>
             </div>
           </CardBody>
@@ -163,7 +163,7 @@ export default function Models() {
             {(providers ?? []).slice(0, 4).map((p) => (
               <div key={p.id} className="flex items-center justify-between">
                 <span>{p.name}</span>
-                <span className="font-mono text-[var(--color-text-muted)]">{formatNumber(p.monthlyTokens)}</span>
+                <span className="font-mono text-[var(--text-muted)]">{formatNumber(p.monthlyTokens)}</span>
               </div>
             ))}
           </CardBody>
@@ -176,7 +176,7 @@ export default function Models() {
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[120px_1fr] items-center gap-2">
-      <div className="text-[var(--color-text-muted)]">{label}</div>
+      <div className="text-[var(--text-muted)]">{label}</div>
       <div className="font-mono text-xs">{value}</div>
     </div>
   );
@@ -185,7 +185,7 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-[var(--color-text-muted)]">{label}</span>
+      <span className="text-[var(--text-muted)]">{label}</span>
       <span>{value}</span>
     </div>
   );

@@ -1,13 +1,25 @@
 <!doctype html>
-<html lang="zh-CN" class="dark">
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#0b1220" />
+    <meta name="theme-color" content="#4f46e5" />
+    <script>
+      // 在 React 加载前先应用主题，避免闪烁
+      (function () {
+        try {
+          var s = JSON.parse(localStorage.getItem('de-ui') || '{}');
+          var t = (s && s.state && s.state.theme) || 'light';
+          document.documentElement.classList.add(t);
+        } catch (e) {
+          document.documentElement.classList.add('light');
+        }
+      })();
+    </script>
     <title>数字员工平台 · Digital Employee</title>
   </head>
-  <body class="bg-[var(--color-bg)] text-[var(--color-text)] antialiased">
+  <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

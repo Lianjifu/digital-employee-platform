@@ -36,19 +36,19 @@ export default function Channels() {
   ];
 
   return (
-    <div className="grid h-full grid-cols-[240px_1fr_320px] divide-x divide-[var(--color-border)]">
+    <div className="grid h-full grid-cols-[240px_1fr_320px] divide-x divide-[var(--border)]">
       {/* 左侧渠道 */}
       <aside className="overflow-y-auto p-3">
         {groups.map((g) => (
           <div key={g.label} className="mb-3">
-            <div className="mb-1 px-1 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">{g.label}</div>
+            <div className="mb-1 px-1 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">{g.label}</div>
             {(channels ?? []).filter((c) => g.kinds.includes(c.kind)).map((c) => {
               const Icon = ICONS[c.kind];
               return (
                 <button
                   key={c.id}
                   onClick={() => setActiveId(c.id)}
-                  className={`flex w-full items-center gap-2 rounded-md p-2 text-left text-xs hover:bg-[var(--color-surface-2)] ${activeId === c.id ? 'bg-[var(--color-primary)]/15' : ''}`}
+                  className={`flex w-full items-center gap-2 rounded-md p-2 text-left text-xs hover:bg-[var(--surface-2)] ${activeId === c.id ? 'bg-[var(--brand)]/15' : ''}`}
                 >
                   <Icon className="h-3.5 w-3.5" />
                   <span className="flex-1 font-medium">{c.name}</span>
@@ -62,11 +62,11 @@ export default function Channels() {
 
       {/* 中间 */}
       <section className="flex h-full flex-col overflow-hidden">
-        <div className="border-b border-[var(--color-border)] p-4">
+        <div className="border-b border-[var(--border)] p-4">
           <h1 className="mb-3 text-sm font-semibold">智能路由 · 6 类事件 × 4 兜底</h1>
           <table className="w-full text-xs">
-            <thead className="text-[10px] uppercase text-[var(--color-text-muted)]">
-              <tr className="border-b border-[var(--color-border)]">
+            <thead className="text-[10px] uppercase text-[var(--text-muted)]">
+              <tr className="border-b border-[var(--border)]">
                 <th className="py-2 text-left">事件</th>
                 <th className="py-2 text-left">主</th>
                 <th className="py-2 text-left">失败 1</th>
@@ -76,12 +76,12 @@ export default function Channels() {
             </thead>
             <tbody>
               {ROUTE_TABLE.map((r) => (
-                <tr key={r.event} className="border-b border-[var(--color-border)] last:border-0">
+                <tr key={r.event} className="border-b border-[var(--border)] last:border-0">
                   <td className="py-2.5"><Badge tone={r.tone}>{r.event}</Badge></td>
                   <td className="py-2.5 font-medium">{r.main}</td>
-                  <td className="py-2.5 text-[var(--color-text-muted)]">{r.f1}</td>
-                  <td className="py-2.5 text-[var(--color-text-muted)]">{r.f2}</td>
-                  <td className="py-2.5 text-[var(--color-text-muted)]">{r.fb}</td>
+                  <td className="py-2.5 text-[var(--text-muted)]">{r.f1}</td>
+                  <td className="py-2.5 text-[var(--text-muted)]">{r.f2}</td>
+                  <td className="py-2.5 text-[var(--text-muted)]">{r.fb}</td>
                 </tr>
               ))}
             </tbody>
@@ -98,7 +98,7 @@ export default function Channels() {
                     <c.icon className="h-4 w-4" />
                   </div>
                   <div className="text-sm font-semibold">{c.name}</div>
-                  <div className="mt-1 text-[11px] text-[var(--color-text-muted)]">{c.desc}</div>
+                  <div className="mt-1 text-[11px] text-[var(--text-muted)]">{c.desc}</div>
                   <Button size="sm" variant="outline" className="mt-2 w-full">编辑模板</Button>
                 </CardBody>
               </Card>
@@ -130,7 +130,7 @@ export default function Channels() {
         <Card>
           <CardHeader><CardTitle className="text-xs">路由路径</CardTitle></CardHeader>
           <CardBody className="text-xs">
-            <div className="rounded-md bg-[var(--color-surface-2)] p-2 font-mono text-[11px]">
+            <div className="rounded-md bg-[var(--surface-2)] p-2 font-mono text-[11px]">
               飞书 → (失败 5xx) → 企微 → (失败) → 电话+SMS → 邮件
             </div>
           </CardBody>
@@ -153,9 +153,9 @@ export default function Channels() {
 
 function Stat({ label, value, tone }: { label: string; value: string; tone?: 'success' }) {
   return (
-    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2">
-      <div className="text-[10px] text-[var(--color-text-muted)]">{label}</div>
-      <div className={`mt-0.5 text-sm font-semibold ${tone === 'success' ? 'text-emerald-500' : 'text-[var(--color-text)]'}`}>{value}</div>
+    <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2">
+      <div className="text-[10px] text-[var(--text-muted)]">{label}</div>
+      <div className={`mt-0.5 text-sm font-semibold ${tone === 'success' ? 'text-emerald-500' : 'text-[var(--text)]'}`}>{value}</div>
     </div>
   );
 }
@@ -163,7 +163,7 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: 'su
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-[var(--color-text-muted)]">{label}</span>
+      <span className="text-[var(--text-muted)]">{label}</span>
       <span>{value}</span>
     </div>
   );

@@ -20,16 +20,16 @@ function KpiTile({ k }: { k: Kpi }) {
     <Card>
       <CardBody className="space-y-2">
         <div className="flex items-center justify-between">
-          <div className="text-xs text-[var(--color-text-muted)]">{k.label}</div>
+          <div className="text-xs text-[var(--text-muted)]">{k.label}</div>
           {k.status === 'warn' && <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />}
           {k.status === 'error' && <AlertTriangle className="h-3.5 w-3.5 text-rose-500" />}
         </div>
         <div className="flex items-baseline gap-1.5">
           <div className={cn('text-2xl font-semibold', TONE[k.status ?? 'ok'])}>{k.value}</div>
-          {k.unit && <div className="text-xs text-[var(--color-text-muted)]">{k.unit}</div>}
+          {k.unit && <div className="text-xs text-[var(--text-muted)]">{k.unit}</div>}
         </div>
         {k.delta && (
-          <div className={cn('flex items-center gap-1 text-xs', k.delta.trend === 'up' ? 'text-emerald-500' : k.delta.trend === 'down' ? 'text-rose-500' : 'text-[var(--color-text-muted)]')}>
+          <div className={cn('flex items-center gap-1 text-xs', k.delta.trend === 'up' ? 'text-emerald-500' : k.delta.trend === 'down' ? 'text-rose-500' : 'text-[var(--text-muted)]')}>
             <TrendIcon className="h-3 w-3" />
             <span>较昨日 {k.delta.value > 0 ? '+' : ''}{k.delta.value}{k.unit ?? ''}</span>
           </div>
@@ -70,9 +70,9 @@ export default function Home() {
       <div className="mb-6 flex items-center justify-between">
         <div>
           <h1 className="text-xl font-semibold">系统总览</h1>
-          <p className="mt-1 text-xs text-[var(--color-text-muted)]">实时刷新 · 数据来源：P3 任务 · P5 智能体 · P9 模型 · P11 合规</p>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">实时刷新 · 数据来源：P3 任务 · P5 智能体 · P9 模型 · P11 合规</p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
+        <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
           <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-500" />
           最后更新：刚刚
         </div>
@@ -91,18 +91,18 @@ export default function Home() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Activity className="h-4 w-4 text-[var(--color-primary)]" />
+              <Activity className="h-4 w-4 text-[var(--brand)]" />
               进行中任务
-              <Badge tone="primary">{inProgress.length}</Badge>
+              <Badge tone="brand">{inProgress.length}</Badge>
             </CardTitle>
-            <a className="text-xs text-[var(--color-primary)] hover:underline" href="/tasks">查看全部</a>
+            <a className="text-xs text-[var(--brand)] hover:underline" href="/tasks">查看全部</a>
           </CardHeader>
           <CardBody className="space-y-2">
             {inProgress.slice(0, 4).map((t: any) => (
-              <div key={t.id} className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 text-xs">
+              <div key={t.id} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2 text-xs">
                 <div className="flex-1 truncate">
                   <div className="truncate font-medium">{t.title}</div>
-                  <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{t.code} · {t.assignee}</div>
+                  <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{t.code} · {t.assignee}</div>
                 </div>
                 <Badge tone={t.priority === 'P0' ? 'error' : t.priority === 'P1' ? 'warn' : 'info'}>{t.priority}</Badge>
               </div>
@@ -124,7 +124,7 @@ export default function Home() {
               <div key={t.id} className="flex items-center justify-between rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs">
                 <div className="flex-1 truncate">
                   <div className="truncate font-medium">{t.title}</div>
-                  <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{t.code}</div>
+                  <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{t.code}</div>
                 </div>
                 <Badge tone="warn">双签</Badge>
               </div>
@@ -146,7 +146,7 @@ export default function Home() {
               <div key={t.id} className="flex items-center justify-between rounded-md border border-emerald-500/30 bg-emerald-500/5 p-2 text-xs">
                 <div className="flex-1 truncate">
                   <div className="truncate font-medium">{t.title}</div>
-                  <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">{relativeTime(t.updatedAt)}</div>
+                  <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{relativeTime(t.updatedAt)}</div>
                 </div>
                 <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
               </div>
@@ -160,10 +160,10 @@ export default function Home() {
         <Card className="col-span-2">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Zap className="h-4 w-4 text-[var(--color-primary)]" />
+              <Zap className="h-4 w-4 text-[var(--brand)]" />
               24h 任务活动
             </CardTitle>
-            <div className="flex gap-3 text-[10px] text-[var(--color-text-muted)]">
+            <div className="flex gap-3 text-[10px] text-[var(--text-muted)]">
               <span>● 进行中</span>
               <span className="text-amber-500">● 待复核</span>
               <span className="text-emerald-500">● 已完成</span>
@@ -196,7 +196,7 @@ export default function Home() {
         <Card>
           <CardHeader>
             <CardTitle>Token 用量分布</CardTitle>
-            <span className="text-xs text-[var(--color-text-muted)]">本月 12.4M</span>
+            <span className="text-xs text-[var(--text-muted)]">本月 12.4M</span>
           </CardHeader>
           <CardBody className="h-64">
             <ResponsiveContainer width="100%" height="100%">
@@ -213,7 +213,7 @@ export default function Home() {
               {PROVIDER_PIE.map((p) => (
                 <div key={p.name} className="flex items-center gap-1.5">
                   <span className="h-2 w-2 rounded-sm" style={{ background: p.color }} />
-                  <span className="text-[var(--color-text-muted)]">{p.name}</span>
+                  <span className="text-[var(--text-muted)]">{p.name}</span>
                   <span className="ml-auto">{p.value}%</span>
                 </div>
               ))}
@@ -226,16 +226,16 @@ export default function Home() {
       <Card className="mt-4">
         <CardHeader>
           <CardTitle>最近 5 次事件</CardTitle>
-          <a className="text-xs text-[var(--color-primary)] hover:underline" href="#">查看全部</a>
+          <a className="text-xs text-[var(--brand)] hover:underline" href="#">查看全部</a>
         </CardHeader>
-        <CardBody className="divide-y divide-[var(--color-border)]">
+        <CardBody className="divide-y divide-[var(--border)]">
           {(events ?? []).map((e: any) => (
             <div key={e.id} className="flex items-center justify-between py-2 text-xs">
               <div className="flex items-center gap-2">
                 <Badge tone={e.type.startsWith('sla') ? 'warn' : e.type.includes('completed') ? 'success' : 'info'}>{e.type.split('.')[0]}</Badge>
                 <span>{e.text}</span>
               </div>
-              <span className="text-[var(--color-text-muted)]">{relativeTime(e.time)}</span>
+              <span className="text-[var(--text-muted)]">{relativeTime(e.time)}</span>
             </div>
           ))}
         </CardBody>

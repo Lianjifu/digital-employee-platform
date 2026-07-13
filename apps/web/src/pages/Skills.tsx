@@ -23,7 +23,7 @@ export default function Skills() {
   };
 
   return (
-    <div className="grid h-full grid-cols-[200px_1fr_320px] divide-x divide-[var(--color-border)]">
+    <div className="grid h-full grid-cols-[200px_1fr_320px] divide-x divide-[var(--border)]">
       {/* 左侧分类 */}
       <aside className="overflow-y-auto p-3">
         <div className="mb-2 text-xs font-semibold">分类</div>
@@ -32,20 +32,20 @@ export default function Skills() {
         <FilterBtn label="MCP" count={counts.mcp} tone="success" active={filter === 'mcp'} onClick={() => setFilter('mcp')} />
         <FilterBtn label="Tool" count={counts.tool} tone="warn" active={filter === 'tool'} onClick={() => setFilter('tool')} />
 
-        <div className="mt-4 rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2 text-[10px]">
+        <div className="mt-4 rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2 text-[10px]">
           <div className="mb-1 font-semibold">沙箱隔离</div>
-          <div className="text-[var(--color-text-muted)]">gVisor runsc · 等保 3</div>
+          <div className="text-[var(--text-muted)]">gVisor runsc · 等保 3</div>
         </div>
       </aside>
 
       {/* 中间卡片 */}
       <section className="flex h-full flex-col overflow-hidden">
-        <div className="border-b border-[var(--color-border)] p-4">
+        <div className="border-b border-[var(--border)] p-4">
           <Tabs
             value={tab}
             onChange={(k) => setTab(k as any)}
             items={[
-              { key: 'installed', label: <>已安装 <Badge tone="primary" className="ml-1">24</Badge></> },
+              { key: 'installed', label: <>已安装 <Badge tone="brand" className="ml-1">24</Badge></> },
               { key: 'store', label: <>商店 <Badge tone="neutral" className="ml-1">62</Badge></> },
             ]}
           />
@@ -56,23 +56,23 @@ export default function Skills() {
               key={s.id}
               onClick={() => setActiveId(s.id)}
               className={cn(
-                'rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-3 text-left transition-all hover:border-[var(--color-primary)]',
-                activeId === s.id && 'border-[var(--color-primary)] ring-2 ring-[var(--color-primary)]/30',
+                'rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3 text-left transition-all hover:border-[var(--brand)]',
+                activeId === s.id && 'border-[var(--brand)] ring-2 ring-[var(--brand)]/30',
               )}
             >
               <div className="mb-2 flex items-center gap-2">
-                <div className="grid h-8 w-8 place-items-center rounded-md bg-[var(--color-primary)]/15 text-[var(--color-primary)]">
+                <div className="grid h-8 w-8 place-items-center rounded-md bg-[var(--brand)]/15 text-[var(--brand)]">
                   <Wrench className="h-4 w-4" />
                 </div>
                 <div className="flex-1">
                   <div className="text-sm font-medium">{s.name}</div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">v{s.version} · ⭐ {s.rating}</div>
+                  <div className="text-[10px] text-[var(--text-muted)]">v{s.version} · ⭐ {s.rating}</div>
                 </div>
                 <Badge tone={KIND_TONE[s.kind]}>{KIND_LABELS[s.kind]}</Badge>
               </div>
-              <div className="text-[11px] text-[var(--color-text-muted)]">{s.description}</div>
+              <div className="text-[11px] text-[var(--text-muted)]">{s.description}</div>
               <div className="mt-2 flex items-center justify-between text-[10px]">
-                <span className="flex items-center gap-1 text-[var(--color-text-muted)]">
+                <span className="flex items-center gap-1 text-[var(--text-muted)]">
                   <Download className="h-3 w-3" />{s.installCount}
                 </span>
                 {s.riskLevel === 'high' ? (
@@ -95,18 +95,18 @@ export default function Skills() {
             <Card>
               <CardBody>
                 <div className="flex items-center gap-2">
-                  <div className="grid h-10 w-10 place-items-center rounded-md bg-[var(--color-primary)]/15 text-[var(--color-primary)]">
+                  <div className="grid h-10 w-10 place-items-center rounded-md bg-[var(--brand)]/15 text-[var(--brand)]">
                     <Wrench className="h-5 w-5" />
                   </div>
                   <div>
                     <div className="text-sm font-semibold">{active.name}</div>
                     <div className="mt-0.5 flex items-center gap-1.5 text-[10px]">
                       <Badge tone={KIND_TONE[active.kind]}>{KIND_LABELS[active.kind]}</Badge>
-                      <span className="text-[var(--color-text-muted)]">v{active.version}</span>
+                      <span className="text-[var(--text-muted)]">v{active.version}</span>
                     </div>
                   </div>
                 </div>
-                <div className="mt-2 text-xs text-[var(--color-text-muted)]">{active.description}</div>
+                <div className="mt-2 text-xs text-[var(--text-muted)]">{active.description}</div>
               </CardBody>
             </Card>
 
@@ -152,7 +152,7 @@ function FilterBtn({ label, count, tone = 'neutral', active, onClick }: { label:
       onClick={onClick}
       className={cn(
         'flex w-full items-center justify-between rounded-md px-3 py-1.5 text-xs',
-        active ? 'bg-[var(--color-primary)]/15 text-[var(--color-primary)]' : 'hover:bg-[var(--color-surface-2)]',
+        active ? 'bg-[var(--brand)]/15 text-[var(--brand)]' : 'hover:bg-[var(--surface-2)]',
       )}
     >
       <span>{label}</span>
@@ -164,7 +164,7 @@ function FilterBtn({ label, count, tone = 'neutral', active, onClick }: { label:
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between">
-      <span className="text-[var(--color-text-muted)]">{label}</span>
+      <span className="text-[var(--text-muted)]">{label}</span>
       <span>{value}</span>
     </div>
   );

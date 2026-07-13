@@ -20,25 +20,25 @@ export default function Knowledge() {
   const heatmap = Array.from({ length: 30 }, (_, i) => Math.floor(Math.random() * 4));
 
   return (
-    <div className="grid h-full grid-cols-[1fr_360px] divide-x divide-[var(--color-border)]">
+    <div className="grid h-full grid-cols-[1fr_360px] divide-x divide-[var(--border)]">
       <section className="flex h-full flex-col overflow-hidden">
         {/* RAG Pipeline 5 步 */}
-        <div className="border-b border-[var(--color-border)] p-4">
+        <div className="border-b border-[var(--border)] p-4">
           <div className="mb-3 flex items-center justify-between">
             <h1 className="text-sm font-semibold">RAG Pipeline · 5 步可视化</h1>
             <Button size="sm"><Upload className="h-3.5 w-3.5" />上传文档</Button>
           </div>
           <div className="grid grid-cols-5 gap-2">
             {PIPELINE.map((p, i) => (
-              <div key={p.key} className="relative rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+              <div key={p.key} className="relative rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-3">
                 <div className="mb-1 flex items-center gap-2">
-                  <div className="grid h-7 w-7 place-items-center rounded-md bg-[var(--color-primary)]/15 text-[var(--color-primary)]">
+                  <div className="grid h-7 w-7 place-items-center rounded-md bg-[var(--brand)]/15 text-[var(--brand)]">
                     <p.icon className="h-3.5 w-3.5" />
                   </div>
-                  <div className="text-[10px] text-[var(--color-text-muted)]">Step {i + 1}</div>
+                  <div className="text-[10px] text-[var(--text-muted)]">Step {i + 1}</div>
                 </div>
                 <div className="text-sm font-semibold">{p.label}</div>
-                <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{p.tool}</div>
+                <div className="mt-1 text-[10px] text-[var(--text-muted)]">{p.tool}</div>
               </div>
             ))}
           </div>
@@ -57,7 +57,7 @@ export default function Knowledge() {
             {(docs ?? []).map((d) => (
               <Card key={d.id}>
                 <CardBody className="flex items-start gap-3">
-                  <div className="grid h-10 w-10 place-items-center rounded-md bg-[var(--color-primary)]/15 text-[var(--color-primary)]">
+                  <div className="grid h-10 w-10 place-items-center rounded-md bg-[var(--brand)]/15 text-[var(--brand)]">
                     <FileText className="h-5 w-5" />
                   </div>
                   <div className="min-w-0 flex-1">
@@ -68,11 +68,11 @@ export default function Knowledge() {
                       <Badge tone="info">{d.source}</Badge>
                       <Badge tone={d.status === 'ready' ? 'success' : d.status === 'indexing' ? 'warn' : 'neutral'}>{d.status}</Badge>
                     </div>
-                    <div className="mt-2 flex items-center justify-between text-[10px] text-[var(--color-text-muted)]">
+                    <div className="mt-2 flex items-center justify-between text-[10px] text-[var(--text-muted)]">
                       <span>{d.chunks} chunks · {d.sizeKb} KB</span>
                       <span>{d.citeCount} 引用</span>
                     </div>
-                    <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{relativeTime(d.updatedAt)}</div>
+                    <div className="mt-1 text-[10px] text-[var(--text-muted)]">{relativeTime(d.updatedAt)}</div>
                   </div>
                 </CardBody>
               </Card>
@@ -87,13 +87,13 @@ export default function Knowledge() {
           <CardHeader><CardTitle className="text-xs">Top-3 RAG Chunks</CardTitle><Badge tone="success">实时</Badge></CardHeader>
           <CardBody className="space-y-2 text-xs">
             {(chunks ?? []).slice(0, 3).map((c) => (
-              <div key={c.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2">
+              <div key={c.id} className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-2">
                 <div className="mb-1 flex items-center gap-1.5">
-                  <span className="font-medium text-[var(--color-primary)]">{c.source}</span>
+                  <span className="font-medium text-[var(--brand)]">{c.source}</span>
                   {c.page && <Badge tone="info">p.{c.page}</Badge>}
                   <span className="ml-auto text-[10px] text-emerald-500">{(c.score * 100).toFixed(0)}%</span>
                 </div>
-                <div className="text-[11px] text-[var(--color-text-muted)]">{c.text}</div>
+                <div className="text-[11px] text-[var(--text-muted)]">{c.text}</div>
               </div>
             ))}
           </CardBody>
@@ -104,7 +104,7 @@ export default function Knowledge() {
           <CardBody>
             <input
               placeholder="输入问题..."
-              className="h-8 w-full rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2 text-xs outline-none focus:border-[var(--color-primary)]"
+              className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 text-xs outline-none focus:border-[var(--brand)]"
             />
             <Button size="sm" className="mt-2 w-full"><Search className="h-3.5 w-3.5" />检索</Button>
           </CardBody>
@@ -134,7 +134,7 @@ export default function Knowledge() {
                 />
               ))}
             </div>
-            <div className="mt-2 flex items-center justify-between text-[10px] text-[var(--color-text-muted)]">
+            <div className="mt-2 flex items-center justify-between text-[10px] text-[var(--text-muted)]">
               <span>少</span>
               <div className="flex gap-0.5">
                 {[0.2, 0.4, 0.6, 0.8, 1].map((o) => (
@@ -152,9 +152,9 @@ export default function Knowledge() {
 
 function KPI({ label, value, tone }: { label: string; value: string; tone?: 'success' }) {
   return (
-    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2">
-      <div className="text-[10px] text-[var(--color-text-muted)]">{label}</div>
-      <div className={cn('mt-0.5 text-sm font-semibold', tone === 'success' ? 'text-emerald-500' : 'text-[var(--color-text)]')}>{value}</div>
+    <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2">
+      <div className="text-[10px] text-[var(--text-muted)]">{label}</div>
+      <div className={cn('mt-0.5 text-sm font-semibold', tone === 'success' ? 'text-emerald-500' : 'text-[var(--text)]')}>{value}</div>
     </div>
   );
 }

@@ -23,17 +23,17 @@ export default function Settings() {
   const warn = (audits ?? []).filter((a) => a.status === 'warn').length;
 
   return (
-    <div className="grid h-full grid-cols-[220px_1fr_320px] divide-x divide-[var(--color-border)]">
+    <div className="grid h-full grid-cols-[220px_1fr_320px] divide-x divide-[var(--border)]">
       {/* 左侧 8 大模块 */}
       <aside className="overflow-y-auto p-3">
-        <div className="mb-2 px-1 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">企业管理</div>
+        <div className="mb-2 px-1 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">企业管理</div>
         {MENU.map((m) => (
           <button
             key={m.key}
             onClick={() => setActive(m.key)}
             className={cn(
               'flex w-full items-center gap-2 rounded-md p-2 text-left text-xs',
-              active === m.key ? 'bg-[var(--color-primary)]/15 text-[var(--color-primary)]' : 'hover:bg-[var(--color-surface-2)]',
+              active === m.key ? 'bg-[var(--brand)]/15 text-[var(--brand)]' : 'hover:bg-[var(--surface-2)]',
             )}
           >
             <m.icon className="h-3.5 w-3.5" />
@@ -62,8 +62,8 @@ export default function Settings() {
               <CardHeader><CardTitle>4 角色权限矩阵</CardTitle></CardHeader>
               <CardBody>
                 <table className="w-full text-xs">
-                  <thead className="text-[10px] uppercase text-[var(--color-text-muted)]">
-                    <tr className="border-b border-[var(--color-border)]">
+                  <thead className="text-[10px] uppercase text-[var(--text-muted)]">
+                    <tr className="border-b border-[var(--border)]">
                       <th className="py-2 text-left">角色</th>
                       <th className="py-2 text-left">人数</th>
                       <th className="py-2 text-left">主要权限</th>
@@ -77,10 +77,10 @@ export default function Settings() {
                       { role: 'Sec', count: 3, perms: 'SecOps / 审计 / 数据出境', tone: 'info' as const },
                       { role: 'View', count: 9, perms: '只读 · 检索 · 报表', tone: 'neutral' as const },
                     ].map((r) => (
-                      <tr key={r.role} className="border-b border-[var(--color-border)] last:border-0">
+                      <tr key={r.role} className="border-b border-[var(--border)] last:border-0">
                         <td className="py-2.5"><Badge tone={r.tone}>{r.role}</Badge></td>
                         <td className="py-2.5">{r.count}</td>
-                        <td className="py-2.5 text-[var(--color-text-muted)]">{r.perms}</td>
+                        <td className="py-2.5 text-[var(--text-muted)]">{r.perms}</td>
                         <td className="py-2.5">{r.role === 'View' ? <Badge tone="neutral">✗</Badge> : <Badge tone="success">✔ 复核</Badge>}</td>
                       </tr>
                     ))}
@@ -90,10 +90,10 @@ export default function Settings() {
             </Card>
 
             <div className="grid grid-cols-4 gap-3">
-              <Card><CardBody className="text-xs"><div className="text-[10px] text-[var(--color-text-muted)]">合规评分</div><div className="mt-1 text-2xl font-semibold text-emerald-500">98<span className="text-xs">/100</span></div></CardBody></Card>
-              <Card><CardBody className="text-xs"><div className="text-[10px] text-[var(--color-text-muted)]">审计/24h</div><div className="mt-1 text-2xl font-semibold">242</div></CardBody></Card>
-              <Card><CardBody className="text-xs"><div className="text-[10px] text-[var(--color-text-muted)]">本月用量</div><div className="mt-1 text-2xl font-semibold">$1.24k</div></CardBody></Card>
-              <Card><CardBody className="text-xs"><div className="text-[10px] text-[var(--color-text-muted)]">预算占比</div><div className="mt-1 text-2xl font-semibold text-emerald-500">24%</div></CardBody></Card>
+              <Card><CardBody className="text-xs"><div className="text-[10px] text-[var(--text-muted)]">合规评分</div><div className="mt-1 text-2xl font-semibold text-emerald-500">98<span className="text-xs">/100</span></div></CardBody></Card>
+              <Card><CardBody className="text-xs"><div className="text-[10px] text-[var(--text-muted)]">审计/24h</div><div className="mt-1 text-2xl font-semibold">242</div></CardBody></Card>
+              <Card><CardBody className="text-xs"><div className="text-[10px] text-[var(--text-muted)]">本月用量</div><div className="mt-1 text-2xl font-semibold">$1.24k</div></CardBody></Card>
+              <Card><CardBody className="text-xs"><div className="text-[10px] text-[var(--text-muted)]">预算占比</div><div className="mt-1 text-2xl font-semibold text-emerald-500">24%</div></CardBody></Card>
             </div>
           </div>
         )}
@@ -110,11 +110,11 @@ export default function Settings() {
               <CardBody>
                 <div className="mb-3">
                   <Progress value={(pass / (audits?.length ?? 1)) * 100} tone="success" />
-                  <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{pass} / {audits?.length} 通过 · 98%</div>
+                  <div className="mt-1 text-[10px] text-[var(--text-muted)]">{pass} / {audits?.length} 通过 · 98%</div>
                 </div>
                 <div className="space-y-1">
                   {(audits ?? []).map((a) => (
-                    <div key={a.id} className="flex items-center justify-between rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-2 text-xs">
+                    <div key={a.id} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-3 py-2 text-xs">
                       <div className="flex items-center gap-2">
                         {a.status === 'pass' ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" /> : <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />}
                         <span>{a.name}</span>
@@ -146,7 +146,7 @@ export default function Settings() {
         {['members', 'audit', 'notify', 'billing', 'backup'].includes(active) && (
           <Card>
             <CardHeader><CardTitle>{MENU.find((m) => m.key === active)?.label}</CardTitle></CardHeader>
-            <CardBody className="text-xs text-[var(--color-text-muted)]">
+            <CardBody className="text-xs text-[var(--text-muted)]">
               此模块占位 — 完整功能将在后续 Sprint 接入。<br />
               <br />
               当前演示模块已覆盖：租户信息、安全 & 认证、数据合规。
@@ -194,22 +194,22 @@ export default function Settings() {
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="grid grid-cols-[80px_1fr] items-center gap-2">
-      <div className="text-[var(--color-text-muted)]">{label}</div>
+      <div className="text-[var(--text-muted)]">{label}</div>
       <div>{value}</div>
     </div>
   );
 }
 function Row({ label, value }: { label: string; value: React.ReactNode }) {
-  return <div className="flex items-center justify-between"><span className="text-[var(--color-text-muted)]">{label}</span>{value}</div>;
+  return <div className="flex items-center justify-between"><span className="text-[var(--text-muted)]">{label}</span>{value}</div>;
 }
 function ComplianceItem({ title, status, desc }: { title: string; status: 'pass' | 'warn'; desc: string }) {
   return (
-    <div className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-2)] p-3">
+    <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3">
       <div className="flex items-center justify-between">
         <span className="font-medium">{title}</span>
         <Badge tone={status === 'pass' ? 'success' : 'warn'}>{status === 'pass' ? '通过' : '改善中'}</Badge>
       </div>
-      <div className="mt-1 text-[10px] text-[var(--color-text-muted)]">{desc}</div>
+      <div className="mt-1 text-[10px] text-[var(--text-muted)]">{desc}</div>
     </div>
   );
 }

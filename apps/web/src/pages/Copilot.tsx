@@ -31,16 +31,16 @@ export default function Copilot() {
   };
 
   return (
-    <div className="grid h-full grid-cols-[260px_1fr_320px] divide-x divide-[var(--color-border)]">
+    <div className="grid h-full grid-cols-[260px_1fr_320px] divide-x divide-[var(--border)]">
       {/* 左侧 Agent 列表 */}
       <aside className="flex flex-col overflow-hidden">
-        <div className="border-b border-[var(--color-border)] p-3">
+        <div className="border-b border-[var(--border)] p-3">
           <div className="text-xs font-semibold">数字员工</div>
-          <div className="mt-0.5 text-[10px] text-[var(--color-text-muted)]">8 个领域 · 24 个 Agent</div>
+          <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">8 个领域 · 24 个 Agent</div>
           <Input className="mt-3" placeholder="搜索 Agent..." />
         </div>
         <div className="flex-1 overflow-y-auto">
-          <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">AIOps</div>
+          <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">AIOps</div>
           {(agents ?? []).filter((a) => a.category === 'AIOps').map((a) => (
             <button
               key={a.id}
@@ -48,18 +48,18 @@ export default function Copilot() {
               className={cn(
                 'flex w-full items-center gap-2 border-l-2 px-3 py-2 text-left text-xs transition-colors',
                 activeAgentId === a.id
-                  ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10'
-                  : 'border-transparent hover:bg-[var(--color-surface-2)]',
+                  ? 'border-[var(--brand)] bg-[var(--brand)]/10'
+                  : 'border-transparent hover:bg-[var(--surface-2)]',
               )}
             >
               <Avatar name={a.name} size={28} />
               <div className="min-w-0 flex-1">
                 <div className="truncate font-medium">{a.name}</div>
-                <div className="truncate text-[10px] text-[var(--color-text-muted)]">v{a.version} · ⭐ {a.rating}</div>
+                <div className="truncate text-[10px] text-[var(--text-muted)]">v{a.version} · ⭐ {a.rating}</div>
               </div>
             </button>
           ))}
-          <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-[var(--color-text-muted)]">SecOps</div>
+          <div className="px-3 py-2 text-[10px] uppercase tracking-wide text-[var(--text-muted)]">SecOps</div>
           {(agents ?? []).filter((a) => a.category === 'SecOps').map((a) => (
             <button
               key={a.id}
@@ -67,14 +67,14 @@ export default function Copilot() {
               className={cn(
                 'flex w-full items-center gap-2 border-l-2 px-3 py-2 text-left text-xs transition-colors',
                 activeAgentId === a.id
-                  ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/10'
-                  : 'border-transparent hover:bg-[var(--color-surface-2)]',
+                  ? 'border-[var(--brand)] bg-[var(--brand)]/10'
+                  : 'border-transparent hover:bg-[var(--surface-2)]',
               )}
             >
               <Avatar name={a.name} size={28} />
               <div className="min-w-0 flex-1">
                 <div className="truncate font-medium">{a.name}</div>
-                <div className="truncate text-[10px] text-[var(--color-text-muted)]">v{a.version} · ⭐ {a.rating}</div>
+                <div className="truncate text-[10px] text-[var(--text-muted)]">v{a.version} · ⭐ {a.rating}</div>
               </div>
             </button>
           ))}
@@ -84,12 +84,12 @@ export default function Copilot() {
       {/* 中间对话 */}
       <section className="flex flex-col overflow-hidden">
         {/* 对话头 */}
-        <header className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
+        <header className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
           <div className="flex items-center gap-3">
             <Avatar name={conv?.title ?? '?'} size={32} />
             <div>
               <div className="text-sm font-semibold">{conv?.title ?? '加载中...'}</div>
-              <div className="text-[10px] text-[var(--color-text-muted)]">
+              <div className="text-[10px] text-[var(--text-muted)]">
                 {agents?.find((a) => a.id === activeAgentId)?.name} · 模型 Sonnet-4 · 上下文 4.2k tokens
               </div>
             </div>
@@ -106,7 +106,7 @@ export default function Copilot() {
             <div key={m.id} className={cn('flex gap-3', m.role === 'user' ? 'flex-row-reverse' : '')}>
               <div className="shrink-0">
                 {m.role === 'user' ? (
-                  <div className="grid h-8 w-8 place-items-center rounded-full bg-[var(--color-surface-3)]">
+                  <div className="grid h-8 w-8 place-items-center rounded-full bg-[var(--surface-3)]">
                     <UserIcon className="h-4 w-4" />
                   </div>
                 ) : m.role === 'tool' ? (
@@ -114,21 +114,21 @@ export default function Copilot() {
                     <Wrench className="h-4 w-4" />
                   </div>
                 ) : (
-                  <div className="grid h-8 w-8 place-items-center rounded-full bg-[var(--color-primary)]/15 text-[var(--color-primary)]">
+                  <div className="grid h-8 w-8 place-items-center rounded-full bg-[var(--brand)]/15 text-[var(--brand)]">
                     <Bot className="h-4 w-4" />
                   </div>
                 )}
               </div>
               <div className={cn('flex-1 space-y-2', m.role === 'user' ? 'flex flex-col items-end' : '')}>
-                <div className="text-[10px] text-[var(--color-text-muted)]">{relativeTime(m.createdAt)}</div>
+                <div className="text-[10px] text-[var(--text-muted)]">{relativeTime(m.createdAt)}</div>
                 <div
                   className={cn(
                     'max-w-2xl whitespace-pre-wrap rounded-lg px-3 py-2 text-sm',
                     m.role === 'user'
-                      ? 'bg-[var(--color-primary)] text-white'
+                      ? 'bg-[var(--brand)] text-white'
                       : m.role === 'tool'
                         ? 'border border-amber-500/30 bg-amber-500/10 text-amber-200'
-                        : 'bg-[var(--color-surface-2)] text-[var(--color-text)]',
+                        : 'bg-[var(--surface-2)] text-[var(--text)]',
                   )}
                 >
                   {m.content}
@@ -136,15 +136,15 @@ export default function Copilot() {
 
                 {/* 工具调用 */}
                 {m.toolCalls?.map((tc) => (
-                  <div key={tc.id} className="max-w-2xl rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-2 text-xs">
+                  <div key={tc.id} className="max-w-2xl rounded-md border border-[var(--border)] bg-[var(--surface-1)] p-2 text-xs">
                     <div className="mb-1 flex items-center gap-1.5 font-mono">
-                      <Wrench className="h-3 w-3 text-[var(--color-primary)]" />
+                      <Wrench className="h-3 w-3 text-[var(--brand)]" />
                       <span className="font-semibold">{tc.name}</span>
                       <Badge tone={tc.status === 'success' ? 'success' : 'warn'}>{tc.status}</Badge>
-                      {tc.durationMs && <span className="text-[var(--color-text-muted)]">· {tc.durationMs}ms</span>}
+                      {tc.durationMs && <span className="text-[var(--text-muted)]">· {tc.durationMs}ms</span>}
                     </div>
                     {tc.result && (
-                      <pre className="overflow-x-auto rounded bg-[var(--color-bg)] p-2 text-[11px] text-emerald-400">{tc.result}</pre>
+                      <pre className="overflow-x-auto rounded bg-[var(--bg-elevated)] p-2 text-[11px] text-emerald-400">{tc.result}</pre>
                     )}
                   </div>
                 ))}
@@ -152,16 +152,16 @@ export default function Copilot() {
                 {/* RAG 引用 */}
                 {m.citations && m.citations.length > 0 && (
                   <div className="max-w-2xl space-y-1">
-                    <div className="text-[10px] text-[var(--color-text-muted)]">📚 引用 {m.citations.length} 个文档段</div>
+                    <div className="text-[10px] text-[var(--text-muted)]">📚 引用 {m.citations.length} 个文档段</div>
                     {m.citations.map((c) => (
-                      <div key={c.id} className="rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)] p-2 text-xs">
+                      <div key={c.id} className="rounded-md border border-[var(--border)] bg-[var(--surface-1)] p-2 text-xs">
                         <div className="mb-1 flex items-center gap-1.5">
-                          <FileText className="h-3 w-3 text-[var(--color-primary)]" />
+                          <FileText className="h-3 w-3 text-[var(--brand)]" />
                           <span className="font-medium">{c.source}</span>
                           {c.page && <Badge tone="info">p.{c.page}</Badge>}
-                          <span className="ml-auto text-[10px] text-[var(--color-text-muted)]">相关度 {(c.score * 100).toFixed(0)}%</span>
+                          <span className="ml-auto text-[10px] text-[var(--text-muted)]">相关度 {(c.score * 100).toFixed(0)}%</span>
                         </div>
-                        <div className="text-[var(--color-text-muted)]">{c.text}</div>
+                        <div className="text-[var(--text-muted)]">{c.text}</div>
                       </div>
                     ))}
                   </div>
@@ -172,20 +172,20 @@ export default function Copilot() {
         </div>
 
         {/* 输入区 */}
-        <div className="border-t border-[var(--color-border)] p-4">
+        <div className="border-t border-[var(--border)] p-4">
           <div className="mb-2 flex flex-wrap gap-1.5">
             {QUICK_PROMPTS.map((p) => (
               <button
                 key={p}
                 onClick={() => setInput(p)}
-                className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-[11px] hover:bg-[var(--color-surface-3)]"
+                className="rounded-full border border-[var(--border)] bg-[var(--surface-2)] px-3 py-1 text-[11px] hover:bg-[var(--surface-3)]"
               >
                 {p}
               </button>
             ))}
           </div>
-          <div className="flex items-end gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-2)] p-2">
-            <button className="grid h-8 w-8 place-items-center rounded text-[var(--color-text-muted)] hover:bg-[var(--color-surface-3)]">
+          <div className="flex items-end gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-2)] p-2">
+            <button className="grid h-8 w-8 place-items-center rounded text-[var(--text-muted)] hover:bg-[var(--surface-3)]">
               <Paperclip className="h-4 w-4" />
             </button>
             <textarea
@@ -199,14 +199,14 @@ export default function Copilot() {
               }}
               placeholder="问任何问题... (Shift+Enter 换行)"
               rows={1}
-              className="flex-1 resize-none bg-transparent text-sm outline-none placeholder:text-[var(--color-text-muted)]"
+              className="flex-1 resize-none bg-transparent text-sm outline-none placeholder:text-[var(--text-muted)]"
             />
             <Button onClick={onSend} disabled={!input.trim()} size="sm">
               <Send className="h-3.5 w-3.5" />
               发送
             </Button>
           </div>
-          <div className="mt-2 flex items-center gap-3 text-[10px] text-[var(--color-text-muted)]">
+          <div className="mt-2 flex items-center gap-3 text-[10px] text-[var(--text-muted)]">
             <span className="flex items-center gap-1"><ShieldCheck className="h-3 w-3" /> 对话存档 · SignedLog</span>
             <span>·</span>
             <span>P95 680ms · 99.4% 成功率</span>
