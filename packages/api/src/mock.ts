@@ -243,6 +243,49 @@ export const mockKnowledgeDocs: KnowledgeDoc[] = [
   { id: 'k8', title: 'ATT&CK 检测用例', source: 'SIEM', sizeKb: 540, chunks: 380, citeCount: 95, status: 'ready', updatedAt: '2026-07-09T00:00:00Z' },
 ];
 
+// ============ P8 技能扩展数据 ============
+
+export interface SkillTestCase {
+  name: string;
+  input: string;
+  output: string;
+  durationMs: number;
+  status: 'success' | 'failed';
+}
+
+export const mockSkillExecTrace = {
+  s1: {
+    trace: [
+      { ts: '14:28:01.023', level: 'info', text: 'redis-cli CONFIG SET maxmemory 16GB' },
+      { ts: '14:28:01.045', level: 'debug', text: '连接 prod-redis-01:6379' },
+      { ts: '14:28:01.123', level: 'info', text: '执行 SET 命令' },
+      { ts: '14:28:01.168', level: 'info', text: '响应: +OK (45ms)' },
+      { ts: '14:28:01.170', level: 'info', text: '输出已写入审计日志 SignedLog' },
+    ],
+    testCases: [
+      { name: '正常调用', input: 'CONFIG SET maxmemory 16GB', output: '+OK', durationMs: 45, status: 'success' },
+      { name: '无效参数', input: 'CONFIG SET invalid', output: '(error) ERR syntax error', durationMs: 12, status: 'failed' },
+    ] as SkillTestCase[],
+    perf: { calls24h: 2300, errorRate: 0.4, p95Ms: 80 },
+  },
+};
+
+export const mockSkillVersions = {
+  s1: [
+    { version: '1.4.2', date: '2026-07-08', type: 'minor', notes: ['+ Redis 7.x 兼容', '+ 新增 CONFIG STATS 命令', '- 修复 cluster bus 报错'] },
+    { version: '1.4.1', date: '2026-06-20', type: 'patch', notes: ['+ 超时自动重试 1 次'] },
+    { version: '1.4.0', date: '2026-06-01', type: 'major', notes: ['+ 全新沙箱隔离', '+ 支持 TLS 加密'] },
+    { version: '1.3.5', date: '2026-05-15', type: 'minor', notes: ['+ 审计日志自动写入'] },
+  ],
+};
+
+export const mockSkillPerms = [
+  { role: 'Admin', canCall: true, canConfig: true },
+  { role: 'SRE', canCall: true, canConfig: true },
+  { role: 'Sec', canCall: false, canConfig: false },
+  { role: 'View', canCall: false, canConfig: false },
+];
+
 export const mockSkills: Skill[] = [
   { id: 's1', name: 'redis-cli', kind: 'skill', description: 'Redis 命令执行', version: '1.0', status: 'installed', rating: 4.9, installCount: 1200, riskLevel: 'mid', cacheable: true },
   { id: 's2', name: 'kubectl', kind: 'skill', description: 'K8s 操作', version: '1.0', status: 'installed', rating: 4.8, installCount: 1100, riskLevel: 'high', cacheable: true },
@@ -549,6 +592,15 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 技能
   if (path === '/api/skills') return mockSkills;
+  if (path.startsWith('/api/skills/') && path.endsWith('/trace')) {
+    const id = path.split('/')[3];
+    return mockSkillExecTrace[id as keyof typeof mockSkillExecTrace] ?? null;
+  }
+  if (path.startsWith('/api/skills/') && path.endsWith('/versions')) {
+    const id = path.split('/')[3];
+    return mockSkillVersions[id as keyof typeof mockSkillVersions] ?? [];
+  }
+  if (path === '/api/skills/perms') return mockSkillPerms;
 
   // 模型
   if (path === '/api/providers') return mockProviders;
