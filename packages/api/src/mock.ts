@@ -193,7 +193,47 @@ export const mockWorkflow: Workflow = {
     { id: 'e7', source: 'n7', target: 'n8' },
   ],
 };
-  export const mockKnowledgeDocs: KnowledgeDoc[] = [
+  // ============ P7 知识扩展数据 ============
+
+export const mockKbList = [
+  { key: 'runbook', label: 'Runbook 知识库', count: 86, source: 'Runbook' },
+  { key: 'cmdb', label: 'CMDB 资产', count: 1280, source: 'CMDB' },
+  { key: 'cve', label: 'CVE 漏洞库', count: 620, source: 'CVE' },
+  { key: 'siem', label: 'SIEM 检测用例', count: 380, source: 'SIEM' },
+];
+
+export const mockDocDetail = {
+  id: 'k1',
+  title: 'Redis 故障 Runbook v3.2',
+  source: 'Runbook',
+  author: '李婷',
+  updatedAt: '2026-07-10',
+  size: '124 KB',
+  chunks: 86,
+  version: 'v3.2',
+  content: '# Redis 故障 Runbook\n\n## §3.1 OOM 处理\n\n当 Redis 触发 maxmemory 限制时，优先检查 maxmemory-policy 与最近写入速率；建议在维护窗口执行 volatile-lru 切换。\n\n### 步骤\n\n1. **检测**：监控指标 used_memory 与 maxmemory 比值\n2. **评估**：判断是否有大 Key 写入（>100MB）\n3. **方案**：临时扩容 OR 切换 LRU 策略\n4. **执行**：CONFIG SET maxmemory-policy volatile-lru\n5. **验证**：观察 5min 内 OOM 频率下降\n\n### 历史事件\n\n- 2026-05-22 INC-019：使用 volatile-lru，耗时 38min\n- 2026-04-08 INC-011：临时扩容到 16GB，耗时 22min',
+};
+
+export const mockSearchHistory = [
+  { id: 'h1', time: '14:28', query: 'Redis OOM 处理', kb: 'Runbook', results: 8, topScore: 0.92 },
+  { id: 'h2', time: '14:18', query: 'CVE-2026-3321 影响哪些资产', kb: 'CVE', results: 12, topScore: 0.88 },
+  { id: 'h3', time: '13:55', query: '容量预测算法', kb: 'Runbook', results: 6, topScore: 0.79 },
+  { id: 'h4', time: '13:42', query: 'K8s 节点扩容', kb: 'Runbook', results: 9, topScore: 0.85 },
+];
+
+export const mockCitationTrace = [
+  { docId: 'k1', title: 'Redis 故障 Runbook v3.2', citeCount: 320, lastUsed: '2026-07-13', usedBy: ['故障自愈 v1.4.2', '变更辅助 v1.2.5', '42 次任务'] },
+  { docId: 'k2', title: 'CMDB 全量资产清单', citeCount: 1280, lastUsed: '2026-07-13', usedBy: ['故障自愈 v1.4.2', '告警降噪 v1.3.2', '215 次任务'] },
+];
+
+export const mockEvalMetrics = {
+  recall: 92,
+  precision: 88,
+  p95Latency: 320,
+  hitRate: 32,
+};
+
+export const mockKnowledgeDocs: KnowledgeDoc[] = [
   { id: 'k1', title: 'Redis 故障 Runbook v3.2', source: 'Runbook', sizeKb: 128, chunks: 86, citeCount: 320, status: 'ready', updatedAt: '2026-07-10T00:00:00Z' },
   { id: 'k3', title: 'CVE-2026 漏洞库', source: 'CVE', sizeKb: 840, chunks: 620, citeCount: 88, status: 'ready', updatedAt: '2026-07-12T00:00:00Z' },
   { id: 'k4', title: 'K8s 节点运维手册', source: 'Runbook', sizeKb: 320, chunks: 210, citeCount: 156, status: 'ready', updatedAt: '2026-07-05T00:00:00Z' },
@@ -498,6 +538,11 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 知识
   if (path === '/api/knowledge/docs') return mockKnowledgeDocs;
+  if (path === '/api/knowledge/kb-list') return mockKbList;
+  if (path === '/api/knowledge/doc/k1') return mockDocDetail;
+  if (path === '/api/knowledge/search-history') return mockSearchHistory;
+  if (path === '/api/knowledge/citation-trace') return mockCitationTrace;
+  if (path === '/api/knowledge/eval') return mockEvalMetrics;
   if (path === '/api/knowledge/chunks/top') {
     return mockConversation.messages.find((m) => m.citations)?.citations ?? [];
   }
