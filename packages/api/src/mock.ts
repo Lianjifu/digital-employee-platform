@@ -442,21 +442,76 @@ export const mockChannels: Channel[] = [
   { id: 'c6', name: 'Webhook', kind: 'webhook', enabled: true, monthlySent: 120, successRate: 0.995 },
 ];
 
-export const mockAudits: AuditItem[] = [
-  { id: 'a1', name: '身份认证 (Authentik+OIDC)', category: 'identity', status: 'pass', updatedAt: '2026-07-12T00:00:00Z' },
-  { id: 'a2', name: 'MFA 双因素', category: 'identity', status: 'pass', updatedAt: '2026-07-12T00:00:00Z' },
-  { id: 'a3', name: '密码策略', category: 'identity', status: 'pass', updatedAt: '2026-07-12T00:00:00Z' },
-  { id: 'a4', name: '字段级权限', category: 'access', status: 'pass', updatedAt: '2026-07-12T00:00:00Z' },
-  { id: 'a5', name: '数据出境策略', category: 'data', status: 'pass', updatedAt: '2026-07-12T00:00:00Z' },
-  { id: 'a6', name: '双签复核', category: 'access', status: 'pass', updatedAt: '2026-07-12T00:00:00Z' },
-  { id: 'a7', name: 'SignedLog 审计', category: 'audit', status: 'pass', updatedAt: '2026-07-12T00:00:00Z' },
-  { id: 'a8', name: 'API Key 30d 轮转', category: 'data', status: 'pass', updatedAt: '2026-07-12T00:00:00Z' },
-  { id: 'a9', name: '风险评估', category: 'compliance', status: 'pass', updatedAt: '2026-07-12T00:00:00Z' },
-  { id: 'a10', name: '下次审计日期', category: 'compliance', status: 'pass', updatedAt: '2026-07-12T00:00:00Z' },
-  { id: 'a11', name: '导出审计日志', category: 'audit', status: 'warn', updatedAt: '2026-07-12T00:00:00Z' },
-  { id: 'a12', name: '字段脱敏增强', category: 'data', status: 'warn', updatedAt: '2026-07-12T00:00:00Z' },
-  { id: 'a13', name: '灰度发布', category: 'compliance', status: 'warn', updatedAt: '2026-07-12T00:00:00Z' },
+// ============ P11 设置扩展数据 ============
+
+export const mockApiKeys = [
+  { id: 'k1', name: 'Production Primary', prefix: 'sk-prod-****', created: '2026-04-01', lastUsed: '14:32', expires: '2026-08-01', status: 'active' },
+  { id: 'k2', name: 'CI/CD Pipeline', prefix: 'sk-cicd-****', created: '2026-05-15', lastUsed: '12:18', expires: '2026-09-15', status: 'active' },
+  { id: 'k3', name: 'Dev Sandbox', prefix: 'sk-dev-****', created: '2026-06-20', lastUsed: '昨天', expires: '2026-07-20', status: 'warning' },
 ];
+
+export const mockWebhooks = [
+  { id: 'w1', url: 'https://acme.com/webhook/alert', events: ['P0 告警', 'P1 升级'], status: 'active', secret: 'whsec_****', retry: 3, success: 99.2 },
+  { id: 'w2', url: 'https://siem.acme.com/ingest', events: ['审计日志', '合规事件'], status: 'active', secret: 'whsec_****', retry: 5, success: 99.8 },
+];
+
+export const mockBackups = [
+  { id: 'b1', time: '2026-07-13 02:00', type: '自动', size: '4.2 GB', status: 'success', duration: '12min' },
+  { id: 'b2', time: '2026-07-12 02:00', type: '自动', size: '4.1 GB', status: 'success', duration: '11min' },
+  { id: 'b3', time: '2026-07-11 02:00', type: '自动', size: '4.1 GB', status: 'success', duration: '12min' },
+  { id: 'b4', time: '2026-07-10 02:00', type: '手动', size: '3.9 GB', status: 'success', duration: '15min' },
+];
+
+export const mockAuditStream = [
+  { id: 'a1', time: '14:32:12', user: '王昊', action: 'CONFIG_SET', target: 'prod-redis-01', result: 'success' },
+  { id: 'a2', time: '14:28:45', user: '王昊', action: 'APPROVE', target: 'TSK-20260713-001', result: 'success' },
+  { id: 'a3', time: '14:25:30', user: '李婷', action: 'TASK_CREATE', target: 'TSK-20260713-004', result: 'success' },
+  { id: 'a4', time: '14:18:22', user: '张睿', action: 'CVE_SCAN', target: 'PRD-CACHE-019', result: 'success' },
+  { id: 'a5', time: '14:12:08', user: '孙博', action: 'DEPLOY', target: 'gateway-prod', result: 'success' },
+  { id: 'a6', time: '14:05:15', user: '李婷', action: 'WORKFLOW_TRIGGER', target: 'cache-oom', result: 'failed' },
+];
+
+export const mockComplianceChecks = [
+  { id: 'c1', name: '身份认证 (Authentik+OIDC)', category: 'identity', status: 'pass' },
+  { id: 'c2', name: 'MFA 双因素 (100% 启用)', category: 'identity', status: 'pass' },
+  { id: 'c3', name: '密码策略 (12 位 + 90d 轮转)', category: 'identity', status: 'pass' },
+  { id: 'c4', name: '字段级权限', category: 'access', status: 'pass' },
+  { id: 'c5', name: '数据出境策略', category: 'data', status: 'pass' },
+  { id: 'c6', name: '双签复核 (写动作 100%)', category: 'access', status: 'pass' },
+  { id: 'c7', name: 'SignedLog 审计', category: 'audit', status: 'pass' },
+  { id: 'c8', name: 'API Key 30d 轮转', category: 'data', status: 'pass' },
+  { id: 'c9', name: 'gVisor 沙箱隔离', category: 'compliance', status: 'pass' },
+  { id: 'c10', name: '风险评估', category: 'compliance', status: 'pass' },
+  { id: 'c11', name: '下次审计日期', category: 'compliance', status: 'pass' },
+  { id: 'c12', name: '导出审计日志', category: 'audit', status: 'warn' },
+  { id: 'c13', name: '字段脱敏增强', category: 'data', status: 'warn' },
+  { id: 'c14', name: '灰度发布策略', category: 'compliance', status: 'warn' },
+];
+
+export const mockBilling = {
+  plan: 'Enterprise Plus',
+  price: '$5,000',
+  usage: {
+    cost: 1240,
+    budget: 5000,
+    tokens: 12.4e6,
+    tokenBudget: 50e6,
+    seats: 18,
+    seatLimit: 50,
+    agents: 8,
+    agentLimit: 20,
+  },
+  nextBilling: '2026-08-01',
+};
+
+export const mockNotificationChannels = [
+  { id: 'n1', name: '安全告警', channels: ['飞书', '邮件', '电话'], frequency: '即时', enabled: true },
+  { id: 'n2', name: '系统状态', channels: ['飞书', '邮件'], frequency: '每 5 分钟', enabled: true },
+  { id: 'n3', name: '日报', channels: ['邮件'], frequency: '每天 9:00', enabled: true },
+  { id: 'n4', name: '营销活动', channels: ['邮件'], frequency: '每周', enabled: false },
+];
+
+export const mockAudits: AuditItem[] = mockComplianceChecks.map((c) => ({ ...c, updatedAt: '2026-07-12' })) as unknown as AuditItem[];
 
 // ============ P2 会话扩展数据 ============
 
@@ -749,7 +804,13 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/channel-config') return mockChannelConfig;
 
   // 设置
-  if (path === '/api/audits') return mockAudits;
+  if (path === '/api/audits') return mockComplianceChecks;
+  if (path === '/api/api-keys') return mockApiKeys;
+  if (path === '/api/webhooks-config') return mockWebhooks;
+  if (path === '/api/backups') return mockBackups;
+  if (path === '/api/audit-stream') return mockAuditStream;
+  if (path === '/api/billing') return mockBilling;
+  if (path === '/api/notification-channels') return mockNotificationChannels;
 
   // 会话
   if (path === '/api/conversations/cv1') return mockConversation;
