@@ -129,6 +129,43 @@ export const mockAgents: Agent[] = [
   { id: 'a10', name: '日志查询', category: 'AIOps', description: 'Loki · ES · S3 统一查询', version: '2.3.0', status: 'available', rating: 4.7, installCount: 880, tools: ['loki', 'opensearch'] },
 ];
 
+// ============ P6 工作流扩展数据 ============
+
+export interface WorkflowTemplate {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  nodes: number;
+  installs: number;
+  rating: number;
+}
+
+export const mockWorkflowTemplates: WorkflowTemplate[] = [
+  { id: 'tpl1', name: 'cache-oom 故障自愈', description: 'Redis 缓存 OOM 自动扩容 + 切换 LRU 策略', category: 'system', nodes: 8, installs: 124, rating: 4.8 },
+  { id: 'tpl2', name: 'CVE 自动修复', description: 'CVE 扫描 → 资产匹配 → 工单创建', category: 'security', nodes: 6, installs: 88, rating: 4.6 },
+  { id: 'tpl3', name: '合规审计报告', description: '等保 3 94 项自动核查 + 报告生成', category: 'business', nodes: 7, installs: 56, rating: 4.7 },
+  { id: 'tpl4', name: '变更灰度发布', description: '蓝绿发布 + 自动回滚', category: 'business', nodes: 5, installs: 142, rating: 4.9 },
+  { id: 'tpl5', name: '告警降噪', description: 'SIEM 重复告警合并 + 静默', category: 'ai', nodes: 4, installs: 78, rating: 4.5 },
+  { id: 'tpl6', name: '容量预测', description: '历史趋势分析 + 提前扩容建议', category: 'ai', nodes: 6, installs: 42, rating: 4.4 },
+];
+
+export const mockWorkflowRuns = [
+  { id: 'r1', time: '14:28', trigger: 'cache-oom', status: 'success', duration: 38, steps: 6, who: '王昊' },
+  { id: 'r2', time: '13:42', trigger: 'cache-oom', status: 'success', duration: 36, steps: 6, who: '李婷' },
+  { id: 'r3', time: '11:18', trigger: 'cache-oom', status: 'failed', duration: 52, steps: 4, who: '王昊', error: '双签审批超时' },
+  { id: 'r4', time: '09:54', trigger: 'change-deploy', status: 'success', duration: 124, steps: 8, who: '孙博' },
+  { id: 'r5', time: '08:30', trigger: 'cve-scan', status: 'success', duration: 78, steps: 6, who: '张睿' },
+];
+
+export const mockWorkflowKpi = {
+  running: 3,
+  totalToday: 47,
+  successRate: 97.8,
+  avgDuration: 42,
+  mttrImprovement: -65,
+};
+
 export const mockWorkflow: Workflow = {
   id: 'wf1',
   name: 'cache-oom 故障自愈',
@@ -455,6 +492,9 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 工作流
   if (path === '/api/workflows') return [mockWorkflow];
+  if (path === '/api/workflow-templates') return mockWorkflowTemplates;
+  if (path === '/api/workflow-runs') return mockWorkflowRuns;
+  if (path === '/api/workflow-kpi') return mockWorkflowKpi;
 
   // 知识
   if (path === '/api/knowledge/docs') return mockKnowledgeDocs;
