@@ -10,7 +10,7 @@ export function useApiQuery<T>(
   params?: { query?: Record<string, any>; body?: unknown; method?: 'GET' | 'POST' },
   options?: Omit<UseQueryOptions<T>, 'queryKey' | 'queryFn'>,
 ) {
-  return useQuery<T>({
+  const q = useQuery<T>({
     queryKey: key,
     queryFn: async () => {
       const c = getApiClient();
@@ -22,6 +22,14 @@ export function useApiQuery<T>(
     },
     ...options,
   });
+  return {
+    data: q.data,
+    error: q.error,
+    isLoading: q.isLoading,
+    isFetching: q.isFetching,
+    isError: q.isError,
+    refetch: q.refetch,
+  };
 }
 
 type MutationOpts<TData, TVar> = {

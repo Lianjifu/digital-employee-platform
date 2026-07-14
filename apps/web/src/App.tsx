@@ -3,6 +3,8 @@ import { lazy, Suspense } from 'react';
 import { AppLayout } from './layouts/AppLayout';
 import { ProtectedRoute } from './router/ProtectedRoute';
 import { ToastHost, Spinner } from '@de/web-ui';
+import { ErrorBoundary } from './components/ErrorBoundary';
+import { NotFound } from './pages/NotFound';
 
 // 11 个模块按路由懒加载
 const Login = lazy(() => import('./pages/Login'));
@@ -20,43 +22,46 @@ const Settings = lazy(() => import('./pages/Settings'));
 
 function PageFallback() {
   return (
-    <div className="flex h-full items-center justify-center">
-      <Spinner size={28} className="text-[var(--color-primary)]" />
+    <div className="flex h-full items-center justify-center" role="status" aria-live="polite">
+      <Spinner size={28} className="text-[var(--brand)]" />
     </div>
   );
 }
 
 export default function App() {
   return (
-    <>
+    <ErrorBoundary fallbackTitle="应用遇到问题">
+      <a href="#main-content" className="skip-link">跳转到主内容</a>
       <Suspense fallback={<PageFallback />}>
         <Routes>
-          <Route path="/login" element={<Login />} />
+          <Route path="/login" element={<ErrorBoundary><Login /></ErrorBoundary>} />
           <Route
             element={
               <ProtectedRoute>
-                <AppLayout />
+                <ErrorBoundary>
+                  <AppLayout />
+                </ErrorBoundary>
               </ProtectedRoute>
             }
           >
             <Route index element={<Navigate to="/home" replace />} />
-            <Route path="/home" element={<Home />} />
-            <Route path="/copilot" element={<Copilot />} />
-            <Route path="/copilot/:id" element={<Copilot />} />
-            <Route path="/tasks" element={<Tasks />} />
-            <Route path="/workspaces" element={<Workspaces />} />
-            <Route path="/agents" element={<Agents />} />
-            <Route path="/workflows" element={<Workflows />} />
-            <Route path="/knowledge" element={<Knowledge />} />
-            <Route path="/skills" element={<Skills />} />
-            <Route path="/models" element={<Models />} />
-            <Route path="/channels" element={<Channels />} />
-            <Route path="/settings/*" element={<Settings />} />
+            <Route path="/home" element={<ErrorBoundary><Home /></ErrorBoundary>} />
+            <Route path="/copilot" element={<ErrorBoundary><Copilot /></ErrorBoundary>} />
+            <Route path="/copilot/:id" element={<ErrorBoundary><Copilot /></ErrorBoundary>} />
+            <Route path="/tasks" element={<ErrorBoundary><Tasks /></ErrorBoundary>} />
+            <Route path="/workspaces" element={<ErrorBoundary><Workspaces /></ErrorBoundary>} />
+            <Route path="/agents" element={<ErrorBoundary><Agents /></ErrorBoundary>} />
+            <Route path="/workflows" element={<ErrorBoundary><Workflows /></ErrorBoundary>} />
+            <Route path="/knowledge" element={<ErrorBoundary><Knowledge /></ErrorBoundary>} />
+            <Route path="/skills" element={<ErrorBoundary><Skills /></ErrorBoundary>} />
+            <Route path="/models" element={<ErrorBoundary><Models /></ErrorBoundary>} />
+            <Route path="/channels" element={<ErrorBoundary><Channels /></ErrorBoundary>} />
+            <Route path="/settings/*" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
           </Route>
-          <Route path="*" element={<Navigate to="/home" replace />} />
+          <Route path="*" element={<NotFound />} />
         </Routes>
       </Suspense>
       <ToastHost />
-    </>
+    </ErrorBoundary>
   );
 }

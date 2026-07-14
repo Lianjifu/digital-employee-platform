@@ -10,8 +10,10 @@ import {
   Home, MessageSquare, ListChecks, Building2, Bot, Workflow,
   BookOpen, Wrench, Brain, Send,
   Search, Bell, Sun, Moon, Menu, Settings2, Languages,
-  LogOut, ChevronDown,
+  LogOut, ChevronDown, X,
 } from 'lucide-react';
+import { GlobalSearch } from '@/components/GlobalSearch';
+import { useT } from '@/i18n';
 import { useUiStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
@@ -22,22 +24,23 @@ import type { Workspace } from '@de/web-types';
 
 // 侧栏只放 9 个业务模块导航；
 // Settings / Workspace 移到左下角用户菜单（避免重复）
-const NAV: { to: string; label: string; icon: any; code: string }[] = [
-  { to: '/home', label: '首页', icon: Home, code: 'P1' },
-  { to: '/copilot', label: '会话', icon: MessageSquare, code: 'P2' },
-  { to: '/tasks', label: '任务', icon: ListChecks, code: 'P3' },
-  { to: '/agents', label: '智能体', icon: Bot, code: 'P5' },
-  { to: '/workflows', label: '工作流', icon: Workflow, code: 'P6' },
-  { to: '/knowledge', label: '知识', icon: BookOpen, code: 'P7' },
-  { to: '/skills', label: '技能', icon: Wrench, code: 'P8' },
-  { to: '/models', label: '模型', icon: Brain, code: 'P9' },
-  { to: '/channels', label: '渠道', icon: Send, code: 'P10' },
+const NAV: { to: string; label: string; i18n: string; icon: any; code: string }[] = [
+  { to: '/home', label: '首页', i18n: 'nav.home', icon: Home, code: 'P1' },
+  { to: '/copilot', label: '会话', i18n: 'nav.copilot', icon: MessageSquare, code: 'P2' },
+  { to: '/tasks', label: '任务', i18n: 'nav.tasks', icon: ListChecks, code: 'P3' },
+  { to: '/agents', label: '智能体', i18n: 'nav.agents', icon: Bot, code: 'P5' },
+  { to: '/workflows', label: '工作流', i18n: 'nav.workflows', icon: Workflow, code: 'P6' },
+  { to: '/knowledge', label: '知识', i18n: 'nav.knowledge', icon: BookOpen, code: 'P7' },
+  { to: '/skills', label: '技能', i18n: 'nav.skills', icon: Wrench, code: 'P8' },
+  { to: '/models', label: '模型', i18n: 'nav.models', icon: Brain, code: 'P9' },
+  { to: '/channels', label: '渠道', i18n: 'nav.channels', icon: Send, code: 'P10' },
 ];
 
 export function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { sidebarCollapsed, toggleSidebar, theme, toggleTheme } = useUiStore();
+  const { sidebarCollapsed, toggleSidebar, theme, toggleTheme, mobileDrawerOpen, openMobileDrawer, closeMobileDrawer } = useUiStore();
+  const { t, locale, setLocale } = useT();
   const { user, logout } = useAuthStore();
   const { current, setCurrent, setList } = useWorkspaceStore();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -72,18 +75,30 @@ export function AppLayout() {
 
   return (
     <div
-      className="grid h-screen w-screen overflow-hidden bg-[var(--bg-elevated)]"
+      className="grid h-screen w-screen overflow-hidden bg-[var(--bg-elevated)] lg:[grid-template-columns:260px_1fr] lg:[grid-template-rows:60px_1fr]"
       style={{ gridTemplateColumns: sidebarCollapsed ? '72px 1fr' : '260px 1fr', gridTemplateRows: '60px 1fr' }}
     >
+      {/* Mobile Drawer Overlay */}
+      {mobileDrawerOpen && (
+        <div
+          className="lg:hidden fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
+          onClick={closeMobileDrawer}
+          aria-hidden="true"
+        />
+      )}
       {/* ============ Topbar ============ */}
       <header
-        className="col-span-2 flex h-[60px] items-center gap-6 border-b border-[var(--border)] bg-[var(--bg)] px-6 shadow-[var(--shadow-xs)] sticky top-0 z-30"
+        className="col-span-2 flex h-[60px] items-center gap-3 md:gap-6 border-b border-[var(--border)] bg-[var(--bg)] px-4 md:px-6 shadow-[var(--shadow-xs)] sticky top-0 z-30"
         style={{ gridColumn: '1 / -1' }}
       >
         <button
-          onClick={toggleSidebar}
+          onClick={() => {
+            if (window.innerWidth < 1024) openMobileDrawer();
+            else toggleSidebar();
+          }}
           className="grid h-9 w-9 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
           title={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
+          aria-label={sidebarCollapsed ? '展开侧栏' : '收起侧栏'}
         >
           <Menu className="h-4 w-4" />
         </button>
@@ -106,18 +121,22 @@ export function AppLayout() {
 
         {/* Search */}
         <div className="relative flex-1 max-w-md">
-          <Search className="absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--text-muted)]" />
-          <input
-            placeholder="搜索 Agent / 任务 / 文档..."
-            className="h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] pl-11 pr-12 text-sm transition-all duration-200 placeholder:text-[var(--text-muted)] focus:border-[var(--brand)] focus:bg-[var(--bg)] focus:outline-none focus:shadow-[0_0_0_3px_var(--brand-light)]"
-          />
-          <kbd className="absolute right-3 top-1/2 -translate-y-1/2 rounded bg-[var(--bg)] px-1.5 py-0.5 text-[10px] font-mono text-[var(--text-muted)] border border-[var(--border)]">
-            ⌘K
-          </kbd>
+          <GlobalSearch />
         </div>
 
         {/* Right */}
         <div className="ml-auto flex items-center gap-3">
+          {/* 语言切换 */}
+          <button
+            onClick={() => setLocale(locale === 'zh-CN' ? 'en-US' : 'zh-CN')}
+            className="flex items-center gap-1 h-9 px-2.5 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] text-xs hover:bg-[var(--bg-hover)] transition-colors"
+            aria-label={locale === 'zh-CN' ? '切换到 English' : 'Switch to 简体中文'}
+            title={locale === 'zh-CN' ? 'EN' : '中'}
+          >
+            <Languages className="h-3.5 w-3.5" />
+            <span className="font-mono font-semibold">{locale === 'zh-CN' ? '中' : 'EN'}</span>
+          </button>
+
           {/* 合规徽章 */}
           <div className="flex items-center gap-1.5 rounded-md border border-[var(--success)]/30 bg-[var(--success-bg)] px-2.5 py-1 text-[11px] text-[var(--success)]">
             <Dot tone="success" />
@@ -129,12 +148,16 @@ export function AppLayout() {
             onClick={toggleTheme}
             className="grid h-9 w-9 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)] transition-colors"
             title={theme === 'light' ? '切换到深色' : '切换到浅色'}
+            aria-label={theme === 'light' ? '切换到深色主题' : '切换到浅色主题'}
           >
             {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
           </button>
 
           {/* 通知 */}
-          <button className="relative grid h-9 w-9 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]">
+          <button
+            className="relative grid h-9 w-9 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+            aria-label="通知（1 条未读）"
+          >
             <Bell className="h-4 w-4" />
             <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--danger)]" />
           </button>
@@ -145,7 +168,10 @@ export function AppLayout() {
       <aside
         className={cn(
           'row-start-2 flex flex-col border-r border-[var(--border)] bg-[var(--bg)] overflow-y-auto',
-          sidebarCollapsed ? 'items-center' : '',
+          'lg:relative lg:translate-x-0',
+          'fixed top-0 bottom-0 left-0 z-50 w-[260px] transition-transform duration-200',
+          mobileDrawerOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
+          sidebarCollapsed ? 'items-center lg:w-[72px]' : '',
         )}
       >
         {/* 工作区选择器 */}
@@ -183,7 +209,7 @@ export function AppLayout() {
                     : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]',
                 )
               }
-              title={sidebarCollapsed ? `${item.code} · ${item.label}` : undefined}
+              title={sidebarCollapsed ? `${item.code} · ${t(item.i18n)}` : undefined}
             >
               <item.icon
                 className={cn(
@@ -193,7 +219,7 @@ export function AppLayout() {
               />
               {!sidebarCollapsed && (
                 <>
-                  <span className="flex-1 truncate">{item.label}</span>
+                  <span className="flex-1 truncate">{t(item.i18n)}</span>
                   <span className="text-[10px] font-mono text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]">
                     {item.code}
                   </span>

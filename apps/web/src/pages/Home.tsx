@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useApiQuery } from '@/services/query';
 import { Button, Badge, Avatar, Dot, Input } from '@de/web-ui';
+import { PageSkeleton } from '@/components/PageSkeleton';
 import {
   Pause, BarChart3, Plus, MessageSquare, ListChecks, Bot, AlertTriangle,
   ArrowRight, TrendingUp, Activity, Bell, CheckCircle2, FileText, Clock,
@@ -87,10 +88,10 @@ function useCountdown(targetSec: number) {
 }
 
 export default function Home() {
-  const { data: tasks } = useApiQuery<Task[]>(['home', 'tasks'], '/api/tasks');
-  const { data: extra } = useApiQuery<any>(['home', 'extra'], '/api/home/extra');
-  const { data: team } = useApiQuery<any[]>(['home', 'team'], '/api/home/team');
-  const { data: alerts } = useApiQuery<any[]>(['home', 'alerts'], '/api/home/alerts');
+  const { data: tasks, isLoading: lTasks } = useApiQuery<Task[]>(['home', 'tasks'], '/api/tasks');
+  const { data: extra, isLoading: lExtra } = useApiQuery<any>(['home', 'extra'], '/api/home/extra');
+  const { data: team, isLoading: lTeam } = useApiQuery<any[]>(['home', 'team'], '/api/home/team');
+  const { data: alerts, isLoading: lAlerts } = useApiQuery<any[]>(['home', 'alerts'], '/api/home/alerts');
   const [alertFilter, setAlertFilter] = useState<'all' | 'P0' | 'P1' | 'P2' | 'P3'>('all');
   const { current } = useWorkspaceStore();
   const { user } = useAuthStore();
@@ -101,6 +102,11 @@ export default function Home() {
   const healthScore = extra?.agentCallSummary
     ? Math.round((extra.agentCallSummary.healthy / 8) * 100)
     : 75;
+
+  // loading 骨架
+  if (lTasks && lExtra && lTeam && lAlerts) {
+    return <PageSkeleton />;
+  }
 
   return (
     <div className="flex flex-col h-full overflow-y-auto bg-[var(--bg-elevated)]">
