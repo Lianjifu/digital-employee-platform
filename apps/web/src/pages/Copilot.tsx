@@ -206,20 +206,23 @@ export default function Copilot() {
                       onClick={() => setSessionId(s.id)}
                       className={cn('session-item relative', active && 'session-item--active')}
                     >
-                      <div className="flex items-center justify-between">
-                        <div className="session-item__title">
+                      {/* 第一行：title + 时间（grid 固定列宽） */}
+                      <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+                        <div className="session-item__title min-w-0">
                           {s.pinned && <Pin className="h-3 w-3 shrink-0 text-[var(--brand)]" />}
                           <span className="truncate">{s.title}</span>
                         </div>
-                        <div className="flex items-center gap-1 shrink-0">
+                        <div className="shrink-0 flex items-center">
                           {s.unread ? (
                             <span className="min-w-[16px] h-4 rounded-full bg-[var(--danger)] text-white text-[9px] font-mono flex items-center justify-center px-1">{s.unread}</span>
                           ) : (
-                            <span className="text-[10px] text-[var(--text-muted)] font-mono">{s.time}</span>
+                            <span className="text-[10px] text-[var(--text-muted)] font-mono whitespace-nowrap">{s.time}</span>
                           )}
                         </div>
                       </div>
+                      {/* 第二行：preview */}
                       <div className="session-item__preview">{s.preview}</div>
+                      {/* 第三行：agent + 状态徽章（固定底部） */}
                       <div className="session-item__meta">
                         <span className="nav-pill text-[10px] !py-0.5">{s.agent}</span>
                         <Badge tone={s.status === 'active' ? 'brand' : 'success'} className="text-[10px]">
