@@ -203,63 +203,26 @@ export default function Home() {
         </div>
       )}
 
-      {/* ============ 6 KPI 卡（Todo 3：双向对比 + sparkline）============ */}
+      {/* ============ 6 KPI 卡（可点击跳转）============ */}
       <div className="px-6 md:px-8 mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <KpiCard
-          tone="brand"
-          label="今日任务"
-          value={38}
-          unit="次"
-          delta={{ v: 12, dir: 'up' }}
-          sparkline={[5, 8, 6, 9, 11, 10, 12]}
-          prev="昨日 26 · P0×2 P1×5"
-        />
-        <KpiCard
-          tone="success"
-          label="系统健康度"
-          value={98.4}
-          unit="%"
-          delta={{ v: 0.3, dir: 'up' }}
-          sparkline={extra?.healthTrend24h?.slice(-7) ?? [95, 96, 98, 97, 99, 100, 99]}
-          prev="18/19 服务正常 · 1 故障"
-        />
-        <KpiCard
-          tone="success"
-          label="AI 调用量"
-          value="8.2k"
-          unit="次/日"
-          delta={{ v: 18, dir: 'up' }}
-          sparkline={[120, 180, 220, 190, 240, 280, 310]}
-          prev="8,180 成功 · 240 失败"
-        />
-        <KpiCard
-          tone="purple"
-          label="Token 用量"
-          value="12.4M"
-          unit="tokens"
-          delta={{ v: 6, dir: 'up' }}
-          sparkline={[10, 12, 11, 13, 14, 12.4, 12.4]}
-          prev="8.4M 输入 / 2.8M 输出"
-        />
-        <KpiCard
-          tone="warning"
-          label="P95 响应"
-          value={680}
-          unit="ms"
-          delta={{ v: -8, dir: 'down' }}
-          sparkline={[720, 700, 690, 680, 670, 660, 680]}
-          prev="API 680 / Agent 1100 / RAG 320"
-        />
-        <KpiCard
-          tone="error"
-          label="SLA 告警"
-          value={3}
-          unit="件"
-          delta={{ v: 1, dir: 'up' }}
-          sparkline={[1, 0, 2, 1, 0, 2, 3]}
-          prev="1 P0 · 2 P1 · 8min 平均响应"
-          threshold={{ warn: 3, error: 10 }}
-        />
+        <Link to="/tasks" className="block cursor-pointer group">
+          <KpiCard tone="brand" label="今日任务" value={38} unit="次" delta={{ v: 12, dir: 'up' }} sparkline={[5, 8, 6, 9, 11, 10, 12]} prev="昨日 26 · P0×2 P1×5" />
+        </Link>
+        <Link to="/home" className="block cursor-pointer group">
+          <KpiCard tone="success" label="系统健康度" value={98.4} unit="%" delta={{ v: 0.3, dir: 'up' }} sparkline={extra?.healthTrend24h?.slice(-7) ?? [95, 96, 98, 97, 99, 100, 99]} prev="18/19 服务正常 · 1 故障" />
+        </Link>
+        <Link to="/agents" className="block cursor-pointer group">
+          <KpiCard tone="success" label="AI 调用量" value="8.2k" unit="次/日" delta={{ v: 18, dir: 'up' }} sparkline={[120, 180, 220, 190, 240, 280, 310]} prev="8,180 成功 · 240 失败" />
+        </Link>
+        <Link to="/models" className="block cursor-pointer group">
+          <KpiCard tone="purple" label="Token 用量" value="12.4M" unit="tokens" delta={{ v: 6, dir: 'up' }} sparkline={[10, 12, 11, 13, 14, 12.4, 12.4]} prev="8.4M 输入 / 2.8M 输出" />
+        </Link>
+        <Link to="/copilot" className="block cursor-pointer group">
+          <KpiCard tone="warning" label="P95 响应" value={680} unit="ms" delta={{ v: -8, dir: 'down' }} sparkline={[720, 700, 690, 680, 670, 660, 680]} prev="API 680 / Agent 1100 / RAG 320" />
+        </Link>
+        <Link to="/tasks" className="block cursor-pointer group">
+          <KpiCard tone="error" label="SLA 告警" value={3} unit="件" delta={{ v: 1, dir: 'up' }} sparkline={[1, 0, 2, 1, 0, 2, 3]} prev="1 P0 · 2 P1 · 8min 响应" threshold={{ warn: 3, error: 10 }} />
+        </Link>
       </div>
 
       {/* ============ 快捷入口 + 健康度评分（Todo 5 增强） ============ */}
@@ -334,10 +297,11 @@ export default function Home() {
       {/* ============ 图表行：完成度环 + 24h 健康 + Agent 趋势 ============ */}
       <div className="px-6 md:px-8 pt-5 grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Todo 4: 任务完成度环 */}
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
+        <Link to="/tasks" className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4 block hover:border-[var(--brand)] transition-all group">
           <div className="flex items-center justify-between mb-2">
             <div className="text-xs font-semibold flex items-center gap-1.5">
               <Target className="h-3.5 w-3.5" />今日任务完成度
+              <span className="text-[9px] text-[var(--brand)] group-hover:underline ml-1">详情 →</span>
             </div>
             <span className="font-mono text-sm font-bold text-[var(--success)]">{tcDonePct.toFixed(0)}%</span>
           </div>
@@ -368,13 +332,14 @@ export default function Home() {
               ))}
             </div>
           </div>
-        </div>
+        </Link>
 
         {/* Todo 6: 24h 健康度趋势 */}
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4 lg:col-span-2">
+        <Link to="/home" className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4 block lg:col-span-2 hover:border-[var(--brand)] transition-all group">
           <div className="flex items-center justify-between mb-2">
             <div className="text-xs font-semibold flex items-center gap-1.5">
               <Activity className="h-3.5 w-3.5" />24h 系统健康度趋势
+              <span className="text-[9px] text-[var(--brand)] group-hover:underline ml-1">刷新</span>
             </div>
             <div className="flex items-center gap-2 text-[10px]">
               <span className="flex items-center gap-0.5"><span className="h-1.5 w-1.5 rounded-full bg-[var(--success)]" />健康度</span>
@@ -407,7 +372,7 @@ export default function Home() {
               <Tooltip contentStyle={{ background: '#131a2d', border: '1px solid #2a3654', borderRadius: 6, fontSize: 11 }} />
             </AreaChart>
           </ResponsiveContainer>
-        </div>
+        </Link>
       </div>
 
       {/* ============ 主体 3 列 ============ */}
@@ -572,10 +537,11 @@ export default function Home() {
         </div>
 
         {/* Todo 11: 团队成员 + 角色分布 */}
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
+        <Link to="/settings" className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4 block hover:border-[var(--brand)] transition-all group">
           <div className="flex items-center justify-between mb-3">
             <div className="text-xs font-semibold flex items-center gap-1.5">
               <Users className="h-3.5 w-3.5" />团队成员 ({team?.filter((m: any) => m.online).length ?? 0} 在线)
+              <span className="text-[9px] text-[var(--brand)] group-hover:underline ml-1">详情 →</span>
             </div>
             <Link to="/settings" className="text-[10px] text-[var(--brand)] hover:underline">管理</Link>
           </div>
@@ -614,7 +580,7 @@ export default function Home() {
               ))}
             </div>
           </div>
-        </div>
+        </Link>
 
         {/* Todo 14: 智能建议 + Todo 13: 快捷链接 */}
         <div className="space-y-4">
