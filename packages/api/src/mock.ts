@@ -592,6 +592,12 @@ export interface AgentMeta {
   installCount: number;
   responseP95: number;
   totalTokens: number;
+  // 新增字段
+  sla: number; // 0-100
+  errorRate: number; // 0-1
+  knowledgeBases: number; // 引用的知识库数
+  tools: number; // 工具数
+  languages: string[]; // 支持语言
 }
 
 export const mockAgentMeta: AgentMeta = {
@@ -606,6 +612,11 @@ export const mockAgentMeta: AgentMeta = {
   installCount: 1240,
   responseP95: 580,
   totalTokens: 1240000,
+  sla: 99.6,
+  errorRate: 0.012,
+  knowledgeBases: 4,
+  tools: 8,
+  languages: ['zh-CN', 'en-US'],
 };
 
 export interface ChatMessageEx {
@@ -724,13 +735,18 @@ export const mockSessions: SessionItem[] = [
 
 // Slash 命令面板
 export const mockSlashCommands = [
-  { cmd: '/agent', desc: '切换 Agent', icon: 'Bot' },
-  { cmd: '/search', desc: '检索知识库', icon: 'Search' },
-  { cmd: '/task', desc: '创建任务', icon: 'ListChecks' },
-  { cmd: '/skill', desc: '调用技能', icon: 'Wrench' },
-  { cmd: '/workflow', desc: '触发工作流', icon: 'Workflow' },
-  { cmd: '/model', desc: '切换模型', icon: 'Brain' },
-  { cmd: '/help', desc: '显示所有命令', icon: 'Sparkles' },
+  { cmd: '/agent', desc: '切换 Agent', icon: 'Bot', category: 'agent' },
+  { cmd: '/search', desc: '检索知识库', icon: 'Search', category: 'kb' },
+  { cmd: '/task', desc: '创建任务', icon: 'ListChecks', category: 'task' },
+  { cmd: '/skill', desc: '调用技能', icon: 'Wrench', category: 'tool' },
+  { cmd: '/workflow', desc: '触发工作流', icon: 'Workflow', category: 'tool' },
+  { cmd: '/model', desc: '切换模型', icon: 'Cpu', category: 'tool' },
+  { cmd: '/doc', desc: '查询文档', icon: 'FileText', category: 'kb' },
+  { cmd: '/member', desc: '@ 提及成员', icon: 'Users', category: 'collab' },
+  { cmd: '/clear', desc: '清空会话', icon: 'X', category: 'tool' },
+  { cmd: '/export', desc: '导出对话', icon: 'Download', category: 'tool' },
+  { cmd: '/help', desc: '显示所有命令', icon: 'Sparkles', category: 'tool' },
+  { cmd: '/summary', desc: '生成会话摘要', icon: 'FileText', category: 'kb' },
 ];
 
 export const mockConversation: Conversation = {
