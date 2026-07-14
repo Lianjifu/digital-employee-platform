@@ -160,10 +160,12 @@ export default function Home() {
             </h1>
             <p className="page-header__sub">
               {current?.name ?? 'ACME 生产'} · {current?.region ?? 'cn-east-1'} ·{' '}
-              <span className="text-[var(--text-secondary)]">11 模块运行中</span> ·{' '}
-              <span className="text-[var(--text-secondary)]">8 个 Agent 在线</span> ·{' '}
-              <span className="text-[var(--text-secondary)]">18 成员</span>
-              <span className="ml-2 font-mono text-[var(--brand)]">
+              <span className="text-[var(--text-secondary)]">今日 {tasks?.length ?? 38} 任务</span> ·{' '}
+              <span className="text-[var(--text-secondary)]">8 Agent 在线</span> ·{' '}
+              <span className="text-[var(--text-secondary)]">18 成员</span> ·{' '}
+              <span className="text-[var(--success)]">99.4% SLA</span> ·{' '}
+              <span className="text-[var(--brand)]">$1.24k / $5k</span>
+              <span className="ml-2 font-mono text-[var(--text-muted)]">
                 {now.toLocaleTimeString('zh-CN', { hour12: false })}
               </span>
             </p>
@@ -190,6 +192,9 @@ export default function Home() {
             <span className="text-[var(--brand)] font-semibold">{unreadCount} 条未读通知</span>
             <span className="text-[var(--text-muted)] truncate flex-1">
               {extra?.notifications?.find((n: any) => n.unread && !readIds.has(n.id))?.text}
+              {extra?.notifications?.find((n: any) => n.unread && !readIds.has(n.id))?.detail && (
+                <span className="text-[var(--text-muted)]"> · {extra?.notifications?.find((n: any) => n.unread && !readIds.has(n.id))?.detail}</span>
+              )}
             </span>
             <Button size="sm" variant="secondary" onClick={ackAll}>
               <Check className="h-3 w-3" />全部已读
@@ -198,7 +203,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* ============ KPI 6 卡（Todo 3：双向对比 + sparkline）============ */}
+      {/* ============ 6 KPI 卡（Todo 3：双向对比 + sparkline）============ */}
       <div className="px-6 md:px-8 mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <KpiCard
           tone="brand"
@@ -207,7 +212,7 @@ export default function Home() {
           unit="次"
           delta={{ v: 12, dir: 'up' }}
           sparkline={[5, 8, 6, 9, 11, 10, 12]}
-          prev="昨日 26"
+          prev="昨日 26 · P0×2 P1×5"
         />
         <KpiCard
           tone="success"
@@ -216,7 +221,7 @@ export default function Home() {
           unit="%"
           delta={{ v: 0.3, dir: 'up' }}
           sparkline={extra?.healthTrend24h?.slice(-7) ?? [95, 96, 98, 97, 99, 100, 99]}
-          prev="上周 96.1%"
+          prev="18/19 服务正常 · 1 故障"
         />
         <KpiCard
           tone="success"
@@ -225,7 +230,7 @@ export default function Home() {
           unit="次/日"
           delta={{ v: 18, dir: 'up' }}
           sparkline={[120, 180, 220, 190, 240, 280, 310]}
-          prev="上周 6.9k"
+          prev="8,180 成功 · 240 失败"
         />
         <KpiCard
           tone="purple"
@@ -234,7 +239,7 @@ export default function Home() {
           unit="tokens"
           delta={{ v: 6, dir: 'up' }}
           sparkline={[10, 12, 11, 13, 14, 12.4, 12.4]}
-          prev="预算 25%"
+          prev="8.4M 输入 / 2.8M 输出"
         />
         <KpiCard
           tone="warning"
@@ -243,7 +248,7 @@ export default function Home() {
           unit="ms"
           delta={{ v: -8, dir: 'down' }}
           sparkline={[720, 700, 690, 680, 670, 660, 680]}
-          prev="较昨日 -8ms"
+          prev="API 680 / Agent 1100 / RAG 320"
         />
         <KpiCard
           tone="error"
@@ -252,7 +257,7 @@ export default function Home() {
           unit="件"
           delta={{ v: 1, dir: 'up' }}
           sparkline={[1, 0, 2, 1, 0, 2, 3]}
-          prev="昨日 2 件"
+          prev="1 P0 · 2 P1 · 8min 平均响应"
           threshold={{ warn: 3, error: 10 }}
         />
       </div>
@@ -261,10 +266,10 @@ export default function Home() {
       <div className="px-6 md:px-8 pt-5 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           {[
-            { to: '/copilot', icon: MessageSquare, iconClass: 'quick-entry__icon--brand', title: '发起会话', desc: `与 ${inProgress.length > 0 ? '故障自愈' : '数字员工'} 对话` },
-            { to: '/tasks', icon: ListChecks, iconClass: 'quick-entry__icon--success', title: '查看任务', desc: `${inProgress.length} 个进行中` },
-            { to: '/agents', icon: Bot, iconClass: 'quick-entry__icon--warning', title: '管理 Agent', desc: '8 个在线' },
-            { to: '/home', icon: AlertTriangle, iconClass: 'quick-entry__icon--danger', title: '告警中心', desc: `${alerts?.length ?? 0} 条待处理` },
+            { to: '/copilot', icon: MessageSquare, iconClass: 'quick-entry__icon--brand', title: '发起会话', desc: `与故障自愈 v1.4.2 对话` },
+            { to: '/tasks', icon: ListChecks, iconClass: 'quick-entry__icon--success', title: '查看任务', desc: `${inProgress.length} 进行中 · 5 待复核` },
+            { to: '/agents', icon: Bot, iconClass: 'quick-entry__icon--warning', title: '管理 Agent', desc: '8 在线 · 1 告警 · 0 离线' },
+            { to: '/home', icon: AlertTriangle, iconClass: 'quick-entry__icon--danger', title: '告警中心', desc: `${extra?.slaAlerts?.length ?? 3} P0/P1 · 1 临近超时` },
           ].map((q) => (
             <Link
               key={q.title}
@@ -317,7 +322,7 @@ export default function Home() {
                   .map((s: any) => (
                     <div key={s.id} className="flex items-start gap-1.5">
                       <Lightbulb className="h-3 w-3 text-[var(--warning)] shrink-0 mt-0.5" />
-                      <span className="text-[var(--text-secondary)]">{s.text}</span>
+                      <span className="text-[var(--text-secondary)] line-clamp-2">{s.text}</span>
                     </div>
                   ))}
               </div>
@@ -358,7 +363,7 @@ export default function Home() {
                   <span className="h-2 w-2 rounded-sm" style={{ background: d.fill }} />
                   <span className="flex-1">{d.name}</span>
                   <span className="font-mono font-semibold">{d.value}</span>
-                  <span className="text-[var(--text-muted)] text-[10px]">{((d.value / tcTotal) * 100).toFixed(0)}%</span>
+                  <span className="text-[var(--text-muted)] text-[10px]">/ {tcTotal}</span>
                 </div>
               ))}
             </div>
@@ -646,6 +651,7 @@ export default function Home() {
                   <Link
                     key={l.to + l.label}
                     to={l.to}
+                    title={l.desc}
                     className="flex flex-col items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-[10px] hover:border-[var(--brand)] hover:text-[var(--brand)] transition-colors"
                   >
                     <Icon className="h-3.5 w-3.5" />
