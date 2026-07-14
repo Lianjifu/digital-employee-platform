@@ -37,6 +37,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import { DualSignModal } from '@/components/DualSignModal';
+import { DebugPanel } from '@/components/DebugPanel';
 import { useChat } from '@/hooks/useChat';
 import { useT } from '@/i18n';
 import { Markdown } from '@/components/Markdown';
@@ -104,6 +105,7 @@ export default function Copilot() {
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [expandedArgs, setExpandedArgs] = useState<Record<string, boolean>>({});
   const [citationDrawer, setCitationDrawer] = useState<any | null>(null);
+  const [debugOpen, setDebugOpen] = useState(false);
   const [hoverMsgId, setHoverMsgId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -380,7 +382,7 @@ export default function Copilot() {
               <button onClick={shareSession} className="grid h-8 w-8 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)]" title="分享" aria-label="分享">
                 <Share2 className="h-4 w-4" />
               </button>
-              <Button variant="secondary" size="sm">
+              <Button variant="secondary" size="sm" onClick={() => setDebugOpen(true)}>
                 <Settings className="h-3.5 w-3.5" />调试
               </Button>
               <Button variant="secondary" size="sm" onClick={() => alert('已导出 (mock)')}>
@@ -743,6 +745,12 @@ export default function Copilot() {
           if (showApproval) chat.approveSign(showApproval);
           setShowApproval(null);
         }}
+      />
+      <DebugPanel
+        open={debugOpen}
+        onClose={() => setDebugOpen(false)}
+        session={currentSession}
+        agentMeta={agentMeta}
       />
     </div>
   );

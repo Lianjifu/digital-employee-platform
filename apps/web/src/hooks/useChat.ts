@@ -13,6 +13,19 @@ export type { ChatMessageEx };
 
 // ============ 状态 ============
 
+export interface RequestLog {
+  id: string;
+  ts: number;
+  op: 'send' | 'regenerate' | 'stop' | 'approve' | 'delete' | 'create';
+  mid?: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  durationMs: number;
+  status: 'pending' | 'streaming' | 'success' | 'aborted' | 'error';
+  error?: string;
+}
+
 export interface ChatSession {
   id: string;
   title: string;
@@ -36,6 +49,8 @@ interface State {
   inputHistory: string[]; // 上次输入历史（按上下方向键）
   typing: boolean;
   abortRef: { current: AbortController | null };
+  requests: RequestLog[]; // 请求日志（按时间倒序，限 50 条）
+  debugOpen: boolean; // 调试面板开关
 }
 
 type Action =
@@ -55,6 +70,10 @@ type Action =
   | { type: 'stop_typing' }
   | { type: 'set_abort'; ctrl: AbortController | null }
   | { type: 'clear_unread'; id: string }
+  | { type: 'log_request'; log: RequestLog }
+  | { type: 'update_request'; id: string; patch: Partial<RequestLog> }
+  | { type: 'clear_requests' }
+  | { type: 'set_debug'; open: boolean }
   | { type: 'hydrate'; state: State };
 
 const STORAGE_KEY = 'de-chat-state';
@@ -66,6 +85,8 @@ const initial: State = {
   inputHistory: [],
   typing: false,
   abortRef: { current: null },
+  requests: [],
+  debugOpen: false,
 };
 
 function reducer(s: State, a: Action): State {
@@ -126,6 +147,16 @@ function reducer(s: State, a: Action): State {
       return { ...s, abortRef: { current: a.ctrl } };
     case 'clear_unread':
       return { ...s, sessions: { ...s.sessions, [a.id]: { ...s.sessions[a.id], unread: 0 } } };
+    case 'log_request':
+      return { ...s, requests: [a.log, ...s.requests].slice(0, 50) };
+    case 'update_request': {
+      const reqs = s.requests.map((r) => (r.id === a.id ? { ...r, ...a.patch } : r));
+      return { ...s, requests: reqs };
+    }
+    case 'clear_requests':
+      return { ...s, requests: [] };
+    case 'set_debug':
+      return { ...s, debugOpen: a.open };
     case 'hydrate':
       return a.state;
   }
@@ -340,6 +371,8 @@ export function useChat(agentMeta?: { name: string }) {
           return {
             ...parsed,
             inputHistory: parsed.inputHistory ?? [],
+            requests: parsed.requests ?? [],
+            debugOpen: parsed.debugOpen ?? false,
             typing: false,
             abortRef: { current: null },
           };
@@ -374,6 +407,8 @@ export function useChat(agentMeta?: { name: string }) {
       inputHistory: [],
       typing: false,
       abortRef: { current: null },
+      requests: [],
+      debugOpen: false,
     };
   });
 
