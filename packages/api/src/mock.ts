@@ -73,20 +73,69 @@ export const mockWorkspaces: Workspace[] = [
   { id: 'w4', name: '外协沙箱', region: 'cn-south-1', plan: 'standard', memberCount: 2, complianceScore: 85, createdAt: '2025-01-15T00:00:00Z' },
 ];
 
-// ============ 首页扩展数据（healthTrend/team/activities）============
+// ============ 首页扩展数据 ============
 export interface HomeExtra {
   healthTrend24h: number[];
   teamMembers: { id: string; name: string; role: string; online: boolean }[];
   recentActivities: { id: string; type: string; tone: 'success' | 'warning' | 'info' | 'danger'; text: string; actor: string; resource: string; time: string }[];
   agentCallSummary: { total: number; healthy: number; warning: number; offline: number };
+  // 新增字段
+  notifications: { id: string; tone: 'info' | 'warn' | 'success' | 'error'; icon: string; text: string; time: string; unread: boolean }[];
+  agent7dTrend: Record<string, number[]>; // 7 天每日调用
+  taskCompletion: { done: number; doing: number; review: number; todo: number };
+  slaAlerts: { id: string; level: 'P0' | 'P1' | 'P2' | 'P3'; text: string; time: string; assignee: string; taskCode: string }[];
+  costMonth: { used: number; budget: number; daily: number[] }; // 7 天
+  roleDistribution: { role: string; count: number }[];
+  suggestion: { id: string; tone: 'success' | 'warn' | 'info'; text: string; action: string; to: string }[];
+  quickLinks: { label: string; to: string; icon: string }[];
 }
 
 export const mockHomeExtra: HomeExtra = {
   healthTrend24h: [92, 94, 95, 93, 96, 98, 97, 96, 98, 99, 98, 97, 99, 100, 99, 98, 97, 96, 98, 99, 98, 99, 100, 99],
+  notifications: [
+    { id: 'n1', tone: 'warn', icon: 'AlertTriangle', text: 'P0 告警：Redis cache-oom 临近超时', time: '8 min 前', unread: true },
+    { id: 'n2', tone: 'info', icon: 'CheckCircle2', text: 'CVE 周报已生成（12 个新漏洞）', time: '12 min 前', unread: true },
+    { id: 'n3', tone: 'success', icon: 'Sparkles', text: '月度合规自评通过（94/94）', time: '1h 前', unread: false },
+    { id: 'n4', tone: 'info', icon: 'Activity', text: '告警降噪合并 23 条重复告警', time: '2h 前', unread: false },
+  ],
+  agent7dTrend: {
+    '故障自愈': [120, 180, 220, 190, 240, 280, 310],
+    '告警降噪': [780, 820, 810, 850, 880, 860, 900],
+    'K8s 操作': [80, 95, 110, 90, 120, 130, 140],
+    '变更辅助': [40, 60, 80, 70, 90, 100, 110],
+    '容量预测': [1, 0, 2, 1, 0, 1, 1],
+    '威胁狩猎': [380, 420, 410, 450, 480, 460, 500],
+    '漏洞修复': [0, 2, 1, 3, 1, 2, 3],
+    '合规审计': [5, 6, 7, 8, 6, 7, 7],
+  },
+  taskCompletion: { done: 18, doing: 14, review: 5, todo: 9 },
+  slaAlerts: [
+    { id: 'sl1', level: 'P0', text: 'Redis cache-oom 临近超时（-8min）', time: '8 min 前', assignee: '王昊', taskCode: 'TSK-20260713-001' },
+    { id: 'sl2', level: 'P1', text: 'K8s 节点扩容审批超时（5 min）', time: '15 min 前', assignee: '李婷', taskCode: 'TSK-20260713-002' },
+    { id: 'sl3', level: 'P1', text: 'CVE-2026-3321 待修复', time: '32 min 前', assignee: '张睿', taskCode: 'TSK-20260712-019' },
+    { id: 'sl4', level: 'P2', text: 'K8s 节点扩容申请待审', time: '1h 前', assignee: '王昊', taskCode: 'TSK-20260713-004' },
+  ],
+  costMonth: { used: 1240, budget: 5000, daily: [22, 28, 31, 35, 30, 27, 25] },
+  roleDistribution: [
+    { role: 'Admin', count: 2 },
+    { role: 'SRE', count: 4 },
+    { role: 'Sec', count: 3 },
+    { role: 'View', count: 9 },
+  ],
+  suggestion: [
+    { id: 'sg1', tone: 'warn', text: '漏洞修复 Agent 过去 7 天 0 调用，建议排查集成', action: '查看 Agent', to: '/agents' },
+    { id: 'sg2', tone: 'info', text: '容量预测 14 天未运行，可启用每周自动任务', action: '配置工作流', to: '/workflows' },
+    { id: 'sg3', tone: 'success', text: '本月 Token 用量 25%，预算充足', action: '查看用量', to: '/models' },
+  ],
+  quickLinks: [
+    { label: '新建任务', to: '/tasks', icon: 'Plus' },
+    { label: '工作流市场', to: '/workflows', icon: 'Workflow' },
+    { label: '知识检索', to: '/knowledge', icon: 'Search' },
+    { label: '模型路由', to: '/models', icon: 'Cpu' },
+    { label: 'Agent 商店', to: '/agents', icon: 'Bot' },
+    { label: '设置', to: '/settings', icon: 'Settings' },
+  ],
   teamMembers: [
-    { id: 'u1', name: '王昊', role: 'SRE', online: true },
-    { id: 'u2', name: '李婷', role: 'SRE', online: true },
-    { id: 'u3', name: '张睿', role: 'Sec', online: true },
     { id: 'u4', name: '陈雪', role: 'SRE', online: false },
     { id: 'u5', name: '赵明', role: 'Sec', online: true },
     { id: 'u6', name: '孙博', role: 'Admin', online: false },
