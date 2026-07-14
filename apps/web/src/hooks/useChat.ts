@@ -18,10 +18,12 @@ export interface ChatSession {
   title: string;
   preview: string;
   agent: string;
+  agentKey?: string; // 'fault-recovery' | 'workflow' | 'cve' | 'compliance' | 'alert' | 'threat' | 'deploy' | 'knowledge' | 'task' | 'general'
   status: 'active' | 'done';
   group: 'today' | 'yesterday' | 'week';
   time: string;
   pinned?: boolean;
+  starred?: boolean;
   unread?: number;
   messages: ChatMessageEx[];
   createdAt: number;
@@ -31,16 +33,19 @@ interface State {
   sessions: Record<string, ChatSession>;
   activeId: string;
   draftInput: string;
+  inputHistory: string[]; // 上次输入历史（按上下方向键）
   typing: boolean;
   abortRef: { current: AbortController | null };
 }
 
 type Action =
   | { type: 'set_draft'; value: string }
+  | { type: 'push_history'; value: string }
   | { type: 'new_session'; session: ChatSession }
   | { type: 'del_session'; id: string }
   | { type: 'switch'; id: string }
   | { type: 'pin'; id: string; pinned: boolean }
+  | { type: 'star'; id: string; starred: boolean }
   | { type: 'append_msg'; sid: string; msg: ChatMessageEx }
   | { type: 'replace_msg'; sid: string; mid: string; msg: ChatMessageEx }
   | { type: 'del_msg'; sid: string; mid: string }
@@ -58,6 +63,7 @@ const initial: State = {
   sessions: {},
   activeId: '',
   draftInput: '',
+  inputHistory: [],
   typing: false,
   abortRef: { current: null },
 };
@@ -78,6 +84,10 @@ function reducer(s: State, a: Action): State {
       return { ...s, activeId: a.id };
     case 'pin':
       return { ...s, sessions: { ...s.sessions, [a.id]: { ...s.sessions[a.id], pinned: a.pinned } } };
+    case 'star':
+      return { ...s, sessions: { ...s.sessions, [a.id]: { ...s.sessions[a.id], starred: a.starred } } };
+    case 'push_history':
+      return { ...s, inputHistory: [a.value, ...s.inputHistory.filter((x) => x !== a.value)].slice(0, 20) };
     case 'append_msg': {
       const sess = s.sessions[a.sid];
       if (!sess) return s;
@@ -192,6 +202,104 @@ const REPLY_TEMPLATES: { match: RegExp; reply: (q: string) => ChatMessageEx }[] 
     }),
   },
   {
+    match: /(alert|alertnoise|告警|降噪|siem|edr)/i,
+    reply: (q) => ({
+      id: uid('m_'),
+      role: 'assistant' as const,
+      agentName: '告警降噪',
+      content:
+        '已分析过去 24h 告警数据：\n\n**告警去重**：1,247 → 89（合并 92.8% 重复）\n\n- **重复 SIEM 规则**：R-019 触发 478 次（同一 IP）\n- **升级风暴**：kubernetes_pod_restart 触发 312 次（同一 deployment）\n- **低危噪音**：disk_usage_warning 156 次（>80% 但 <90%）\n\n建议处理：\n1. 静默 R-019（该 IP 已确认）\n2. 合并 k8s deployment 重启告警（1 条聚合）\n3. 调高 disk_usage 阈值到 90%\n\n效果：预计每日告警量从 1,247 降至 ~150（-88%）',
+      thinking: '告警降噪核心是模式识别 + 历史数据关联。',
+      citations: [
+        { id: 'c1', source: 'SIEM', page: 12, score: 0.94, text: '告警去重 R-019 历史触发 478 次...' },
+        { id: 'c2', source: 'CMDB', page: null, score: 0.82, text: 'kubernetes deployment prod-frontend-7d8...' },
+      ],
+      toolCalls: [
+        { id: uid('t_'), name: 'siem query', args: { rule: 'R-019', range: '24h' }, result: '478 hits · 1 unique IP', status: 'success' as const, durationMs: 240 },
+      ],
+      createdAt: new Date().toISOString(),
+    }),
+  },
+  {
+    match: /(siem|调查|威胁|入侵|incident)/i,
+    reply: (q) => ({
+      id: uid('m_'),
+      role: 'assistant' as const,
+      agentName: '威胁狩猎',
+      content:
+        '**SIEM 调查时间线**（基于 ATT&CK 框架）：\n\n1. **07:23** 初始入侵 — 钓鱼邮件 → 用户工作站执行恶意附件\n2. **07:45** 持久化 — 注册表 Run 键写入 svchost.exe\n3. **08:12** 凭证窃取 — Mimikatz 抓取 23 个凭据\n4. **08:30** 横向移动 — 扫描内网 SMB 共享\n5. **09:15** 数据外传 — DNS 隧道 1.2GB 至 C2 服务器\n\n**已自动隔离**：3 个工作站 + 2 个服务账号\n**建议**：立即重置 23 个泄露凭据 + 阻断 C2 域名',
+      thinking: 'SIEM 调查需要按时间线 + ATT&CK 战术分类。',
+      citations: [
+        { id: 'c1', source: 'SIEM', page: 5, score: 0.96, text: 'Mimikatz 凭证窃取 T1003...' },
+        { id: 'c2', source: 'CMDB', page: null, score: 0.88, text: 'workstation-042 · user-svc-018 ...' },
+      ],
+      toolCalls: [
+        { id: uid('t_'), name: 'siem timeline', args: { case: 'INC-2026-0723' }, result: '5 events · 23 creds · 1.2GB exfil', status: 'success' as const, durationMs: 380 },
+      ],
+      approvalRequest: { action: '重置 23 个泄露凭据 + 阻断 3 个 C2 域名', signed: 1, required: 2, signers: [{ name: '王昊', signed: true }, { name: '张睿', signed: false }] },
+      createdAt: new Date().toISOString(),
+    }),
+  },
+  {
+    match: /(灰度|发布|deploy|release|蓝绿)/i,
+    reply: (q) => ({
+      id: uid('m_'),
+      role: 'assistant' as const,
+      agentName: '变更辅助',
+      content:
+        '**灰度发布方案**（蓝绿 → 5% → 25% → 100%）：\n\n**阶段 1**（5% · 30min）\n- 仅 cn-east-1 区域\n- 监控指标：5xx < 0.1% / P95 < 800ms\n- 自动回滚阈值：5xx > 0.5%\n\n**阶段 2**（25% · 1h）\n- cn-east-1 + cn-south-1\n- 监控指标：CPU < 70% / 内存 < 80%\n\n**阶段 3**（100% · 24h）\n- 全量 + 流量切换\n- 监控所有业务指标 + 用户反馈\n\n**预计风险**：\n- 影响服务：5 个（gateway / order / pay / auth / inventory）\n- 回滚时间：< 30s（自动）\n- 影响用户：渐进式',
+      thinking: '蓝绿发布 3 阶段，每阶段 30min 观察 + 自动回滚。',
+      citations: [
+        { id: 'c1', source: 'Runbook', page: 8, score: 0.91, text: '蓝绿发布 3 阶段流程...' },
+      ],
+      toolCalls: [
+        { id: uid('t_'), name: 'argocd rollout', args: { stage: '5%', region: 'cn-east-1' }, result: '5/100 pods updated · 0 errors', status: 'success' as const, durationMs: 1200 },
+      ],
+      createdAt: new Date().toISOString(),
+    }),
+  },
+  {
+    match: /(知识|文档|wiki|怎么用|介绍|使用)/i,
+    reply: (q) => ({
+      id: uid('m_'),
+      role: 'assistant' as const,
+      agentName: '知识答疑',
+      content:
+        '**数字员工平台使用指南**（v3.0）：\n\n**11 个模块**：\n- **P1 首页** — 业务总览（KPI / 健康度 / 告警）\n- **P2 会话**（Copilot）— 与 AI Agent 对话\n- **P3 任务** — Kanban 任务管理 + 双签\n- **P4 工作区** — 多租户隔离\n- **P5 智能体** — Agent 商店 + 8 个内置\n- **P6 工作流** — DAG 可视化编排\n- **P7 知识库** — RAG 检索 + 4 KB / 247 文档\n- **P8 技能** — Skill / MCP / Tool（gVisor 沙箱）\n- **P9 模型** — 8 Provider + 5 等级路由\n- **P10 渠道** — 飞书 / 企微 / 邮件 / Webhook\n- **P11 设置** — 租户 / 成员 / 合规 / 计费\n\n**快速上手**：\n1. 按 `⌘K` 全局搜索\n2. 输入 `/` 唤起命令面板\n3. 输入 `@` 提及 Agent / Skill / 文档\n4. 主题切换在顶栏右侧\n5. 11 模块入口在左侧栏',
+      citations: [
+        { id: 'c1', source: 'Runbook', page: 1, score: 0.95, text: '数字员工平台使用指南 v3.0 ...' },
+      ],
+      createdAt: new Date().toISOString(),
+    }),
+  },
+  {
+    match: /(工单|创建任务|建工单|ticket|incident)/i,
+    reply: (q) => ({
+      id: uid('m_'),
+      role: 'assistant' as const,
+      agentName: '故障自愈',
+      content:
+        '**工单已创建** — TSK-20260714-001\n\n**基本信息**：\n- **标题**：' + (q.replace(/^.*?(工单|创建|建|ticket|incident)/i, '') || '用户问题') + '\n- **优先级**：P1（基于关键词分析）\n- **状态**：待分配\n- **创建人**：王昊\n- **来源**：Copilot 对话\n\n**自动关联**：\n- CMDB 资产：prod-redis-01, k8s-prod-cluster\n- Runbook：cache-oom 处置 v3.2\n- 知识库引用：3 篇\n\n**SLA**：4 小时内响应 / 24 小时内解决\n**负责人**：待分配（建议分配给 王昊 或 李婷）\n\n是否要立即分配给某人？',
+      thinking: '创建工单需要从用户消息提取关键信息 + 关联资产 + 设置 SLA。',
+      toolCalls: [
+        { id: uid('t_'), name: 'jira create', args: { project: 'OPS', priority: 'P1' }, result: 'TSK-20260714-001 created', status: 'success' as const, durationMs: 320 },
+        { id: uid('t_'), name: 'cmdb lookup', args: { query: 'cache' }, result: '3 assets matched', status: 'success' as const, durationMs: 180 },
+      ],
+      createdAt: new Date().toISOString(),
+    }),
+  },
+  {
+    match: /^($|help|帮助|\?)/i,
+    reply: () => ({
+      id: uid('m_'),
+      role: 'assistant' as const,
+      agentName: '故障自愈',
+      content:
+        '我是 **故障自愈** Agent v1.4.2。可以帮你：\n\n**我能处理**：\n- 🔴 Redis/K8s 等基础设施故障\n- 📊 容量预测与扩容建议\n- 🔍 CVE 漏洞扫描与修复\n- 🛡️ 合规审计报告\n- 📋 任务创建与追踪\n\n**试试问我**：\n- "prod-redis-01 OOM 了怎么办？"\n- "K8s 节点扩容建议"\n- "本周 CVE 周报"\n- "本月合规审计"\n\n**快捷键**：\n- `/` — 命令面板\n- `@` — 提及\n- `Enter` 发送 / `Shift+Enter` 换行\n- `Esc` 停止生成',
+      createdAt: new Date().toISOString(),
+    }),
+  },
+  {
     match: /^(hi|hello|你好|嗨)/i,
     reply: () => ({
       id: uid('m_'),
@@ -253,15 +361,16 @@ export function useChat(agentMeta?: { name: string }) {
       sessions: { [id]: sid },
       activeId: id,
       draftInput: '',
+      inputHistory: [],
       typing: false,
       abortRef: { current: null },
     };
   });
 
-  // 持久化（typing 状态不存）
+  // 持久化（typing / abortRef / inputHistory 不存）
   useEffect(() => {
     try {
-      const { typing, abortRef, ...rest } = state;
+      const { typing, abortRef, inputHistory, ...rest } = state;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(rest));
     } catch {}
   }, [state]);
@@ -297,6 +406,10 @@ export function useChat(agentMeta?: { name: string }) {
     const sess = state.sessions[id];
     if (sess) dispatch({ type: 'pin', id, pinned: !sess.pinned });
   }, [state.sessions]);
+  const toggleStar = useCallback((id: string) => {
+    const sess = state.sessions[id];
+    if (sess) dispatch({ type: 'star', id, starred: !sess.starred });
+  }, [state.sessions]);
 
   // 停止生成
   const stop = useCallback(() => dispatch({ type: 'stop_typing' }), []);
@@ -305,6 +418,9 @@ export function useChat(agentMeta?: { name: string }) {
   const send = useCallback((content: string) => {
     const text = content.trim();
     if (!text || !state.activeId) return;
+
+    // push 到输入历史
+    dispatch({ type: 'push_history', value: text });
 
     const userMsg: ChatMessageEx = {
       id: uid('m_'),
@@ -431,6 +547,7 @@ export function useChat(agentMeta?: { name: string }) {
     delSession,
     switchSession,
     togglePin,
+    toggleStar,
     send,
     stop,
     regenerate,

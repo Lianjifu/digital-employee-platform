@@ -588,7 +588,65 @@ a:focus-visible,
 }
 .react-flow__node { font-family: var(--font-sans); }
 
-/* ============ 工作流节点（自定义）============ */
+/* ============ Markdown 渲染 ============ */
+.md-content { line-height: 1.7; }
+.md-content .md-p { margin: 0 0 6px; }
+.md-content .md-p:last-child { margin-bottom: 0; }
+.md-content .md-bold { font-weight: 600; color: var(--text); }
+.md-content .md-em { font-style: italic; color: var(--text-secondary); }
+.md-content .md-code {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 0.85em;
+  color: var(--brand);
+}
+.md-content .md-link {
+  color: var(--brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.md-content .md-link:hover { color: var(--brand-hover); }
+.md-content .md-h { font-weight: 700; color: var(--text); margin: 8px 0 4px; }
+.md-content .md-h1 { font-size: 1.25em; }
+.md-content .md-h2 { font-size: 1.15em; }
+.md-content .md-h3 { font-size: 1.05em; }
+.md-content .md-h4 { font-size: 1em; }
+.md-content .md-h5, .md-content .md-h6 { font-size: 0.95em; }
+.md-content .md-quote {
+  border-left: 3px solid var(--brand);
+  padding: 4px 10px;
+  margin: 4px 0;
+  color: var(--text-secondary);
+  background: var(--brand-light);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.md-content .md-hr { border: 0; border-top: 1px solid var(--border); margin: 6px 0; }
+.md-content .md-ul, .md-content .md-ol { margin: 4px 0 6px 16px; padding-left: 8px; }
+.md-content .md-ul li, .md-content .md-ol li { margin: 2px 0; }
+.md-content .md-pre {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  margin: 6px 0;
+  overflow-x: auto;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+.md-content .md-pre-code { color: var(--text-secondary); white-space: pre-wrap; }
+.md-content .md-kw { color: var(--brand); font-weight: 600; }
+.md-content .md-str { color: var(--success); }
+.md-content .md-num { color: var(--purple); }
+.md-content .md-com { color: var(--text-muted); font-style: italic; }
+
+/* 用户消息里的 chat-bubble 去掉 pre 格式（用户内容通常不是 markdown） */
+.chat-bubble--user .md-content { line-height: 1.5; }
+.chat-bubble--user .md-content .md-p { margin: 0; }
+
+/* 工作流节点（自定义）============ */
 .wf-node {
   background: var(--surface-1);
   border: 1px solid var(--border);

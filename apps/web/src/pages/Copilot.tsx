@@ -39,6 +39,7 @@ import { cn } from '@de/web-utils';
 import { DualSignModal } from '@/components/DualSignModal';
 import { useChat } from '@/hooks/useChat';
 import { useT } from '@/i18n';
+import { Markdown } from '@/components/Markdown';
 
 interface ChatMessageEx {
   id: string;
@@ -115,6 +116,44 @@ export default function Copilot() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const historyIdx = useRef(0);
+
+  // todo 8: 上下方向键切换输入历史
+  const onTextareaKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+      historyIdx.current = 0;
+      return;
+    }
+    if (e.key === 'Escape' && chat.state.typing) {
+      chat.stop();
+      return;
+    }
+    const ta = e.currentTarget;
+    if (e.key === 'ArrowUp' && ta.selectionStart === 0 && ta.value !== '' && chat.state.inputHistory.length > 0) {
+      e.preventDefault();
+      const hist = chat.state.inputHistory;
+      const next = Math.min(hist.length, historyIdx.current + 1);
+      if (next > 0 && next <= hist.length) {
+        historyIdx.current = next;
+        chat.setDraft(hist[next - 1]);
+      }
+    } else if (e.key === 'ArrowDown' && ta.selectionEnd === ta.value.length && historyIdx.current > 0) {
+      e.preventDefault();
+      const hist = chat.state.inputHistory;
+      historyIdx.current -= 1;
+      chat.setDraft(historyIdx.current === 0 ? '' : hist[historyIdx.current - 1]);
+    }
+  };
+
+  // todo 10: 分享会话
+  const shareSession = () => {
+    if (!currentSession) return;
+    const url = `${window.location.origin}/copilot?session=${currentSession.id}`;
+    try { navigator.clipboard.writeText(url); } catch {}
+    alert(`分享链接已复制：\n${url}`);
+  };
 
   // 分组的 slash 命令
   const slashGrouped = useMemo(() => {
@@ -317,17 +356,28 @@ export default function Copilot() {
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               <button
+                onClick={() => currentSession && chat.toggleStar(currentSession.id)}
+                className={cn(
+                  'grid h-8 w-8 place-items-center rounded-md transition-colors',
+                  currentSession?.starred ? 'text-amber-500 bg-amber-500/10' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]',
+                )}
+                title="星标会话"
+                aria-label="星标会话"
+              >
+                <Star className={cn('h-4 w-4', currentSession?.starred && 'fill-current')} />
+              </button>
+              <button
                 onClick={() => currentSession && chat.togglePin(currentSession.id)}
                 className={cn(
                   'grid h-8 w-8 place-items-center rounded-md transition-colors',
                   currentSession?.pinned ? 'text-amber-500 bg-amber-500/10' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]',
                 )}
-                title="置顶"
+                title="置顶（双击侧栏会话）"
                 aria-label="置顶"
               >
-                <Star className={cn('h-4 w-4', currentSession?.pinned && 'fill-current')} />
+                <Pin className={cn('h-4 w-4', currentSession?.pinned && 'fill-current')} />
               </button>
-              <button className="grid h-8 w-8 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)]" title="分享" aria-label="分享">
+              <button onClick={shareSession} className="grid h-8 w-8 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)]" title="分享" aria-label="分享">
                 <Share2 className="h-4 w-4" />
               </button>
               <Button variant="secondary" size="sm">
@@ -481,14 +531,7 @@ export default function Copilot() {
               ref={inputRef}
               value={chat.state.draftInput}
               onChange={(e) => onInputChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                } else if (e.key === 'Escape' && chat.state.typing) {
-                  chat.stop();
-                }
-              }}
+              onKeyDown={onTextareaKey}
               placeholder="输入问题，/ 唤起命令 · @ 提及对象（Shift+Enter 换行 · Esc 停止）"
               rows={2}
               className="w-full resize-none bg-transparent px-3 py-2.5 text-sm outline-none placeholder:text-[var(--text-muted)]"
@@ -779,7 +822,11 @@ function MessageBubble({
 
         {!isEmpty && (
           <div className={cn(isUser ? 'chat-bubble chat-bubble--user' : isTool ? 'chat-bubble chat-bubble--tool' : 'chat-bubble')}>
-            <span className="whitespace-pre-wrap">{m.content}</span>
+            {isUser ? (
+              <span className="whitespace-pre-wrap">{m.content}</span>
+            ) : (
+              <Markdown text={m.content} />
+            )}
             {m.content.length === 0 && (
               <span className="inline-flex items-center gap-1 text-[var(--text-muted)]">
                 <Loader2 className="h-3 w-3 animate-spin" />
