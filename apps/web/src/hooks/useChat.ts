@@ -86,8 +86,10 @@ function reducer(s: State, a: Action): State {
       return { ...s, sessions: { ...s.sessions, [a.id]: { ...s.sessions[a.id], pinned: a.pinned } } };
     case 'star':
       return { ...s, sessions: { ...s.sessions, [a.id]: { ...s.sessions[a.id], starred: a.starred } } };
-    case 'push_history':
-      return { ...s, inputHistory: [a.value, ...s.inputHistory.filter((x) => x !== a.value)].slice(0, 20) };
+    case 'push_history': {
+      const prev = s.inputHistory ?? [];
+      return { ...s, inputHistory: [a.value, ...prev.filter((x) => x !== a.value)].slice(0, 20) };
+    }
     case 'append_msg': {
       const sess = s.sessions[a.sid];
       if (!sess) return s;
@@ -333,7 +335,15 @@ export function useChat(agentMeta?: { name: string }) {
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         const parsed = JSON.parse(stored);
-        if (parsed && parsed.sessions) return { ...parsed, typing: false, abortRef: { current: null } };
+        if (parsed && parsed.sessions) {
+          // 清理旧字段，强制默认值
+          return {
+            ...parsed,
+            inputHistory: parsed.inputHistory ?? [],
+            typing: false,
+            abortRef: { current: null },
+          };
+        }
       }
     } catch {}
     // 创建默认会话
