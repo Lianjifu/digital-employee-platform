@@ -393,7 +393,7 @@ export default function Copilot() {
         </header>
 
         {/* 消息流 */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-5 space-y-5">
           {currentSession && currentSession.messages.length > 0 ? (
             <>
               <div className="flex items-center gap-3">

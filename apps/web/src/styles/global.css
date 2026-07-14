@@ -590,6 +590,10 @@ a:focus-visible,
 
 /* ============ Markdown 渲染 ============ */
 .md-content { line-height: 1.7; }
+
+/* 消息流容器防抖动 */
+.flex-1\.overflow-y-auto { -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.flex-1\.overflow-y-auto > * { backface-visibility: hidden; -webkit-backface-visibility: hidden; transform: translateZ(0); -webkit-transform: translateZ(0); }
 .md-content .md-p { margin: 0 0 6px; }
 .md-content .md-p:last-child { margin-bottom: 0; }
 .md-content .md-bold { font-weight: 600; color: var(--text); }
