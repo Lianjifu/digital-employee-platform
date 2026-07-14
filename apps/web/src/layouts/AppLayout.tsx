@@ -208,7 +208,7 @@ export function AppLayout() {
               {!sidebarCollapsed && (
                 <>
                   <span className="flex-1 truncate">{t(item.i18n)}</span>
-                  <span className="text-[10px] font-mono text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]">
+                  <span className="text-[10px] font-mono text-[var(--text-muted)] group-hover:text-[var(--text-secondary)] shrink-0">
                     {item.code}
                   </span>
                 </>
