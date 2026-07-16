@@ -51,7 +51,7 @@ export default function App() {
             <Route path="/tasks" element={<ErrorBoundary><Tasks /></ErrorBoundary>} />
             <Route path="/workspaces" element={<ErrorBoundary><Workspaces /></ErrorBoundary>} />
             <Route path="/agents" element={<ErrorBoundary><Agents /></ErrorBoundary>} />
-            <Route path="/workflows" element={<ErrorBoundary><Workflows /></ErrorBoundary>} />
+            <Route path="/workflows" element={<ProtectedRoute permission="workflow.read"><ErrorBoundary><Workflows /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/knowledge" element={<ErrorBoundary><Knowledge /></ErrorBoundary>} />
             <Route path="/skills" element={<ErrorBoundary><Skills /></ErrorBoundary>} />
             <Route path="/models" element={<ErrorBoundary><Models /></ErrorBoundary>} />

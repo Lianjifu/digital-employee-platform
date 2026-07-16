@@ -122,6 +122,10 @@ export const mockHomeExtra: HomeExtra = {
     { id: 'sl2', level: 'P1', text: 'K8s 节点扩容审批超时（原计划 15:00 完成）', time: '15 min 前', assignee: '李婷', taskCode: 'TSK-20260713-002' },
     { id: 'sl3', level: 'P1', text: 'CVE-2026-3321 修复已 32 天待处理', time: '32 min 前', assignee: '张睿', taskCode: 'TSK-20260712-019' },
     { id: 'sl4', level: 'P2', text: 'K8s 节点扩容申请待审（影响 5 个服务）', time: '1h 前', assignee: '王昊', taskCode: 'TSK-20260713-004' },
+    { id: 'sl5', level: 'P2', text: 'API 网关证书将在 3 天后到期，待完成轮换', time: '2h 前', assignee: '孙博', taskCode: 'TSK-20260712-018' },
+    { id: 'sl6', level: 'P1', text: '生产数据库备份延迟超过 30 分钟', time: '4h 前', assignee: '陈雪', taskCode: 'TSK-20260711-011' },
+    { id: 'sl7', level: 'P2', text: 'Prometheus 监控规则同步失败，影响 6 个服务', time: '昨天 18:40', assignee: '赵明', taskCode: 'TSK-20260711-007' },
+    { id: 'sl8', level: 'P3', text: '外协沙箱访问策略将在本周五复核', time: '2 天前', assignee: '周慧', taskCode: 'TSK-20260710-003' },
   ],
   costMonth: { used: 1240, budget: 5000, daily: [22, 28, 31, 35, 30, 27, 25] },
   roleDistribution: [
@@ -915,6 +919,8 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
           permissions: [
             'workspace.read',
             'agent.read',
+            'workflow.read',
+            'workflow.write',
             'workflow.execute',
             'knowledge.read',
             'skill.execute',
