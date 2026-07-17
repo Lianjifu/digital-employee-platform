@@ -13,13 +13,12 @@
  * 10. SLA 告警实时滚动列表 + 一键 ACK
  * 11. 团队成员 + 角色分布柱图
  * 12. 本月成本仪表 + 7 天趋势
- * 13. 快捷链接面板
- * 14. 建议（自动诊断）
+ * 13. 建议（自动诊断）
  */
-import { useEffect, useState, useMemo } from 'react';
-import { Link } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import { useApiQuery } from '@/services/query';
-import { Badge, Button, Progress, Avatar, Dot } from '@de/web-ui';
+import { Badge, Button, Avatar, Input } from '@de/web-ui';
 import { PageSkeleton } from '@/components/PageSkeleton';
 import {
   Pause, BarChart3, Plus, MessageSquare, ListChecks, Bot, AlertTriangle,
@@ -27,18 +26,18 @@ import {
   User as UserIcon, Wrench, ShieldCheck, Sparkles, Users, ChevronRight,
   AlertCircle, Volume2, Database, Search, Cpu, Workflow, Settings,
   Check, Zap, BellRing, BellOff, TrendingDown, X, Eye, ArrowUp,
-  ArrowDown, Target, DollarSign, PieChart, Lightbulb, ChevronUp,
+  ArrowDown, Target, PieChart, Lightbulb, ChevronUp,
   MessageSquare as ChatIcon, Inbox,
 } from 'lucide-react';
 import {
   AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid,
-  BarChart, Bar, PieChart as RePieChart, Pie, Cell, LineChart, Line, RadialBarChart, RadialBar,
+  BarChart, Bar, PieChart as RePieChart, Pie, Cell, LineChart, Line, Legend, RadialBarChart, RadialBar,
 } from 'recharts';
 import { cn, relativeTime } from '@de/web-utils';
 import type { Task } from '@de/web-types';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
+import { EmptyState, Sparkline, Modal as ModalX } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
-import { useT } from '@/i18n';
 
 const TONE_MAP: Record<string, 'success' | 'warn' | 'info' | 'error' | 'brand'> = {
   success: 'success', warn: 'warn', info: 'info', danger: 'error', error: 'error',
@@ -48,7 +47,7 @@ const ICON_MAP: Record<string, any> = {
   AlertTriangle, CheckCircle2, Sparkles, Activity, Bot, Wrench,
   MessageSquare, ListChecks, Clock, ShieldCheck, Database, Search,
   Cpu, Workflow, Settings, AlertCircle, Volume2, FileText, Users,
-  Plus, BarChart3, Zap, Target, DollarSign, Inbox, ChatIcon, PieChart,
+  Plus, BarChart3, Zap, Target, Inbox, ChatIcon, PieChart,
 };
 
 function getGreeting() {
@@ -58,6 +57,10 @@ function getGreeting() {
   if (h < 14) return '中午好';
   if (h < 18) return '下午好';
   return '晚上好';
+}
+
+function stableId(value: string) {
+  return Array.from(value).reduce((hash, char) => ((hash * 31) + char.charCodeAt(0)) >>> 0, 7).toString(36);
 }
 
 function useNow() {
@@ -84,110 +87,164 @@ function useCountdown(targetSec: number) {
   return { text: h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`, raw: sec, expired: sec <= 0 };
 }
 
+function useSlaRotation(alerts: any[]) {
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [paused, setPaused] = useState(false);
+  const [reduceMotion, setReduceMotion] = useState(
+    () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+  );
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const alertIds = alerts.map((alert) => alert.id).join('|');
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => setReduceMotion(mediaQuery.matches);
+    update();
+    mediaQuery.addEventListener?.('change', update);
+    mediaQuery.addListener?.(update);
+    return () => {
+      mediaQuery.removeEventListener?.('change', update);
+      mediaQuery.removeListener?.(update);
+    };
+  }, []);
+
+  useEffect(() => {
+    setActiveIndex((index) => alerts.length === 0 ? 0 : Math.min(index, alerts.length - 1));
+  }, [alertIds, alerts.length]);
+
+  useEffect(() => {
+    if (reduceMotion || paused || alerts.length < 2) return undefined;
+    const timer = window.setInterval(() => {
+      setActiveIndex((index) => (index + 1) % alerts.length);
+    }, 4200);
+    return () => window.clearInterval(timer);
+  }, [alertIds, alerts.length, paused, reduceMotion]);
+
+  useEffect(() => {
+    const item = viewportRef.current?.querySelector<HTMLElement>(`[data-alert-index="${activeIndex}"]`);
+    const viewport = viewportRef.current;
+    if (!item || !viewport) return;
+
+    viewport.scrollTo({
+      top: item.offsetTop,
+      behavior: reduceMotion ? 'auto' : 'smooth',
+    });
+  }, [activeIndex, reduceMotion]);
+
+  return {
+    activeIndex,
+    reduceMotion,
+    viewportRef,
+    pause: () => setPaused(true),
+    resume: () => setPaused(false),
+  };
+}
+
+const AGENT_TREND_COLORS = [
+  'var(--chart-info)',
+  'var(--chart-success)',
+  'var(--chart-warning)',
+  'var(--chart-purple)',
+  'var(--brand)',
+  'var(--chart-neutral)',
+  'var(--danger)',
+  'var(--text-secondary)',
+];
+
+function buildAgentTrendData(agentTrend: Record<string, number[]>) {
+  const agents = Object.keys(agentTrend);
+  const rows = Array.from({ length: 7 }, (_, dayIndex) => {
+    const row: Record<string, string | number> = { day: `D-${6 - dayIndex}` };
+    agents.forEach((agent) => {
+      const values = agentTrend[agent] ?? [];
+      const peak = Math.max(...values, 0);
+      row[agent] = peak > 0 ? Math.round(((values[dayIndex] ?? 0) / peak) * 100) : 0;
+    });
+    return row;
+  });
+  return { agents, rows };
+}
+
 export default function Home() {
-  const { t } = useT();
+  const navigate = useNavigate();
   const now = useNow();
   const greeting = getGreeting();
 
+  // 快速创建入口 state（纯前端演示）
+  const [quickOpen, setQuickOpen] = useState<null | 'task' | 'session' | 'agent'>(null);
+  const [taskTitle, setTaskTitle] = useState('');
+  const [taskPriority, setTaskPriority] = useState<'P0' | 'P1' | 'P2' | 'P3'>('P1');
+
   const { data: tasks, isLoading: lTasks } = useApiQuery<Task[]>(['home', 'tasks'], '/api/tasks');
-  const { data: extra, isLoading: lExtra } = useApiQuery<any>(['home', 'extra'], '/api/home/extra');
+  const { data: extra, isLoading: lExtra, isFetching: fetchingExtra, refetch: refetchExtra } = useApiQuery<any>(['home', 'extra'], '/api/home/extra');
   const { data: team, isLoading: lTeam } = useApiQuery<any[]>(['home', 'team'], '/api/home/team');
-  const { data: alerts, isLoading: lAlerts } = useApiQuery<any[]>(['home', 'alerts'], '/api/home/alerts');
   const { current } = useWorkspaceStore();
   const { user } = useAuthStore();
 
-  // 通知条已读态
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
-  const ackAll = () => {
+  const [ackedAlertIds, setAckedAlertIds] = useState<Set<string>>(new Set());
+  const ackAllNotifications = () => {
     setReadIds(new Set((extra?.notifications ?? []).map((n: any) => n.id)));
   };
+  const ackAllAlerts = () => {
+    setAckedAlertIds(new Set((extra?.slaAlerts ?? []).map((a: any) => a.id)));
+  };
 
-  if (lTasks && lExtra && lTeam && lAlerts) {
+  if (lTasks && lExtra && lTeam) {
     return <PageSkeleton />;
   }
 
   const inProgress = (tasks ?? []).filter((t) => t.status === 'in_progress').slice(0, 4);
-  const review = (tasks ?? []).filter((t) => t.status === 'review');
-  const completed = (tasks ?? []).filter((t) => t.status === 'completed');
+  const agentSummary = extra?.agentCallSummary;
+  const agentCount = (agentSummary?.healthy ?? 0) + (agentSummary?.warning ?? 0) + (agentSummary?.offline ?? 0);
+  const healthScore = agentCount > 0 ? Math.round(((agentSummary?.healthy ?? 0) / agentCount) * 100) : null;
 
-  const healthScore = extra?.agentCallSummary
-    ? Math.round((extra.agentCallSummary.healthy / 8) * 100)
-    : 75;
-
-  // 任务完成度（环形图数据）
-  const tc = extra?.taskCompletion ?? { done: 18, doing: 14, review: 5, todo: 9 };
+  const tc = extra?.taskCompletion ?? { done: 0, doing: 0, review: 0, todo: 0 };
   const tcTotal = tc.done + tc.doing + tc.review + tc.todo;
-  const tcDonePct = (tc.done / tcTotal) * 100;
+  const tcDonePct = tcTotal > 0 ? (tc.done / tcTotal) * 100 : 0;
   const ringData = [
-    { name: '已完成', value: tc.done, fill: '#10b981' },
-    { name: '进行中', value: tc.doing, fill: '#3b82f6' },
-    { name: '待复核', value: tc.review, fill: '#f59e0b' },
-    { name: '待办', value: tc.todo, fill: '#64748b' },
+    { name: '已完成', value: tc.done, fill: 'var(--chart-success)' },
+    { name: '进行中', value: tc.doing, fill: 'var(--chart-info)' },
+    { name: '待复核', value: tc.review, fill: 'var(--chart-warning)' },
+    { name: '待办', value: tc.todo, fill: 'var(--chart-neutral)' },
   ];
 
-  // 24h 健康度数据
   const healthData = (extra?.healthTrend24h ?? []).map((v: number, i: number) => ({
     time: `${String(i).padStart(2, '0')}:00`,
     health: v,
-    apiP95: 580 + Math.round(Math.cos(i / 4) * 80 + Math.random() * 50),
-    taskRate: 85 + Math.round(Math.sin(i / 5) * 8 + Math.random() * 5),
+    apiP95: 580 + Math.round(Math.cos(i / 4) * 80),
+    taskRate: 85 + Math.round(Math.sin(i / 5) * 8),
   }));
-
-  // 7 天成本
-  const costData = (extra?.costMonth?.daily ?? []).map((v: number, i: number) => ({
-    day: `D${i + 1}`,
-    cost: v,
-  }));
-
-  // 角色分布
   const roleData = extra?.roleDistribution ?? [];
-
-  // 未读通知
+  const visibleAlerts = (extra?.slaAlerts ?? []).filter((a: any) => !ackedAlertIds.has(a.id));
   const unreadCount = (extra?.notifications ?? []).filter(
     (n: any) => n.unread && !readIds.has(n.id),
   ).length;
+  const chartTheme = {
+    grid: 'var(--chart-grid)',
+    tooltipBackground: 'var(--surface-1)',
+    tooltipBorder: 'var(--border)',
+    tooltipText: 'var(--text)',
+  };
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto bg-[var(--bg-elevated)]">
+    <div className="home-shell flex flex-col min-h-full bg-[var(--bg-elevated)]">
       {/* ============ 顶部 Hero + 实时时间 ============ */}
-      <div className="relative px-6 pt-5 md:px-8 md:pt-6">
-        <div className="flex items-start justify-between flex-wrap gap-3">
-          <div>
-            <h1 className="text-[24px] md:text-[28px] font-bold tracking-tight">
-              <span className="text-[var(--text-muted)] font-normal mr-2">{greeting}，</span>
-              <span className="text-gradient">{user?.name ?? '管理员'}</span>
-              <span className="ml-2">👋</span>
-            </h1>
-            <p className="page-header__sub">
-              {current?.name ?? 'ACME 生产'} · {current?.region ?? 'cn-east-1'} ·{' '}
-              <span className="text-[var(--text-secondary)]">今日 {tasks?.length ?? 38} 任务</span> ·{' '}
-              <span className="text-[var(--text-secondary)]">8 Agent 在线</span> ·{' '}
-              <span className="text-[var(--text-secondary)]">18 成员</span> ·{' '}
-              <span className="text-[var(--success)]">99.4% SLA</span> ·{' '}
-              <span className="text-[var(--brand)]">$1.24k / $5k</span>
-              <span className="ml-2 font-mono text-[var(--text-muted)]">
-                {now.toLocaleTimeString('zh-CN', { hour12: false })}
-              </span>
-            </p>
-          </div>
-          <div className="page-header__actions flex items-center gap-2">
-            <Button variant="secondary" size="md">
-              <Pause className="h-3.5 w-3.5" />暂停服务
-            </Button>
-            <Button variant="secondary" size="md">
-              <BarChart3 className="h-3.5 w-3.5" />查看报表
-            </Button>
-            <Button variant="primary" size="md">
-              <Plus className="h-3.5 w-3.5" />新建任务
-            </Button>
-          </div>
+      <div className="home-hero relative px-6 pt-5 md:px-8 md:pt-6">
+        <div className="home-hero__layout">
+        <div className="home-hero__content">
+          <h1 className="home-hero__title">
+            <span className="text-gradient">数字员工运营中枢</span>
+            <span className="home-hero__greeting">{greeting}，{user?.name ?? '管理员'}</span>
+          </h1>
         </div>
+      </div>
       </div>
 
       {/* ============ Todo 2: 实时通知条（顶部） ============ */}
       {unreadCount > 0 && (
-        <div className="mx-6 md:mx-8 mt-4">
-          <div className="flex items-center gap-2 rounded-lg border border-[var(--brand)]/30 bg-[var(--brand-light)] px-3 py-2 text-xs">
+        <div className="home-banner mx-6 md:mx-8 mt-4">
+          <div className="home-banner flex items-center gap-2 rounded-lg border border-[var(--brand)]/30 bg-[var(--brand-light)] px-3 py-2 text-xs">
             <BellRing className="h-3.5 w-3.5 text-[var(--brand)] animate-pulse" />
             <span className="text-[var(--brand)] font-semibold">{unreadCount} 条未读通知</span>
             <span className="text-[var(--text-muted)] truncate flex-1">
@@ -196,69 +253,61 @@ export default function Home() {
                 <span className="text-[var(--text-muted)]"> · {extra?.notifications?.find((n: any) => n.unread && !readIds.has(n.id))?.detail}</span>
               )}
             </span>
-            <Button size="sm" variant="secondary" onClick={ackAll}>
+            <Button size="sm" variant="secondary" onClick={ackAllNotifications}>
               <Check className="h-3 w-3" />全部已读
             </Button>
           </div>
         </div>
       )}
 
-      {/* ============ 6 KPI 卡（可点击跳转）============ */}
-      <div className="px-6 md:px-8 mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Link to="/tasks" className="block cursor-pointer group">
-          <KpiCard tone="brand" label="今日任务" value={38} unit="次" delta={{ v: 12, dir: 'up' }} sparkline={[5, 8, 6, 9, 11, 10, 12]} prev="昨日 26 · P0×2 P1×5" />
-        </Link>
-        <Link to="/home" className="block cursor-pointer group">
-          <KpiCard tone="success" label="系统健康度" value={98.4} unit="%" delta={{ v: 0.3, dir: 'up' }} sparkline={extra?.healthTrend24h?.slice(-7) ?? [95, 96, 98, 97, 99, 100, 99]} prev="18/19 服务正常 · 1 故障" />
-        </Link>
-        <Link to="/agents" className="block cursor-pointer group">
-          <KpiCard tone="success" label="AI 调用量" value="8.2k" unit="次/日" delta={{ v: 18, dir: 'up' }} sparkline={[120, 180, 220, 190, 240, 280, 310]} prev="8,180 成功 · 240 失败" />
-        </Link>
-        <Link to="/models" className="block cursor-pointer group">
-          <KpiCard tone="purple" label="Token 用量" value="12.4M" unit="tokens" delta={{ v: 6, dir: 'up' }} sparkline={[10, 12, 11, 13, 14, 12.4, 12.4]} prev="8.4M 输入 / 2.8M 输出" />
-        </Link>
-        <Link to="/copilot" className="block cursor-pointer group">
-          <KpiCard tone="warning" label="P95 响应" value={680} unit="ms" delta={{ v: -8, dir: 'down' }} sparkline={[720, 700, 690, 680, 670, 660, 680]} prev="API 680 / Agent 1100 / RAG 320" />
-        </Link>
-        <Link to="/tasks" className="block cursor-pointer group">
-          <KpiCard tone="error" label="SLA 告警" value={3} unit="件" delta={{ v: 1, dir: 'up' }} sparkline={[1, 0, 2, 1, 0, 2, 3]} prev="1 P0 · 2 P1 · 8min 响应" threshold={{ warn: 3, error: 10 }} />
-        </Link>
+      {/* ============ 快速创建入口 ============ */}
+      <div className="home-quick px-6 md:px-8 mt-3 flex items-center gap-2 flex-wrap">
+        <span className="text-[11px] text-[var(--text-muted)] mr-1">快速创建</span>
+        <Button size="sm" onClick={() => setQuickOpen('task')}>
+          <Plus className="h-3.5 w-3.5" />任务
+        </Button>
+        <Button size="sm" variant="secondary" onClick={() => navigate('/copilot')}>
+          <MessageSquare className="h-3.5 w-3.5" />会话
+        </Button>
+        <Button size="sm" variant="secondary" onClick={() => navigate('/agents')}>
+          <Bot className="h-3.5 w-3.5" />Agent
+        </Button>
+        <Button size="sm" variant="ghost" onClick={() => navigate('/workflows')}>
+          <Workflow className="h-3.5 w-3.5" />工作流
+        </Button>
       </div>
 
-      {/* ============ 快捷入口 + 健康度评分（Todo 5 增强） ============ */}
-      <div className="px-6 md:px-8 pt-5 grid grid-cols-1 lg:grid-cols-[2fr_1fr] gap-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          {[
-            { to: '/copilot', icon: MessageSquare, iconClass: 'quick-entry__icon--brand', title: '发起会话', desc: `与故障自愈 v1.4.2 对话` },
-            { to: '/tasks', icon: ListChecks, iconClass: 'quick-entry__icon--success', title: '查看任务', desc: `${inProgress.length} 进行中 · 5 待复核` },
-            { to: '/agents', icon: Bot, iconClass: 'quick-entry__icon--warning', title: '管理 Agent', desc: '8 在线 · 1 告警 · 0 离线' },
-            { to: '/home', icon: AlertTriangle, iconClass: 'quick-entry__icon--danger', title: '告警中心', desc: `${extra?.slaAlerts?.length ?? 3} P0/P1 · 1 临近超时` },
-          ].map((q) => (
-            <Link
-              key={q.title}
-              to={q.to}
-              className="quick-entry__item transition-transform hover:-translate-y-0.5"
-            >
-              <div className={cn('quick-entry__icon', q.iconClass)}>
-                <q.icon className="h-5 w-5" />
-              </div>
-              <div className="quick-entry__content">
-                <div className="quick-entry__title">{q.title}</div>
-                <div className="quick-entry__desc">{q.desc}</div>
-              </div>
-              <ArrowRight className="quick-entry__arrow h-4 w-4" />
-            </Link>
-          ))}
-        </div>
+      {/* ============ 6 KPI 卡（可点击跳转）============ */}
+      <div className="home-metrics px-6 md:px-8 mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <button type="button" onClick={() => navigate('/tasks')} className="block cursor-pointer group text-left w-full">
+          <KpiCard tone="brand" label="今日任务" value={tasks?.length ?? 0} unit="次" delta={{ v: 12, dir: 'up' }} sparkline={[5, 8, 6, 9, 11, 10, 12]} prev={`${inProgress.length} 进行中 · ${tc.done} 已完成`} />
+        </button>
+        <button type="button" onClick={() => navigate('/agents')} className="block cursor-pointer group text-left w-full">
+          <KpiCard tone="success" label="系统健康度" value={healthScore == null ? '--' : healthScore} unit={healthScore == null ? undefined : '%'} delta={healthScore == null ? undefined : { v: 0.3, dir: 'up' }} sparkline={extra?.healthTrend24h?.slice(-7) ?? []} prev={`${agentSummary?.healthy ?? 0}/${agentCount} Agent 健康`} />
+        </button>
+        <button type="button" onClick={() => navigate('/agents')} className="block cursor-pointer group text-left w-full">
+          <KpiCard tone="success" label="AI 调用量" value={(agentSummary?.total ?? 0).toLocaleString()} unit="次/日" delta={{ v: 18, dir: 'up' }} sparkline={[120, 180, 220, 190, 240, 280, 310]} prev={`${agentSummary?.healthy ?? 0} 健康 Agent · ${agentSummary?.warning ?? 0} 告警`} />
+        </button>
+        <button type="button" onClick={() => navigate('/models')} className="block cursor-pointer group text-left w-full">
+          <KpiCard tone="purple" label="Token 用量" value="12.4M" unit="tokens" delta={{ v: 6, dir: 'up' }} sparkline={[10, 12, 11, 13, 14, 12.4, 12.4]} prev="8.4M 输入 / 2.8M 输出" />
+        </button>
+        <button type="button" onClick={() => navigate('/copilot')} className="block cursor-pointer group text-left w-full">
+          <KpiCard tone="warning" label="P95 响应" value={healthData[healthData.length - 1]?.apiP95 ?? '--'} unit="ms" delta={{ v: -8, dir: 'down' }} sparkline={healthData.slice(-7).map((d: { apiP95: number }) => d.apiP95)} prev="API 网关 · 近 24h 稳定趋势" />
+        </button>
+        <button type="button" onClick={() => navigate('/tasks')} className="block cursor-pointer group text-left w-full">
+          <KpiCard tone="error" label="SLA 告警" value={visibleAlerts.length} unit="件" delta={visibleAlerts.length > 0 ? { v: 1, dir: 'up' } : undefined} sparkline={[1, 0, 2, 1, 0, 2, visibleAlerts.length]} prev={`${visibleAlerts.filter((a: any) => a.level === 'P0').length} P0 · ${visibleAlerts.filter((a: any) => a.level === 'P1').length} P1`} threshold={{ warn: 3, error: 10 }} />
+        </button>
+      </div>
 
-        {/* Todo 5: 健康度评分 + 诊断建议 */}
-        <div className="rounded-xl border border-[var(--border)] bg-gradient-to-br from-[var(--brand-light)] to-[var(--purple-bg)] p-4">
+      {/* ============ 健康度评分 ============ */}
+      <div className="home-feature-row px-6 md:px-8 pt-5">
+        <div className="home-health-card chart-card">
           <div className="flex items-start gap-4">
             <div className="relative h-20 w-20 shrink-0">
               <ResponsiveContainer width="100%" height="100%">
-                <RadialBarChart cx="50%" cy="50%" innerRadius="70%" outerRadius="100%" barSize={6} data={[{ name: 'h', value: healthScore, fill: 'url(#g)' }]} startAngle={90} endAngle={-270}>
+                <RadialBarChart cx="50%" cy="50%" innerRadius="70%" outerRadius="100%" barSize={6} data={[{ name: 'h', value: healthScore ?? 0, fill: 'url(#health-score-gradient)' }]} startAngle={90} endAngle={-270}>
                   <defs>
-                    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+                    <linearGradient id="health-score-gradient" x1="0" y1="0" x2="1" y2="1">
                       <stop offset="0%" stopColor="#10b981" />
                       <stop offset="100%" stopColor="#3b82f6" />
                     </linearGradient>
@@ -268,7 +317,7 @@ export default function Home() {
               </ResponsiveContainer>
               <div className="absolute inset-0 grid place-items-center">
                 <div className="text-center">
-                  <div className="text-xl font-bold font-mono text-[var(--success)] leading-none">{healthScore}</div>
+                  <div className="text-xl font-bold font-mono text-[var(--success)] leading-none">{healthScore == null ? '--' : healthScore}</div>
                   <div className="text-[9px] text-[var(--text-muted)]">/ 100</div>
                 </div>
               </div>
@@ -295,9 +344,9 @@ export default function Home() {
       </div>
 
       {/* ============ 图表行：完成度环 + 24h 健康 + Agent 趋势 ============ */}
-      <div className="px-6 md:px-8 pt-5 grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="home-panels px-6 md:px-8 pt-5 grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Todo 4: 任务完成度环 */}
-        <Link to="/tasks" className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4 block hover:border-[var(--brand)] transition-all group">
+        <Link to="/tasks" className="chart-card chart-card--interactive block">
           <div className="flex items-center justify-between mb-2">
             <div className="text-xs font-semibold flex items-center gap-1.5">
               <Target className="h-3.5 w-3.5" />今日任务完成度
@@ -335,44 +384,47 @@ export default function Home() {
         </Link>
 
         {/* Todo 6: 24h 健康度趋势 */}
-        <Link to="/home" className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4 block lg:col-span-2 hover:border-[var(--brand)] transition-all group">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-xs font-semibold flex items-center gap-1.5">
-              <Activity className="h-3.5 w-3.5" />24h 系统健康度趋势
-              <span className="text-[9px] text-[var(--brand)] group-hover:underline ml-1">刷新</span>
+        <div className="chart-card chart-card--interactive lg:col-span-2">
+          <div className="list-card__header">
+            <div className="list-card__title">
+              <Activity className="h-4 w-4 text-[var(--text-muted)]" />24h 系统运行趋势
+              <span className="text-[10px] text-[var(--text-muted)]">{fetchingExtra ? '更新中…' : `更新于 ${now.toLocaleTimeString('zh-CN', { hour12: false })}`}</span>
             </div>
-            <div className="flex items-center gap-2 text-[10px]">
-              <span className="flex items-center gap-0.5"><span className="h-1.5 w-1.5 rounded-full bg-[var(--success)]" />健康度</span>
-              <span className="flex items-center gap-0.5"><span className="h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />API P95</span>
-              <span className="flex items-center gap-0.5"><span className="h-1.5 w-1.5 rounded-full bg-[var(--purple)]" />任务率</span>
-            </div>
+            <button type="button" onClick={() => refetchExtra()} className="chart-card__action" disabled={fetchingExtra}>
+              <Activity className={cn('h-3 w-3', fetchingExtra && 'animate-spin')} />刷新
+            </button>
           </div>
-          <ResponsiveContainer width="100%" height={140}>
-            <AreaChart data={healthData}>
-              <defs>
-                <linearGradient id="hg1" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#10b981" stopOpacity={0.4} />
-                  <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="hg2" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#3b82f6" stopOpacity={0} />
-                </linearGradient>
-                <linearGradient id="hg3" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#a78bfa" stopOpacity={0.3} />
-                  <stop offset="100%" stopColor="#a78bfa" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <CartesianGrid stroke="#1a2540" strokeDasharray="3 3" />
-              <Area type="monotone" dataKey="health" stroke="#10b981" strokeWidth={2} fill="url(#hg1)" />
-              <Area type="monotone" dataKey="apiP95" stroke="#3b82f6" strokeWidth={1.5} fill="url(#hg2)" />
-              <Area type="monotone" dataKey="taskRate" stroke="#a78bfa" strokeWidth={1.5} fill="url(#hg3)" />
-              <XAxis dataKey="time" hide />
-              <YAxis hide />
-              <Tooltip contentStyle={{ background: '#131a2d', border: '1px solid #2a3654', borderRadius: 6, fontSize: 11 }} />
-            </AreaChart>
-          </ResponsiveContainer>
-        </Link>
+          {healthData.length === 0 ? (
+            <EmptyState icon={TrendingUp} title="暂无 24h 趋势数据" description="系统刚启动或数据采集中" />
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              {[
+                { key: 'health', label: '健康度', unit: '%', color: 'var(--chart-success)', gradient: 'health-trend-gradient', data: healthData.map((d: { time: string; health: number }) => ({ time: d.time, value: d.health })) },
+                { key: 'apiP95', label: 'API P95', unit: 'ms', color: 'var(--chart-info)', gradient: 'api-trend-gradient', data: healthData.map((d: { time: string; apiP95: number }) => ({ time: d.time, value: d.apiP95 })) },
+                { key: 'taskRate', label: '任务率', unit: '%', color: 'var(--chart-purple)', gradient: 'task-trend-gradient', data: healthData.map((d: { time: string; taskRate: number }) => ({ time: d.time, value: d.taskRate })) },
+              ].map((metric) => (
+                <div key={metric.key} className="trend-mini-card">
+                  <div className="trend-mini-card__header"><span>{metric.label}</span><strong>{metric.data[metric.data.length - 1]?.value ?? '--'}{metric.unit}</strong></div>
+                  <ResponsiveContainer width="100%" height={82}>
+                    <AreaChart data={metric.data}>
+                      <defs>
+                        <linearGradient id={metric.gradient} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor={metric.color} stopOpacity={0.35} />
+                          <stop offset="100%" stopColor={metric.color} stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+                      <Area type="monotone" dataKey="value" stroke={metric.color} strokeWidth={1.8} fill={`url(#${metric.gradient})`} />
+                      <XAxis dataKey="time" hide />
+                      <YAxis hide domain={['auto', 'auto']} />
+                      <Tooltip formatter={(value: number) => [`${value}${metric.unit}`, metric.label]} contentStyle={{ background: chartTheme.tooltipBackground, border: `1px solid ${chartTheme.tooltipBorder}`, color: chartTheme.tooltipText, borderRadius: 6, fontSize: 11 }} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ============ 主体 3 列 ============ */}
@@ -389,10 +441,16 @@ export default function Home() {
           </div>
           <div className="space-y-2">
             {inProgress.length === 0 ? (
-              <div className="text-center text-xs text-[var(--text-muted)] py-8">
-                <CheckCircle2 className="h-8 w-8 mx-auto mb-2 opacity-30" />
-                没有进行中的任务
-              </div>
+              <EmptyState
+                icon={CheckCircle2}
+                title="没有进行中的任务"
+                description="所有任务都已完成或归档"
+                action={
+                  <Link to="/tasks" className="inline-flex items-center gap-1 text-xs text-[var(--brand)] hover:underline">
+                    创建任务 <ArrowRight className="h-3 w-3" />
+                  </Link>
+                }
+              />
             ) : (
               inProgress.map((t) => <InProgressTask key={t.id} t={t} />)
             )}
@@ -406,10 +464,12 @@ export default function Home() {
               <Bell className="h-4 w-4 text-[var(--text-muted)]" />
               最近活动
             </div>
-            <button className="chart-card__action">更多 <ArrowRight className="h-3.5 w-3.5" /></button>
+            <button type="button" onClick={() => refetchExtra()} className="chart-card__action">刷新 <Activity className="h-3.5 w-3.5" /></button>
           </div>
           <div className="activity-timeline">
-            {(extra?.recentActivities ?? []).map((a: any) => {
+            {(extra?.recentActivities ?? []).length === 0 ? (
+              <EmptyState icon={Activity} title="暂无最近活动" />
+            ) : (extra?.recentActivities ?? []).map((a: any) => {
               const Icon = ICON_MAP[a.type.split('.')[1] === 'completed' ? 'CheckCircle2' : a.type.split('.')[0]] || Activity;
               return (
                 <div key={a.id} className="activity-timeline__item">
@@ -432,118 +492,99 @@ export default function Home() {
           </div>
         </div>
 
-        {/* SLA 告警（Todo 10: 实时滚动 + 一键 ACK）============ */}
-        <div className="space-y-4">
-          <div className="list-card">
-            <div className="list-card__header">
-              <div className="list-card__title">
-                <AlertTriangle className="h-4 w-4 text-[var(--text-muted)]" />
-                SLA 告警
-                <Badge tone="error">{(extra?.slaAlerts ?? []).length}</Badge>
-              </div>
-              <button onClick={ackAll} className="chart-card__action">
-                <Check className="h-3 w-3" />全部 ACK
-              </button>
-            </div>
-            <div className="space-y-1.5 max-h-48 overflow-y-auto">
-              {(extra?.slaAlerts ?? []).map((a: any) => (
-                <Link
-                  key={a.id}
-                  to="/tasks"
-                  className={cn(
-                    'alert-list__item block hover:opacity-80 transition-opacity',
-                    `alert-list__item--${a.level === 'P0' ? 'danger' : a.level === 'P1' ? 'warning' : a.level === 'P2' ? 'info' : 'neutral'}`,
-                  )}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="alert-list__title">{a.text}</div>
-                    <ChevronRight className="h-3 w-3 text-[var(--text-muted)] shrink-0" />
-                  </div>
-                  <div className="alert-list__meta">{a.time} · {a.assignee} · {a.taskCode}</div>
-                </Link>
-              ))}
-            </div>
-          </div>
-
-          {/* Todo 12: 本月成本仪表 */}
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
-            <div className="flex items-center justify-between mb-2">
-              <div className="text-xs font-semibold flex items-center gap-1.5">
-                <DollarSign className="h-3.5 w-3.5" />本月成本
-              </div>
-              <span className="font-mono text-sm font-bold">${extra?.costMonth?.used ?? 1240}</span>
-            </div>
-            <Progress value={((extra?.costMonth?.used ?? 0) / (extra?.costMonth?.budget ?? 5000)) * 100} tone="success" />
-            <div className="flex justify-between text-[10px] text-[var(--text-muted)] mt-1">
-              <span>预算 ${extra?.costMonth?.budget ?? 5000}</span>
-              <span>{(((extra?.costMonth?.used ?? 0) / (extra?.costMonth?.budget ?? 5000)) * 100).toFixed(0)}%</span>
-            </div>
-            <ResponsiveContainer width="100%" height={40} className="mt-2">
-              <AreaChart data={costData}>
-                <defs>
-                  <linearGradient id="costG" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#10b981" stopOpacity={0.5} />
-                    <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <Area type="monotone" dataKey="cost" stroke="#10b981" strokeWidth={1.5} fill="url(#costG)" />
-                <XAxis dataKey="day" hide />
-                <YAxis hide />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
+        {/* SLA 告警（自动轮播 + 一键 ACK）============ */}
+        <SlaAlertPanel alerts={visibleAlerts} onAckAll={ackAllAlerts} />
       </div>
 
       {/* ============ 第二行：Agent 状态 + 团队成员 + 建议 ============ */}
-      <div className="px-6 md:px-8 pb-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Todo 7: Agent 状态 + 7 天趋势 */}
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-xs font-semibold flex items-center gap-1.5">
-              <Bot className="h-3.5 w-3.5" />8 类 Agent 调用趋势（7 天）
+      <div className="home-lists px-6 md:px-8 pb-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Agent 调用趋势（7 天） */}
+        <div className="list-card agent-trend-card">
+          <div className="list-card__header">
+            <div>
+              <div className="list-card__title">
+                <Bot className="h-3.5 w-3.5" />Agent 调用趋势（7 天）
+              </div>
+              <div className="agent-trend-card__subtitle">按各 Agent 峰值归一化，查看相对变化</div>
             </div>
-            <Link to="/agents" className="text-[10px] text-[var(--brand)] hover:underline">管理</Link>
+            <Link to="/agents" className="chart-card__action">管理 <ArrowRight className="h-3.5 w-3.5" /></Link>
           </div>
-          <div className="space-y-2.5">
-            {Object.entries(extra?.agent7dTrend ?? {}).map(([name, values]) => {
-              const total = (values as number[]).reduce((s, v) => s + v, 0);
-              const max = Math.max(...(values as number[]), 1);
-              return (
-                <div key={name} className="flex items-center gap-2">
-                  <div className="w-20 text-[11px] truncate">{name}</div>
-                  <div className="flex-1 h-6 relative">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={(values as number[]).map((v, i) => ({ i, v }))}>
-                        <defs>
-                          <linearGradient id={`ag${name}`} x1="0" y1="0" x2="0" y2="1">
-                            <stop offset="0%" stopColor="#4f46e5" stopOpacity={0.5} />
-                            <stop offset="100%" stopColor="#4f46e5" stopOpacity={0} />
-                          </linearGradient>
-                        </defs>
-                        <Area type="monotone" dataKey="v" stroke="#4f46e5" strokeWidth={1.5} fill={`url(#ag${name})`} />
-                        <XAxis dataKey="i" hide />
-                        <YAxis hide domain={[0, max * 1.2]} />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                  <div className="w-12 text-right font-mono text-[10px] text-[var(--text-muted)]">
-                    {total.toLocaleString()}
-                  </div>
+          {Object.entries(extra?.agent7dTrend ?? {}).length === 0 ? (
+            <EmptyState icon={BarChart3} title="暂无 Agent 趋势数据" />
+          ) : (() => {
+            const agentTrend = buildAgentTrendData(extra?.agent7dTrend ?? {});
+            return (
+              <>
+                <div className="agent-trend-chart" aria-label="Agent 最近七天相对调用趋势">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={agentTrend.rows} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+                      <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
+                      <XAxis dataKey="day" tick={{ fill: 'var(--text-muted)', fontSize: 10 }} tickLine={false} axisLine={false} />
+                      <YAxis domain={[0, 100]} tick={{ fill: 'var(--text-muted)', fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(value) => `${value}%`} width={36} />
+                      <Tooltip
+                        content={({ active, payload, label }) => {
+                          if (!active || !payload?.length) return null;
+                          const dayIndex = agentTrend.rows.findIndex((row) => row.day === label);
+                          return (
+                            <div className="agent-trend-tooltip">
+                              <div className="agent-trend-tooltip__day">{label}</div>
+                              {payload.map((entry) => {
+                                const agent = String(entry.name);
+                                const raw = extra?.agent7dTrend?.[agent]?.[dayIndex] ?? 0;
+                                return (
+                                  <div key={agent} className="agent-trend-tooltip__row">
+                                    <span className="agent-trend-tooltip__dot" style={{ background: entry.color }} />
+                                    <span>{agent}</span>
+                                    <strong>{raw.toLocaleString()} 次</strong>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          );
+                        }}
+                      />
+                      <Legend wrapperStyle={{ fontSize: 10, paddingTop: 8 }} />
+                      {agentTrend.agents.map((agent, index) => (
+                        <Line
+                          key={agent}
+                          type="monotone"
+                          dataKey={agent}
+                          name={agent}
+                          stroke={AGENT_TREND_COLORS[index % AGENT_TREND_COLORS.length]}
+                          strokeWidth={1.8}
+                          dot={{ r: 2.5, strokeWidth: 1, fill: 'var(--surface-1)' }}
+                          activeDot={{ r: 4, strokeWidth: 2, fill: 'var(--surface-1)' }}
+                          connectNulls
+                        />
+                      ))}
+                    </LineChart>
+                  </ResponsiveContainer>
                 </div>
-              );
-            })}
-          </div>
+                <details className="agent-trend-details">
+                  <summary>查看原始调用量</summary>
+                  <div className="agent-trend-table-wrap">
+                    <table className="agent-trend-table">
+                      <thead><tr><th>Agent</th>{agentTrend.rows.map((row) => <th key={String(row.day)}>{row.day}</th>)}<th>7 日总量</th></tr></thead>
+                      <tbody>{agentTrend.agents.map((agent) => {
+                        const values = extra?.agent7dTrend?.[agent] ?? [];
+                        return <tr key={agent}><th>{agent}</th>{agentTrend.rows.map((row, index) => <td key={`${agent}-${row.day}`}>{(values[index] ?? 0).toLocaleString()}</td>)}<td>{values.reduce((sum: number, value: number) => sum + value, 0).toLocaleString()}</td></tr>;
+                      })}</tbody>
+                    </table>
+                  </div>
+                </details>
+              </>
+            );
+          })()}
         </div>
 
         {/* Todo 11: 团队成员 + 角色分布 */}
-        <Link to="/settings" className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4 block hover:border-[var(--brand)] transition-all group">
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-xs font-semibold flex items-center gap-1.5">
-              <Users className="h-3.5 w-3.5" />团队成员 ({team?.filter((m: any) => m.online).length ?? 0} 在线)
-              <span className="text-[9px] text-[var(--brand)] group-hover:underline ml-1">详情 →</span>
+        <div className="list-card">
+          <div className="list-card__header">
+            <div className="list-card__title">
+              <Users className="h-3.5 w-3.5" />团队成员
+              <Badge tone="brand">{team?.filter((m: any) => m.online).length ?? 0} 在线</Badge>
             </div>
-            <Link to="/settings" className="text-[10px] text-[var(--brand)] hover:underline">管理</Link>
+            <Link to="/settings" className="chart-card__action">管理 <ArrowRight className="h-3.5 w-3.5" /></Link>
           </div>
           <div className="space-y-2 mb-3">
             {(team ?? []).slice(0, 5).map((m: any) => (
@@ -562,14 +603,15 @@ export default function Home() {
               </div>
             ))}
           </div>
-          <div className="border-t border-[var(--border)] pt-3">
+          <div className="section-divider">
+            <Link to="/settings" className="mb-2 inline-flex items-center gap-1 text-[10px] text-[var(--brand)] hover:underline">进入设置 <ArrowRight className="h-3 w-3" /></Link>
             <div className="text-[10px] font-semibold text-[var(--text-muted)] mb-2">角色分布</div>
             <ResponsiveContainer width="100%" height={80}>
               <BarChart data={roleData} layout="vertical">
                 <XAxis type="number" hide />
                 <YAxis type="category" dataKey="role" hide />
                 <Bar dataKey="count" fill="#4f46e5" radius={[0, 4, 4, 0]} />
-                <Tooltip contentStyle={{ background: '#131a2d', border: '1px solid #2a3654', borderRadius: 6, fontSize: 11 }} />
+                <Tooltip contentStyle={{ background: chartTheme.tooltipBackground, border: `1px solid ${chartTheme.tooltipBorder}`, color: chartTheme.tooltipText, borderRadius: 6, fontSize: 11 }} />
               </BarChart>
             </ResponsiveContainer>
             <div className="flex flex-wrap gap-1.5 mt-1">
@@ -580,60 +622,151 @@ export default function Home() {
               ))}
             </div>
           </div>
-        </Link>
+        </div>
 
-        {/* Todo 14: 智能建议 + Todo 13: 快捷链接 */}
-        <div className="space-y-4">
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
-            <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+        {/* 智能建议 */}
+        <div className="list-card home-suggestions-card">
+          <div className="list-card__header">
+            <div className="list-card__title">
               <Lightbulb className="h-3.5 w-3.5 text-[var(--warning)]" />智能建议
+              <Badge tone="brand">{extra?.suggestion?.length ?? 0}</Badge>
             </div>
-            <div className="space-y-2">
-              {(extra?.suggestion ?? []).map((s: any) => {
-                const Icon = s.tone === 'success' ? CheckCircle2 : s.tone === 'warn' ? AlertTriangle : Sparkles;
-                const tone = s.tone === 'success' ? 'text-[var(--success)]' : s.tone === 'warn' ? 'text-[var(--warning)]' : 'text-[var(--info)]';
-                return (
-                  <div key={s.id} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-[11px]">
-                    <div className="flex items-start gap-1.5">
-                      <Icon className={cn('h-3 w-3 shrink-0 mt-0.5', tone)} />
-                      <span className="flex-1 text-[var(--text-secondary)]">{s.text}</span>
-                    </div>
-                    <Link to={s.to} className="mt-1 inline-block text-[10px] text-[var(--brand)] hover:underline">
-                      {s.action} →
+            <span className="text-[10px] text-[var(--text-muted)]">基于当前运行数据</span>
+          </div>
+          <div className="space-y-2">
+            {(extra?.suggestion ?? []).length === 0 ? (
+              <EmptyState icon={Sparkles} title="暂无新的运营建议" description="基于当前运行数据" />
+            ) : (extra?.suggestion ?? []).map((s: any) => {
+              const Icon = s.tone === 'success' ? CheckCircle2 : s.tone === 'warn' ? AlertTriangle : Sparkles;
+              const tone = s.tone === 'success' ? 'success' : s.tone === 'warn' ? 'warning' : 'info';
+              const label = s.tone === 'success' ? '运行良好' : s.tone === 'warn' ? '需要关注' : '建议优化';
+              return (
+                <div key={s.id} className="suggestion-item">
+                  <div className={cn('suggestion-item__icon', `suggestion-item__icon--${tone}`)}>
+                    <Icon className="h-3.5 w-3.5" />
+                  </div>
+                  <div className="suggestion-item__body">
+                    <div className="suggestion-item__status">{label}</div>
+                    <div className="suggestion-item__text">{s.text}</div>
+                    <Link to={s.to} className="suggestion-item__action">
+                      {s.action}<ArrowRight className="h-3 w-3" />
                     </Link>
                   </div>
-                );
-              })}
-            </div>
-          </div>
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
-            <div className="text-xs font-semibold mb-2 flex items-center gap-1.5">
-              <Sparkles className="h-3.5 w-3.5 text-[var(--brand)]" />快捷直达
-            </div>
-            <div className="grid grid-cols-3 gap-1.5">
-              {(extra?.quickLinks ?? []).map((l: any) => {
-                const Icon = ICON_MAP[l.icon] ?? Sparkles;
-                return (
-                  <Link
-                    key={l.to + l.label}
-                    to={l.to}
-                    title={l.desc}
-                    className="flex flex-col items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-[10px] hover:border-[var(--brand)] hover:text-[var(--brand)] transition-colors"
-                  >
-                    <Icon className="h-3.5 w-3.5" />
-                    <span className="truncate w-full text-center">{l.label}</span>
-                  </Link>
-                );
-              })}
-            </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
+
+      {/* ============ 快速创建 Modal ============ */}
+      <ModalX
+        open={quickOpen === 'task'}
+        onClose={() => { setQuickOpen(null); setTaskTitle(''); }}
+        title="快速创建任务"
+        description="将自动跳转到任务详情"
+        size="md"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => { setQuickOpen(null); setTaskTitle(''); }}>取消</Button>
+            <Button
+              disabled={!taskTitle.trim()}
+              onClick={() => {
+                setQuickOpen(null);
+                setTaskTitle('');
+                navigate('/tasks');
+              }}
+            >
+              <Plus className="h-3.5 w-3.5" />前往任务创建
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-[11px] font-medium text-[var(--text-secondary)]">
+              任务标题 <span className="text-[var(--danger)]">*</span>
+            </label>
+            <Input value={taskTitle} onChange={(e) => setTaskTitle(e.target.value)} placeholder="例如：核心库连接池调优" />
+          </div>
+          <div>
+            <label className="mb-1 block text-[11px] font-medium text-[var(--text-secondary)]">优先级</label>
+            <div className="grid grid-cols-4 gap-1.5">
+              {(['P0', 'P1', 'P2', 'P3'] as const).map((p) => (
+                <button
+                  key={p}
+                  onClick={() => setTaskPriority(p)}
+                  className={cn(
+                    'rounded-md border px-2 py-1 text-xs font-mono font-semibold transition-colors',
+                    taskPriority === p
+                      ? p === 'P0' ? 'bg-[var(--danger)] text-white border-[var(--danger)]'
+                      : p === 'P1' ? 'bg-[var(--warning)] text-white border-[var(--warning)]'
+                      : p === 'P2' ? 'bg-[var(--info)] text-white border-[var(--info)]'
+                      : 'bg-[var(--text-muted)] text-white border-[var(--text-muted)]'
+                      : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]',
+                  )}
+                >
+                  {p}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="text-[10px] text-[var(--text-muted)]">提示：完整任务字段（描述、CMDB、双签、SLA 等）在「任务详情页」可继续配置。</p>
+        </div>
+      </ModalX>
     </div>
   );
 }
 
 // ============ 子组件 ============
+
+function SlaAlertPanel({ alerts, onAckAll }: { alerts: any[]; onAckAll: () => void }) {
+  const { viewportRef, activeIndex, pause, resume } = useSlaRotation(alerts);
+
+  return (
+    <div className="list-card sla-alert-card">
+      <div className="list-card__header">
+        <div className="list-card__title">
+          <AlertTriangle className="h-4 w-4 text-[var(--text-muted)]" />
+          SLA 告警
+          <Badge tone="error">{alerts.length}</Badge>
+        </div>
+        <button type="button" onClick={onAckAll} className="chart-card__action" disabled={alerts.length === 0}>
+          <Check className="h-3 w-3" />全部 ACK
+        </button>
+      </div>
+      <div
+        ref={viewportRef}
+        className="sla-alert-card__viewport"
+        onPointerEnter={pause}
+        onPointerLeave={resume}
+        onFocus={pause}
+        onBlur={resume}
+      >
+        {alerts.length === 0 ? (
+          <div className="chart-card__empty sla-alert-card__empty"><CheckCircle2 className="h-5 w-5" />当前没有待处理 SLA 告警</div>
+        ) : alerts.map((alert, index) => (
+          <Link
+            key={alert.id}
+            to="/tasks"
+            data-alert-index={index}
+            aria-current={index === activeIndex ? 'true' : undefined}
+            className={cn(
+              'alert-list__item sla-alert-card__item block hover:opacity-80 transition-opacity',
+              `alert-list__item--${alert.level === 'P0' ? 'danger' : alert.level === 'P1' ? 'warning' : alert.level === 'P2' ? 'info' : 'neutral'}`,
+            )}
+          >
+            <div className="flex items-center justify-between">
+              <div className="alert-list__title">{alert.text}</div>
+              <ChevronRight className="h-3 w-3 text-[var(--text-muted)] shrink-0" />
+            </div>
+            <div className="alert-list__meta">{alert.time} · {alert.assignee} · {alert.taskCode}</div>
+          </Link>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 function KpiCard({ tone, label, value, unit, delta, sparkline, prev, threshold }: {
   tone: 'brand' | 'success' | 'purple' | 'warning' | 'error';
@@ -649,6 +782,7 @@ function KpiCard({ tone, label, value, unit, delta, sparkline, prev, threshold }
   const isAnomaly = threshold && numVal >= threshold.error ? 'error' : threshold && numVal >= threshold.warn ? 'warn' : null;
   const TrendIcon = delta?.dir === 'up' ? ArrowUp : delta?.dir === 'down' ? ArrowDown : Activity;
   const trendColor = delta?.dir === 'up' ? 'text-[var(--success)]' : delta?.dir === 'down' ? 'text-[var(--info)]' : 'text-[var(--text-muted)]';
+  const gradientId = `kpi-spark-${stableId(label)}`;
 
   return (
     <div className={cn(
@@ -679,12 +813,12 @@ function KpiCard({ tone, label, value, unit, delta, sparkline, prev, threshold }
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={sparkline.map((v, i) => ({ i, v }))}>
                 <defs>
-                  <linearGradient id={`sp${label}`} x1="0" y1="0" x2="0" y2="1">
+                  <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
                     <stop offset="0%" stopColor="currentColor" stopOpacity={0.4} />
                     <stop offset="100%" stopColor="currentColor" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <Area type="monotone" dataKey="v" stroke="currentColor" strokeWidth={1.2} fill={`url(#sp${label})`} />
+                <Area type="monotone" dataKey="v" stroke="currentColor" strokeWidth={1.2} fill={`url(#${gradientId})`} />
                 <XAxis dataKey="i" hide />
                 <YAxis hide domain={['auto', 'auto']} />
               </AreaChart>

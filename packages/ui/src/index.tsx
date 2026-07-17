@@ -375,3 +375,246 @@ export function ToastHost() {
     </div>
   );
 }
+
+/* ============ 企业级共享组件（Copilot / Tasks / Agents 通用） ============ */
+
+export type KpiTone = 'brand' | 'info' | 'success' | 'warn' | 'error' | 'neutral';
+
+const KPI_TONE_COLOR: Record<KpiTone, string> = {
+  brand: 'text-[var(--brand)]',
+  info: 'text-[var(--info)]',
+  success: 'text-[var(--success)]',
+  warn: 'text-[var(--warning)]',
+  error: 'text-[var(--danger)]',
+  neutral: 'text-[var(--text)]',
+};
+
+/** 顶部 KPI 卡（数字 + 标签 + 可选子文本 + 图标） */
+export function KpiCard({
+  label, value, sub, tone = 'brand', icon: Icon, className,
+}: {
+  label: string; value: ReactNode; sub?: ReactNode; tone?: KpiTone; icon?: any; className?: string;
+}) {
+  return (
+    <div className={cn('rounded-md border border-[var(--border)] bg-[var(--bg)] p-2.5 flex items-center gap-2', className)}>
+      {Icon && <Icon className={cn('h-3.5 w-3.5 shrink-0', KPI_TONE_COLOR[tone])} />}
+      <div className="min-w-0">
+        <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-semibold leading-none">{label}</div>
+        <div className={cn('text-base font-bold font-mono leading-tight mt-0.5', KPI_TONE_COLOR[tone])}>
+          {value}
+          {sub && <span className="text-[10px] text-[var(--text-muted)] font-normal ml-1">{sub}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** 紧凑型 KPI 单元（无图标，更小） */
+export function KpiMini({ label, value, tone = 'neutral', className }: { label: string; value: ReactNode; tone?: KpiTone; className?: string }) {
+  return (
+    <div className={cn('rounded bg-[var(--bg)] border border-[var(--border)] px-2 py-1', className)}>
+      <div className="text-[var(--text-muted)] text-[9px]">{label}</div>
+      <div className={cn('font-mono font-semibold text-[11px]', KPI_TONE_COLOR[tone])}>{value}</div>
+    </div>
+  );
+}
+
+/** label-value 行（统计页 / 详情面板用） */
+export function Row({ label, value, className }: { label: string; value: ReactNode; className?: string }) {
+  return (
+    <div className={cn('flex items-center justify-between gap-2 text-[10px] py-0.5', className)}>
+      <span className="text-[var(--text-muted)]">{label}</span>
+      <span className="font-semibold text-right">{value}</span>
+    </div>
+  );
+}
+
+/** 表单字段标签 + 子元素 */
+export function FormField({ label, children, className }: { label: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={className}>
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">{label}</div>
+      {children}
+    </div>
+  );
+}
+
+/** 筛选分组（左侧筛选栏） */
+export function FilterGroup({ title, children, className }: { title: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={cn('px-3', className)}>
+      <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+/** 筛选单选行（标签 + 数量徽标） */
+export function FilterRadio({
+  active, onClick, label, count, dot, tone,
+}: {
+  active: boolean; onClick: () => void; label: string; count?: number; dot?: string; tone?: 'success' | 'warning' | 'danger' | 'idle';
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'flex w-full items-center justify-between rounded-md px-2 py-1 text-[11px]',
+        active ? 'bg-[var(--brand-light)] text-[var(--brand)] font-semibold' : 'hover:bg-[var(--bg-hover)] text-[var(--text-secondary)]',
+      )}
+    >
+      <span className="flex items-center gap-1.5">
+        {dot && <span className={cn('h-2 w-2 rounded-full', dot.replace('border-', 'bg-'))} />}
+        {!dot && tone && tone !== 'idle' && <Dot tone={tone} />}
+        {label}
+      </span>
+      {count !== undefined && <span className="font-mono text-[10px] opacity-70">{count}</span>}
+    </button>
+  );
+}
+
+/** 筛选 chip（用于分类/评分/标签） */
+export function ChipBtn({
+  label, active, onClick, tone,
+}: {
+  label: string; active: boolean; onClick: () => void; tone?: 'error' | 'warn' | 'info' | 'brand' | 'neutral';
+}) {
+  const activeBg = !tone || tone === 'neutral' ? 'bg-[var(--brand)] text-white' :
+    tone === 'error' ? 'bg-[var(--danger)] text-white' :
+    tone === 'warn' ? 'bg-[var(--warning)] text-white' :
+    tone === 'info' ? 'bg-[var(--info)] text-white' :
+    'bg-[var(--brand)] text-white';
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        'px-2 py-0.5 rounded-md text-[10px] font-mono transition-colors',
+        active ? activeBg : 'bg-[var(--bg)] text-[var(--text-muted)] border border-[var(--border)] hover:bg-[var(--bg-hover)]',
+      )}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** 详情面板的标签分组（带图标 + 标题） */
+export function Section({ label, icon: Icon, children, className }: { label: string; icon?: any; children: ReactNode; className?: string }) {
+  return (
+    <div className={className}>
+      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
+        {Icon && <Icon className="h-3 w-3" />}
+        {label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+/** 右侧可折叠面板的收起态：slim 40px handle，写竖排文字，hover 高亮 */
+export function CollapsedPanelHandle({
+  label = '详情',
+  Icon,
+  onOpen,
+  HintIcon,
+  hint = '点击展开详情',
+}: {
+  label?: string; Icon?: any; onOpen?: () => void; HintIcon?: any; hint?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label={hint}
+      title={hint}
+      className="group flex h-full w-10 flex-col items-center justify-center gap-3 border-l border-[var(--border)] bg-[var(--bg-elevated)] hover:bg-[var(--brand-light)] hover:border-[var(--brand)] transition-colors"
+    >
+      {Icon && <Icon className="h-3.5 w-3.5 text-[var(--text-muted)] group-hover:text-[var(--brand)]" />}
+      <span
+        className="select-none text-[10px] font-semibold tracking-widest text-[var(--text-muted)] group-hover:text-[var(--brand)]"
+        style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}
+      >
+        {label}
+      </span>
+      <div className="h-12 w-px bg-[var(--border)] group-hover:bg-[var(--brand)]" />
+      {HintIcon && <HintIcon className="h-3.5 w-3.5 text-[var(--text-muted)] group-hover:text-[var(--brand)] animate-pulse" />}
+    </button>
+  );
+}
+
+/** 三段式页面头部：标题 + 副标题 + 可选 actions */
+export function PageHeader({
+  title, subtitle, icon: Icon, badge, actions, className,
+}: {
+  title: string; subtitle?: ReactNode; icon?: any; badge?: string; actions?: ReactNode; className?: string;
+}) {
+  return (
+    <div className={cn('flex items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--bg)] px-5 py-3', className)}>
+      <div className="flex items-center gap-2 min-w-0">
+        {Icon && <Icon className="h-4 w-4 text-[var(--brand)] shrink-0" />}
+        <div className="min-w-0">
+          <h1 className="text-sm font-semibold flex items-center gap-2">
+            {title}
+            {badge && <Badge tone="brand" className="text-[9px]">{badge}</Badge>}
+          </h1>
+          {subtitle && <div className="text-[10px] text-[var(--text-muted)] mt-0.5 font-mono">{subtitle}</div>}
+        </div>
+      </div>
+      {actions && <div className="flex items-center gap-1.5 shrink-0">{actions}</div>}
+    </div>
+  );
+}
+
+// ChevronLeft icon 已被替换为 HintIcon prop，由调用方注入
+// 无需在 web-ui 中依赖 lucide-react
+
+/** 可折叠分组（左侧筛选栏） */
+export function CollapsibleSection({
+  title,
+  icon,
+  children,
+  collapsed,
+  onToggle,
+  className,
+}: {
+  title: string;
+  icon?: ReactNode;
+  children: ReactNode;
+  collapsed?: boolean;
+  onToggle?: () => void;
+  className?: string;
+}) {
+  return (
+    <div className={cn('px-3', className)}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-label={collapsed ? `展开 ${title}` : `收起 ${title}`}
+        aria-expanded={!collapsed}
+        className="flex w-full items-center gap-1.5 px-1 py-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] hover:text-[var(--text)] transition-colors rounded hover:bg-[var(--bg-hover)]"
+      >
+        {icon && <span className="h-3.5 w-3.5 shrink-0">{icon}</span>}
+        <span className="flex-1 text-left">{title}</span>
+        <span className={cn('transition-transform duration-200 ease-out', collapsed ? 'rotate-[-90deg]' : 'rotate-0')}>
+          <ChevronDown className="h-3 w-3 shrink-0" />
+        </span>
+      </button>
+      <div className={cn('overflow-hidden transition-all duration-200 ease-in-out', collapsed ? 'max-h-0 opacity-0' : 'max-h-[1000px] opacity-100')}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** 下箭头图标（内联 SVG）- 使用 fill 模式确保箭头可见 */
+function ChevronDown({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      stroke="none"
+    >
+      <path d="M7 10l5 5 5-5z" />
+    </svg>
+  );
+}

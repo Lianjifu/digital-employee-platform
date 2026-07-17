@@ -1,23 +1,22 @@
 /**
  * PSSP 主布局
- * - 顶部 60px Topbar（Logo + Breadcrumb + Search + Status + Theme + Notification）
- * - 左侧 260px Sidebar（11 模块导航 + 工作区切换 + 用户菜单）
+ * - 顶部 60px Topbar（菜单 + Logo + Breadcrumb）
+ * - 左侧 260px Sidebar（9 模块导航 + 工作区切换 + 用户菜单）
  * - 用户信息移到左下角，菜单按 Claude 风格分 3 组
  */
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   Home, MessageSquare, ListChecks, Building2, Bot, Workflow,
   BookOpen, Wrench, Brain, Send,
-  Search, Bell, Sun, Moon, Menu, Settings2, Languages,
+  Menu, Settings2, Languages, Sun, Moon,
   LogOut, ChevronDown, X,
 } from 'lucide-react';
-import { GlobalSearch } from '@/components/GlobalSearch';
 import { useT } from '@/i18n';
 import { useUiStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
-import { Avatar, Badge, Dot } from '@de/web-ui';
+import { Avatar, Badge } from '@de/web-ui';
 import { cn } from '@de/web-utils';
 import { useApiQuery } from '@/services/query';
 import type { Workspace } from '@de/web-types';
@@ -40,7 +39,7 @@ export function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { sidebarCollapsed, toggleSidebar, theme, toggleTheme, mobileDrawerOpen, openMobileDrawer, closeMobileDrawer } = useUiStore();
-  const { t, locale, setLocale } = useT();
+  const { t } = useT();
   const { user, logout } = useAuthStore();
   const { current, setCurrent, setList } = useWorkspaceStore();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -75,8 +74,8 @@ export function AppLayout() {
 
   return (
     <div
-      className="grid h-screen w-screen overflow-hidden bg-[var(--bg-elevated)] lg:[grid-template-columns:260px_1fr] lg:[grid-template-rows:60px_1fr]"
-      style={{ gridTemplateColumns: sidebarCollapsed ? '72px 1fr' : '260px 1fr', gridTemplateRows: '60px 1fr' }}
+      className="grid h-screen w-screen overflow-hidden bg-[var(--bg-elevated)] lg:[grid-template-columns:var(--sidebar-width)_1fr] lg:[grid-template-rows:60px_1fr]"
+      style={{ '--sidebar-width': sidebarCollapsed ? '72px' : '260px', gridTemplateRows: '60px 1fr' } as CSSProperties}
     >
       {/* Mobile Drawer Overlay */}
       {mobileDrawerOpen && (
@@ -88,7 +87,7 @@ export function AppLayout() {
       )}
       {/* ============ Topbar ============ */}
       <header
-        className="col-span-2 flex h-[60px] items-center gap-3 md:gap-6 border-b border-[var(--border)] bg-[var(--bg)] px-4 md:px-6 shadow-[var(--shadow-xs)] sticky top-0 z-30"
+        className="col-span-2 flex h-[60px] items-center gap-2 md:gap-6 border-b border-[var(--border)] bg-[var(--bg)] px-3 md:px-6 shadow-[var(--shadow-xs)] sticky top-0 z-30"
         style={{ gridColumn: '1 / -1' }}
       >
         <button
@@ -108,60 +107,19 @@ export function AppLayout() {
           <div className="grid h-9 w-9 place-items-center rounded-md bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-sm font-bold text-white shadow-[0_2px_8px_rgba(79,70,229,0.3)]">
             DE
           </div>
-          {!sidebarCollapsed && <span>数字员工平台</span>}
+          {!sidebarCollapsed && <span className="hidden sm:inline">数字员工平台</span>}
         </NavLink>
 
         {/* Breadcrumb */}
         {!sidebarCollapsed && (
-          <div className="flex items-center gap-2 text-[13px] text-[var(--text-muted)]">
+          <div className="hidden items-center gap-2 text-[13px] text-[var(--text-muted)] sm:flex">
             <span>·</span>
             <span className="text-[var(--text-secondary)]">{activeNav?.label ?? '首页'}</span>
           </div>
         )}
 
-        {/* Search */}
-        <div className="relative flex-1 max-w-md">
-          <GlobalSearch />
-        </div>
-
         {/* Right */}
-        <div className="ml-auto flex items-center gap-3">
-          {/* 语言切换 */}
-          <button
-            onClick={() => setLocale(locale === 'zh-CN' ? 'en-US' : 'zh-CN')}
-            className="flex items-center gap-1 h-9 px-2.5 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] text-xs hover:bg-[var(--bg-hover)] transition-colors"
-            aria-label={locale === 'zh-CN' ? '切换到 English' : 'Switch to 简体中文'}
-            title={locale === 'zh-CN' ? 'EN' : '中'}
-          >
-            <Languages className="h-3.5 w-3.5" />
-            <span className="font-mono font-semibold">{locale === 'zh-CN' ? '中' : 'EN'}</span>
-          </button>
-
-          {/* 合规徽章 */}
-          <div className="flex items-center gap-1.5 rounded-md border border-[var(--success)]/30 bg-[var(--success-bg)] px-2.5 py-1 text-[11px] text-[var(--success)]">
-            <Dot tone="success" />
-            <span className="font-mono">等保 3 · 98/100</span>
-          </div>
-
-          {/* 主题切换 */}
-          <button
-            onClick={toggleTheme}
-            className="grid h-9 w-9 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)] transition-colors"
-            title={theme === 'light' ? '切换到深色' : '切换到浅色'}
-            aria-label={theme === 'light' ? '切换到深色主题' : '切换到浅色主题'}
-          >
-            {theme === 'light' ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
-          </button>
-
-          {/* 通知 */}
-          <button
-            className="relative grid h-9 w-9 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
-            aria-label="通知（1 条未读）"
-          >
-            <Bell className="h-4 w-4" />
-            <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-[var(--danger)]" />
-          </button>
-        </div>
+        <div className="ml-auto" />
       </header>
 
       {/* ============ Sidebar ============ */}
@@ -339,7 +297,7 @@ export function AppLayout() {
       </aside>
 
       {/* ============ Main ============ */}
-      <main className="row-start-2 overflow-y-auto bg-[var(--bg-elevated)]">
+      <main className="row-start-2 col-span-2 lg:col-start-2 lg:col-span-1 overflow-y-auto bg-[var(--bg-elevated)] min-w-0">
         <Outlet />
       </main>
     </div>

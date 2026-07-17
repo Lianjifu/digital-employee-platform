@@ -687,25 +687,26 @@ export default function Workflows() {
   const filteredNodes = nodes; // 留作以后按筛选条件过滤
 
   return (
-    <div className="flex h-full flex-col overflow-hidden bg-[var(--bg-elevated)]">
+    <div className="workflow-page flex h-full min-w-0 flex-col overflow-hidden bg-[var(--bg-elevated)]">
       {/* ======== 顶部 KPI（5 张） ======== */}
-      <div className="grid grid-cols-2 gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-3 md:grid-cols-3 md:px-6 lg:grid-cols-5">
-        <Stat icon={<Play className="h-4 w-4 text-[var(--brand)]" />} label="执行中" value={KPI.running} sub="个" tone="primary" />
-        <Stat icon={<Activity className="h-4 w-4" />} label="今日总数" value={KPI.totalToday} sub="次" />
-        <Stat icon={<CheckCircle2 className="h-4 w-4 text-[var(--success)]" />} label="成功率" value={KPI.successRate} sub="%" tone="success" />
-        <Stat icon={<Clock className="h-4 w-4" />} label="平均完成" value={KPI.avgDuration} />
-        <Stat icon={<Sparkles className="h-4 w-4 text-[var(--purple)]" />} label="MTTR 降低" value={`${KPI.mttrImprovement}%`} tone="purple" />
+      <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2 md:grid md:grid-cols-3 md:gap-3 md:px-6 lg:grid-cols-5">
+        <div className="min-w-[148px] md:min-w-0"><Stat icon={<Play className="h-4 w-4 text-[var(--brand)]" />} label="执行中" value={KPI.running} sub="个" tone="primary" /></div>
+        <div className="min-w-[148px] md:min-w-0"><Stat icon={<Activity className="h-4 w-4" />} label="今日总数" value={KPI.totalToday} sub="次" /></div>
+        <div className="min-w-[148px] md:min-w-0"><Stat icon={<CheckCircle2 className="h-4 w-4 text-[var(--success)]" />} label="成功率" value={KPI.successRate} sub="%" tone="success" /></div>
+        <div className="min-w-[148px] md:min-w-0"><Stat icon={<Clock className="h-4 w-4" />} label="平均完成" value={KPI.avgDuration} /></div>
+        <div className="min-w-[148px] md:min-w-0"><Stat icon={<Sparkles className="h-4 w-4 text-[var(--purple)]" />} label="MTTR 降低" value={`${KPI.mttrImprovement}%`} tone="purple" /></div>
       </div>
 
       {/* ======== Tab Bar（与 KPI 区分明确） ======== */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2 md:px-6">
-        <div className="flex items-center gap-3">
-          <h2 className="text-sm font-semibold text-[var(--text)]">P6 · 工作流</h2>
-          <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
-            {tab === 'canvas' ? `DAG 画布 · ${nodes.length} 节点 / ${edges.length} 连线` : tab === 'templates' ? `模板市场 · ${TEMPLATES.length} 套` : `执行历史 · ${RUNS.length} 条`}
-          </span>
-          {/* 版本选择器 */}
-          <div className="relative ml-2">
+      <div className="shrink-0 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2 md:px-6">
+        <div className="flex min-w-0 items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="shrink-0 text-sm font-semibold text-[var(--text)]">P6 · 工作流</h2>
+            <span className="truncate text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+              {tab === 'canvas' ? `DAG 画布 · ${nodes.length} 节点 / ${edges.length} 连线` : tab === 'templates' ? `模板市场 · ${TEMPLATES.length} 套` : `执行历史 · ${RUNS.length} 条`}
+            </span>
+          </div>
+          <div className="relative shrink-0">
             <button
               onClick={() => setVersionMenuOpen(!versionMenuOpen)}
               className="flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[11px] hover:border-[var(--brand)]"
@@ -717,8 +718,8 @@ export default function Workflows() {
             {versionMenuOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setVersionMenuOpen(false)} />
-                <div className="absolute left-0 top-full mt-1 z-50 min-w-[260px] rounded-md border border-[var(--border)] bg-[var(--surface-1)] py-1 shadow-xl">
-                  <div className="px-3 py-1.5 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold border-b border-[var(--border)]">
+                <div className="absolute right-0 top-full z-50 mt-1 max-w-[calc(100vw-24px)] min-w-[260px] rounded-md border border-[var(--border)] bg-[var(--surface-1)] py-1 shadow-xl">
+                  <div className="border-b border-[var(--border)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                     版本历史 · 共 {versions.length} 版
                   </div>
                   {versions.map((v) => (
@@ -735,15 +736,15 @@ export default function Workflows() {
                         v.id === activeVersion && 'bg-[var(--brand-light)]',
                       )}
                     >
-                      <span className="font-mono text-[11px] font-semibold text-[var(--brand)] shrink-0 mt-0.5">{v.label}</span>
+                      <span className="mt-0.5 shrink-0 font-mono text-[11px] font-semibold text-[var(--brand)]">{v.label}</span>
                       <div className="min-w-0 flex-1">
                         <div className="text-[10px] text-[var(--text-muted)]">{v.time}</div>
-                        <div className="text-[11px] text-[var(--text-secondary)] truncate">{v.desc}</div>
+                        <div className="truncate text-[11px] text-[var(--text-secondary)]">{v.desc}</div>
                       </div>
-                      {v.id === activeVersion && <Badge tone="success" className="text-[9px] shrink-0">当前</Badge>}
+                      {v.id === activeVersion && <Badge tone="success" className="shrink-0 text-[9px]">当前</Badge>}
                     </button>
                   ))}
-                  <div className="border-t border-[var(--border)] px-3 py-1.5 flex gap-1">
+                  <div className="flex gap-1 border-t border-[var(--border)] px-3 py-1.5">
                     <Button size="sm" variant="outline" className="flex-1" onClick={() => {
                       if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
                       const current = versions.find((v) => v.id === activeVersion);
@@ -776,7 +777,7 @@ export default function Workflows() {
             )}
           </div>
         </div>
-        <div className="flex max-w-full items-center gap-1.5 overflow-x-auto">
+        <div className="mt-2 flex min-w-0 items-center gap-1.5 overflow-x-auto border-t border-[var(--border)] pt-2">
           {([
             { k: 'canvas' as TabKey, label: '画布', icon: GitBranch },
             { k: 'templates' as TabKey, label: '模板市场', icon: Layers },
@@ -786,7 +787,7 @@ export default function Workflows() {
               key={v.k}
               onClick={() => setTab(v.k)}
               className={cn(
-                'flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-colors',
+                'flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-colors',
                 tab === v.k
                   ? 'bg-[var(--brand)] text-white'
                   : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]',
@@ -1023,11 +1024,12 @@ function CanvasView(props: {
   } = props;
 
   const [mobilePanelOpen, setMobilePanelOpen] = useState<SidePanelKey | null>(null);
+  const [nodePaletteOpen, setNodePaletteOpen] = useState(true);
 
   return (
-    <div className="grid h-full min-w-0 grid-cols-1 gap-0 lg:grid-cols-[260px_minmax(0,1fr)_340px]">
+    <div className="flex h-full min-h-0 min-w-0">
       {/* —— 左侧：节点库 —— */}
-      <div className="hidden flex-col border-r border-[var(--border)] bg-[var(--bg)] lg:flex">
+      <div className="hidden">
         <div className="border-b border-[var(--border)] p-3">
           <div className="flex items-center gap-1.5 text-xs font-semibold mb-2">
             <Box className="h-3.5 w-3.5" />
@@ -1081,10 +1083,10 @@ function CanvasView(props: {
       </div>
 
       {/* —— 中间：DAG 画布 + Webhook + 操作按钮 —— */}
-      <div className="flex min-w-0 flex-col bg-[var(--surface-2)]">
-        <div className="absolute left-3 top-3 z-20 flex gap-1.5 lg:hidden">
-          <Button size="sm" variant="outline" onClick={() => setMobilePanelOpen('library')}>
-            <Box className="h-3.5 w-3.5" />节点库
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--surface-2)]">
+        <div className="flex shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2">
+          <Button size="sm" variant="outline" onClick={() => setNodePaletteOpen((open) => !open)}>
+            <Box className="h-3.5 w-3.5" />{nodePaletteOpen ? '收起节点库' : '节点库'}
           </Button>
           <Button size="sm" variant="outline" onClick={() => setMobilePanelOpen(sidePanel)}>
             <Settings className="h-3.5 w-3.5" />{sidePanel === 'debug' ? '调试' : sidePanel === 'properties' ? '属性' : '信息'}
@@ -1195,7 +1197,7 @@ function CanvasView(props: {
         {/* 画布 */}
         <div
           ref={wrapperRef}
-          className="relative flex-1"
+          className="relative min-h-[560px] flex-1 w-full"
           onDragOver={handleDragOver}
           onDrop={handleDrop}
         >
@@ -1228,6 +1230,40 @@ function CanvasView(props: {
             </ReactFlow>
           </ReactFlowProvider>
 
+          {/* 画布内节点库：可直接拖放到任意画布位置 */}
+          {nodePaletteOpen && (
+            <div className="absolute left-3 top-3 z-20 w-[232px] rounded-lg border border-[var(--border)] bg-[var(--bg)]/95 p-2 shadow-lg backdrop-blur">
+              <div className="mb-2 flex items-center gap-1.5 px-1 text-[11px] font-semibold">
+                <Box className="h-3.5 w-3.5 text-[var(--brand)]" />节点库
+                <span className="ml-auto font-mono text-[10px] text-[var(--text-muted)]">拖拽添加</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                {filteredLibrary.map((kind) => {
+                  const Icon = NODE_ICONS[kind];
+                  const color = NODE_COLORS[kind];
+                  return (
+                    <button
+                      key={kind}
+                      draggable
+                      onDragStart={(event) => {
+                        event.dataTransfer.setData('application/wf-node', kind);
+                        event.dataTransfer.effectAllowed = 'move';
+                        setDraggedKind(kind);
+                      }}
+                      onDragEnd={() => setDraggedKind(null)}
+                      onClick={() => addNode(kind)}
+                      className="flex cursor-grab items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1.5 text-left text-[10px] transition-colors hover:border-[var(--brand)] hover:bg-[var(--brand-light)] active:cursor-grabbing"
+                      title={`${NODE_DESCS[kind]} · 拖拽到画布添加`}
+                    >
+                      <Icon className="h-3.5 w-3.5 shrink-0" style={{ color }} />
+                      <span className="truncate">{NODE_LABELS[kind]}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* 拖拽提示 */}
           {props.draggedKind && (
             <div className="pointer-events-none absolute inset-0 grid place-items-center bg-[var(--brand)]/5 border-2 border-dashed border-[var(--brand)]/40 z-10">
@@ -1244,14 +1280,14 @@ function CanvasView(props: {
           </div>
 
           {/* 快捷键提示 */}
-          <div className="absolute bottom-3 right-3 flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg)]/95 px-2 py-1 text-[9px] text-[var(--text-muted)] backdrop-blur font-mono">
-            <span>拖动节点 handle 连线 · 双击连线删除 · Del 删除节点 · ⌘S 保存 · ⌘Z 撤销</span>
+          <div className="absolute bottom-3 right-3 hidden max-w-[min(520px,calc(100%-24px))] items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg)]/95 px-2 py-1 text-[9px] text-[var(--text-muted)] backdrop-blur font-mono sm:flex">
+            <span className="whitespace-normal">拖动节点 handle 连线 · 双击连线删除 · Del 删除节点 · ⌘S 保存 · ⌘Z 撤销</span>
           </div>
         </div>
       </div>
 
       {/* —— 右侧：Tab（节点库信息 / 调试 / 属性） —— */}
-      <div className="hidden flex-col border-l border-[var(--border)] bg-[var(--bg)] lg:flex">
+      <div className="hidden">
         <div className="flex items-center border-b border-[var(--border)]">
           {([
             { k: 'library' as SidePanelKey, label: '信息', icon: FileText },
@@ -1273,7 +1309,7 @@ function CanvasView(props: {
           ))}
         </div>
 
-        <div className="flex-1 overflow-y-auto p-3">
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2.5">
           {sidePanel === 'library' && <InfoPanel nodes={nodes} />}
           {sidePanel === 'debug' && (
             <DebugPanel
@@ -1305,18 +1341,34 @@ function CanvasView(props: {
  * ============================================================= */
 function InfoPanel({ nodes }: { nodes: Node[] }) {
   return (
-    <div className="space-y-3">
-      <div>
-        <div className="mb-2 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold">当前画布</div>
-        <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3 text-center">
-          <div className="text-2xl font-bold font-mono text-[var(--brand)]">{nodes.length}</div>
-          <div className="text-[10px] text-[var(--text-muted)] uppercase">节点</div>
+    <div className="space-y-4">
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">画布概览</div>
+          <Badge tone="success" className="text-[9px]">运行中</Badge>
         </div>
-      </div>
+        <div className="grid grid-cols-3 divide-x divide-[var(--border)] rounded-md border border-[var(--border)] bg-[var(--surface-2)]">
+          <div className="px-2 py-2 text-center">
+            <div className="font-mono text-lg font-bold text-[var(--brand)]">{nodes.length}</div>
+            <div className="text-[9px] text-[var(--text-muted)]">节点</div>
+          </div>
+          <div className="px-2 py-2 text-center">
+            <div className="font-mono text-lg font-bold text-[var(--text)]">10</div>
+            <div className="text-[9px] text-[var(--text-muted)]">连线</div>
+          </div>
+          <div className="px-2 py-2 text-center">
+            <div className="font-mono text-lg font-bold text-[var(--success)]">100%</div>
+            <div className="text-[9px] text-[var(--text-muted)]">成功率</div>
+          </div>
+        </div>
+      </section>
 
-      <div>
-        <div className="mb-2 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold">节点列表</div>
-        <div className="space-y-1">
+      <section>
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">节点列表</div>
+          <span className="font-mono text-[10px] text-[var(--text-muted)]">{nodes.length} 个</span>
+        </div>
+        <div className="divide-y divide-[var(--border)] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--bg)]">
           {nodes.map((n, i) => {
             const kind = n.data?.kind as WorkflowNodeKind;
             const Icon = NODE_ICONS[kind];
@@ -1326,39 +1378,41 @@ function InfoPanel({ nodes }: { nodes: Node[] }) {
               <div
                 key={n.id}
                 className={cn(
-                  'flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg)] p-2 text-[11px]',
-                  isExecuting && 'border-[var(--brand)] bg-[var(--brand-light)]',
+                  'flex h-11 items-center gap-2 px-2.5 text-[11px] transition-colors',
+                  isExecuting && 'bg-[var(--brand-light)]',
                 )}
               >
-                <span className="font-mono text-[10px] text-[var(--text-muted)]">{i + 1}</span>
-                <Icon className="h-3 w-3 shrink-0" style={{ color }} />
-                <span className="truncate flex-1 font-semibold">{n.data?.label || NODE_LABELS[kind]}</span>
-                {isExecuting && <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand)] animate-pulse" />}
+                <span className="w-4 shrink-0 text-right font-mono text-[10px] text-[var(--text-muted)]">{i + 1}</span>
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded" style={{ backgroundColor: `${color}1a` }}>
+                  <Icon className="h-3.5 w-3.5" style={{ color }} />
+                </span>
+                <span className="min-w-0 flex-1 truncate font-semibold">{n.data?.label || NODE_LABELS[kind]}</span>
+                {isExecuting && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--brand)] animate-pulse" />}
               </div>
             );
           })}
         </div>
-      </div>
+      </section>
 
-      <div>
-        <div className="mb-2 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold">运行时统计</div>
-        <div className="space-y-1.5">
+      <section>
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">运行统计</div>
+        <div className="grid grid-cols-2 gap-1.5">
           {[
             { label: '触发', value: '124', icon: Zap, color: 'text-[var(--brand)]' },
             { label: '成功率', value: '100%', icon: ShieldCheck, color: 'text-[var(--success)]' },
             { label: '平均完成', value: '38s', icon: Play, color: 'text-[var(--brand)]' },
             { label: 'MTTR 降低', value: '-65%', icon: Sparkles, color: 'text-[var(--purple)]' },
           ].map((s) => (
-            <div key={s.label} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--bg)] p-2">
+            <div key={s.label} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 py-2">
               <div>
-                <div className="text-[9px] text-[var(--text-muted)] uppercase">{s.label}</div>
-                <div className={cn('text-sm font-mono font-bold', s.color)}>{s.value}</div>
+                <div className="text-[9px] text-[var(--text-muted)]">{s.label}</div>
+                <div className={cn('mt-0.5 font-mono text-sm font-bold', s.color)}>{s.value}</div>
               </div>
               <s.icon className={cn('h-3.5 w-3.5', s.color)} />
             </div>
           ))}
         </div>
-      </div>
+      </section>
     </div>
   );
 }

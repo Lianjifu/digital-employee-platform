@@ -1,39 +1,40 @@
 /**
- * P2 会话 · Copilot（完全可交互版）
- * 20 项功能:
- *  1. 消息流本地状态管理 + 持久化
- *  2. Agent 流式响应（打字机效果）
- *  3. Slash 命令 12 个分 5 类（点击填充）
- *  4. @ mention 4 类（点击插入）
- *  5. 双签 Modal 真实生效（更新 1/2 → 2/2）
- *  6. RAG 引用点击 → Drawer
- *  7. Tool call 模拟执行（按关键词）
- *  8. 思考过程折叠
- *  9. 消息 hover 操作（copy/regenerate/delete/like）
- * 10. 重新生成（点踩触发）
- * 11. 停止生成（agent 输出中显示）
- * 12. Token 用量条
- * 13. 自动滚动 + 自动 focus
- * 14. 侧栏会话新建 / 删除 / 置顶
- * 15. localStorage 持久化
- * 16. 输入区工具按钮（附件/语音/@ 提及）
- * 17. Agent 元数据（SLA/错误率/工具数）
- * 18. RAG 来源色分类
- * 19. 双签 inline 进度
- * 20. 知识检索置信度可视化
+ * P2 会话 · Copilot（企业级数字员工会话）
+ * 核心能力:
+ *  1. 消息状态机（queued / streaming / succeeded / failed / cancelled / expired / moderated）
+ *  2. 多会话管理（增/删/置顶/星标/归档/分享/TTL）
+ *  3. 流式响应（chunk 级 + AbortController + 超时）
+ *  4. 双签审批（operator + auditor 角色 + 时间戳 + hash）
+ *  5. Reasoning steps 折叠（plan / search / analyze / tool_call / reflect / finalize）
+ *  6. RAG 引用（chunkId / rerankScore / evalLabel + Drawer）
+ *  7. Tool call（permission / sandboxId / traceId + 失败重试）
+ *  8. 反馈写回（like / dislike + 标签 + 备注 → RAG eval）
+ *  9. 错误处理（分类 / inline 重试 / 超时）
+ * 10. 导出（Markdown / JSON / 审计 PDF 占位）
+ * 11. 分享（只读 token + RBAC 边界）
+ * 12. 本地持久化（IndexedDB / localStorage，容量上限 + 字段裁剪）
+ * 13. 可观测性（correlationId / TTFT / tokens / cache 命中）
+ * 14. 侧栏会话搜索 / 分组 / 置顶 / 标签
+ * 15. 输入草稿 / 历史（↑↓）+ 字符 / Token 用量
+ * 16. 内容安全（脱敏 / 拦截 / 警告）
+ * 17. 键盘可达 + aria-live 多档
+ * 18. i18n（中英双语）
+ * 19. 调试面板（Request / Response / Agent / Tools / RAG / Reasoning / Policy / Approval / Timeline / Audit）
+ * 20. 升级人工（escalate to human）
  */
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useApiQuery } from '@/services/query';
-import { Avatar, Badge, Button, Input, Dot } from '@de/web-ui';
+import { Avatar, Badge, Button, Input, Dot, Row, CollapsedPanelHandle } from '@de/web-ui';
 import {
   Bot, Search, ListChecks as ListChecksIcon, Wrench, Workflow as WorkflowIcon, FileText, ShieldCheck,
   AlertTriangle, Upload, MoreHorizontal, Download,
-  Link2, CheckCircle2, BarChart3, Volume2, Zap, Clock,
-  Star, Share2, Settings, X, Pin, ChevronDown,
+  Link2, CheckCircle2, BarChart3, Volume2, Zap, Clock, Server, BellOff,
+  Star, Share2, Settings, X, Pin, ChevronDown, ChevronLeft,
   Sparkles, Database, Code, Cpu, Users, Loader2, AlertCircle, AtSign,
   Hash, Activity, Languages, BookOpenCheck, Brain, RotateCcw,
   Paperclip, Mic, Send, ChevronRight, ThumbsUp, ThumbsDown,
-  Copy, Trash2, Square, Plus,
+  Copy, Trash2, Square, Plus, Archive, ArchiveRestore, FileDown, Lock, Eye, EyeOff, ArrowUp,
+  Archive as ArchiveIcon, MessageSquareWarning, ShieldAlert, Check, Hourglass, Plug, PlugZap,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import { DualSignModal } from '@/components/DualSignModal';
@@ -41,21 +42,15 @@ import { DebugPanel } from '@/components/DebugPanel';
 import { useChat } from '@/hooks/useChat';
 import { useT } from '@/i18n';
 import { Markdown } from '@/components/Markdown';
-
-interface ChatMessageEx {
-  id: string;
-  role: 'user' | 'assistant' | 'tool' | 'system';
-  content: string;
-  agentId?: string;
-  agentName?: string;
-  citations?: any[];
-  toolCalls?: { id: string; name: string; args: Record<string, unknown>; result?: string; status: 'pending' | 'running' | 'success' | 'failed'; durationMs?: number; retryCount?: number }[];
-  codeBlock?: { lang: string; code: string };
-  attachment?: { name: string; size: string; type: 'file' | 'image' };
-  thinking?: string;
-  approvalRequest?: { action: string; signed: number; required: number; signers: { name: string; signed: boolean }[] };
-  createdAt: string;
-}
+import type {
+  ChatMessageEx,
+  ChatSession,
+  FeedbackKind,
+  FeedbackTag,
+  Signer,
+  MessageStatus,
+  ErrorCategory,
+} from '@/hooks/types';
 
 interface SessionItem {
   id: string;
@@ -96,6 +91,72 @@ const MENTIONS = [
   { key: '@member', label: '成员', icon: Users, desc: '王昊 / 李婷 ...' },
 ];
 
+interface ComposerAttachment {
+  name: string;
+  size: string;
+  type: 'file' | 'image';
+}
+
+const MODELS: { key: string; label: string; tier: string; tone: 'success' | 'brand' | 'warn' | 'neutral'; desc: string }[] = [
+  { key: 'sonnet-4', label: 'Sonnet-4', tier: 'P0', tone: 'success', desc: '复杂推理 · 长上下文 · 默认' },
+  { key: 'haiku-4.5', label: 'Haiku-4.5', tier: 'P2', tone: 'brand', desc: '低成本 · 高吞吐 · FAQ 场景' },
+  { key: 'opus-4.8', label: 'Opus-4.8', tier: 'P0+', tone: 'success', desc: '深度分析 · 合规审计' },
+  { key: 'gpt-5', label: 'GPT-5', tier: 'P1', tone: 'brand', desc: '通用 · 多模态' },
+  { key: 'deepseek-r2', label: 'DeepSeek-R2', tier: 'P1', tone: 'brand', desc: '代码生成 · 技术问答' },
+];
+
+const availableTools: { key: string; name: string; desc: string; requiresApproval?: boolean }[] = [
+  { key: 'redis-cli', name: 'redis-cli', desc: '查询 / 设置 Redis 配置' },
+  { key: 'kubectl', name: 'kubectl', desc: 'K8s 资源管理（需双签）', requiresApproval: true },
+  { key: 'prometheus', name: 'prometheus', desc: '指标查询 · PromQL' },
+  { key: 'loki-query', name: 'loki-query', desc: '日志检索' },
+  { key: 'siem', name: 'siem', desc: '威胁狩猎 · ATT&CK 时间线' },
+  { key: 'jira', name: 'jira', desc: '工单 / 任务创建' },
+  { key: 'cmdb', name: 'cmdb', desc: '资产查询' },
+];
+
+const FEEDBACK_TAGS: { key: FeedbackTag; label: string }[] = [
+  { key: 'factuality', label: '事实性' },
+  { key: 'helpfulness', label: '有用' },
+  { key: 'style', label: '风格' },
+  { key: 'outdated', label: '信息陈旧' },
+  { key: 'harmful', label: '有害' },
+  { key: 'other', label: '其他' },
+];
+
+const STATUS_LABEL: Record<MessageStatus, string> = {
+  queued: '排队中',
+  in_flight: '请求中',
+  streaming: '生成中',
+  succeeded: '已完成',
+  failed: '失败',
+  cancelled: '已停止',
+  expired: '已过期',
+  moderated: '已拦截',
+};
+
+const STATUS_TONE: Record<MessageStatus, string> = {
+  queued: 'neutral',
+  in_flight: 'info',
+  streaming: 'info',
+  succeeded: 'success',
+  failed: 'error',
+  cancelled: 'neutral',
+  expired: 'warn',
+  moderated: 'error',
+};
+
+const ERROR_HINT: Record<ErrorCategory, string> = {
+  network: '网络异常，请检查连通性',
+  auth: '鉴权失败，请重新登录',
+  timeout: '请求超时，可重试',
+  rate_limit: '触发限流，请稍候重试',
+  content_filter: '内容被安全策略拦截',
+  tool_denied: '工具调用被权限策略拒绝',
+  internal: '服务内部错误',
+  unknown: '未知错误',
+};
+
 export default function Copilot() {
   const { t } = useT();
   const [searchQ, setSearchQ] = useState('');
@@ -104,10 +165,31 @@ export default function Copilot() {
   const [showApproval, setShowApproval] = useState<string | null>(null);
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [expandedArgs, setExpandedArgs] = useState<Record<string, boolean>>({});
+  const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
+  const [expandedApproval, setExpandedApproval] = useState<Record<string, boolean>>({});
   const [citationDrawer, setCitationDrawer] = useState<any | null>(null);
+  const [sessionsOpen, setSessionsOpen] = useState(false);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [debugOpen, setDebugOpen] = useState(false);
   const [hoverMsgId, setHoverMsgId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState<string | null>(null);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [shareDialog, setShareDialog] = useState<{ open: boolean; token?: string }>({ open: false });
+  const [rejectionReason, setRejectionReason] = useState<{ mid: string; idx: number; open: boolean }>({ mid: '', idx: -1, open: false });
+
+  // Composer 增强状态
+  const [modelOpen, setModelOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [currentModelKey, setCurrentModelKey] = useState('sonnet-4');
+  const [enabledTools, setEnabledTools] = useState<string[]>(availableTools.map((t) => t.key));
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
+  const [voiceOn, setVoiceOn] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const currentModel = MODELS.find((m) => m.key === currentModelKey) ?? MODELS[0];
+  const enabledToolCount = enabledTools.length;
 
   // 真实状态管理（持久化 + 流式响应 + 多会话）
   const { data: agentMeta } = useApiQuery<AgentMeta>(['agent', 'meta'], '/api/agents/a1/meta');
@@ -118,6 +200,9 @@ export default function Copilot() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const sessionToggleRef = useRef<HTMLButtonElement>(null);
+  const detailsToggleRef = useRef<HTMLButtonElement>(null);
+  const citationTriggerRef = useRef<HTMLButtonElement | null>(null);
   const historyIdx = useRef(0);
 
   // todo 8: 上下方向键切换输入历史
@@ -152,9 +237,41 @@ export default function Copilot() {
   // todo 10: 分享会话
   const shareSession = () => {
     if (!currentSession) return;
-    const url = `${window.location.origin}/copilot?session=${currentSession.id}`;
-    try { navigator.clipboard.writeText(url); } catch {}
-    alert(`分享链接已复制：\n${url}`);
+    if (currentSession.shareToken) {
+      setShareDialog({ open: true, token: currentSession.shareToken });
+      return;
+    }
+    const token = chat.shareSession(currentSession.id);
+    setShareDialog({ open: true, token: token ?? undefined });
+  };
+
+  // 复制分享链接
+  const copyShareUrl = async () => {
+    if (!shareDialog.token) return;
+    const url = `${window.location.origin}/copilot/share/${shareDialog.token}`;
+    try { await navigator.clipboard.writeText(url); } catch {}
+  };
+
+  // 导出菜单
+  const handleExport = (format: 'markdown' | 'json' | 'audit') => {
+    if (!currentSession) return;
+    const data = chat.exportSessionAs(currentSession.id, format);
+    if (!data) return;
+    const blob = new Blob([data], { type: format === 'json' || format === 'audit' ? 'application/json' : 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${currentSession.title || 'session'}-${currentSession.id}.${format === 'json' || format === 'audit' ? 'json' : 'md'}`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setExportMenuOpen(false);
+  };
+
+  // 归档 / 取消归档
+  const toggleArchive = () => {
+    if (!currentSession) return;
+    const archived = currentSession.lifecycle === 'archived';
+    chat.archiveSession(currentSession.id, !archived);
   };
 
   // 分组的 slash 命令
@@ -164,14 +281,54 @@ export default function Copilot() {
     return g;
   }, [slashCmds]);
 
-  // 自动滚动到底部
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      });
     }
   }, [chat.activeSession?.messages.length, chat.state.typing]);
 
-  // 切换会话时自动 focus
+  useEffect(() => {
+    if (!citationDrawer) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setCitationDrawer(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    requestAnimationFrame(() => citationTriggerRef.current?.focus());
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', onKeyDown);
+      citationTriggerRef.current?.focus();
+    };
+  }, [citationDrawer]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (showSlash || showMention) {
+        setShowSlash(false);
+        setShowMention(false);
+        return;
+      }
+      if (sessionsOpen) {
+        setSessionsOpen(false);
+        sessionToggleRef.current?.focus();
+      } else if (detailsOpen) {
+        setDetailsOpen(false);
+        detailsToggleRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [detailsOpen, sessionsOpen, showMention, showSlash]);
+
   useEffect(() => {
     setTimeout(() => inputRef.current?.focus(), 50);
   }, [chat.state.activeId]);
@@ -223,6 +380,33 @@ export default function Copilot() {
     inputRef.current?.focus();
   };
 
+  // 附件：拖拽 / 文件选择 / 粘贴
+  const formatBytes = (b: number): string => {
+    if (b < 1024) return `${b} B`;
+    if (b < 1024 * 1024) return `${(b / 1024).toFixed(1)} KB`;
+    return `${(b / 1024 / 1024).toFixed(1)} MB`;
+  };
+  const addAttachments = (files: File[]) => {
+    if (!files.length) {
+      fileInputRef.current?.click();
+      return;
+    }
+    const next: ComposerAttachment[] = files.map((f) => ({
+      name: f.name,
+      size: formatBytes(f.size),
+      type: f.type.startsWith('image/') ? 'image' : 'file',
+    }));
+    setAttachments((prev) => [...prev, ...next]);
+  };
+  const removeAttachment = (i: number) => setAttachments((prev) => prev.filter((_, idx) => idx !== i));
+  const onPaste: React.ClipboardEventHandler<HTMLTextAreaElement> = (e) => {
+    const files = Array.from(e.clipboardData?.files ?? []).filter((f) => f.type.startsWith('image/'));
+    if (files.length) {
+      e.preventDefault();
+      addAttachments(files);
+    }
+  };
+
   const copyMessage = async (m: ChatMessageEx) => {
     try {
       await navigator.clipboard.writeText(m.content);
@@ -231,12 +415,36 @@ export default function Copilot() {
     } catch {}
   };
 
+  const switchSession = (id: string) => {
+    chat.switchSession(id);
+    setSessionsOpen(false);
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
+
+  const openCitation = (citation: any, trigger?: HTMLButtonElement | null) => {
+    citationTriggerRef.current = trigger ?? null;
+    setCitationDrawer(citation);
+  };
+
   const currentSession = chat.activeSession;
 
   return (
-    <div className="flex h-full bg-[var(--bg-elevated)]">
+    <div className="copilot-shell relative flex h-full min-h-0 min-w-0 bg-[var(--bg-elevated)]">
+      {sessionsOpen && (
+        <button
+          type="button"
+          className="copilot-scrim"
+          aria-label="关闭侧栏"
+          onClick={() => { setSessionsOpen(false); }}
+        />
+      )}
       {/* ============ 左侧 session-list ============ */}
-      <aside className="w-[260px] shrink-0 border-r border-[var(--border)] bg-[var(--bg)] flex flex-col overflow-hidden">
+      <aside
+        id="copilot-sessions"
+        className="copilot-sessions w-[260px] shrink-0 border-r border-[var(--border)] bg-[var(--bg)] flex flex-col overflow-hidden"
+        aria-label="会话列表"
+        data-open={sessionsOpen ? 'true' : 'false'}
+      >
         <div className="px-3 py-3 border-b border-[var(--border)] space-y-2">
           <div className="flex items-center gap-2">
             <Button size="sm" className="flex-1" onClick={chat.newSession}>
@@ -266,41 +474,45 @@ export default function Copilot() {
                 {grouped[g].map((s) => {
                   const active = s.id === chat.state.activeId;
                   return (
-                    <div
-                      key={s.id}
-                      onClick={() => chat.switchSession(s.id)}
-                      onDoubleClick={() => chat.togglePin(s.id)}
-                      className={cn('session-item relative group', active && 'session-item--active')}
-                    >
-                      <div className="grid grid-cols-[1fr_auto] items-center gap-2">
-                        <div className="session-item__title min-w-0">
-                          {s.pinned && <Pin className="h-3 w-3 shrink-0 text-[var(--brand)]" />}
-                          <span className="truncate">{s.title}</span>
+                    <div key={s.id} className="copilot-session-item__wrap relative group">
+                      <button
+                        type="button"
+                        onClick={() => switchSession(s.id)}
+                        onDoubleClick={() => chat.togglePin(s.id)}
+                        className={cn('session-item copilot-session-item w-full text-left', active && 'session-item--active')}
+                        aria-current={active ? 'page' : undefined}
+                        aria-label={`${s.title}，${s.status === 'active' ? '进行中' : '已完成'}${s.unread ? `，${s.unread} 条未读` : ''}`}
+                      >
+                        <div className="grid grid-cols-[1fr_auto] items-center gap-2">
+                          <div className="session-item__title min-w-0">
+                            {s.pinned && <Pin className="h-3 w-3 shrink-0 text-[var(--brand)]" />}
+                            <span className="truncate">{s.title}</span>
+                          </div>
+                          <div className="shrink-0 flex items-center gap-1">
+                            {s.unread ? (
+                              <span className="min-w-[16px] h-4 rounded-full bg-[var(--danger)] text-white text-[9px] font-mono flex items-center justify-center px-1">{s.unread}</span>
+                            ) : (
+                              <span className="text-[10px] text-[var(--text-muted)] font-mono whitespace-nowrap">{s.time}</span>
+                            )}
+                          </div>
                         </div>
-                        <div className="shrink-0 flex items-center gap-1">
-                          {s.unread ? (
-                            <span className="min-w-[16px] h-4 rounded-full bg-[var(--danger)] text-white text-[9px] font-mono flex items-center justify-center px-1">{s.unread}</span>
-                          ) : (
-                            <span className="text-[10px] text-[var(--text-muted)] font-mono whitespace-nowrap">{s.time}</span>
-                          )}
+                        <div className="session-item__preview">{s.preview || '(空)'}</div>
+                        <div className="session-item__meta">
+                          <span className="nav-pill text-[10px] !py-0.5">{s.agent}</span>
+                          <Badge tone={s.status === 'active' ? 'brand' : 'success'} className="text-[10px]">
+                            {s.status === 'active' ? '进行中' : '已完成'}
+                          </Badge>
                         </div>
-                      </div>
-                      <div className="session-item__preview">{s.preview || '(空)'}</div>
-                      <div className="session-item__meta">
-                        <span className="nav-pill text-[10px] !py-0.5">{s.agent}</span>
-                        <Badge tone={s.status === 'active' ? 'brand' : 'success'} className="text-[10px]">
-                          {s.status === 'active' ? '进行中' : '已完成'}
-                        </Badge>
-                        {/* 删除按钮（hover 显示） */}
-                        <button
-                          onClick={(e) => { e.stopPropagation(); chat.delSession(s.id); }}
-                          className="ml-auto opacity-0 group-hover:opacity-100 grid h-5 w-5 place-items-center rounded text-[var(--text-muted)] hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] transition-all"
-                          aria-label="删除会话"
-                          title="删除"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </div>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => chat.delSession(s.id)}
+                        className="copilot-session-item__delete absolute right-2 bottom-2 grid h-5 w-5 place-items-center rounded text-[var(--text-muted)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] transition-all"
+                        aria-label={`删除会话：${s.title}`}
+                        title="删除"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
                     </div>
                   );
                 })}
@@ -317,47 +529,51 @@ export default function Copilot() {
       </aside>
 
       {/* ============ 中间对话 ============ */}
-      <section className="flex-1 flex flex-col bg-[var(--bg)] overflow-hidden">
+      <section className="copilot-conversation flex min-w-0 min-h-0 flex-1 flex-col bg-[var(--bg)] overflow-hidden">
         {/* Agent 元数据头 */}
-        <header className="border-b border-[var(--border)] px-5 py-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3 min-w-0">
-              <div className="grid h-10 w-10 place-items-center rounded-lg bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white shrink-0">
+        <header className="copilot-header border-b border-[var(--border)] px-5 py-3">
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <button
+                ref={sessionToggleRef}
+                type="button"
+                onClick={() => setSessionsOpen((open) => !open)}
+                className="copilot-mobile-toggle grid h-8 w-8 shrink-0 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+                aria-label="打开会话列表"
+                aria-expanded={sessionsOpen}
+                aria-controls="copilot-sessions"
+              >
+                <ListChecksIcon className="h-4 w-4" />
+              </button>
+              <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white">
                 <Bot className="h-5 w-5" />
               </div>
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5 flex-wrap">
-                  <span className="text-sm font-semibold">{agentMeta?.name ?? '故障自愈'}</span>
+                  <span className="truncate text-sm font-semibold">{agentMeta?.name ?? '故障自愈'}</span>
                   <Badge tone="brand" className="text-[10px]">v{agentMeta?.version ?? '1.4.2'}</Badge>
-                  <Badge tone="success" className="text-[10px]">
-                    <Dot tone="success" />在线
-                  </Badge>
-                  {agentMeta?.sla !== undefined && (
-                    <Badge tone={agentMeta.sla >= 99 ? 'success' : 'warn'} className="text-[10px]">
-                      SLA {agentMeta.sla}%
-                    </Badge>
-                  )}
+                  <Badge tone="success" className="text-[10px]"><Dot tone="success" />在线</Badge>
+                  {agentMeta?.sla !== undefined && <Badge tone={agentMeta.sla >= 99 ? 'success' : 'warn'} className="text-[10px]">SLA {agentMeta.sla}%</Badge>}
                 </div>
-                <div className="flex items-center gap-2 mt-0.5 text-[10px] text-[var(--text-muted)] flex-wrap">
-                  <span className="flex items-center gap-0.5 text-amber-500">
-                    <Star className="h-3 w-3 fill-current" />
-                    {agentMeta?.rating ?? 4.8} <span className="text-[var(--text-muted)]">({agentMeta?.ratingCount ?? 1240})</span>
-                  </span>
-                  <span>·</span>
-                  <span>最近活跃 {agentMeta?.lastActive ?? '14:32'}</span>
-                  <span>·</span>
-                  <span>P95 {agentMeta?.responseP95 ?? 580}ms</span>
-                  <span>·</span>
-                  <span className="text-[var(--success)]">错误 {(agentMeta?.errorRate ?? 0.012) * 100 < 2 ? '低' : '中'}</span>
-                  <span>·</span>
-                  <span>{agentMeta?.knowledgeBases ?? 4} 知识库</span>
-                  <span>·</span>
-                  <span>{agentMeta?.tools ?? 8} 工具</span>
+                <div className="copilot-header__meta flex items-center gap-2 mt-0.5 text-[10px] text-[var(--text-muted)] flex-wrap">
+                  <span className="flex items-center gap-0.5 text-amber-500"><Star className="h-3 w-3 fill-current" />{agentMeta?.rating ?? 4.8} <span className="text-[var(--text-muted)]">({agentMeta?.ratingCount ?? 1240})</span></span>
+                  <span>·</span><span>最近活跃 {agentMeta?.lastActive ?? '14:32'}</span><span>·</span><span>P95 {agentMeta?.responseP95 ?? 580}ms</span><span>·</span>
+                  <span className="text-[var(--success)]">错误 {(agentMeta?.errorRate ?? 0.012) * 100 < 2 ? '低' : '中'}</span><span>·</span><span>{agentMeta?.knowledgeBases ?? 4} 知识库</span><span>·</span><span>{agentMeta?.tools ?? 8} 工具</span>
                 </div>
               </div>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
+            <div className="copilot-header__actions flex items-center gap-1.5 shrink-0">
               <button
+                ref={detailsToggleRef}
+                type="button"
+                onClick={() => setDetailsOpen((open) => !open)}
+                className="copilot-mobile-toggle grid h-8 w-8 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+                aria-label="打开 Agent 详情"
+                aria-expanded={detailsOpen}
+                aria-controls="copilot-agent-details"
+              ><Bot className="h-4 w-4" /></button>
+              <button
+                type="button"
                 onClick={() => currentSession && chat.toggleStar(currentSession.id)}
                 className={cn(
                   'grid h-8 w-8 place-items-center rounded-md transition-colors',
@@ -382,81 +598,176 @@ export default function Copilot() {
               <button onClick={shareSession} className="grid h-8 w-8 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)]" title="分享" aria-label="分享">
                 <Share2 className="h-4 w-4" />
               </button>
+              <button
+                onClick={toggleArchive}
+                className="grid h-8 w-8 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)]"
+                title={currentSession?.lifecycle === 'archived' ? '取消归档' : '归档'}
+                aria-label={currentSession?.lifecycle === 'archived' ? '取消归档' : '归档'}
+              >
+                {currentSession?.lifecycle === 'archived' ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
+              </button>
               <Button variant="secondary" size="sm" onClick={() => setDebugOpen(true)}>
                 <Settings className="h-3.5 w-3.5" />调试
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => alert('已导出 (mock)')}>
-                <Download className="h-3.5 w-3.5" />导出
-              </Button>
+              <div className="relative">
+                <Button variant="secondary" size="sm" onClick={() => setExportMenuOpen((v) => !v)} aria-haspopup="menu" aria-expanded={exportMenuOpen}>
+                  <FileDown className="h-3.5 w-3.5" />导出
+                </Button>
+                {exportMenuOpen && (
+                  <div
+                    role="menu"
+                    className="absolute right-0 top-full mt-1 w-44 rounded-md border border-[var(--border)] bg-[var(--surface-1)] shadow-xl z-30 py-1"
+                    onMouseLeave={() => setExportMenuOpen(false)}
+                  >
+                    <button role="menuitem" onClick={() => handleExport('markdown')} className="block w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--bg-hover)]">
+                      <FileText className="inline h-3.5 w-3.5 mr-1.5" />Markdown
+                    </button>
+                    <button role="menuitem" onClick={() => handleExport('json')} className="block w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--bg-hover)]">
+                      <Code className="inline h-3.5 w-3.5 mr-1.5" />JSON（结构化）
+                    </button>
+                    <button role="menuitem" onClick={() => handleExport('audit')} className="block w-full text-left px-3 py-1.5 text-xs hover:bg-[var(--bg-hover)]">
+                      <ShieldCheck className="inline h-3.5 w-3.5 mr-1.5" />审计 PDF（占位）
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </header>
 
         {/* 消息流 */}
-        <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden px-6 py-5 space-y-5">
-          {currentSession && currentSession.messages.length > 0 ? (
-            <>
-              <div className="flex items-center gap-3">
-                <div className="flex-1 h-px bg-[var(--border)]" />
-                <span className="text-[10px] text-[var(--text-muted)] font-mono">{new Date(currentSession.createdAt).toLocaleDateString('zh-CN')}</span>
-                <div className="flex-1 h-px bg-[var(--border)]" />
-              </div>
-              <div className="flex justify-center">
-                <span className="nav-pill nav-pill--info text-[10px]">
-                  <ShieldCheck className="h-3 w-3" /> 对话已加密 · SignedLog 记录 · 等保 3 合规
-                </span>
-              </div>
-
-              {currentSession.messages.map((m) => (
-                <MessageBubble
-                  key={m.id}
-                  m={m}
-                  expandedThinking={expandedThinking}
-                  setExpandedThinking={setExpandedThinking}
-                  expandedArgs={expandedArgs}
-                  setExpandedArgs={setExpandedArgs}
-                  onApprove={(mid) => setShowApproval(mid)}
-                  onCitation={setCitationDrawer}
-                  onRetry={(name) => alert(`已自动重试 ${name}`)}
-                  onCopy={copyMessage}
-                  onRegenerate={(mid) => chat.regenerate(mid)}
-                  onDelete={(mid) => chat.delMessage(mid)}
-                  hoverMsgId={hoverMsgId}
-                  setHoverMsgId={setHoverMsgId}
-                  copiedId={copiedId}
-                />
-              ))}
-
-              {/* 正在输入动画 */}
-              {chat.state.typing && (
-                <div className="flex gap-3">
-                  <div className="grid h-8 w-8 place-items-center rounded-md bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white shrink-0">
-                    <Bot className="h-4 w-4" />
+        <div ref={scrollRef} className="copilot-message-scroll flex-1 min-h-0 overflow-y-auto overflow-x-hidden" aria-label="消息列表">
+          <div className="copilot-message-stream">
+            {currentSession && currentSession.messages.length > 0 ? (
+              <>
+                <div className="copilot-conversation-intro flex flex-col items-center gap-2 pt-6 pb-2">
+                  <div className="flex w-full items-center gap-3">
+                    <div className="flex-1 h-px bg-gradient-to-r from-transparent to-[var(--border)]" />
+                    <span className="text-[10px] text-[var(--text-muted)] font-mono tabular-nums">{new Date(currentSession.createdAt).toLocaleDateString('zh-CN')}</span>
+                    <div className="flex-1 h-px bg-gradient-to-l from-transparent to-[var(--border)]" />
                   </div>
-                  <div className="rounded-2xl bg-[var(--bg-elevated)] border border-[var(--border)] px-4 py-3 inline-flex items-center gap-1.5">
-                    {[0, 1, 2].map((i) => (
-                      <span key={i} className="h-1.5 w-1.5 rounded-full bg-[var(--brand)] animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
-                    ))}
-                    <span className="ml-1 text-[10px] text-[var(--text-muted)]">{agentMeta?.name ?? '故障自愈'} 正在思考</span>
+                  <div className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-1)] px-2.5 py-0.5 text-[10px] text-[var(--text-muted)]">
+                    <ShieldCheck className="h-3 w-3 text-[var(--success)]" />
+                    对话已加密 · SignedLog 审计 · 等保 3 合规
                   </div>
                 </div>
-              )}
-            </>
-          ) : (
-            <div className="h-full grid place-items-center text-center text-[var(--text-muted)]">
-              <div>
-                <Bot className="h-12 w-12 mx-auto mb-3 opacity-30" />
-                <div className="text-sm">发送消息开始对话</div>
-                <div className="mt-2 text-[10px] text-[var(--text-muted)]">按 <kbd className="px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border)]">/</kbd> 唤起命令 · <kbd className="px-1.5 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border)]">@</kbd> 提及</div>
+
+                <div className="copilot-message-list px-4 sm:px-8 md:px-12 py-4">
+                  {currentSession.messages.map((m) => (
+                    <MessageBubble
+                      key={m.id}
+                      m={m}
+                      expandedThinking={expandedThinking}
+                      setExpandedThinking={setExpandedThinking}
+                      expandedArgs={expandedArgs}
+                      setExpandedArgs={setExpandedArgs}
+                      expandedReasoning={expandedReasoning}
+                      setExpandedReasoning={setExpandedReasoning}
+                      expandedApproval={expandedApproval}
+                      setExpandedApproval={setExpandedApproval}
+                      onApprove={(mid) => setShowApproval(mid)}
+                      onCitation={(citation) => openCitation(citation)}
+                      onRetry={(name) => chat.regenerate(m.id)}
+                      onCopy={copyMessage}
+                      onRegenerate={(mid) => chat.regenerate(mid)}
+                      onDelete={(mid) => chat.delMessage(mid)}
+                      onRetryMessage={(mid) => chat.retryMessage(mid)}
+                      onFeedback={(mid, kind) => {
+                        if (kind === null) {
+                          chat.setFeedback(mid, { kind: null });
+                        } else {
+                          setFeedbackOpen(mid);
+                        }
+                      }}
+                      onApproveSigner={(mid, idx) => chat.approve(mid, idx)}
+                      onRequestReject={(mid, idx) => setRejectionReason({ mid, idx, open: true })}
+                      hoverMsgId={hoverMsgId}
+                      setHoverMsgId={setHoverMsgId}
+                      copiedId={copiedId}
+                      agentName={agentMeta?.name}
+                    />
+                  ))}
+                </div>
+
+                {chat.state.typing && (
+                  <div className="copilot-streaming-status flex gap-3 px-4 sm:px-8 md:px-12 pb-4" aria-live="polite" aria-label="Agent 正在思考">
+                    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white" aria-hidden="true">
+                      <Bot className="h-4 w-4" />
+                    </div>
+                    <div className="inline-flex items-center gap-1.5 pt-2 text-[12px] text-[var(--text-muted)]">
+                      {[0, 1, 2].map((i) => (
+                        <span key={i} aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--brand)] animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                      ))}
+                      <span className="ml-1.5">{agentMeta?.name ?? '故障自愈'} 正在思考</span>
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="copilot-empty-state h-full grid place-items-center px-6">
+                <div className="w-full max-w-2xl">
+                  <div className="text-center mb-8">
+                    <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white shadow-lg">
+                      <Bot className="h-7 w-7" />
+                    </div>
+                    <h2 className="text-xl font-semibold text-[var(--text)]">{agentMeta?.name ?? '故障自愈'}</h2>
+                    <p className="text-sm text-[var(--text-muted)] mt-1">{agentMeta?.description ?? '基于 Runbook 的自动故障定位与恢复 · 内置 8 个 Skill'}</p>
+                  </div>
+                  <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                    <Sparkles className="h-3 w-3" />建议试试
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {[
+                      { Icon: Zap, title: 'Redis 集群 OOM', desc: 'prod-redis-01 触发 maxmemory 限制' },
+                      { Icon: Server, title: 'K8s 节点扩容', desc: '为 cn-east-1 增加 2 个 worker' },
+                      { Icon: ShieldCheck, title: 'CVE 周报', desc: '本周漏洞与影响资产' },
+                      { Icon: BellOff, title: '告警降噪', desc: '合并重复告警规则' },
+                    ].map((p) => (
+                      <button
+                        key={p.title}
+                        onClick={() => { chat.setDraft(`${p.title} - ${p.desc}`); inputRef.current?.focus(); }}
+                        className="group flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3 text-left transition-colors hover:border-[var(--brand)] hover:bg-[var(--bg-elevated)]"
+                      >
+                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[var(--brand-light)] text-[var(--brand)] group-hover:bg-[var(--brand)] group-hover:text-white transition-colors">
+                          <p.Icon className="h-4.5 w-4.5" />
+                        </span>
+                        <div className="min-w-0">
+                          <div className="text-sm font-semibold text-[var(--text)]">{p.title}</div>
+                          <div className="text-[11px] text-[var(--text-muted)] truncate">{p.desc}</div>
+                        </div>
+                        <ArrowUp className="h-3.5 w-3.5 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 ml-auto self-center" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* ============ 输入区（企业级 Composer） ============ */}
+        <div
+          className="copilot-composer relative border-t border-[var(--border)] px-3 pb-3 pt-2.5 bg-gradient-to-b from-[var(--bg)] to-[var(--bg-elevated)]/40"
+          onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
+          onDragLeave={() => setIsDragging(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setIsDragging(false);
+            const files = Array.from(e.dataTransfer.files ?? []);
+            if (files.length) addAttachments(files);
+          }}
+        >
+          {/* 拖拽高亮 */}
+          {isDragging && (
+            <div className="absolute inset-2 z-20 rounded-xl border-2 border-dashed border-[var(--brand)] bg-[var(--brand-light)]/40 backdrop-blur-sm grid place-items-center pointer-events-none">
+              <div className="text-xs text-[var(--brand)] font-semibold flex items-center gap-1.5">
+                <Upload className="h-4 w-4" />松手以上传到当前会话
               </div>
             </div>
           )}
-        </div>
 
-        {/* ============ 输入区 ============ */}
-        <div className="relative border-t border-[var(--border)] p-4 bg-[var(--bg)]">
           {showSlash && (
-            <div className="absolute bottom-full left-4 right-4 mb-2 max-h-80 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-2 z-10">
+            <div className="copilot-popover copilot-popover--slash absolute bottom-full left-3 right-3 mb-2 max-h-80 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-2 z-10">
               <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
                 <Sparkles className="h-3 w-3" />Slash 命令
                 <span className="text-[10px] font-mono normal-case text-[var(--text-muted)] ml-auto">{slashCmds.length} 个</span>
@@ -480,6 +791,7 @@ export default function Copilot() {
                             <div className="text-xs font-mono font-semibold">{c.cmd}</div>
                             <div className="text-[10px] text-[var(--text-muted)]">{c.desc}</div>
                           </div>
+                          <Badge tone="neutral" className="text-[9px]">{c.category}</Badge>
                         </button>
                       );
                     })}
@@ -490,9 +802,9 @@ export default function Copilot() {
           )}
 
           {showMention && (
-            <div className="absolute bottom-full left-4 mb-2 w-72 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-1 z-10">
+            <div className="copilot-popover copilot-popover--mention absolute bottom-full left-3 mb-2 max-h-80 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-1 z-10">
               <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
-                <AtSign className="h-3 w-3" />@ 提及
+                <AtSign className="h-3 w-3" />@ 提及对象
               </div>
               {MENTIONS.map((m) => {
                 const Icon = m.icon;
@@ -515,93 +827,317 @@ export default function Copilot() {
             </div>
           )}
 
-          {/* Token 用量条 */}
-          <div className="mb-2 flex items-center gap-3 text-[10px] text-[var(--text-muted)]">
-            <Wrench className="h-3 w-3" />
-            <span>工具: redis-cli · kubectl · prometheus · loki-query</span>
-            <span className="ml-auto flex items-center gap-1.5">
-              <Hash className="h-3 w-3" />
-              <span className="font-mono">{charCount}/{MAX_CHARS} 字符 · {tokenEstimate} tokens</span>
-              <div className="w-20 h-1 bg-[var(--bg-hover)] rounded overflow-hidden">
-                <div className={cn('h-full transition-all', tokenPercent > 90 ? 'bg-[var(--danger)]' : tokenPercent > 60 ? 'bg-[var(--warning)]' : 'bg-[var(--success)]')} style={{ width: `${Math.min(100, tokenPercent)}%` }} />
-              </div>
-            </span>
+          {/* 上下文条：Agent · 会话 · 模型 · 工具链 */}
+          <div className="copilot-composer__context" aria-label="会话运行上下文">
+            <div className="flex items-center gap-1.5 min-w-0">
+              <span className="grid h-5 w-5 place-items-center rounded-md bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white shrink-0">
+                <Bot className="h-3 w-3" />
+              </span>
+              <span className="font-semibold text-[11px] text-[var(--text)] truncate">{agentMeta?.name ?? '故障自愈'}</span>
+              <Badge tone="success" className="text-[9px]"><Dot tone="success" />在线</Badge>
+              <span className="text-[var(--text-muted)] text-[10px]">·</span>
+              <span className="text-[10px] text-[var(--text-muted)] truncate">{currentSession?.title ?? '新会话'}</span>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              <button
+                type="button"
+                onClick={() => setModelOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={modelOpen}
+                className="copilot-composer__model-pill flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[10px] font-mono text-[var(--text-secondary)] hover:border-[var(--brand)] hover:text-[var(--text)] transition-colors"
+                title="切换模型"
+              >
+                <Cpu className="h-3 w-3 text-[var(--brand)]" />
+                {currentModel.label}
+                <Badge tone={currentModel.tone} className="text-[9px] ml-0.5">{currentModel.tier}</Badge>
+                <ChevronDown className="h-3 w-3 opacity-60" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setToolsOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={toolsOpen}
+                className="copilot-composer__model-pill flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)] hover:border-[var(--brand)] hover:text-[var(--text)] transition-colors"
+                title="启用/禁用工具链"
+              >
+                <Wrench className="h-3 w-3 text-[var(--brand)]" />
+                工具 {enabledToolCount}/{availableTools.length}
+                <ChevronDown className="h-3 w-3 opacity-60" />
+              </button>
+            </div>
           </div>
 
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] focus-within:border-[var(--brand)] focus-within:shadow-[0_0_0_3px_var(--brand-light)] transition-all">
+          {/* 模型选择 popover */}
+          {modelOpen && (
+            <div role="menu" className="absolute right-3 bottom-full mb-2 w-72 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-1 z-30">
+              <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">选择模型</div>
+              {MODELS.map((m) => (
+                <button
+                  key={m.key}
+                  onClick={() => { setCurrentModelKey(m.key); setModelOpen(false); }}
+                  role="menuitemradio"
+                  aria-checked={currentModelKey === m.key}
+                  className={cn(
+                    'flex w-full items-start gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]',
+                    currentModelKey === m.key && 'bg-[var(--brand-light)]/40',
+                  )}
+                >
+                  <Cpu className="h-3.5 w-3.5 text-[var(--brand)] mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-semibold flex items-center gap-1.5">
+                      {m.label}
+                      <Badge tone={m.tone} className="text-[9px]">{m.tier}</Badge>
+                      {currentModelKey === m.key && <Check className="h-3 w-3 text-[var(--brand)] ml-auto" />}
+                    </div>
+                    <div className="text-[10px] text-[var(--text-muted)]">{m.desc}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* 工具链 popover */}
+          {toolsOpen && (
+            <div role="menu" className="absolute right-3 bottom-full mb-2 w-72 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-1 z-30">
+              <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
+                <Wrench className="h-3 w-3" />本会话工具链
+                <button className="ml-auto text-[10px] text-[var(--brand)] hover:underline" onClick={() => setEnabledTools(availableTools.map((t) => t.key))}>全选</button>
+              </div>
+              {availableTools.map((t) => {
+                const on = enabledTools.includes(t.key);
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => setEnabledTools((prev) => on ? prev.filter((k) => k !== t.key) : [...prev, t.key])}
+                    role="menuitemcheckbox"
+                    aria-checked={on}
+                    className={cn('flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]', on && 'bg-[var(--brand-light)]/30')}
+                  >
+                    <span className={cn('grid h-5 w-5 place-items-center rounded border text-[10px]', on ? 'bg-[var(--brand)] text-white border-[var(--brand)]' : 'border-[var(--border)] text-[var(--text-muted)]')}>
+                      {on && <Check className="h-3 w-3" />}
+                    </span>
+                    <Plug className="h-3.5 w-3.5 text-[var(--brand)]" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-mono font-semibold">{t.name}</div>
+                      <div className="text-[10px] text-[var(--text-muted)]">{t.desc}</div>
+                    </div>
+                    {t.requiresApproval && <Badge tone="warn" className="text-[9px]">需双签</Badge>}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* 附件 chip 区 */}
+          {attachments.length > 0 && (
+            <div className="copilot-composer__attachments flex flex-wrap gap-1.5 mb-2">
+              {attachments.map((a, i) => (
+                <div key={i} className="copilot-composer__attach-chip flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] pl-1.5 pr-1 py-1 text-[11px]">
+                  {a.type === 'image' ? <FileText className="h-3.5 w-3.5 text-[var(--info)]" /> : <Paperclip className="h-3.5 w-3.5 text-[var(--text-muted)]" />}
+                  <span className="font-mono text-[var(--text)] max-w-[160px] truncate">{a.name}</span>
+                  <span className="text-[10px] text-[var(--text-muted)] font-mono">{a.size}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(i)}
+                    className="grid h-4 w-4 place-items-center rounded text-[var(--text-muted)] hover:text-[var(--danger)]"
+                    aria-label={`移除附件 ${a.name}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                onClick={() => addAttachments([])}
+                className="copilot-composer__attach-chip flex items-center gap-1 rounded-md border border-dashed border-[var(--border)] px-2 py-1 text-[10px] text-[var(--text-muted)] hover:border-[var(--brand)] hover:text-[var(--text)]"
+              >
+                <Plus className="h-3 w-3" />添加
+              </button>
+            </div>
+          )}
+
+          {/* 编辑器卡片 */}
+          <div className={cn(
+            'copilot-composer__editor group relative rounded-xl border bg-[var(--surface-1)] shadow-sm transition-all',
+            'border-[var(--border)] focus-within:border-[var(--brand)] focus-within:shadow-[0_0_0_3px_var(--brand-light)]',
+            isDragging && 'border-[var(--brand)] shadow-[0_0_0_3px_var(--brand-light)]',
+          )}>
+            {/* 自动 @ token 渲染预览（输入含 @ 时显示） */}
+            {/[@#]\w+/.test(chat.state.draftInput) && (
+              <div className="copilot-composer__chips flex flex-wrap items-center gap-1 px-3 pt-2 text-[10px]">
+                {Array.from(new Set(chat.state.draftInput.match(/[@#]\w+/g) ?? [])).map((tok, i) => (
+                  <span key={i} className="inline-flex items-center gap-1 rounded-md bg-[var(--brand-light)] text-[var(--brand)] px-1.5 py-0.5 font-mono">
+                    <AtSign className="h-2.5 w-2.5" />{tok}
+                  </span>
+                ))}
+              </div>
+            )}
+
             <textarea
               ref={inputRef}
               value={chat.state.draftInput}
               onChange={(e) => onInputChange(e.target.value)}
               onKeyDown={onTextareaKey}
-              placeholder="输入问题，/ 唤起命令 · @ 提及对象（Shift+Enter 换行 · Esc 停止）"
+              onPaste={onPaste}
+              aria-label="输入会话消息"
+              placeholder="向 故障自愈 提问 · 试试 / 唤起命令、@ 提及资源、粘贴截图 (Shift+Enter 换行 · Esc 停止)"
+              maxLength={MAX_CHARS}
               rows={2}
-              className="w-full resize-none bg-transparent px-3 py-2.5 text-sm outline-none placeholder:text-[var(--text-muted)]"
+              className="copilot-composer__textarea block w-full resize-none bg-transparent px-3.5 py-2.5 text-sm leading-relaxed outline-none placeholder:text-[var(--text-muted)]/80"
             />
-            <div className="flex items-center justify-between px-2 py-1.5 border-t border-[var(--border)]">
-              <div className="flex items-center gap-1">
-                <button className="grid h-7 w-7 place-items-center rounded text-[var(--text-muted)] hover:bg-[var(--surface-3)] hover:text-[var(--text)]" title="附件">
+
+            {/* 操作栏 */}
+            <div className="copilot-composer__footer flex items-center justify-between gap-2 border-t border-[var(--border)]/60 px-2 py-1.5">
+              <div className="copilot-composer__tools flex items-center gap-0.5">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => addAttachments(Array.from(e.target.files ?? []))}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="copilot-composer__tool grid h-7 w-7 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+                  title="附件（支持拖拽 / 粘贴）"
+                  aria-label="添加附件"
+                >
                   <Paperclip className="h-3.5 w-3.5" />
                 </button>
-                <button className="grid h-7 w-7 place-items-center rounded text-[var(--text-muted)] hover:bg-[var(--surface-3)] hover:text-[var(--text)]" title="语音输入">
+                <button
+                  type="button"
+                  onClick={() => setVoiceOn((v) => !v)}
+                  className={cn(
+                    'copilot-composer__tool grid h-7 w-7 place-items-center rounded-md transition-colors',
+                    voiceOn ? 'text-[var(--danger)] bg-[var(--danger-bg)]' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]',
+                  )}
+                  title={voiceOn ? '语音输入已开启' : '语音输入'}
+                  aria-label="语音输入"
+                  aria-pressed={voiceOn}
+                >
                   <Mic className="h-3.5 w-3.5" />
                 </button>
+                <span className="mx-1 h-4 w-px bg-[var(--border)]" aria-hidden="true" />
                 <button
+                  type="button"
                   onClick={() => chat.setDraft(chat.state.draftInput + ' @')}
-                  className="grid h-7 w-7 place-items-center rounded text-[var(--text-muted)] hover:bg-[var(--surface-3)] hover:text-[var(--text)]"
+                  className="copilot-composer__tool grid h-7 w-7 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
                   title="@ 提及"
                   aria-label="@ 提及"
                 >
                   <AtSign className="h-3.5 w-3.5" />
                 </button>
-                {chat.state.typing && (
+                <button
+                  type="button"
+                  onClick={() => chat.setDraft(chat.state.draftInput + ' /')}
+                  className="copilot-composer__tool grid h-7 w-7 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+                  title="/ 命令"
+                  aria-label="slash 命令"
+                >
+                  <Hash className="h-3.5 w-3.5" />
+                </button>
+                {chat.state.typing ? (
                   <button
+                    type="button"
                     onClick={chat.stop}
-                    className="ml-1 flex items-center gap-1 rounded bg-[var(--danger)] text-white px-2 py-1 text-[10px] hover:opacity-90"
+                    className="copilot-composer__stop ml-1 flex items-center gap-1 rounded-md px-2 py-1 text-[10px]"
                     title="停止生成（Esc）"
                   >
                     <Square className="h-2.5 w-2.5 fill-current" />停止
                   </button>
+                ) : (
+                  <Badge tone="info" className="ml-1 text-[9px]" title="AI 正在等待输入">
+                    <Hourglass className="h-2.5 w-2.5 mr-0.5" />就绪
+                  </Badge>
                 )}
               </div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] text-[var(--text-muted)] font-mono">Sonnet-4 · P0</span>
-                <Button onClick={handleSend} disabled={!chat.state.draftInput.trim() || chat.state.typing} size="sm">
+
+              <div className="copilot-composer__send flex items-center gap-2">
+                <span className="copilot-composer__model hidden sm:inline-flex items-center gap-1 text-[10px] text-[var(--text-muted)] font-mono">
+                  <kbd className="px-1 py-0.5 rounded border border-[var(--border)] bg-[var(--bg)] text-[9px]">Enter</kbd>
+                  <span>发送 ·</span>
+                  <kbd className="px-1 py-0.5 rounded border border-[var(--border)] bg-[var(--bg)] text-[9px]">Shift+Enter</kbd>
+                  <span>换行</span>
+                </span>
+                <span className={cn('copilot-composer__usage hidden sm:flex', tokenPercent > 90 && 'copilot-composer__usage--danger', tokenPercent > 60 && tokenPercent <= 90 && 'copilot-composer__usage--warning')}>
+                  <Hash className="h-3 w-3" aria-hidden="true" />
+                  <span className="font-mono">{charCount}/{MAX_CHARS}</span>
+                  <div className="copilot-composer__usage-bar" aria-hidden="true"><div style={{ width: `${Math.min(100, tokenPercent)}%` }} /></div>
+                </span>
+                <Button
+                  onClick={handleSend}
+                  disabled={!chat.state.draftInput.trim() || chat.state.typing}
+                  size="sm"
+                  className="copilot-composer__send-btn"
+                  aria-label={chat.state.typing ? '生成中，发送已禁用' : '发送消息（Enter）'}
+                >
                   <Send className="h-3.5 w-3.5" />发送
                 </Button>
               </div>
             </div>
           </div>
+
+          {/* 提示条 */}
+          <div className="mt-1.5 px-1 flex items-center justify-between text-[10px] text-[var(--text-muted)]">
+            <span className="flex items-center gap-1">
+              <ShieldCheck className="h-3 w-3 text-[var(--success)]" />对话加密 · SignedLog 写入审计 · 等保 3 合规
+            </span>
+            <span className="hidden sm:flex items-center gap-2 font-mono">
+              <span>{enabledToolCount} 工具 · {attachments.length} 附件</span>
+              <span>·</span>
+              <span>{tokenEstimate} tokens / 8k</span>
+            </span>
+          </div>
         </div>
       </section>
 
       {/* ============ 右侧详情 ============ */}
-      <aside className="w-[320px] shrink-0 border-l border-[var(--border)] bg-[var(--bg)] overflow-y-auto">
-        <div className="px-5 py-4 border-b border-[var(--border)]">
-          <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-            <Bot className="h-3.5 w-3.5 text-[var(--text-muted)]" />Agent 详情
+      <aside
+        id="copilot-agent-details"
+        className={cn(
+          'copilot-agent-details flex min-h-0 flex-col shrink-0 border-l border-[var(--border)] bg-[var(--bg)] overflow-hidden transition-[width] duration-200 ease-out',
+          detailsOpen ? 'w-[320px]' : 'w-10',
+        )}
+        aria-label="Agent 详情"
+        data-open={detailsOpen ? 'true' : 'false'}
+        aria-expanded={detailsOpen}
+      >
+        {detailsOpen ? (
+        <div className="copilot-agent-details__inner flex min-h-0 flex-1 flex-col">
+          <div className="copilot-agent-details__header flex shrink-0 items-center justify-between gap-2 px-4 py-3 border-b border-[var(--border)] bg-[var(--bg)]">
+            <div className="text-xs font-semibold flex items-center gap-1.5 truncate"><Bot className="h-3.5 w-3.5 text-[var(--text-muted)] shrink-0" /><span className="truncate">Agent 详情</span></div>
+            <button
+              type="button"
+              onClick={() => setDetailsOpen(false)}
+              title="关闭详情（Esc）"
+              aria-label="关闭 Agent 详情"
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] hover:border-[var(--danger)] hover:bg-[var(--danger-bg)] hover:text-[var(--danger)] transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
-          <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3 space-y-1.5 text-xs">
+          <div className="copilot-agent-details__body min-h-0 flex-1 overflow-y-auto">
+            <section className="copilot-agent-details__section px-5 py-4 border-b border-[var(--border)]">
+              <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3 space-y-1.5 text-xs">
             <div className="flex justify-between"><span className="text-[var(--text-muted)]">分类</span><Badge tone="info">{agentMeta?.category}</Badge></div>
             <div className="flex justify-between"><span className="text-[var(--text-muted)]">SLA</span><span className="text-[var(--success)] font-mono">{agentMeta?.sla}%</span></div>
             <div className="flex justify-between"><span className="text-[var(--text-muted)]">错误率</span><span className="font-mono">{((agentMeta?.errorRate ?? 0) * 100).toFixed(2)}%</span></div>
             <div className="flex justify-between"><span className="text-[var(--text-muted)]">知识库</span><span className="font-mono">{agentMeta?.knowledgeBases} 个</span></div>
             <div className="flex justify-between"><span className="text-[var(--text-muted)]">工具</span><span className="font-mono">{agentMeta?.tools} 个</span></div>
             <div className="flex justify-between"><span className="text-[var(--text-muted)]">语言</span><span className="font-mono text-[10px]">{agentMeta?.languages?.join(' · ')}</span></div>
-            <div className="pt-1.5 border-t border-[var(--border)] text-[10px] text-[var(--text-muted)]">
-              {agentMeta?.description}
-            </div>
-          </div>
-        </div>
+                <div className="pt-1.5 border-t border-[var(--border)] text-[10px] text-[var(--text-muted)]">{agentMeta?.description}</div>
+              </div>
+            </section>
 
-        <div className="px-5 py-4 border-b border-[var(--border)]">
-          <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-            <Database className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-            RAG 检索
-            <Badge tone="success" className="ml-auto text-[10px]">实时</Badge>
-          </div>
+            <section className="copilot-agent-details__section px-5 py-4 border-b border-[var(--border)]">
+              <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+                <Database className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                RAG 检索
+                <Badge tone="success" className="ml-auto text-[10px]">实时</Badge>
+              </div>
           <div className="space-y-2 text-xs">
-            <Row label="召回耗时" value="320ms" mono />
+            <Row label="召回耗时" value={<span className="font-mono text-[11px]">320ms</span>} />
             <Row label="Top-K" value={<Badge tone="brand" className="text-[10px]">8</Badge>} />
             <Row label="重排模型" value="bge-reranker-large" />
             <Row label="命中率" value={<span className="text-[var(--success)]">92%</span>} />
@@ -615,13 +1151,13 @@ export default function Copilot() {
               <div className="h-full bg-gradient-to-r from-[var(--brand)] to-[var(--purple)]" style={{ width: '0.6%' }} />
             </div>
           </div>
-        </div>
+            </section>
 
-        <div className="px-5 py-4 border-b border-[var(--border)]">
-          <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-            <Link2 className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-            最近引用（带置信度）
-          </div>
+            <section className="copilot-agent-details__section px-5 py-4 border-b border-[var(--border)]">
+              <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+                <Link2 className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                最近引用（带置信度）
+              </div>
           <div className="space-y-2">
             {[
               { src: 'Redis Runbook v3.2', source: 'Runbook', page: 12, score: 0.92 },
@@ -631,7 +1167,7 @@ export default function Copilot() {
             ].map((c, i) => (
               <button
                 key={i}
-                onClick={() => setCitationDrawer(c)}
+                onClick={(event) => openCitation(c, event.currentTarget)}
                 className="block w-full text-left rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 hover:border-[var(--brand)] transition-colors"
               >
                 <div className="flex items-center gap-1.5 mb-1">
@@ -655,27 +1191,27 @@ export default function Copilot() {
               </button>
             ))}
           </div>
-        </div>
+            </section>
 
-        <div className="px-5 py-4 border-b border-[var(--border)]">
-          <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-            <Wrench className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-            工具调用统计
-            <Badge tone="brand" className="ml-auto text-[10px]">3</Badge>
-          </div>
+            <section className="copilot-agent-details__section px-5 py-4 border-b border-[var(--border)]">
+              <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+                <Wrench className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                工具调用统计
+                <Badge tone="brand" className="ml-auto text-[10px]">3</Badge>
+              </div>
           <div className="grid grid-cols-2 gap-2">
             <Mini label="成功" value="3" tone="success" />
             <Mini label="失败" value="0" tone="success" />
             <Mini label="平均" value="42ms" />
             <Mini label="缓存" value="32%" tone="success" />
-          </div>
-        </div>
+              </div>
+            </section>
 
-        <div className="px-5 py-4">
-          <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-            <Clock className="h-3.5 w-3.5 text-[var(--text-muted)]" />活动时间线
-          </div>
-          <div className="activity-timeline">
+            <section className="copilot-agent-details__section px-5 py-4">
+              <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
+                <Clock className="h-3.5 w-3.5 text-[var(--text-muted)]" />活动时间线
+              </div>
+              <div className="activity-timeline">
             {[
               { tone: 'success' as const, icon: CheckCircle2, text: '故障自愈 完成恢复', time: '14:32' },
               { tone: 'success' as const, icon: ShieldCheck, text: '双签审批通过（王昊 + 李婷）', time: '14:28' },
@@ -691,25 +1227,29 @@ export default function Copilot() {
                 </div>
               </div>
             ))}
+              </div>
+            </section>
           </div>
         </div>
+        ) : (
+          <AgentDetailsCollapsed onOpen={() => setDetailsOpen(true)} />
+        )}
       </aside>
 
       {/* 引用 Drawer */}
       {citationDrawer && (
-        <div className="fixed inset-0 z-40" onClick={() => setCitationDrawer(null)}>
-          <div className="absolute inset-0 bg-black/40" />
+        <div className="copilot-citation-layer fixed inset-0 z-40" onClick={() => setCitationDrawer(null)}>
+          <div className="copilot-scrim" />
           <div
-            className="absolute right-0 top-0 h-full w-[520px] bg-[var(--surface-1)] border-l border-[var(--border)] shadow-2xl p-6 overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="citation-drawer-title"
+            className="copilot-citation-drawer absolute right-0 top-0 h-full bg-[var(--surface-1)] border-l border-[var(--border)] shadow-2xl p-6 overflow-y-auto"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4">
-              <div className="text-base font-semibold flex items-center gap-2">
-                <Hash className="h-4 w-4 text-[var(--brand)]" />引用详情
-              </div>
-              <button onClick={() => setCitationDrawer(null)} className="grid h-7 w-7 place-items-center rounded hover:bg-[var(--bg-hover)]" aria-label="关闭">
-                <X className="h-4 w-4" />
-              </button>
+              <div id="citation-drawer-title" className="text-base font-semibold flex items-center gap-2"><Hash className="h-4 w-4 text-[var(--brand)]" />引用详情</div>
+              <button type="button" onClick={() => setCitationDrawer(null)} className="grid h-7 w-7 place-items-center rounded hover:bg-[var(--bg-hover)]" aria-label="关闭引用详情"><X className="h-4 w-4" /></button>
             </div>
             <div className="space-y-3 text-xs">
               <DrawerField label="来源" value={
@@ -752,6 +1292,130 @@ export default function Copilot() {
         session={currentSession}
         agentMeta={agentMeta}
       />
+
+      {/* ============ 分享会话 ============ */}
+      {shareDialog.open && (
+        <div className="copilot-citation-layer fixed inset-0 z-40" onClick={() => setShareDialog({ open: false })}>
+          <div className="copilot-scrim" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="share-dialog-title"
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[420px] max-w-[90vw] rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-2xl p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <div id="share-dialog-title" className="text-sm font-semibold flex items-center gap-2">
+                <Share2 className="h-4 w-4 text-[var(--brand)]" />分享会话
+              </div>
+              <button onClick={() => setShareDialog({ open: false })} className="grid h-7 w-7 place-items-center rounded hover:bg-[var(--bg-hover)]" aria-label="关闭分享">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-3 text-xs">
+              <div className="rounded-md bg-[var(--bg)] border border-[var(--border)] p-2 text-[10px] text-[var(--text-muted)] flex items-center gap-1.5">
+                <ShieldCheck className="h-3 w-3" />仅查看 · 脱敏 token / 内部 IP · 审计 SignedLog
+              </div>
+              <div>
+                <div className="text-[10px] text-[var(--text-muted)] mb-1">分享链接（只读）</div>
+                <div className="flex items-center gap-2">
+                  <code className="flex-1 font-mono text-[11px] break-all rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5">
+                    {window.location.origin}/copilot/share/{shareDialog.token}
+                  </code>
+                  <Button size="sm" variant="secondary" onClick={copyShareUrl}>
+                    <Copy className="h-3 w-3" />复制
+                  </Button>
+                </div>
+              </div>
+              {currentSession && (
+                <div className="flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]">
+                  <Lock className="h-3 w-3" />RBAC：仅工作区 {currentSession.workspaceId ?? 'w1'} 协作者可访问
+                </div>
+              )}
+              <div className="flex gap-1.5 pt-2 border-t border-[var(--border)]">
+                {currentSession?.shareToken && (
+                  <Button size="sm" variant="secondary" onClick={() => { chat.revokeShare(currentSession.id); setShareDialog({ open: false }); }}>
+                    <X className="h-3 w-3" />撤销分享
+                  </Button>
+                )}
+                <div className="flex-1" />
+                <Button size="sm" onClick={() => setShareDialog({ open: false })}>完成</Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============ 反馈 Drawer ============ */}
+      {feedbackOpen && currentSession && (() => {
+        const target = currentSession.messages.find((x) => x.id === feedbackOpen);
+        if (!target) return null;
+        return (
+          <div className="copilot-citation-layer fixed inset-0 z-40" onClick={() => setFeedbackOpen(null)}>
+            <div className="copilot-scrim" />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="feedback-drawer-title"
+              className="absolute right-0 top-0 h-full w-[400px] max-w-[90vw] bg-[var(--surface-1)] border-l border-[var(--border)] shadow-2xl p-5 overflow-y-auto"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-3">
+                <div id="feedback-drawer-title" className="text-sm font-semibold flex items-center gap-2">
+                  <ThumbsDown className="h-4 w-4 text-[var(--danger)]" />反馈 · 写回 RAG eval
+                </div>
+                <button onClick={() => setFeedbackOpen(null)} className="grid h-7 w-7 place-items-center rounded hover:bg-[var(--bg-hover)]" aria-label="关闭反馈">
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+              <FeedbackForm
+                target={target}
+                onSubmit={(payload) => { chat.setFeedback(target.id, { kind: 'dislike', ...payload }); setFeedbackOpen(null); }}
+              />
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ============ 拒绝双签 ============ */}
+      {rejectionReason.open && currentSession && (
+        <div className="copilot-citation-layer fixed inset-0 z-40" onClick={() => setRejectionReason({ mid: '', idx: -1, open: false })}>
+          <div className="copilot-scrim" />
+          <div
+            role="dialog"
+            aria-modal="true"
+            className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[400px] max-w-[90vw] rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-2xl p-5"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="text-sm font-semibold mb-3 flex items-center gap-2">
+              <X className="h-4 w-4 text-[var(--danger)]" />拒绝双签
+            </div>
+            <div className="space-y-2 text-xs">
+              <label className="block text-[10px] text-[var(--text-muted)]">拒绝原因（必填，写入审计）</label>
+              <textarea
+                id="rejection-reason"
+                className="w-full h-24 rounded border border-[var(--border)] bg-[var(--bg)] p-2 text-xs"
+                placeholder="例如：维护窗口未到 / 影响范围过大 / 配置错误..."
+              />
+              <div className="flex gap-1.5 pt-2">
+                <div className="flex-1" />
+                <Button size="sm" variant="secondary" onClick={() => setRejectionReason({ mid: '', idx: -1, open: false })}>取消</Button>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => {
+                    const reason = (document.getElementById('rejection-reason') as HTMLTextAreaElement | null)?.value ?? '';
+                    chat.reject(rejectionReason.mid, rejectionReason.idx, reason);
+                    setRejectionReason({ mid: '', idx: -1, open: false });
+                  }}
+                >
+                  确认拒绝
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -763,59 +1427,156 @@ function labelOfCat(c: string) {
 // ============ 消息气泡 ============
 function MessageBubble({
   m, expandedThinking, setExpandedThinking, expandedArgs, setExpandedArgs,
-  onApprove, onCitation, onRetry, onCopy, onRegenerate, onDelete,
-  hoverMsgId, setHoverMsgId, copiedId,
+  expandedReasoning, setExpandedReasoning, expandedApproval, setExpandedApproval,
+  onApprove, onCitation, onRetry, onCopy, onRegenerate, onDelete, onRetryMessage, onFeedback,
+  onApproveSigner, onRequestReject,
+  hoverMsgId, setHoverMsgId, copiedId, agentName,
 }: {
   m: ChatMessageEx;
   expandedThinking: Record<string, boolean>;
   setExpandedThinking: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   expandedArgs: Record<string, boolean>;
   setExpandedArgs: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  expandedReasoning: Record<string, boolean>;
+  setExpandedReasoning: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
+  expandedApproval: Record<string, boolean>;
+  setExpandedApproval: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   onApprove: (msgId: string) => void;
   onCitation: (c: any) => void;
   onRetry: (name: string) => void;
   onCopy: (m: ChatMessageEx) => void;
   onRegenerate: (mid: string) => void;
   onDelete: (mid: string) => void;
+  onRetryMessage: (mid: string) => void;
+  onFeedback: (mid: string, kind: FeedbackKind) => void;
+  onApproveSigner: (mid: string, idx: number) => void;
+  onRequestReject: (mid: string, idx: number) => void;
   hoverMsgId: string | null;
   setHoverMsgId: (v: string | null) => void;
   copiedId: string | null;
+  agentName?: string;
 }) {
   const isUser = m.role === 'user';
   const isTool = m.role === 'tool';
   const isEmpty = !m.content;
+  const isStreaming = m.status === 'streaming';
+  const agentDisplayName = agentName ?? '故障自愈';
 
   return (
     <div
-      className={cn('flex gap-3 group relative', isUser && 'flex-row-reverse')}
+      className={cn('copilot-message group relative', isUser ? 'flex justify-end' : 'flex gap-3')}
       onMouseEnter={() => setHoverMsgId(m.id)}
       onMouseLeave={() => setHoverMsgId(null)}
     >
-      <div className="shrink-0">
-        {isUser ? (
-          <Avatar name="王昊" size={36} />
-        ) : isTool ? (
-          <div className="grid h-9 w-9 place-items-center rounded-md bg-[var(--warning-bg)] border border-[var(--warning)]/40 text-[var(--warning)]">
-            <Wrench className="h-4 w-4" />
-          </div>
-        ) : (
-          <div className="grid h-9 w-9 place-items-center rounded-md bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white">
-            <Bot className="h-4 w-4" />
+      {!isUser && (
+        <div className="shrink-0 pt-0.5">
+          {isTool ? (
+            <div className="grid h-7 w-7 place-items-center rounded-full bg-[var(--warning-bg)] text-[var(--warning)]">
+              <Wrench className="h-3.5 w-3.5" />
+            </div>
+          ) : (
+            <div className="grid h-7 w-7 place-items-center rounded-full bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white">
+              <Bot className="h-3.5 w-3.5" />
+            </div>
+          )}
+        </div>
+      )}
+      <div className={cn('copilot-message__content min-w-0 space-y-2', isUser ? 'max-w-[80%]' : 'flex-1')}>
+        {/* Header row: avatar + name + role + time, compact single line */}
+        <div className={cn('copilot-message__meta flex items-center gap-1.5 text-[11px]', isUser && 'justify-end')}>
+          {isUser ? (
+            <Avatar name="王昊" size={20} />
+          ) : null}
+          <span className="font-semibold text-[var(--text)]">{m.agentName ?? (isUser ? '王昊' : isTool ? '工具调用' : '故障自愈')}</span>
+          {!isUser && m.status && (
+            <span className={cn('inline-flex items-center gap-1 text-[10px] text-[var(--text-muted)]', isStreaming && 'text-[var(--brand)]')}>
+              {isStreaming && <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand)] animate-pulse" aria-hidden="true" />}
+              {STATUS_LABEL[m.status]}
+            </span>
+          )}
+          {!isUser && m.metrics?.ttftMs !== undefined && (
+            <span className="text-[10px] text-[var(--text-muted)] font-mono tabular-nums" title="首 token 时间 · 耗时 · 模型">
+              TTFT {m.metrics.ttftMs}ms · {m.metrics.durationMs ? `${(m.metrics.durationMs / 1000).toFixed(1)}s` : ''}{m.metrics.model ? ` · ${m.metrics.model}` : ''}
+            </span>
+          )}
+          <span className="text-[10px] text-[var(--text-muted)] font-mono tabular-nums" title={m.createdAt}>{m.createdAt.slice(11, 16)}</span>
+          {isTool && <Badge tone="warn" className="text-[9px]">工具</Badge>}
+          {m.approvalRequest && <Badge tone="error" className="text-[9px]">写操作</Badge>}
+        </div>
+
+        {/* 错误条（failed / cancelled / moderated） */}
+        {m.status === 'failed' && (
+          <div role="alert" className="rounded-md border border-[var(--danger)]/30 bg-[var(--danger-bg)] px-3 py-2 text-[11px] flex items-center gap-2">
+            <AlertCircle className="h-3.5 w-3.5 text-[var(--danger)]" />
+            <span className="text-[var(--text)]">
+              {m.error?.message ?? ERROR_HINT[m.error?.category ?? 'unknown']}
+            </span>
+            <button
+              type="button"
+              onClick={() => onRetryMessage(m.id)}
+              className="ml-auto inline-flex items-center gap-1 text-[10px] text-[var(--danger)] hover:underline"
+            >
+              <RotateCcw className="h-3 w-3" />重试
+            </button>
           </div>
         )}
-      </div>
-      <div className={cn('flex-1 space-y-2', isUser && 'flex flex-col items-end max-w-[80%]')}>
-        <div className="flex items-center gap-2 text-[10px]">
-          <span className="font-semibold text-[var(--text-secondary)]">{m.agentName ?? (isUser ? '王昊' : isTool ? '工具调用' : '故障自愈')}</span>
-          <span className="text-[var(--text-muted)] font-mono">{m.createdAt.slice(11, 16)}</span>
-          {isTool && <Badge tone="warn" className="text-[10px]">工具</Badge>}
-          {m.approvalRequest && <Badge tone="error" className="text-[10px]">写操作</Badge>}
-        </div>
+        {m.status === 'cancelled' && (
+          <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-1.5 text-[11px] text-[var(--text-muted)] inline-flex items-center gap-1.5">
+            <Square className="h-3 w-3" />生成已停止
+          </div>
+        )}
+        {m.status === 'moderated' && m.safety && (
+          <div role="alert" className="rounded-md border border-[var(--warning)]/30 bg-[var(--warning-bg)] px-3 py-2 text-[11px] flex items-center gap-2">
+            <ShieldAlert className="h-3.5 w-3.5 text-[var(--warning)]" />
+            <span className="text-[var(--text)]">
+              内容安全：{m.safety.flaggedCategory ?? 'policy'} · 已{m.safety.action === 'block' ? '拦截' : m.safety.action === 'redact' ? '脱敏' : '告警'}
+            </span>
+            {m.safety.redactedText && (
+              <details className="ml-auto text-[10px]">
+                <summary className="cursor-pointer text-[var(--text-muted)]">查看脱敏后</summary>
+                <pre className="mt-1 max-w-md whitespace-pre-wrap text-[10px]">{m.safety.redactedText}</pre>
+              </details>
+            )}
+          </div>
+        )}
+
+        {m.reasoningSteps && m.reasoningSteps.length > 0 && (
+          <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)]">
+            <button
+              onClick={() => setExpandedReasoning({ ...expandedReasoning, [m.id]: !expandedReasoning[m.id] })}
+              aria-expanded={!!expandedReasoning[m.id]}
+              aria-controls={`reasoning-${m.id}`}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text)]"
+            >
+              <Activity className="h-3 w-3" />
+              <span className="font-semibold">推理步骤 · {m.reasoningSteps.length} 步</span>
+              {expandedReasoning[m.id] ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
+            </button>
+            {expandedReasoning[m.id] && (
+              <div id={`reasoning-${m.id}`} className="px-3 pb-2 space-y-1.5">
+                {m.reasoningSteps.map((s, i) => (
+                  <div key={s.id} className="flex items-start gap-2 text-[11px]">
+                    <span className="grid h-4 w-4 place-items-center rounded-full bg-[var(--brand-light)] text-[var(--brand)] text-[9px] font-mono shrink-0 mt-0.5">{i + 1}</span>
+                    <div className="min-w-0">
+                      <div className="font-semibold text-[var(--text-secondary)]">
+                        <span className="font-mono text-[9px] text-[var(--text-muted)] mr-1">[{s.kind}]</span>
+                        {s.title}
+                      </div>
+                      {s.detail && <div className="text-[var(--text-muted)]">{s.detail}</div>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
 
         {m.thinking && m.thinking.length > 0 && (
           <div className="rounded-md border border-dashed border-[var(--border)] bg-[var(--bg-elevated)]">
             <button
               onClick={() => setExpandedThinking({ ...expandedThinking, [m.id]: !expandedThinking[m.id] })}
+              aria-expanded={!!expandedThinking[m.id]}
+              aria-controls={`thinking-${m.id}`}
               className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text)]"
             >
               <Brain className="h-3 w-3" />
@@ -823,26 +1584,36 @@ function MessageBubble({
               {expandedThinking[m.id] ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
             </button>
             {expandedThinking[m.id] && (
-              <div className="px-3 pb-2 text-[11px] text-[var(--text-muted)] italic">{m.thinking}</div>
+              <div id={`thinking-${m.id}`} className="px-3 pb-2 text-[11px] text-[var(--text-muted)] italic">{m.thinking}</div>
             )}
           </div>
         )}
 
-        {!isEmpty && (
-          <div className={cn(isUser ? 'chat-bubble chat-bubble--user' : isTool ? 'chat-bubble chat-bubble--tool' : 'chat-bubble')}>
+        {!isEmpty ? (
+          <div className={cn(
+            'copilot-message__body relative',
+            isUser
+              ? 'inline-block max-w-full whitespace-pre-wrap break-words rounded-2xl rounded-tr-sm bg-gradient-to-br from-[var(--brand)] to-[var(--brand-hover)] px-4 py-2.5 text-[14px] text-white shadow-sm'
+              : isTool
+              ? 'rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)]/50 px-3 py-2 text-[12px] text-[var(--text-secondary)] font-mono'
+              : 'text-[14.5px] leading-[1.7] text-[var(--text)] break-words',
+          )}>
             {isUser ? (
               <span className="whitespace-pre-wrap">{m.content}</span>
             ) : (
-              <Markdown text={m.content} />
-            )}
-            {m.content.length === 0 && (
-              <span className="inline-flex items-center gap-1 text-[var(--text-muted)]">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                正在生成
-              </span>
+              <div className="md-content">
+                <Markdown text={m.content} />
+                {isStreaming && <span className="inline-block h-3.5 w-1.5 ml-0.5 align-text-bottom bg-[var(--brand)] animate-pulse rounded-sm" aria-hidden="true" />}
+              </div>
             )}
           </div>
-        )}
+        ) : isStreaming ? (
+          <div className="copilot-message__body copilot-message__body--pending inline-flex items-center gap-2 text-[var(--text-muted)] text-sm py-1" role="status" aria-label="消息正在生成">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
+            <span>{agentDisplayName} 正在思考</span>
+            <span className="inline-block h-3.5 w-1.5 align-text-bottom bg-[var(--brand)] animate-pulse rounded-sm" aria-hidden="true" />
+          </div>
+        ) : null}
 
         {m.codeBlock && (
           <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] overflow-hidden max-w-2xl">
@@ -851,7 +1622,10 @@ function MessageBubble({
                 <Code className="h-3 w-3 text-[var(--text-muted)]" />
                 <span className="font-mono text-[var(--text-muted)]">{m.codeBlock.lang}</span>
               </div>
-              <button className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text)] flex items-center gap-1">
+              <button
+                onClick={async () => { try { await navigator.clipboard.writeText(m.codeBlock!.code); } catch {} }}
+                className="text-[10px] text-[var(--text-muted)] hover:text-[var(--text)] flex items-center gap-1"
+              >
                 <Download className="h-3 w-3" />复制
               </button>
             </div>
@@ -867,33 +1641,58 @@ function MessageBubble({
               const argsKey = `${m.id}-${tc.id}`;
               const isOpen = expandedArgs[argsKey];
               const failed = tc.status === 'failed';
+              const denied = tc.status === 'denied' || tc.permission === 'denied';
               return (
-                <div key={tc.id} className={cn('rounded-md border p-2 text-[11px]', failed ? 'border-[var(--danger)]/40 bg-[var(--danger-bg)]' : 'border-[var(--border)] bg-[var(--bg-elevated)]')}>
-                  <div className="flex items-center gap-2">
-                    <Wrench className={cn('h-3 w-3', failed ? 'text-[var(--danger)]' : 'text-[var(--brand)]')} />
+                <div key={tc.id} className={cn('rounded-md border p-2 text-[11px]', failed || denied ? 'border-[var(--danger)]/40 bg-[var(--danger-bg)]' : 'border-[var(--border)] bg-[var(--bg-elevated)]')}>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Wrench className={cn('h-3 w-3', failed || denied ? 'text-[var(--danger)]' : 'text-[var(--brand)]')} />
                     <span className="font-mono font-semibold">{tc.name}</span>
+                    {tc.permission === 'approval-required' && (
+                      <Badge tone="warn" className="text-[9px]"><ShieldCheck className="mr-0.5 inline h-2.5 w-2.5" />需双签</Badge>
+                    )}
+                    {tc.permission === 'auto' && (
+                      <Badge tone="success" className="text-[9px]"><PlugZap className="mr-0.5 inline h-2.5 w-2.5" />auto</Badge>
+                    )}
+                    {tc.permission === 'denied' && (
+                      <Badge tone="error" className="text-[9px]"><Lock className="mr-0.5 inline h-2.5 w-2.5" />已拦截</Badge>
+                    )}
                     {failed ? (
                       <Badge tone="error" className="text-[9px]">
                         <AlertCircle className="mr-0.5 inline h-2.5 w-2.5" />失败
                       </Badge>
-                    ) : (
+                    ) : !denied ? (
                       <Badge tone="success" className="text-[9px]">
                         <CheckCircle2 className="mr-0.5 inline h-2.5 w-2.5" />{tc.durationMs}ms
                       </Badge>
+                    ) : null}
+                    {tc.sandboxId && (
+                      <span className="text-[9px] font-mono text-[var(--text-muted)]" title="gVisor 沙箱 ID">[{tc.sandboxId}]</span>
+                    )}
+                    {tc.traceId && (
+                      <span className="text-[9px] font-mono text-[var(--text-muted)]" title="执行 traceId">{tc.traceId}</span>
                     )}
                     {failed && (
                       <button onClick={() => onRetry(tc.name)} className="text-[10px] text-[var(--danger)] hover:underline ml-auto">
                         <RotateCcw className="inline h-2.5 w-2.5 mr-0.5" />自动重试
                       </button>
                     )}
-                    {!failed && (
-                      <button onClick={() => setExpandedArgs({ ...expandedArgs, [argsKey]: !isOpen })} className="ml-auto text-[10px] text-[var(--text-muted)] hover:text-[var(--text)]">
+                    {!failed && !denied && (
+                      <button
+                        type="button"
+                        onClick={() => setExpandedArgs({ ...expandedArgs, [argsKey]: !isOpen })}
+                        aria-expanded={!!isOpen}
+                        aria-controls={`tool-args-${argsKey}`}
+                        className="ml-auto text-[10px] text-[var(--text-muted)] hover:text-[var(--text)]"
+                      >
                         {isOpen ? '收起' : '参数'}
                       </button>
                     )}
                   </div>
+                  {tc.error && (
+                    <div className="mt-1 text-[10px] font-mono text-[var(--danger)]">{tc.error}</div>
+                  )}
                   {isOpen && (
-                    <div className="mt-1.5 space-y-1 pl-5">
+                    <div id={`tool-args-${argsKey}`} className="mt-1.5 space-y-1 pl-5">
                       <pre className="text-[10px] font-mono text-[var(--text-muted)] bg-[var(--bg)] rounded p-1.5 overflow-x-auto">
                         {JSON.stringify(tc.args, null, 2)}
                       </pre>
@@ -933,68 +1732,147 @@ function MessageBubble({
 
         {m.approvalRequest && (
           <div className="rounded-md border border-[var(--danger)]/30 bg-[var(--danger-bg)] p-3 max-w-md">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--danger)] mb-1">
-              <ShieldCheck className="h-3.5 w-3.5" />双签审批请求（等保 3）
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--danger)] mb-1 flex-wrap">
+              <ShieldCheck className="h-3.5 w-3.5" />双签审批请求
+              {m.approvalRequest.reason && <Badge tone="warn" className="text-[9px] ml-1">{m.approvalRequest.reason}</Badge>}
+              {m.approvalRequest.ticketId && <span className="text-[10px] font-mono text-[var(--text-muted)]">· {m.approvalRequest.ticketId}</span>}
               <span className="ml-auto text-[10px] font-mono text-[var(--text-muted)]">
                 {m.approvalRequest.signed}/{m.approvalRequest.required}
               </span>
             </div>
-            <div className="text-[11px] text-[var(--text)] mb-2 font-mono">{m.approvalRequest.action}</div>
-            <div className="flex gap-1 mb-2">
+            <div className="text-[11px] text-[var(--text)] mb-2 font-mono break-all">{m.approvalRequest.action}</div>
+            {m.approvalRequest.resource && (
+              <div className="text-[10px] text-[var(--text-muted)] mb-2">资源：<span className="font-mono">{m.approvalRequest.resource}</span></div>
+            )}
+
+            {/* 签名进度条 */}
+            <div className="flex gap-1 mb-2" aria-label={`签名进度 ${m.approvalRequest.signed}/${m.approvalRequest.required}`}>
               {m.approvalRequest.signers.map((s, i) => (
                 <div
                   key={i}
-                  className={cn('flex-1 h-1.5 rounded-full', s.signed ? 'bg-[var(--success)]' : 'bg-[var(--bg)]')}
+                  className={cn('flex-1 h-1.5 rounded-full', s.signed ? (s.role === 'auditor' ? 'bg-[var(--info)]' : 'bg-[var(--success)]') : 'bg-[var(--bg)]')}
+                  title={`${s.name}（${s.role}）${s.signedAt ? ` · ${s.signedAt.slice(11, 19)}` : ''}`}
                 />
               ))}
             </div>
-            <div className="flex gap-1.5 text-[10px] mb-2">
+
+            {/* 签名人列表 */}
+            <div className="space-y-1 mb-2">
               {m.approvalRequest.signers.map((s, i) => (
-                <span key={i} className={cn('flex-1', s.signed ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>
-                  {s.signed ? '✓' : '○'} {s.name}
-                </span>
+                <div key={i} className="flex items-center gap-1.5 text-[10px]">
+                  <span className={cn('w-3 inline-block', s.signed ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>{s.signed ? '✓' : '○'}</span>
+                  <span className={cn('flex-1', s.signed ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>{s.name}</span>
+                  <Badge tone={s.role === 'auditor' ? 'info' : 'neutral'} className="text-[9px]">{s.role}</Badge>
+                  {s.signedAt && <span className="text-[9px] font-mono text-[var(--text-muted)]">{s.signedAt.slice(11, 19)}</span>}
+                  {s.signatureHash && <span className="text-[9px] font-mono text-[var(--text-muted)]" title="签名 hash">#{s.signatureHash.slice(-6)}</span>}
+                </div>
               ))}
             </div>
-            <div className="flex gap-1.5">
-              {m.approvalRequest.signed < m.approvalRequest.required ? (
-                <Button size="sm" variant="danger" onClick={() => onApprove(m.id)}>
-                  <ShieldCheck className="h-3 w-3" />批准（{m.approvalRequest.signed === 0 ? '第一签' : '第二签'}）
+
+            {/* 操作按钮 */}
+            {m.approvalRequest.decision === 'pending' && (
+              <div className="flex gap-1.5 flex-wrap">
+                {m.approvalRequest.signers.map((s, i) => (
+                  !s.signed && (
+                    <Button key={i} size="sm" variant="danger" onClick={() => onApproveSigner(m.id, i)}>
+                      <ShieldCheck className="h-3 w-3" />批准（{s.name}）
+                    </Button>
+                  )
+                ))}
+                {m.approvalRequest.signers.some((s) => !s.signed) && (
+                  <Button size="sm" variant="secondary" onClick={() => {
+                    const idx = m.approvalRequest!.signers.findIndex((s) => !s.signed);
+                    if (idx >= 0) onRequestReject(m.id, idx);
+                  }}>
+                    <X className="h-3 w-3" />拒绝
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setExpandedApproval({ ...expandedApproval, [m.id]: !expandedApproval[m.id] })}
+                >
+                  详情
                 </Button>
-              ) : (
-                <Badge tone="success" className="text-[10px]"><CheckCircle2 className="mr-1 inline h-3 w-3" />已通过双签</Badge>
-              )}
-              <Button size="sm" variant="secondary">拒绝</Button>
-            </div>
+              </div>
+            )}
+            {m.approvalRequest.decision === 'approved' && (
+              <Badge tone="success" className="text-[10px]">
+                <CheckCircle2 className="mr-1 inline h-3 w-3" />已通过双签
+                {m.approvalRequest.decidedAt && <span className="ml-1 font-mono">{m.approvalRequest.decidedAt.slice(11, 19)}</span>}
+              </Badge>
+            )}
+            {m.approvalRequest.decision === 'rejected' && (
+              <Badge tone="error" className="text-[10px]">
+                <X className="mr-1 inline h-3 w-3" />已拒绝
+                {m.approvalRequest.decidedAt && <span className="ml-1 font-mono">{m.approvalRequest.decidedAt.slice(11, 19)}</span>}
+              </Badge>
+            )}
+
+            {/* 审计 / 详情展开 */}
+            {expandedApproval[m.id] && (
+              <div className="mt-2 pt-2 border-t border-[var(--border)] text-[10px] space-y-1">
+                <div className="text-[var(--text-muted)]">审计字段：</div>
+                <div>policyHash：<span className="font-mono">{m.approvalRequest.policyHash ?? '—'}</span></div>
+                <div>resource：<span className="font-mono">{m.approvalRequest.resource ?? '—'}</span></div>
+                <div>reason：<span className="font-mono">{m.approvalRequest.reason ?? '—'}</span></div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* Hover 消息操作栏 */}
+        {/* Hover 消息操作栏 — Claude Code 风格 chip row */}
         {(hoverMsgId === m.id) && !isEmpty && (
-          <div className={cn('flex items-center gap-1 text-[var(--text-muted)]', isUser ? 'justify-end' : '')}>
+          <div className={cn('copilot-message__actions flex items-center gap-0.5 text-[var(--text-muted)]', isUser ? 'justify-end' : '')}>
             <button
               onClick={() => onCopy(m)}
-              className="grid h-6 w-6 place-items-center rounded hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
               title="复制"
               aria-label="复制消息"
             >
               {copiedId === m.id ? <CheckCircle2 className="h-3 w-3 text-[var(--success)]" /> : <Copy className="h-3 w-3" />}
+              <span>{copiedId === m.id ? '已复制' : '复制'}</span>
             </button>
             {!isUser && (
               <>
-                <button className="grid h-6 w-6 place-items-center rounded hover:bg-[var(--bg-hover)] hover:text-[var(--text)]" title="点赞" aria-label="点赞">
+                <button
+                  onClick={() => onRegenerate(m.id)}
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+                  title="重新生成"
+                  aria-label="重新生成"
+                  disabled={m.status === 'streaming'}
+                >
+                  <RotateCcw className="h-3 w-3" />
+                  <span>重新生成</span>
+                </button>
+                <div className="mx-1 h-3 w-px bg-[var(--border)]" aria-hidden="true" />
+                <button
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] hover:bg-[var(--bg-hover)]',
+                    m.feedback?.kind === 'like' ? 'text-[var(--success)]' : 'hover:text-[var(--text)]',
+                  )}
+                  title="点赞 · 写回 RAG eval"
+                  aria-label="点赞"
+                  aria-pressed={m.feedback?.kind === 'like'}
+                  onClick={() => onFeedback(m.id, m.feedback?.kind === 'like' ? null : 'like')}
+                >
                   <ThumbsUp className="h-3 w-3" />
                 </button>
                 <button
-                  onClick={() => onRegenerate(m.id)}
-                  className="grid h-6 w-6 place-items-center rounded hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
-                  title="重新生成"
-                  aria-label="重新生成"
+                  className={cn(
+                    'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] hover:bg-[var(--bg-hover)]',
+                    m.feedback?.kind === 'dislike' ? 'text-[var(--danger)]' : 'hover:text-[var(--text)]',
+                  )}
+                  title="点踩 · 写回 RAG eval"
+                  aria-label="点踩"
+                  aria-pressed={m.feedback?.kind === 'dislike'}
+                  onClick={() => onFeedback(m.id, m.feedback?.kind === 'dislike' ? null : 'dislike')}
                 >
-                  <RotateCcw className="h-3 w-3" />
+                  <ThumbsDown className="h-3 w-3" />
                 </button>
                 <button
                   onClick={() => onDelete(m.id)}
-                  className="grid h-6 w-6 place-items-center rounded hover:bg-[var(--bg-hover)] hover:text-[var(--danger)]"
+                  className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] hover:bg-[var(--bg-hover)] hover:text-[var(--danger)]"
                   title="删除"
                   aria-label="删除消息"
                 >
@@ -1009,14 +1887,19 @@ function MessageBubble({
   );
 }
 
-function Row({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
+// ============ Agent 详情折叠条 ============
+function AgentDetailsCollapsed({ onOpen }: { onOpen: () => void }) {
   return (
-    <div className="flex items-center justify-between">
-      <span className="text-[var(--text-muted)]">{label}</span>
-      <span className={cn(mono && 'font-mono')}>{value}</span>
-    </div>
+    <CollapsedPanelHandle
+      Icon={Bot}
+      HintIcon={ChevronLeft}
+      label="Agent 详情"
+      hint="点击展开 Agent 详情"
+      onOpen={onOpen}
+    />
   );
 }
+
 
 function Mini({ label, value, tone }: { label: string; value: any; tone?: 'success' }) {
   const color = tone === 'success' ? 'text-[var(--success)]' : 'text-[var(--text)]';
@@ -1033,6 +1916,72 @@ function DrawerField({ label, value, mono }: { label: string; value: React.React
     <div className="flex items-center justify-between">
       <span className="text-[var(--text-muted)]">{label}</span>
       <span className={cn(mono && 'font-mono text-[11px]')}>{value}</span>
+    </div>
+  );
+}
+
+// ============ 反馈表单 ============
+function FeedbackForm({ target, onSubmit }: { target: ChatMessageEx; onSubmit: (p: { tags?: FeedbackTag[]; comment?: string }) => void }) {
+  const [tags, setTags] = useState<FeedbackTag[]>(target.feedback?.tags ?? []);
+  const [comment, setComment] = useState(target.feedback?.comment ?? '');
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const toggle = (k: FeedbackTag) => setTags((prev) => prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]);
+  const handleSubmit = () => {
+    if (submitting || submitted) return;
+    setSubmitting(true);
+    // 模拟提交反馈（含短暂 loading → 成功）
+    setTimeout(() => {
+      onSubmit({ tags, comment: comment || undefined });
+      setSubmitting(false);
+      setSubmitted(true);
+      setTimeout(() => setSubmitted(false), 1500);
+    }, 500);
+  };
+  return (
+    <div className="space-y-3 text-xs">
+      <div className="rounded-md bg-[var(--bg)] border border-[var(--border)] p-2 text-[10px] text-[var(--text-muted)]">
+        反馈将用于 RAG eval / 模型训练（仅管理员与训练管线可见）。
+      </div>
+      <div>
+        <div className="text-[10px] text-[var(--text-muted)] mb-1">问题分类（多选）</div>
+        <div className="flex flex-wrap gap-1.5">
+          {FEEDBACK_TAGS.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => toggle(t.key)}
+              aria-pressed={tags.includes(t.key)}
+              className={cn(
+                'rounded-full px-2.5 py-0.5 text-[10px] border transition-colors',
+                tags.includes(t.key)
+                  ? 'bg-[var(--brand)] text-white border-[var(--brand)]'
+                  : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]',
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <label htmlFor="fb-comment" className="text-[10px] text-[var(--text-muted)] block mb-1">详细说明</label>
+        <textarea
+          id="fb-comment"
+          value={comment}
+          onChange={(e) => setComment(e.target.value)}
+          rows={4}
+          placeholder="例如：第 2 步引用文档已过期 / 回答不够具体..."
+          className="w-full rounded border border-[var(--border)] bg-[var(--bg)] p-2 text-xs"
+        />
+      </div>
+      <Button
+        size="sm"
+        onClick={handleSubmit}
+        disabled={submitting || submitted}
+      >
+        {submitted ? <><CheckCircle2 className="h-3 w-3" />已提交</> : submitting ? '提交中…' : '提交反馈'}
+      </Button>
     </div>
   );
 }
