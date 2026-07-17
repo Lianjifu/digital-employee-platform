@@ -82,6 +82,59 @@ export interface Task {
   updatedAt: ISODate;
 }
 
+export type TaskLifecycleStage =
+  | 'pending'
+  | 'running'
+  | 'human_action'
+  | 'risk'
+  | 'completed'
+  | 'archived';
+
+export type TaskRisk = 'none' | 'warning' | 'critical' | 'overdue' | 'failed' | 'blocked';
+
+export interface TaskAuditEvent {
+  id: ID;
+  at: ISODate;
+  actor: string;
+  action: string;
+  detail?: string;
+  tone: 'info' | 'success' | 'warn' | 'error';
+}
+
+export interface ControlledTask extends Task {
+  lifecycleStage: TaskLifecycleStage;
+  source: 'alert' | 'conversation' | 'workflow' | 'manual';
+  sla: {
+    dueAt?: ISODate;
+    remainingMin?: number;
+    risk: TaskRisk;
+    escalated: boolean;
+  };
+  execution: {
+    runId?: string;
+    currentStep?: string;
+    retryCount: number;
+    error?: string;
+    paused: boolean;
+  };
+  governance: {
+    approvalRequired: boolean;
+    approvalStatus: 'not_required' | 'pending' | 'approved' | 'rejected';
+    takeoverBy?: string;
+    takeoverReason?: string;
+    policyBlocked?: boolean;
+  };
+  links: {
+    conversationId?: ID;
+    alertCode?: string;
+    workflowId?: ID;
+    assetName?: string;
+    blockedBy?: ID;
+  };
+  auditEvents: TaskAuditEvent[];
+  version: number;
+}
+
 // ============ 智能体 P5 ============
 export type AgentCategory = 'AIOps' | 'SecOps';
 export type AgentStatus = 'installed' | 'available' | 'beta' | 'deprecated';
