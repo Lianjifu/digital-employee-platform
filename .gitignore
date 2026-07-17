@@ -9,3 +9,4 @@ build
 .env.local
 .vite
 coverage
+.worktrees/
