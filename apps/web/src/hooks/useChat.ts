@@ -20,6 +20,7 @@
  *  - 旧 ChatMessageEx 字段保留（同时新增企业级字段）
  */
 import { useCallback, useEffect, useReducer, useRef } from 'react';
+import { getApiClient } from '@de/web-api';
 import type {
   ChatMessageEx,
   ChatSession,
@@ -554,7 +555,7 @@ const REPLY_TEMPLATES: { match: RegExp; reply: (q: string) => ReplyMock }[] = [
     reply: () => ({
       role: 'assistant',
       agentName: '知识答疑',
-      content: '**数字员工平台使用指南**（v3.0）：\n\n**11 个模块**：\n- **P1 首页** — 业务总览（KPI / 健康度 / 告警）\n- **P2 会话**（Copilot）— 与 AI Agent 对话\n- **P3 任务** — Kanban 任务管理 + 双签\n- **P4 工作区** — 多租户隔离\n- **P5 智能体** — Agent 商店 + 8 个内置\n- **P6 工作流** — DAG 可视化编排\n- **P7 知识库** — RAG 检索 + 4 KB / 247 文档\n- **P8 技能** — Skill / MCP / Tool（gVisor 沙箱）\n- **P9 模型** — 8 Provider + 5 等级路由\n- **P10 渠道** — 飞书 / 企微 / 邮件 / Webhook\n- **P11 设置** — 租户 / 成员 / 合规 / 计费\n\n**快速上手**：\n1. 按 `⌘K` 全局搜索\n2. 输入 `/` 唤起命令面板\n3. 输入 `@` 提及 Agent / Skill / 文档\n4. 主题切换在顶栏右侧\n5. 11 模块入口在左侧栏',
+      content: '**数字员工平台使用指南**（v3.0）：\n\n**核心模块**：\n- **首页** — 业务总览（KPI / 健康度 / 告警）\n- **会话**（Copilot）— 与数字员工协同处理工作\n- **任务** — 任务管理与双签审批\n- **工作区** — 多租户隔离与成员协作\n- **智能体** — 智能体能力管理\n- **工作流** — DAG 可视化编排\n- **知识** — RAG 检索与知识资产管理\n- **技能** — Skill / MCP / Tool（gVisor 沙箱）\n- **模型** — 多 Provider 与分级路由\n- **渠道** — 飞书 / 企微 / 邮件 / Webhook\n- **设置** — 租户 / 成员 / 合规 / 计费\n\n**快速上手**：\n1. 按 `⌘K` 全局搜索\n2. 输入 `/` 唤起命令面板\n3. 输入 `@` 提及智能体、技能或文档\n4. 主题切换在顶栏右侧\n5. 在左侧栏进入所需模块',
       citations: [
         { id: 'c1', docId: 'rb-platform-v3', source: 'Runbook', page: 1, score: 0.95, rerankScore: 0.97, evalLabel: 'gold', text: '数字员工平台使用指南 v3.0 ...' },
       ],
@@ -1039,7 +1040,21 @@ export function useChat(agentMeta?: { name: string }) {
 
   /** 新 API：指定签名人 index 批准 */
   const approve = useCallback((mid: string, signerIndex: number) => {
-    if (state.activeId) dispatch({ type: 'approve', sid: state.activeId, mid, signerIndex });
+    if (!state.activeId) return;
+    const session = state.sessions[state.activeId];
+    const message = session?.messages.find((item) => item.id === mid);
+    if (!message?.approvalRequest) return;
+    dispatch({ type: 'approve', sid: state.activeId, mid, signerIndex });
+    void (async () => {
+      const api = getApiClient();
+      await api.post(`/api/actions/${mid}/approve`, { signerIndex, conversationId: state.activeId });
+      if (message.approvalRequest!.signed + 1 >= message.approvalRequest!.required) {
+        const task = await api.post<{ id: string; code: string }>(`/api/conversations/${state.activeId}/tasks`, {
+          title: `${session?.title ?? '数字员工会话'} · 受控执行`, priority: 'P1', assignee: '王昊',
+        });
+        await api.post(`/api/actions/${mid}/execute`, { taskId: task.id });
+      }
+    })().catch(() => undefined);
   }, [state.activeId]);
 
   /** 拒绝 */

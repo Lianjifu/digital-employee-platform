@@ -26,15 +26,13 @@ import { cn } from '@de/web-utils';
 import type { AuditItem } from '@de/web-types';
 
 const MENU = [
-  { key: 'tenant', label: '租户信息', icon: Building2 },
+  { key: 'tenant', label: '组织信息', icon: Building2 },
   { key: 'members', label: '成员 & 权限', icon: Users },
-  { key: 'security', label: '安全 & 认证', icon: ShieldCheck },
-  { key: 'audit', label: '审计 & 监控', icon: FileText },
-  { key: 'compliance', label: '数据合规', icon: Lock },
-  { key: 'notify', label: '通知 & 告警', icon: Bell },
-  { key: 'billing', label: '租户 & 计费', icon: CreditCard },
+  { key: 'security', label: '安全与访问', icon: ShieldCheck },
+  { key: 'audit', label: '审计日志', icon: FileText },
+  { key: 'notify', label: '通知策略', icon: Bell },
   { key: 'backup', label: '备份 & 恢复', icon: Database },
-  { key: 'apikeys', label: 'API Key', icon: Key },
+  { key: 'apikeys', label: 'API 凭证', icon: Key },
   { key: 'webhooks', label: 'Webhook', icon: Webhook },
 ];
 
@@ -44,7 +42,12 @@ export default function Settings() {
   const { data: apiKeys = [] } = useApiQuery<any[]>(['api-keys'], '/api/api-keys');
   const { data: webhooks = [] } = useApiQuery<any[]>(['webhooks-config'], '/api/webhooks-config');
   const { data: backups = [] } = useApiQuery<any[]>(['backups'], '/api/backups');
-  const { data: auditStream = [] } = useApiQuery<any[]>(['audit-stream'], '/api/audit-stream');
+  const { data: auditStream = [] } = useApiQuery<any[]>(
+    ['audit-stream'],
+    '/api/audit-stream',
+    undefined,
+    { refetchInterval: 5_000 },
+  );
   const { data: billing } = useApiQuery<any>(['billing'], '/api/billing');
   const { data: notifChannels = [] } = useApiQuery<any[]>(['notification-channels'], '/api/notification-channels');
 
@@ -54,9 +57,9 @@ export default function Settings() {
   const auditScore = Math.round((pass / total) * 100);
 
   return (
-    <div className="flex h-full">
-      {/* 左侧 10 模块菜单 */}
-      <aside className="w-[220px] shrink-0 border-r border-[var(--border)] bg-[var(--bg)] overflow-y-auto">
+    <div className="settings-page h-full min-w-0 overflow-y-auto bg-[var(--bg-elevated)]">
+      {/* 已由顶部设置导航替代的旧侧栏，保留结构以兼容各设置模块。 */}
+      <aside className="hidden">
         <div className="p-3 border-b border-[var(--border)]">
           <div className="text-[10px] font-semibold mb-3 uppercase tracking-wider text-[var(--text-muted)]">企业管理</div>
           <div className="space-y-0.5">
@@ -98,8 +101,29 @@ export default function Settings() {
         </div>
       </aside>
 
-      {/* 中间主区 */}
-      <section className="flex-1 overflow-y-auto p-6 space-y-4">
+      {/* 单一主面板 */}
+      <section className="mx-auto w-full max-w-[1480px] p-4 sm:p-6">
+        <header className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-4 py-4 sm:px-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h1 className="flex items-center gap-2 text-base font-semibold"><SettingsIcon className="h-4 w-4 text-[var(--brand)]" />平台设置</h1>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">统一管理组织访问、安全控制、运行审计与平台集成。</p>
+            </div>
+            <Badge tone="success" className="text-[10px]"><CheckCircle2 className="mr-1 h-3 w-3" />安全基线已启用</Badge>
+          </div>
+          <nav className="mt-4 flex gap-1 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-1" aria-label="设置分类">
+            {MENU.map((item) => (
+              <button
+                key={item.key}
+                onClick={() => setActive(item.key)}
+                className={cn('flex shrink-0 items-center gap-1.5 rounded-md px-3 py-2 text-xs transition-colors', active === item.key ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]')}
+              >
+                <item.icon className="h-3.5 w-3.5" />{item.label}
+              </button>
+            ))}
+          </nav>
+        </header>
+        <div className="space-y-4">
         {/* Todo 1: 租户信息 */}
         {active === 'tenant' && (
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
@@ -427,10 +451,11 @@ export default function Settings() {
             </div>
           </div>
         )}
+        </div>
       </section>
 
-      {/* 右侧：企业详情 + 快捷操作 */}
-      <aside className="w-[280px] shrink-0 border-l border-[var(--border)] bg-[var(--bg)] overflow-y-auto">
+      {/* 固定企业详情侧栏已由顶部设置导航与各设置项内信息替代。 */}
+      <aside className="hidden">
         <div className="p-4 border-b border-[var(--border)]">
           <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
             <Building2 className="h-3.5 w-3.5 text-[var(--brand)]" />企业详情

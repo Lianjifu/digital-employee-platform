@@ -86,7 +86,12 @@ export default function Channels() {
 
   const { data: fetchedChannels } = useApiQuery<Channel[]>(['channels'], '/api/channels');
   const { data: health } = useApiQuery<any>(['channel-health'], '/api/channel-health');
-  const { data: stream = [] } = useApiQuery<any[]>(['message-stream'], '/api/message-stream');
+  const { data: stream = [] } = useApiQuery<any[]>(
+    ['message-stream'],
+    '/api/message-stream',
+    undefined,
+    { refetchInterval: 5_000 },
+  );
   const { data: config } = useApiQuery<any>(['channel-config'], '/api/channel-config');
 
   // 填充 channels

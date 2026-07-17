@@ -21,20 +21,19 @@
  */
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useApiQuery } from '@/services/query';
-import { Badge, Button, Progress, Avatar, Modal, Dot, Input, KpiCard, KpiMini, Row, FilterGroup, FilterRadio, ChipBtn, Section, FormField } from '@de/web-ui';
+import { Badge, Button, Progress, Avatar, Modal, Dot, Input, KpiCard, KpiMini, Row, FilterGroup, FilterRadio, ChipBtn, Section, CollapsedPanelHandle } from '@de/web-ui';
 import {
   Clock, AlertTriangle, CheckCircle2, ShieldCheck, Filter, Plus,
-  Wrench, ChevronRight, X, Tag as TagIcon,
+  Wrench, ChevronRight, ChevronLeft, X, Tag as TagIcon,
   Bot, Database, Search, GitBranch, Inbox, ChevronDown, ListChecks,
   Trash2, Archive, KanbanSquare, List, Calendar, Activity, User as UserIcon,
-  Sparkles, Save, Link2, MessageSquare, Paperclip, Hash,
+  Sparkles, Save, Eye, Link2, MessageSquare, Paperclip, Hash,
   ArrowUp, ArrowDown, MoreHorizontal, Layers, TrendingUp, Zap, ZapOff, Server, Rocket,
   Copy, RotateCcw, AlertOctagon, ChevronUp, Pause, Play, FileText, GripVertical,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import type { Task, TaskStatus, Priority } from '@de/web-types';
 import { DualSignModal } from '@/components/DualSignModal';
-import { Drawer, EmptyState, Modal as ModalX } from '@/components/shared';
 
 type ViewMode = 'kanban' | 'list' | 'timeline' | 'mine';
 type SlaBand = 'all' | 'overdue' | 'critical' | 'warning' | 'healthy';
@@ -138,15 +137,8 @@ const SEED_TASKS: Task[] = [
 
 export default function Tasks() {
   /* ============ 状态 ============ */
-  const { data: apiTasks = [] } = useApiQuery<Task[]>(
-    ['tasks', 'shared-domain'],
-    '/api/tasks',
-    undefined,
-    { refetchInterval: 5_000 },
-  );
   const [view, setView] = useState<ViewMode>('kanban');
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const [detailTab, setDetailTab] = useState<'detail' | 'steps' | 'cmdb' | 'sign' | 'audit' | 'comments'>('detail');
   const [searchQ, setSearchQ] = useState('');
   const [sortBy, setSortBy] = useState<'priority' | 'sla' | 'updated' | 'created'>('priority');
@@ -157,6 +149,7 @@ export default function Tasks() {
   const [filterSla, setFilterSla] = useState<SlaBand>('all');
   const [filterTag, setFilterTag] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState<TaskStatus | 'all'>('all');
+  const [filterPanelOpen, setFilterPanelOpen] = useState(true);
   const [newModalOpen, setNewModalOpen] = useState(false);
   const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
   const [signOpen, setSignOpen] = useState(false);
@@ -182,6 +175,7 @@ export default function Tasks() {
         setFilterSla(s.filterSla ?? 'all');
         setFilterTag(s.filterTag ?? null);
         setFilterStatus(s.filterStatus ?? 'all');
+        setFilterPanelOpen(s.filterPanelOpen ?? true);
         setSortBy(s.sortBy ?? 'priority');
         setSortDir(s.sortDir ?? 'asc');
       }
@@ -189,9 +183,9 @@ export default function Tasks() {
   }, []);
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ view, filterAgent, filterAssignee, filterPriority, filterSla, filterTag, filterStatus, sortBy, sortDir }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ view, filterAgent, filterAssignee, filterPriority, filterSla, filterTag, filterStatus, filterPanelOpen, sortBy, sortDir }));
     } catch {}
-  }, [view, filterAgent, filterAssignee, filterPriority, filterSla, filterTag, filterStatus, sortBy, sortDir]);
+  }, [view, filterAgent, filterAssignee, filterPriority, filterSla, filterTag, filterStatus, filterPanelOpen, sortBy, sortDir]);
 
   // 任务列表（带派生字段：依赖 / 评论 / 附件 / 子任务 / 审计）
   const [tasks, setTasks] = useState<(Task & {
@@ -224,32 +218,6 @@ export default function Tasks() {
       { ts: '2026-07-13T08:18:02Z', actor: '王昊', action: '创建任务', tone: 'info' },
     ],
   })));
-
-  // 会话中的审批和执行会写入共享 Mock 领域状态；仅合并新任务，避免覆盖当前页的拖拽和编辑结果。
-  useEffect(() => {
-    if (!apiTasks.length) return;
-    setTasks((current) => {
-      const existingIds = new Set(current.map((task) => task.id));
-      const incoming = apiTasks
-        .filter((task) => !existingIds.has(task.id))
-        .map((task) => ({
-          ...task,
-          description: task.description ?? '',
-          blockedBy: [],
-          comments: 0,
-          attachments: 0,
-          subtasks: 0,
-          signers: [],
-          auditLog: [{
-            ts: task.createdAt,
-            actor: '数字员工',
-            action: '由会话创建任务',
-            tone: 'info' as const,
-          }],
-        }));
-      return incoming.length ? [...incoming, ...current] : current;
-    });
-  }, [apiTasks]);
 
   /* ============ 派生 ============ */
   const allTags = useMemo(() => {
@@ -315,10 +283,6 @@ export default function Tasks() {
       if (n.has(id)) n.delete(id); else n.add(id);
       return n;
     });
-  }, []);
-  const openTaskDetails = useCallback((id: string) => {
-    setActiveId(id);
-    setDetailDrawerOpen(true);
   }, []);
   const clearSelect = () => setSelectedIds(new Set());
   const selectAllVisible = () => setSelectedIds(new Set(sortedTasks.map((t) => t.id)));
@@ -449,15 +413,115 @@ export default function Tasks() {
   const activeFilterCount = (filterAgent !== '全部' ? 1 : 0) + (filterAssignee !== '全部' ? 1 : 0) + (filterPriority !== '全部' ? 1 : 0) + (filterSla !== 'all' ? 1 : 0) + (filterTag ? 1 : 0) + (filterStatus !== 'all' ? 1 : 0);
 
   return (
-    <div className="tasks-page h-full min-w-0 overflow-y-auto overscroll-contain bg-[var(--bg-elevated)]">
-      {/* （左侧筛选栏已移到主区顶部） */}
+    <div className="flex h-full min-h-0 bg-[var(--bg)]">
+      {/* ============ 左侧筛选栏 ============ */}
+      <aside
+        className={cn('flex shrink-0 flex-col border-r border-[var(--border)] bg-[var(--bg)] transition-all', filterPanelOpen ? 'w-[260px]' : 'w-0 overflow-hidden')}
+        aria-label="任务筛选"
+      >
+        <div className="border-b border-[var(--border)] p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold flex items-center gap-1.5"><Filter className="h-3.5 w-3.5" />筛选</span>
+            <div className="flex items-center gap-1">
+              {activeFilterCount > 0 && (
+                <button onClick={resetFilters} className="text-[10px] text-[var(--text-muted)] hover:text-[var(--brand)]">重置</button>
+              )}
+              <button onClick={() => setFilterPanelOpen(false)} className="grid h-5 w-5 place-items-center rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]" aria-label="收起筛选">
+                <ChevronRight className="h-3 w-3" />
+              </button>
+            </div>
+          </div>
+          <div className="relative">
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--text-muted)]" />
+            <Input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder="搜索 标题 / 编号 / 标签" className="h-7 pl-7 text-xs" />
+          </div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto py-2 space-y-3">
+          <FilterGroup title="视图">
+            <div className="space-y-0.5">
+              {([
+                { k: 'kanban', label: '看板视图', icon: KanbanSquare },
+                { k: 'list', label: '列表视图', icon: List },
+                { k: 'timeline', label: '时间线', icon: Calendar },
+                { k: 'mine', label: '我的任务', icon: UserIcon },
+              ] as { k: ViewMode; label: string; icon: any }[]).map((v) => (
+                <button
+                  key={v.k}
+                  onClick={() => setView(v.k)}
+                  className={cn(
+                    'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs',
+                    view === v.k ? 'bg-[var(--brand-light)] text-[var(--brand)] font-semibold' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]',
+                  )}
+                >
+                  <v.icon className="h-3.5 w-3.5" />{v.label}
+                </button>
+              ))}
+            </div>
+          </FilterGroup>
+
+          <FilterGroup title="状态">
+            <div className="space-y-0.5">
+              <FilterRadio active={filterStatus === 'all'} onClick={() => setFilterStatus('all')} label="全部" count={tasks.length} />
+              {COLUMNS.map((c) => (
+                <FilterRadio key={c.key} active={filterStatus === c.key} onClick={() => setFilterStatus(c.key)} label={c.label} count={tasks.filter((t) => t.status === c.key).length} dot={c.tone} />
+              ))}
+            </div>
+          </FilterGroup>
+
+          <FilterGroup title="优先级">
+            <div className="flex flex-wrap gap-1">
+              <ChipBtn label="全部" active={filterPriority === '全部'} onClick={() => setFilterPriority('全部')} />
+              {PRIORITIES.map((p) => (
+                <ChipBtn key={p} label={p} active={filterPriority === p} onClick={() => setFilterPriority(p)} tone={PRIORITY_TONE[p]} />
+              ))}
+            </div>
+          </FilterGroup>
+
+          <FilterGroup title="SLA 状态">
+            <div className="space-y-0.5">
+              {SLA_BANDS.map((b) => (
+                <FilterRadio key={b.key} active={filterSla === b.key} onClick={() => setFilterSla(b.key)} label={b.label}
+                  count={b.key === 'all' ? tasks.length : tasks.filter((t) => slaBand(t.slaRemainingMin) === b.key).length}
+                  tone={b.tone}
+                />
+              ))}
+            </div>
+          </FilterGroup>
+
+          <FilterGroup title="负责人">
+            <select value={filterAssignee} onChange={(e) => setFilterAssignee(e.target.value)} className="h-7 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs">
+              {ASSIGNEES.map((a) => <option key={a}>{a}</option>)}
+            </select>
+          </FilterGroup>
+
+          <FilterGroup title="Agent">
+            <select value={filterAgent} onChange={(e) => setFilterAgent(e.target.value)} className="h-7 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs">
+              {AGENTS.map((a) => <option key={a}>{a}</option>)}
+            </select>
+          </FilterGroup>
+
+          {allTags.length > 0 && (
+            <FilterGroup title="标签">
+              <div className="flex flex-wrap gap-1">
+                <ChipBtn label="全部" active={!filterTag} onClick={() => setFilterTag(null)} />
+                {allTags.map((t) => <ChipBtn key={t} label={`#${t}`} active={filterTag === t} onClick={() => setFilterTag(t)} />)}
+              </div>
+            </FilterGroup>
+          )}
+        </div>
+      </aside>
 
       {/* ============ 主区 ============ */}
-      <section className="mx-auto min-w-0 w-full max-w-[1680px] bg-[var(--bg)]">
+      <div className="flex min-w-0 min-h-0 flex-1 flex-col overflow-hidden">
         {/* 顶栏 */}
-        <div className="border-b border-[var(--border)] bg-[var(--bg)] px-5 py-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--bg)] px-5 py-3">
           <div className="flex items-center gap-2 min-w-0">
+            {!filterPanelOpen && (
+              <button onClick={() => setFilterPanelOpen(true)} className="grid h-7 w-7 place-items-center rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]" aria-label="展开筛选">
+                <Filter className="h-3.5 w-3.5" />
+              </button>
+            )}
             <div className="min-w-0">
               <h1 className="text-sm font-semibold flex items-center gap-2">
                 <ListChecks className="h-4 w-4 text-[var(--brand)]" />
@@ -474,7 +538,21 @@ export default function Tasks() {
               </Badge>
             )}
           </div>
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
+            {/* 排序 */}
+            <div className="hidden md:flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg)] px-1 py-0.5 text-[10px]">
+              <span className="text-[var(--text-muted)] px-1">排序</span>
+              {(['priority', 'sla', 'updated', 'created'] as const).map((s) => (
+                <button
+                  key={s}
+                  onClick={() => { if (sortBy === s) setSortDir(sortDir === 'asc' ? 'desc' : 'asc'); else { setSortBy(s); setSortDir('asc'); } }}
+                  className={cn('px-1.5 py-0.5 rounded font-mono uppercase', sortBy === s ? 'bg-[var(--brand-light)] text-[var(--brand)]' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}
+                >
+                  {s === 'priority' ? '优先级' : s === 'sla' ? 'SLA' : s === 'updated' ? '更新' : '创建'}
+                  {sortBy === s && (sortDir === 'asc' ? <ChevronUp className="inline h-2.5 w-2.5" /> : <ChevronDown className="inline h-2.5 w-2.5" />)}
+                </button>
+              ))}
+            </div>
             <Button size="sm" variant="secondary" onClick={() => setTemplatePickerOpen(true)} className="hidden md:inline-flex">
               <Sparkles className="h-3.5 w-3.5" />模板
             </Button>
@@ -482,160 +560,20 @@ export default function Tasks() {
               <Plus className="h-3.5 w-3.5" />新建
             </Button>
           </div>
-          </div>
         </div>
 
-        {/* ============ 顶部筛选条（先于 SLA + KPI） ============ */}
-        <div className="border-b border-[var(--border)] bg-[var(--bg)] px-5 py-2.5 space-y-2">
-          {/* 第 1 行：搜索 + 视图 tab + 重置 */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="relative min-w-[220px] flex-1 basis-[280px] max-w-[420px]">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--text-muted)]" />
-              <Input
-                value={searchQ}
-                onChange={(e) => setSearchQ(e.target.value)}
-                placeholder="搜索 标题 / 编号 / 标签"
-                className="h-7 pl-7 text-xs"
-              />
-            </div>
-            <div className="flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-1">
-              <span className="px-1 text-[10px] font-semibold text-[var(--text-muted)]">视图</span>
-              {([
-                { k: 'kanban' as ViewMode, label: '看板', icon: KanbanSquare },
-                { k: 'list' as ViewMode, label: '列表', icon: List },
-                { k: 'timeline' as ViewMode, label: '时间线', icon: Calendar },
-                { k: 'mine' as ViewMode, label: '我的', icon: UserIcon },
-              ]).map((v) => (
-                <button
-                  key={v.k}
-                  onClick={() => setView(v.k)}
-                  className={cn(
-                    'flex items-center gap-1 rounded px-2 py-1 text-[11px] transition-colors',
-                    view === v.k
-                      ? 'bg-[var(--bg)] text-[var(--brand)] shadow-sm'
-                      : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]',
-                  )}
-                >
-                  <v.icon className="h-3 w-3" />{v.label}
-                </button>
-              ))}
-            </div>
-            <div className="flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg)] px-1 py-1 text-[10px]">
-              <span className="px-1 text-[var(--text-muted)]">排序</span>
-              {(['priority', 'sla', 'updated', 'created'] as const).map((s) => (
-                <button
-                  key={s}
-                  onClick={() => { if (sortBy === s) setSortDir(sortDir === 'asc' ? 'desc' : 'asc'); else { setSortBy(s); setSortDir('asc'); } }}
-                  className={cn('rounded px-1.5 py-0.5 font-mono', sortBy === s ? 'bg-[var(--brand-light)] text-[var(--brand)]' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}
-                >
-                  {s === 'priority' ? '优先级' : s === 'sla' ? 'SLA' : s === 'updated' ? '更新' : '创建'}
-                  {sortBy === s && (sortDir === 'asc' ? <ChevronUp className="inline h-2.5 w-2.5" /> : <ChevronDown className="inline h-2.5 w-2.5" />)}
-                </button>
-              ))}
-            </div>
-            {activeFilterCount > 0 && (
-              <button
-                onClick={resetFilters}
-                className="rounded-md border border-[var(--danger)]/30 bg-[var(--danger-bg)] px-2 py-1 text-[11px] text-[var(--danger)] hover:bg-[var(--danger)] hover:text-white transition-colors flex items-center gap-1"
-              >
-                <X className="h-3 w-3" />重置 ({activeFilterCount})
-              </button>
-            )}
-          </div>
-
-          {/* 第 2 行：状态 + 优先级 + SLA */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold">状态</span>
-            <button
-              onClick={() => setFilterStatus('all')}
-              className={cn('rounded-md border px-2 py-1 text-[11px]', filterStatus === 'all' ? 'bg-[var(--brand)] text-white border-[var(--brand)]' : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]')}
-            >
-              全部 <span className="ml-0.5 font-mono opacity-70">({tasks.length})</span>
-            </button>
-            {COLUMNS.map((c) => (
-              <button
-                key={c.key}
-                onClick={() => setFilterStatus(c.key)}
-                className={cn('rounded-md border px-2 py-1 text-[11px]', filterStatus === c.key ? 'bg-[var(--brand)] text-white border-[var(--brand)]' : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]')}
-              >
-                {c.label} <span className="ml-0.5 font-mono opacity-70">({tasks.filter((t) => t.status === c.key).length})</span>
-              </button>
-            ))}
-            <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold ml-3">优先级</span>
-            {(['全部', ...PRIORITIES] as const).map((p) => (
-              <button
-                key={p}
-                onClick={() => setFilterPriority(p)}
-                className={cn('rounded-md border px-2 py-1 text-[11px] font-mono', filterPriority === p ? 'bg-[var(--brand)] text-white border-[var(--brand)]' : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]')}
-              >
-                {p}
-              </button>
-            ))}
-            <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold ml-3">SLA</span>
-            {SLA_BANDS.map((b) => (
-              <button
-                key={b.key}
-                onClick={() => setFilterSla(b.key)}
-                className={cn('rounded-md border px-2 py-1 text-[11px]', filterSla === b.key ? 'bg-[var(--brand)] text-white border-[var(--brand)]' : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]')}
-              >
-                {b.label}
-              </button>
-            ))}
-          </div>
-
-          {/* 第 3 行：负责人 + Agent + 标签 */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold">负责人</span>
-            <select
-              value={filterAssignee}
-              onChange={(e) => setFilterAssignee(e.target.value)}
-              className="h-7 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-[11px]"
-            >
-              {ASSIGNEES.map((a) => <option key={a} value={a}>{a}</option>)}
-            </select>
-            <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold ml-2">Agent</span>
-            <select
-              value={filterAgent}
-              onChange={(e) => setFilterAgent(e.target.value)}
-              className="h-7 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-[11px]"
-            >
-              {AGENTS.map((a) => <option key={a} value={a}>{a}</option>)}
-            </select>
-            {allTags.length > 0 && (
-              <>
-                <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold ml-2">标签</span>
-                <button
-                  onClick={() => setFilterTag(null)}
-                  className={cn('rounded-full border px-2 py-0.5 text-[10px] font-mono', !filterTag ? 'bg-[var(--brand)] text-white border-[var(--brand)]' : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]')}
-                >
-                  全部
-                </button>
-                {allTags.map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => setFilterTag(filterTag === t ? null : t)}
-                    className={cn('rounded-full border px-2 py-0.5 text-[10px] font-mono', filterTag === t ? 'bg-[var(--brand)] text-white border-[var(--brand)]' : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]')}
-                  >
-                    #{t}
-                  </button>
-                ))}
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* KPI 矩阵（先）+ SLA 风险地图（后）*/}
-        <div className="border-b border-[var(--border)] bg-[var(--bg-elevated)]/40 px-5 py-3 space-y-3">
+        {/* KPI 矩阵（6 卡）+ SLA 风险地图 */}
+        <div className="border-b border-[var(--border)] bg-[var(--bg-elevated)]/40 px-5 py-3">
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
             <KpiCard label="今日任务" value={kpis.total} sub="次" tone="brand" icon={ListChecks} />
             <KpiCard label="进行中" value={kpis.inProgress} sub="件" tone="info" icon={Clock} />
-            <KpiCard label="待复核" value={kpis.review} sub="件" tone="warn" icon={ShieldCheck} />
+            <KpiCard label="待复核" value={kpis.review} sub="件" tone="warning" icon={ShieldCheck} />
             <KpiCard label="P0 进行中" value={kpis.p0} sub="件" tone="error" icon={AlertOctagon} />
             <KpiCard label="SLA 风险" value={kpis.slaRisk} sub="< 1h" tone="error" icon={ZapOff} />
             <KpiCard label="成功率" value={kpis.successRate} sub="%" tone="success" icon={TrendingUp} />
           </div>
           {slaBands.length > 0 && (
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-2.5">
+            <div className="mt-3 rounded-lg border border-[var(--border)] bg-[var(--bg)] p-2.5">
               <div className="flex items-center justify-between mb-1.5">
                 <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
                   <Activity className="h-3 w-3" />SLA 风险地图
@@ -649,7 +587,7 @@ export default function Tasks() {
                   return (
                     <button
                       key={t.id}
-                      onClick={() => openTaskDetails(t.id)}
+                      onClick={() => setActiveId(t.id)}
                       className="flex w-full items-center gap-2 text-[10px] hover:bg-[var(--bg-hover)] rounded px-1.5 py-0.5"
                     >
                       <Badge tone={PRIORITY_TONE[t.priority]} className="text-[9px] shrink-0 w-9 justify-center">{t.priority}</Badge>
@@ -696,13 +634,13 @@ export default function Tasks() {
         )}
 
         {/* 视图区 */}
-        <div className="pb-5">
+        <div className="flex-1 min-h-0 overflow-hidden">
           {view === 'kanban' && (
             <KanbanView
               tasks={sortedTasks}
               activeId={activeId}
               selectedIds={selectedIds}
-              onSelect={openTaskDetails}
+              onSelect={(id) => setActiveId(id)}
               onToggleSelect={toggleSelect}
               onDragStart={onDragStart}
               onDrop={onDrop}
@@ -716,7 +654,7 @@ export default function Tasks() {
               tasks={sortedTasks}
               activeId={activeId}
               selectedIds={selectedIds}
-              onSelect={openTaskDetails}
+              onSelect={(id) => setActiveId(id)}
               onToggleSelect={toggleSelect}
               onSelectAll={selectAllVisible}
               onApprove={(id, idx) => approveSign(id, idx)}
@@ -726,7 +664,7 @@ export default function Tasks() {
             <TimelineView
               tasks={sortedTasks}
               activeId={activeId}
-              onSelect={openTaskDetails}
+              onSelect={(id) => setActiveId(id)}
             />
           )}
           {view === 'mine' && (
@@ -734,7 +672,7 @@ export default function Tasks() {
               tasks={sortedTasks}
               activeId={activeId}
               selectedIds={selectedIds}
-              onSelect={openTaskDetails}
+              onSelect={(id) => setActiveId(id)}
               onToggleSelect={toggleSelect}
               onDragStart={onDragStart}
               onDrop={onDrop}
@@ -744,18 +682,21 @@ export default function Tasks() {
             />
           )}
         </div>
-      </section>
+      </div>
 
-      <Drawer
-        open={detailDrawerOpen && !!active}
-        onClose={() => setDetailDrawerOpen(false)}
-        title={active ? `${active.code} · 任务详情` : '任务详情'}
-        description="任务步骤、资产、双签、审计与协作记录"
-        width={480}
+      {/* ============ 右侧详情 ============ */}
+      <aside
+        className={cn(
+          'relative flex h-full shrink-0 flex-col border-l border-[var(--border)] bg-[var(--bg)] transition-[width] duration-200 ease-out overflow-hidden',
+          active ? 'w-[380px]' : 'w-10',
+        )}
+        aria-label="任务详情"
+        aria-expanded={!!active}
       >
         {active ? (
           <DetailPanel
             task={active}
+            onClose={() => setActiveId(null)}
             tab={detailTab}
             setTab={setDetailTab}
             onOpenSign={() => openSign(active.title)}
@@ -763,12 +704,11 @@ export default function Tasks() {
             onReject={(idx) => setRejectionReason({ signer: idx, open: true })}
             onCMDB={setCmdbAsset}
             cmdbAsset={cmdbAsset}
-            onUpdate={(patch) => setTasks((prev) => prev.map((t) => (t.id === active.id ? { ...t, ...patch, updatedAt: new Date().toISOString() } : t)))}
           />
         ) : (
-          <EmptyState icon={ListChecks} title="选择任务查看详情" />
+          <CollapsedPanelHandle Icon={ListChecks} HintIcon={ChevronLeft} label="任务详情" onOpen={() => { const first = sortedTasks[0]; if (first) setActiveId(first.id); }} hint="点击展开任务详情" />
         )}
-      </Drawer>
+      </aside>
 
       {/* ============ 新建任务 Modal ============ */}
       <Modal open={newModalOpen} onClose={() => { setNewModalOpen(false); setActiveTemplate(null); }} title={activeTemplate ? `从模板创建：${activeTemplate.name}` : '新建任务'} width={560} footer={
@@ -996,15 +936,14 @@ function KanbanView({ tasks, activeId, selectedIds, onSelect, onToggleSelect, on
 }) {
   const grouped = COLUMNS.map((c) => ({ ...c, items: tasks.filter((t: any) => t.status === c.key) }));
   return (
-    <div className="overflow-x-auto bg-[var(--bg-elevated)]/30 p-4">
-      <div className="grid min-w-[1320px] grid-cols-5 gap-3">
-        {grouped.map((col) => {
+    <div className="grid h-full grid-cols-5 gap-3 overflow-x-auto p-4 bg-[var(--bg-elevated)]/30">
+      {grouped.map((col) => {
         const ratio = col.items.length / col.capacity;
         const overCap = ratio > 0.8;
         return (
           <div
             key={col.key}
-            className={cn('flex min-w-0 flex-col rounded-lg border-t-2 bg-[var(--bg)] border border-[var(--border)] transition-all', col.tone, dragOver === col.key && 'ring-2 ring-[var(--brand)]/40 shadow-lg')}
+            className={cn('flex min-w-[260px] flex-col rounded-lg border-t-2 bg-[var(--bg)] border border-[var(--border)] transition-all', col.tone, dragOver === col.key && 'ring-2 ring-[var(--brand)]/40 shadow-lg')}
             onDragOver={(e) => e.preventDefault()}
             onDragEnter={() => setDragOver(col.key)}
             onDragLeave={() => setDragOver(null)}
@@ -1020,7 +959,7 @@ function KanbanView({ tasks, activeId, selectedIds, onSelect, onToggleSelect, on
                 {col.items.length}/{col.capacity}
               </Badge>
             </div>
-            <div className="space-y-2 p-2 bg-[var(--bg-elevated)]/30" role="list">
+            <div className="flex-1 space-y-2 overflow-y-auto p-2 bg-[var(--bg-elevated)]/30" role="list">
               {col.items.length === 0 && (
                 <div className="text-center text-xs text-[var(--text-muted)] py-8 flex flex-col items-center gap-1">
                   <Inbox className="h-5 w-5 opacity-30" />拖拽任务到此处
@@ -1041,8 +980,7 @@ function KanbanView({ tasks, activeId, selectedIds, onSelect, onToggleSelect, on
             </div>
           </div>
         );
-        })}
-      </div>
+      })}
     </div>
   );
 }
@@ -1055,8 +993,8 @@ function ListView({ tasks, activeId, selectedIds, onSelect, onToggleSelect, onSe
 }) {
   const allSelected = tasks.length > 0 && tasks.every((t: any) => selectedIds.has(t.id));
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-[1040px] w-full text-xs">
+    <div className="h-full overflow-auto">
+      <table className="w-full text-xs">
         <thead className="sticky top-0 bg-[var(--bg-elevated)] z-10 border-b border-[var(--border)]">
           <tr className="text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
             <th className="w-8 p-2"><input type="checkbox" checked={allSelected} onChange={onSelectAll} className="accent-[var(--brand)]" /></th>
@@ -1136,7 +1074,7 @@ function TimelineView({ tasks, activeId, onSelect }: { tasks: any[]; activeId: s
     return acc;
   }, {});
   return (
-    <div className="p-6">
+    <div className="h-full overflow-auto p-6">
       <div className="max-w-4xl mx-auto space-y-6">
         {Object.entries(groupedByDay).map(([day, dayTasks]) => (
           <div key={day}>
@@ -1192,80 +1130,13 @@ function TimelineView({ tasks, activeId, onSelect }: { tasks: any[]; activeId: s
 }
 
 /* ============ 详情侧栏 ============ */
-function DetailPanel({ task, tab, setTab, onOpenSign, onApprove, onReject, onCMDB, cmdbAsset, onUpdate }: {
-  task: any; tab: string; setTab: (t: any) => void;
+function DetailPanel({ task, onClose, tab, setTab, onOpenSign, onApprove, onReject, onCMDB, cmdbAsset }: {
+  task: any; onClose: () => void; tab: string; setTab: (t: any) => void;
   onOpenSign: () => void; onApprove: (idx: number) => void; onReject: (idx: number) => void;
   onCMDB: (a: any) => void; cmdbAsset: any;
-  onUpdate?: (patch: any) => void;
 }) {
   const { text: countdownText, expired } = useCountdown(((task.slaRemainingMin ?? 60) * 60) || 3600);
   const band = slaBand(task.slaRemainingMin);
-
-  // 详情交互 state（评论 / 附件 / 子任务 / 依赖 / 暂停）
-  const [commentDraft, setCommentDraft] = useState('');
-  const [commentList, setCommentList] = useState<Array<{ id: string; author: string; text: string; ts: string; tone: 'info' | 'success' | 'warn' | 'error' }>>([]);
-  const [attachmentModal, setAttachmentModal] = useState(false);
-  const [attachmentDraft, setAttachmentDraft] = useState<{ name: string; size: string; type: 'doc' | 'log' | 'image' | 'config' }>({ name: '', size: '', type: 'doc' });
-  const [attachmentList, setAttachmentList] = useState<Array<{ id: string; name: string; size: string; type: 'doc' | 'log' | 'image' | 'config'; ts: string }>>([]);
-  const [subtaskModal, setSubtaskModal] = useState(false);
-  const [subtaskDraft, setSubtaskDraft] = useState('');
-  const [subtaskList, setSubtaskList] = useState<Array<{ id: string; title: string; done: boolean }>>([]);
-  const [depModal, setDepModal] = useState(false);
-  const [depDraft, setDepDraft] = useState('');
-
-  const appendAudit = (action: string, tone: 'info' | 'success' | 'warn' | 'error' = 'info') => {
-    if (!onUpdate) return;
-    const entry = { ts: new Date().toISOString(), actor: '当前用户', action, tone };
-    onUpdate({
-      auditLog: [...(task.auditLog ?? []), entry],
-      updatedAt: entry.ts,
-    });
-  };
-
-  const submitComment = () => {
-    const text = commentDraft.trim();
-    if (!text) return;
-    const newItem = { id: `c_${Date.now().toString(36)}`, author: '当前用户', text, ts: new Date().toISOString(), tone: 'info' as const };
-    setCommentList((prev) => [newItem, ...prev]);
-    setCommentDraft('');
-    if (onUpdate) onUpdate({ comments: (task.comments ?? 0) + 1, updatedAt: new Date().toISOString() });
-    appendAudit(`评论: ${text.slice(0, 24)}${text.length > 24 ? '…' : ''}`, 'info');
-  };
-
-  const addAttachment = () => {
-    if (!attachmentDraft.name.trim()) return;
-    const newItem = { id: `at_${Date.now().toString(36)}`, name: attachmentDraft.name.trim(), size: attachmentDraft.size.trim() || '0 KB', type: attachmentDraft.type, ts: new Date().toISOString() };
-    setAttachmentList((prev) => [newItem, ...prev]);
-    setAttachmentDraft({ name: '', size: '', type: 'doc' });
-    setAttachmentModal(false);
-    appendAudit(`附件上传: ${newItem.name}`, 'success');
-  };
-
-  const addSubtask = () => {
-    if (!subtaskDraft.trim()) return;
-    setSubtaskList((prev) => [...prev, { id: `st_${Date.now().toString(36)}`, title: subtaskDraft.trim(), done: false }]);
-    setSubtaskDraft('');
-    appendAudit(`子任务 +1`, 'info');
-  };
-
-  const toggleSubtask = (id: string) => {
-    setSubtaskList((prev) => prev.map((s) => s.id === id ? { ...s, done: !s.done } : s));
-  };
-
-  const addDependency = () => {
-    if (!depDraft.trim()) return;
-    const blockedBy = [...((task as any).blockedBy ?? []), depDraft.trim()];
-    if (onUpdate) onUpdate({ blockedBy, updatedAt: new Date().toISOString() });
-    setDepDraft('');
-    setDepModal(false);
-    appendAudit(`依赖 +1: ${depDraft}`, 'warn');
-  };
-
-  const togglePause = () => {
-    const newStatus = task.status === 'paused' ? 'in_progress' : 'paused';
-    if (onUpdate) onUpdate({ status: newStatus, updatedAt: new Date().toISOString() });
-    appendAudit(newStatus === 'paused' ? '暂停任务' : '恢复任务', newStatus === 'paused' ? 'warn' : 'success');
-  };
   const tabs = [
     { k: 'detail', label: '详情', icon: FileText },
     { k: 'steps', label: '步骤', icon: ListChecks },
@@ -1274,48 +1145,35 @@ function DetailPanel({ task, tab, setTab, onOpenSign, onApprove, onReject, onCMD
     { k: 'audit', label: '审计', icon: Activity },
     { k: 'comments', label: '评论', icon: MessageSquare, badge: task.comments || 0 },
   ];
-  const statusLabel = COLUMNS.find((column) => column.key === task.status)?.label ?? '处理中';
-  const progressValue = Math.round((task.progress.done / task.progress.total) * 100);
   return (
     <>
-      <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3.5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="mb-2 flex flex-wrap items-center gap-1.5">
-              <Badge tone={PRIORITY_TONE[task.priority as Priority]} className="text-[10px]">{task.priority}</Badge>
-              <Badge tone={task.status === 'completed' ? 'success' : task.status === 'review' ? 'warn' : task.status === 'archived' ? 'neutral' : 'info'} className="text-[10px]">{statusLabel}</Badge>
-              <span className="font-mono text-[10px] text-[var(--text-muted)]">{task.code}</span>
-            </div>
-            <h3 className="text-[15px] font-semibold leading-snug text-[var(--text)]">{task.title}</h3>
-            {task.description && <p className="mt-1.5 text-[11px] leading-relaxed text-[var(--text-muted)]">{task.description}</p>}
-          </div>
-          <Avatar name={task.assignee} size={28} />
+      <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-2.5">
+        <div className="flex items-center gap-2 min-w-0">
+          <Badge tone={PRIORITY_TONE[task.priority as Priority]} className="text-[10px]">{task.priority}</Badge>
+          <span className="font-mono text-[10px] text-[var(--text-muted)] truncate">{task.code}</span>
         </div>
-        <div className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 border-t border-[var(--border)] pt-3 text-[11px]">
-          <div>
-            <div className="text-[10px] text-[var(--text-muted)]">负责人</div>
-            <div className="mt-0.5 flex items-center gap-1.5 font-medium"><Avatar name={task.assignee} size={16} />{task.assignee}</div>
-          </div>
-          <div>
-            <div className="text-[10px] text-[var(--text-muted)]">执行智能体</div>
-            <div className="mt-0.5 flex items-center gap-1.5 font-medium text-[var(--brand)]"><Bot className="h-3.5 w-3.5" />{task.agentId}</div>
-          </div>
-          <div className="col-span-2">
-            <div className="flex items-center justify-between text-[10px] text-[var(--text-muted)]"><span>执行进度</span><span className="font-mono">{task.progress.done}/{task.progress.total}</span></div>
-            <Progress value={progressValue} tone={task.priority === 'P0' ? 'error' : task.priority === 'P1' ? 'warn' : 'primary'} className="mt-1.5 !h-1.5" />
-          </div>
-          {task.relatedTaskCode && <div className="col-span-2 flex items-center gap-1.5 border-t border-[var(--border)] pt-2 text-[10px] text-[var(--text-muted)]"><GitBranch className="h-3 w-3" />关联事件 <span className="font-mono text-[var(--text-secondary)]">{task.relatedTaskCode}</span></div>}
+        <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded text-[var(--text-muted)] hover:bg-[var(--bg-hover)]" aria-label="关闭详情">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="border-b border-[var(--border)] px-4 py-3">
+        <h3 className="text-sm font-semibold leading-snug">{task.title}</h3>
+        {task.description && <p className="text-[11px] text-[var(--text-muted)] mt-1 leading-relaxed">{task.description}</p>}
+        <div className="mt-2 flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]">
+          <Avatar name={task.assignee} size={16} />{task.assignee}
+          <span>·</span><Bot className="h-3 w-3 text-[var(--brand)]" /><span className="text-[var(--brand)]">{task.agentId}</span>
+          {task.relatedTaskCode && <><span>·</span><GitBranch className="h-3 w-3" /><span className="font-mono">{task.relatedTaskCode}</span></>}
         </div>
-      </section>
+      </div>
 
-      <div className="mt-3 flex gap-1 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-1">
+      <div className="border-b border-[var(--border)] flex overflow-x-auto">
         {tabs.map((t) => (
           <button
             key={t.k}
             onClick={() => setTab(t.k)}
             className={cn(
-              'relative flex items-center gap-1 rounded-md px-2.5 py-1.5 text-[10px] whitespace-nowrap transition-colors',
-              tab === t.k ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]',
+              'relative flex items-center gap-1 px-3 py-2 text-[10px] whitespace-nowrap',
+              tab === t.k ? 'text-[var(--brand)] font-semibold border-b-2 border-[var(--brand)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]',
             )}
           >
             <t.icon className="h-3 w-3" />{t.label}
@@ -1324,7 +1182,7 @@ function DetailPanel({ task, tab, setTab, onOpenSign, onApprove, onReject, onCMD
         ))}
       </div>
 
-      <div className="mt-4 space-y-4">
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
         {tab === 'detail' && (
           <>
             <div className={cn('rounded-md border p-3', band === 'overdue' ? 'border-[var(--danger)]/40 bg-[var(--danger-bg)]' : band === 'critical' ? 'border-[var(--danger)]/40 bg-[var(--danger-bg)]' : band === 'warning' ? 'border-[var(--warning)]/40 bg-[var(--warning-bg)]' : 'border-[var(--border)] bg-[var(--bg-elevated)]')}>
@@ -1353,10 +1211,10 @@ function DetailPanel({ task, tab, setTab, onOpenSign, onApprove, onReject, onCMD
             )}
             <Section label="快速操作" icon={Activity}>
               <div className="grid grid-cols-2 gap-1.5">
-                <Button size="sm" variant="secondary" onClick={() => setTab('comments')}><MessageSquare className="h-3 w-3" />评论</Button>
-                <Button size="sm" variant="secondary" onClick={() => setAttachmentModal(true)}><Paperclip className="h-3 w-3" />附件</Button>
-                <Button size="sm" variant="secondary" onClick={() => setSubtaskModal(true)}><ListChecks className="h-3 w-3" />子任务</Button>
-                <Button size="sm" variant="secondary" onClick={() => setDepModal(true)}><Link2 className="h-3 w-3" />依赖</Button>
+                <Button size="sm" variant="secondary"><MessageSquare className="h-3 w-3" />评论</Button>
+                <Button size="sm" variant="secondary"><Paperclip className="h-3 w-3" />附件</Button>
+                <Button size="sm" variant="secondary"><ListChecks className="h-3 w-3" />子任务</Button>
+                <Button size="sm" variant="secondary"><Link2 className="h-3 w-3" />依赖</Button>
               </div>
             </Section>
           </>
@@ -1475,140 +1333,55 @@ function DetailPanel({ task, tab, setTab, onOpenSign, onApprove, onReject, onCMD
 
         {tab === 'comments' && (
           <Section label="评论" icon={MessageSquare}>
-            {commentList.length === 0 ? (
-              <EmptyState icon={MessageSquare} title="还没有评论" description="在下方输入并提交，第一条评论将由你发起" />
-            ) : (
-              <div className="space-y-1.5 mb-2 max-h-40 overflow-y-auto">
-                {commentList.map((c) => (
-                  <div key={c.id} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-[11px]">
-                    <div className="flex items-center justify-between">
-                      <span className="font-semibold">{c.author}</span>
-                      <span className="text-[10px] text-[var(--text-muted)] font-mono">{c.ts.slice(11, 19)}</span>
-                    </div>
-                    <div className="mt-0.5 text-[var(--text-secondary)] whitespace-pre-wrap">{c.text}</div>
-                  </div>
-                ))}
-              </div>
-            )}
-            <textarea
-              value={commentDraft}
-              onChange={(e) => setCommentDraft(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) submitComment(); }}
-              className="w-full h-20 rounded-md border border-[var(--border)] bg-[var(--bg)] p-2 text-xs"
-              placeholder="添加评论... (⌘+Enter 提交)"
-            />
-            <Button size="sm" className="mt-2 w-full" onClick={submitComment} disabled={!commentDraft.trim()}>
-              发表评论
-            </Button>
+            <div className="text-center text-xs text-[var(--text-muted)] py-6">
+              <MessageSquare className="h-6 w-6 mx-auto mb-1 opacity-30" />
+              {task.comments > 0 ? `${task.comments} 条评论` : '暂无评论'}
+            </div>
+            <textarea className="w-full h-20 rounded-md border border-[var(--border)] bg-[var(--bg)] p-2 text-xs" placeholder="添加评论..." />
+            <Button size="sm" className="mt-2 w-full">发表评论</Button>
           </Section>
         )}
       </div>
 
-      <div className="sticky bottom-0 mt-4 flex items-center gap-2 border border-[var(--border)] bg-[var(--bg)]/95 p-2.5 shadow-[0_-8px_18px_rgba(15,23,42,0.06)] backdrop-blur">
-        <Button
-          size="sm"
-          variant="secondary"
-          className="flex-1"
-          onClick={togglePause}
-        >
-          {task.status === 'paused' ? <><Play className="h-3.5 w-3.5" />恢复</> : <><Pause className="h-3.5 w-3.5" />暂停</>}
-        </Button>
+      <div className="flex items-center gap-2 border-t border-[var(--border)] p-3">
+        <Button size="sm" variant="secondary" className="flex-1"><Pause className="h-3.5 w-3.5" />暂停</Button>
         <Button size="sm" onClick={onOpenSign} className="flex-1" disabled={!task.signers?.length}>
           <ShieldCheck className="h-3.5 w-3.5" />批准（双签）
         </Button>
       </div>
-
-      {/* ===== 详情交互 Modal ===== */}
-      <ModalX open={attachmentModal} onClose={() => setAttachmentModal(false)} title="添加附件" size="sm" footer={
-        <>
-          <Button variant="ghost" onClick={() => setAttachmentModal(false)}>取消</Button>
-          <Button disabled={!attachmentDraft.name.trim()} onClick={addAttachment}>添加</Button>
-        </>
-      }>
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-[11px] font-medium text-[var(--text-secondary)]">文件名 <span className="text-[var(--danger)]">*</span></label>
-            <Input value={attachmentDraft.name} onChange={(e) => setAttachmentDraft((s) => ({ ...s, name: e.target.value }))} placeholder="例如：oom-trace-20260716.log" />
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>
-              <label className="mb-1 block text-[11px] font-medium text-[var(--text-secondary)]">大小</label>
-              <Input value={attachmentDraft.size} onChange={(e) => setAttachmentDraft((s) => ({ ...s, size: e.target.value }))} placeholder="128 KB" />
-            </div>
-            <div>
-              <label className="mb-1 block text-[11px] font-medium text-[var(--text-secondary)]">类型</label>
-              <select value={attachmentDraft.type} onChange={(e) => setAttachmentDraft((s) => ({ ...s, type: e.target.value as any }))} className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 text-xs">
-                <option value="doc">文档</option><option value="log">日志</option><option value="image">截图</option><option value="config">配置</option>
-              </select>
-            </div>
-          </div>
-          {attachmentList.length > 0 && (
-            <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-[11px]">
-              <div className="text-[10px] text-[var(--text-muted)] mb-1">已添加 {attachmentList.length} 个附件</div>
-              {attachmentList.slice(0, 3).map((a) => <div key={a.id} className="font-mono">· {a.name} ({a.size})</div>)}
-            </div>
-          )}
-        </div>
-      </ModalX>
-
-      <ModalX open={subtaskModal} onClose={() => setSubtaskModal(false)} title="子任务管理" size="md" footer={
-        <Button onClick={() => setSubtaskModal(false)}>关闭</Button>
-      }>
-        <div className="space-y-2 mb-3">
-          {subtaskList.length === 0 ? (
-            <EmptyState icon={ListChecks} title="还没有子任务" />
-          ) : (
-            subtaskList.map((s) => (
-              <div key={s.id} className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-xs">
-                <input type="checkbox" checked={s.done} onChange={() => toggleSubtask(s.id)} className="accent-[var(--brand)]" />
-                <span className={cn('flex-1', s.done && 'line-through text-[var(--text-muted)]')}>{s.title}</span>
-                <span className="text-[10px] text-[var(--text-muted)] font-mono">{s.done ? '已完成' : '待办'}</span>
-              </div>
-            ))
-          )}
-        </div>
-        <div className="flex items-center gap-2 border-t border-[var(--border)] pt-3">
-          <Input
-            value={subtaskDraft}
-            onChange={(e) => setSubtaskDraft(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addSubtask()}
-            placeholder="添加子任务..."
-            className="flex-1 text-xs"
-          />
-          <Button size="sm" onClick={addSubtask} disabled={!subtaskDraft.trim()}>添加</Button>
-        </div>
-      </ModalX>
-
-      <ModalX open={depModal} onClose={() => setDepModal(false)} title={`依赖关系 · ${((task as any).blockedBy ?? []).length} 个依赖`} size="sm" footer={
-        <>
-          <Button variant="ghost" onClick={() => setDepModal(false)}>关闭</Button>
-        </>
-      }>
-        <div className="space-y-3">
-          {((task as any).blockedBy ?? []).length === 0 ? (
-            <EmptyState icon={Link2} title="无依赖" />
-          ) : (
-            <div className="space-y-1.5">
-              {((task as any).blockedBy as string[]).map((d) => (
-                <div key={d} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-[11px] flex items-center gap-2">
-                  <Link2 className="h-3 w-3 text-[var(--warning)]" />
-                  <span className="font-mono">{d}</span>
-                </div>
-              ))}
-            </div>
-          )}
-          <div className="flex items-center gap-2 border-t border-[var(--border)] pt-3">
-            <Input
-              value={depDraft}
-              onChange={(e) => setDepDraft(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && addDependency()}
-              placeholder="任务 ID / TSK-20260713-001"
-              className="flex-1 text-xs"
-            />
-            <Button size="sm" onClick={addDependency} disabled={!depDraft.trim()}>添加依赖</Button>
-          </div>
-        </div>
-      </ModalX>
     </>
+  );
+}
+
+function Section({ label, icon: Icon, children }: { label: string; icon: any; children: React.ReactNode }) {
+  return (
+    <div>
+      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
+        <Icon className="h-3 w-3" />{label}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function CollapsedHandle({ onOpen }: { onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-label="展开任务详情"
+      title="点击展开任务详情"
+      className="group flex h-full w-10 flex-col items-center justify-center gap-3 border-l border-[var(--border)] bg-[var(--bg-elevated)] hover:bg-[var(--brand-light)] hover:border-[var(--brand)] transition-colors"
+    >
+      <ListChecks className="h-3.5 w-3.5 text-[var(--text-muted)] group-hover:text-[var(--brand)]" />
+      <span
+        className="select-none text-[10px] font-semibold tracking-widest text-[var(--text-muted)] group-hover:text-[var(--brand)]"
+        style={{ writingMode: 'vertical-rl', textOrientation: 'mixed' }}
+      >
+        任务详情
+      </span>
+      <div className="h-12 w-px bg-[var(--border)] group-hover:bg-[var(--brand)]" />
+      <ChevronLeft className="h-3.5 w-3.5 text-[var(--text-muted)] group-hover:text-[var(--brand)] animate-pulse" />
+    </button>
   );
 }

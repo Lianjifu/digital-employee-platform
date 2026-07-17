@@ -655,7 +655,7 @@ export default function Workflows() {
   /* —— 节点交互 —— */
   const onNodeClick: NodeMouseHandler = useCallback((_, node) => {
     setSelectedNodeId(node.id);
-    setSidePanel('debug');
+    setSidePanel('properties');
   }, []);
 
   const onNodeContextMenu: NodeMouseHandler = useCallback((event, node) => {
@@ -701,7 +701,7 @@ export default function Workflows() {
       <div className="shrink-0 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2 md:px-6">
         <div className="flex min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
-            <h2 className="shrink-0 text-sm font-semibold text-[var(--text)]">P6 · 工作流</h2>
+            <h2 className="shrink-0 text-sm font-semibold text-[var(--text)]">工作流</h2>
             <span className="truncate text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
               {tab === 'canvas' ? `DAG 画布 · ${nodes.length} 节点 / ${edges.length} 连线` : tab === 'templates' ? `模板市场 · ${TEMPLATES.length} 套` : `执行历史 · ${RUNS.length} 条`}
             </span>
@@ -1025,6 +1025,12 @@ function CanvasView(props: {
 
   const [mobilePanelOpen, setMobilePanelOpen] = useState<SidePanelKey | null>(null);
   const [nodePaletteOpen, setNodePaletteOpen] = useState(true);
+  const [nodeInspectorTab, setNodeInspectorTab] = useState<'overview' | 'config' | 'debug'>('config');
+  const handleNodeClick: NodeMouseHandler = useCallback((event, node) => {
+    onNodeClick(event, node);
+    setNodeInspectorTab('config');
+    setMobilePanelOpen('properties');
+  }, [onNodeClick]);
 
   return (
     <div className="flex h-full min-h-0 min-w-0">
@@ -1088,16 +1094,20 @@ function CanvasView(props: {
           <Button size="sm" variant="outline" onClick={() => setNodePaletteOpen((open) => !open)}>
             <Box className="h-3.5 w-3.5" />{nodePaletteOpen ? '收起节点库' : '节点库'}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => setMobilePanelOpen(sidePanel)}>
-            <Settings className="h-3.5 w-3.5" />{sidePanel === 'debug' ? '调试' : sidePanel === 'properties' ? '属性' : '信息'}
+          <Button size="sm" variant="outline" onClick={() => {
+            setNodeInspectorTab(selectedNode ? 'config' : 'overview');
+            setMobilePanelOpen(selectedNode ? 'properties' : 'library');
+          }}>
+            <Settings className="h-3.5 w-3.5" />{selectedNode ? '节点详情' : '节点库'}
           </Button>
         </div>
 
         <Drawer
           open={mobilePanelOpen !== null}
           onClose={() => setMobilePanelOpen(null)}
-          title={mobilePanelOpen === 'library' ? '节点库' : mobilePanelOpen === 'debug' ? '调试' : '属性'}
-          width={340}
+          title={mobilePanelOpen === 'library' ? '节点库' : selectedNode ? `${selectedNode.data?.label || NODE_LABELS[selectedNode.data?.kind as WorkflowNodeKind]} · 节点详情` : '节点详情'}
+          description={mobilePanelOpen === 'library' ? '拖拽或点击添加到画布' : selectedNode ? `${selectedNode.id} · ${NODE_DESCS[selectedNode.data?.kind as WorkflowNodeKind]}` : '选择画布中的节点查看信息与配置'}
+          width={460}
         >
           {mobilePanelOpen === 'library' && (
             <div className="space-y-2">
@@ -1113,8 +1123,29 @@ function CanvasView(props: {
               })}
             </div>
           )}
-          {mobilePanelOpen === 'debug' && <DebugPanel selectedNode={selectedNode} selectedNodeId={selectedNodeId} deleteNode={deleteNode} duplicateNode={duplicateNode} disableNode={disableNode} showToast={showToast} />}
-          {mobilePanelOpen === 'properties' && <PropertiesPanel selectedNode={selectedNode} updateNodeLabel={updateNodeLabel} updateNodeDescription={updateNodeDescription} updateNodeNote={updateNodeNote} showToast={showToast} />}
+          {mobilePanelOpen !== 'library' && selectedNode && (
+            <div className="space-y-4">
+              <div className="flex gap-1 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-1">
+                {[
+                  { key: 'overview' as const, label: '概览', icon: FileText },
+                  { key: 'config' as const, label: '配置', icon: Settings },
+                  { key: 'debug' as const, label: '调试', icon: Bug },
+                ].map((item) => (
+                  <button
+                    key={item.key}
+                    type="button"
+                    onClick={() => setNodeInspectorTab(item.key)}
+                    className={cn('flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] transition-colors', nodeInspectorTab === item.key ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}
+                  >
+                    <item.icon className="h-3.5 w-3.5" />{item.label}
+                  </button>
+                ))}
+              </div>
+              {nodeInspectorTab === 'overview' && <NodeOverview selectedNode={selectedNode} />}
+              {nodeInspectorTab === 'config' && <PropertiesPanel selectedNode={selectedNode} updateNodeLabel={updateNodeLabel} updateNodeDescription={updateNodeDescription} updateNodeNote={updateNodeNote} showToast={showToast} />}
+              {nodeInspectorTab === 'debug' && <DebugPanel selectedNode={selectedNode} selectedNodeId={selectedNodeId} deleteNode={deleteNode} duplicateNode={duplicateNode} disableNode={disableNode} showToast={showToast} />}
+            </div>
+          )}
         </Drawer>
 
         {/* Webhook + 操作 */}
@@ -1210,7 +1241,7 @@ function CanvasView(props: {
               fitView
               fitViewOptions={{ padding: 0.18 }}
               proOptions={{ hideAttribution: true }}
-              onNodeClick={onNodeClick}
+              onNodeClick={handleNodeClick}
               onNodeContextMenu={onNodeContextMenu}
               onNodesChange={onNodesChange}
               onConnect={onConnect}
@@ -1412,6 +1443,47 @@ function InfoPanel({ nodes }: { nodes: Node[] }) {
             </div>
           ))}
         </div>
+      </section>
+    </div>
+  );
+}
+
+/* =============================================================
+ *  节点检查器概览
+ * ============================================================= */
+function NodeOverview({ selectedNode }: { selectedNode: Node }) {
+  const kind = selectedNode.data?.kind as WorkflowNodeKind;
+  const Icon = NODE_ICONS[kind];
+  const color = NODE_COLORS[kind];
+  const debugInfo = NODE_DEBUG[selectedNode.id];
+  const isExecuting = selectedNode.id === EXECUTING_NODE_ID;
+
+  return (
+    <div className="space-y-3">
+      <section className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
+        <div className="flex items-start gap-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg" style={{ backgroundColor: `${color}1a`, color }}><Icon className="h-4 w-4" /></span>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="rounded px-1.5 py-0.5 font-mono text-[10px]" style={{ backgroundColor: `${color}1a`, color }}>{kind}</span>
+              {isExecuting && <Badge tone="brand" className="text-[9px]"><span className="mr-1 h-1.5 w-1.5 rounded-full bg-current animate-pulse" />运行中</Badge>}
+              {selectedNode.data?.disabled && <Badge tone="neutral" className="text-[9px]">已禁用</Badge>}
+            </div>
+            <div className="mt-1 text-sm font-semibold text-[var(--text)]">{selectedNode.data?.label || NODE_LABELS[kind]}</div>
+            <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-muted)]">{selectedNode.data?.desc || NODE_DESCS[kind]}</p>
+          </div>
+        </div>
+      </section>
+      <section className="grid grid-cols-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[11px]">
+        <div className="border-b border-r border-[var(--border)] p-2.5"><div className="text-[10px] text-[var(--text-muted)]">节点 ID</div><div className="mt-0.5 font-mono text-[var(--text-secondary)]">{selectedNode.id}</div></div>
+        <div className="border-b border-[var(--border)] p-2.5"><div className="text-[10px] text-[var(--text-muted)]">运行状态</div><div className={cn('mt-0.5 font-medium', selectedNode.data?.disabled ? 'text-[var(--text-muted)]' : isExecuting ? 'text-[var(--brand)]' : 'text-[var(--success)]')}>{selectedNode.data?.disabled ? '已跳过' : isExecuting ? '执行中' : '已就绪'}</div></div>
+        <div className="border-r border-[var(--border)] p-2.5"><div className="text-[10px] text-[var(--text-muted)]">画布坐标</div><div className="mt-0.5 font-mono text-[var(--text-secondary)]">{Math.round(selectedNode.position.x)}, {Math.round(selectedNode.position.y)}</div></div>
+        <div className="p-2.5"><div className="text-[10px] text-[var(--text-muted)]">最近运行</div><div className="mt-0.5 font-mono text-[var(--text-secondary)]">{debugInfo ? debugInfo.log.at(-1)?.slice(1, 9) ?? '—' : '暂无记录'}</div></div>
+      </section>
+      {selectedNode.data?.note && <section className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] p-2.5 text-[11px]"><div className="mb-1 flex items-center gap-1 font-semibold text-[var(--warning)]"><MessageSquare className="h-3.5 w-3.5" />运行批注</div><p className="leading-relaxed text-[var(--text-secondary)]">{selectedNode.data.note}</p></section>}
+      <section className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3">
+        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">配置提示</div>
+        <p className="text-[11px] leading-relaxed text-[var(--text-secondary)]">{kind === 'approval' ? '请设置审批组、签名人数和审批超时；任何写操作均应保留回滚分支。' : kind === 'execute' ? '请确认执行工具、目标资源、参数及重试策略；高风险操作建议串联双签节点。' : kind === 'branch' ? '请配置分支表达式和各出口的目标节点，确保默认路径可追踪。' : '在“配置”页更新节点名称、描述与运行批注；变更后需点击应用修改。'}</p>
       </section>
     </div>
   );

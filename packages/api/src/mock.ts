@@ -787,6 +787,36 @@ export const mockConversation: Conversation = {
   ],
 };
 
+// ============ 运行时 Mock 领域状态 ============
+// 让会话中的行动、审批、任务、审计和通知共享同一份数据。
+// 后续切换真实后端时，页面只需保留相同的 API 契约。
+type MockDomainEvent = { id: string; time: string; user: string; action: string; target: string; result: 'success' | 'failed' };
+const mockDomain = {
+  tasks: [...mockTasks] as any[],
+  audits: mockAuditStream.map((event: any) => ({ ...event, result: event.result === 'failed' ? 'failed' as const : 'success' as const })),
+  messages: [...mockMessageStream] as any[],
+  actions: new Map<string, { id: string; conversationId: string; status: 'pending' | 'approved' | 'executed' | 'rejected'; taskId?: string }>(),
+};
+
+function mockId(prefix: string) {
+  return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function appendDomainEvent(action: string, target: string, result: MockDomainEvent['result'] = 'success') {
+  const event: MockDomainEvent = { id: mockId('audit'), time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), user: '数字员工', action, target, result };
+  mockDomain.audits.unshift(event);
+  mockDomain.messages.unshift({
+    id: mockId('msg'),
+    channel: '飞书',
+    target: '会话工作台',
+    status: result === 'success' ? 'delivered' : 'failed',
+    tone: result === 'success' ? 'success' : 'warning',
+    content: `${action}：${target}`,
+    time: event.time,
+  });
+  return event;
+}
+
 // ============ Mock 路由 ============
 
 export async function mockHandler(path: string, opts: { method?: string; body?: unknown; query?: Record<string, any> }): Promise<unknown> {
@@ -825,10 +855,10 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/workspace-switch-history') return mockWorkspaceSwitchHistory;
 
   // 任务
-  if (path === '/api/tasks') return mockTasks;
+  if (path === '/api/tasks') return mockDomain.tasks;
   if (path.startsWith('/api/tasks/')) {
     const id = path.split('/').pop();
-    return mockTasks.find((t) => t.id === id) ?? null;
+    return mockDomain.tasks.find((t) => t.id === id) ?? null;
   }
 
   // 智能体
@@ -885,7 +915,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   // 渠道
   if (path === '/api/channels') return mockChannels;
   if (path === '/api/channel-health') return mockChannelHealth;
-  if (path === '/api/message-stream') return mockMessageStream;
+  if (path === '/api/message-stream') return mockDomain.messages;
   if (path === '/api/channel-config') return mockChannelConfig;
 
   // 设置
@@ -893,7 +923,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/api-keys') return mockApiKeys;
   if (path === '/api/webhooks-config') return mockWebhooks;
   if (path === '/api/backups') return mockBackups;
-  if (path === '/api/audit-stream') return mockAuditStream;
+  if (path === '/api/audit-stream') return mockDomain.audits;
   if (path === '/api/billing') return mockBilling;
   if (path === '/api/notification-channels') return mockNotificationChannels;
 
@@ -903,6 +933,45 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/sessions') return mockSessions;
   if (path === '/api/slash-commands') return mockSlashCommands;
   if (path.startsWith('/api/agents/') && path.endsWith('/meta')) return mockAgentMeta;
+
+  // 会话工作台写接口：用于演示“会话 → 任务/审批/执行 → 审计/通知”的闭环。
+  if (path.startsWith('/api/conversations/') && path.endsWith('/tasks') && opts.method === 'POST') {
+    const conversationId = path.split('/')[3];
+    const body = (opts.body ?? {}) as { title?: string; priority?: string; assignee?: string };
+    const task = {
+      id: mockId('task'), code: `TSK-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${String(mockDomain.tasks.length + 1).padStart(3, '0')}`,
+      title: body.title ?? '数字员工会话行动项', description: `由会话 ${conversationId} 创建`, priority: body.priority ?? 'P1', status: 'pending', assignee: body.assignee ?? '王昊', agentId: 'a1', progress: { done: 0, total: 3 }, tags: ['会话转任务'], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    };
+    mockDomain.tasks.unshift(task);
+    appendDomainEvent('创建任务', task.code);
+    return task;
+  }
+  if (path.startsWith('/api/actions/') && path.endsWith('/approve') && opts.method === 'POST') {
+    const actionId = path.split('/')[3];
+    const action = mockDomain.actions.get(actionId) ?? { id: actionId, conversationId: 'cv1', status: 'pending' as const };
+    const next = { ...action, status: 'approved' as const };
+    mockDomain.actions.set(actionId, next);
+    appendDomainEvent('审批通过', actionId);
+    return next;
+  }
+  if (path.startsWith('/api/actions/') && path.endsWith('/execute') && opts.method === 'POST') {
+    const actionId = path.split('/')[3];
+    const body = (opts.body ?? {}) as { taskId?: string };
+    const action = { ...(mockDomain.actions.get(actionId) ?? { id: actionId, conversationId: 'cv1', status: 'approved' as const }), taskId: body.taskId ?? mockDomain.actions.get(actionId)?.taskId };
+    const task = action.taskId ? mockDomain.tasks.find((item) => item.id === action.taskId) : undefined;
+    if (task) Object.assign(task, { status: 'completed', progress: { done: 3, total: 3 }, updatedAt: new Date().toISOString() });
+    const next = { ...action, status: 'executed' as const };
+    mockDomain.actions.set(actionId, next);
+    appendDomainEvent('受控执行完成', task?.code ?? actionId);
+    return { ...next, task };
+  }
+  if (path === '/api/mock/reset' && opts.method === 'POST') {
+    mockDomain.tasks.splice(0, mockDomain.tasks.length, ...mockTasks);
+    mockDomain.audits.splice(0, mockDomain.audits.length, ...mockAuditStream);
+    mockDomain.messages.splice(0, mockDomain.messages.length, ...mockMessageStream);
+    mockDomain.actions.clear();
+    return { ok: true };
+  }
 
   // 登录
   if (path === '/api/auth/login') {

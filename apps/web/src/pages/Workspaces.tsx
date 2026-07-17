@@ -59,9 +59,9 @@ export default function Workspaces() {
   }, [list]);
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto">
+    <div className="workspaces-page h-full min-w-0 overflow-y-auto bg-[var(--bg-elevated)]">
       {/* Header */}
-      <div className="px-6 pt-5">
+      <div className="mx-auto w-full max-w-[1480px] px-4 pt-5 sm:px-6">
         <div className="flex items-start justify-between mb-5">
           <div>
             <h1 className="page-header__title">工作区 · 多租户管理</h1>
@@ -70,6 +70,12 @@ export default function Workspaces() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <label className="hidden items-center gap-2 text-xs text-[var(--text-muted)] md:flex">
+              当前工作区
+              <select value={activeWs} onChange={(e) => setActiveWs(e.target.value)} className="h-9 max-w-[220px] rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs font-medium text-[var(--text)]">
+                {(list ?? []).map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name} · {workspace.region}</option>)}
+              </select>
+            </label>
             <Button variant="secondary" size="md">
               <Settings className="h-3.5 w-3.5" />组织设置
             </Button>
@@ -91,10 +97,10 @@ export default function Workspaces() {
         </div>
       </div>
 
-      {/* 主体 3 列 */}
-      <div className="px-6 pb-6 grid grid-cols-[280px_1fr_300px] gap-4 flex-1">
+      {/* 单一主面板 */}
+      <div className="mx-auto w-full max-w-[1480px] px-4 pb-6 sm:px-6">
         {/* Todo 1: 左侧 4 工作区切换器 */}
-        <aside className="space-y-3 overflow-y-auto">
+        <aside className="hidden">
           <div>
             <div className="text-xs font-semibold mb-2 flex items-center gap-1.5">
               <Building2 className="h-3.5 w-3.5 text-[var(--text-muted)]" />
@@ -152,7 +158,7 @@ export default function Workspaces() {
         </aside>
 
         {/* 中间：当前工作区详情 + Tabs */}
-        <section className="rounded-lg border border-[var(--border)] bg-[var(--bg)] flex flex-col overflow-hidden">
+        <section className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)]">
           {active && (
             <>
               <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
@@ -186,7 +192,7 @@ export default function Workspaces() {
                 </div>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-5">
+              <div className="p-4 sm:p-5">
                 {/* Tab: 概览 */}
                 {tab === 'overview' && (
                   <div className="space-y-4">
@@ -217,6 +223,18 @@ export default function Workspaces() {
                         <Mini label="缓存命中" value="32%" tone="success" />
                         <Mini label="P95" value="680ms" />
                         <Mini label="成本" value="$1.24k" tone="primary" />
+                      </div>
+                    </div>
+                    <div>
+                      <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold"><History className="h-3.5 w-3.5" />最近切换记录</div>
+                      <div className="divide-y overflow-hidden rounded-md border border-[var(--border)] bg-[var(--bg)]">
+                        {switchHistory.slice(0, 4).map((h) => (
+                          <div key={h.id} className="flex items-center gap-2 px-3 py-2 text-[11px]">
+                            <span className="font-mono text-[10px] text-[var(--text-muted)]">{h.time}</span>
+                            <span className="truncate">{h.from}</span><ArrowRight className="h-3 w-3 shrink-0 text-[var(--text-muted)]" /><span className="truncate font-semibold text-[var(--brand)]">{h.to}</span>
+                            <span className="ml-auto hidden text-[10px] text-[var(--text-muted)] sm:block">{h.reason}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
                   </div>
@@ -355,7 +373,7 @@ export default function Workspaces() {
         </section>
 
         {/* 右侧：Todo 9 切换历史 + 系统状态 */}
-        <aside className="space-y-3 overflow-y-auto">
+        <aside className="hidden">
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
             <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
               <History className="h-3.5 w-3.5" />工作区切换历史

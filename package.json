@@ -5,7 +5,7 @@
   "description": "企业级数字员工平台 — 前端 (React 18 + Vite 5 + TS + shadcn/ui)",
   "scripts": {
     "dev": "pnpm --filter web dev",
-    "build": "pnpm -r --filter './packages/*' build && pnpm --filter web build",
+    "build": "pnpm --filter web build",
     "preview": "pnpm --filter web preview",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",

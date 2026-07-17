@@ -1,7 +1,7 @@
 /**
  * PSSP 主布局
  * - 顶部 60px Topbar（菜单 + Logo + Breadcrumb）
- * - 左侧 260px Sidebar（9 模块导航 + 工作区切换 + 用户菜单）
+ * - 左侧 200px Sidebar（业务导航 + 用户菜单）
  * - 用户信息移到左下角，菜单按 Claude 风格分 3 组
  */
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
@@ -10,7 +10,7 @@ import {
   Home, MessageSquare, ListChecks, Building2, Bot, Workflow,
   BookOpen, Wrench, Brain, Send,
   Menu, Settings2, Languages, Sun, Moon,
-  LogOut, ChevronDown, X,
+  LogOut, ChevronDown, X, CheckCircle2,
 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { useUiStore } from '@/stores/uiStore';
@@ -21,19 +21,35 @@ import { cn } from '@de/web-utils';
 import { useApiQuery } from '@/services/query';
 import type { Workspace } from '@de/web-types';
 
-// 侧栏只放 9 个业务模块导航；
-// Settings / Workspace 移到左下角用户菜单（避免重复）
-const NAV: { to: string; label: string; i18n: string; icon: any; code: string }[] = [
-  { to: '/home', label: '首页', i18n: 'nav.home', icon: Home, code: 'P1' },
-  { to: '/copilot', label: '会话', i18n: 'nav.copilot', icon: MessageSquare, code: 'P2' },
-  { to: '/tasks', label: '任务', i18n: 'nav.tasks', icon: ListChecks, code: 'P3' },
-  { to: '/agents', label: '智能体', i18n: 'nav.agents', icon: Bot, code: 'P5' },
-  { to: '/workflows', label: '工作流', i18n: 'nav.workflows', icon: Workflow, code: 'P6' },
-  { to: '/knowledge', label: '知识', i18n: 'nav.knowledge', icon: BookOpen, code: 'P7' },
-  { to: '/skills', label: '技能', i18n: 'nav.skills', icon: Wrench, code: 'P8' },
-  { to: '/models', label: '模型', i18n: 'nav.models', icon: Brain, code: 'P9' },
-  { to: '/channels', label: '渠道', i18n: 'nav.channels', icon: Send, code: 'P10' },
+// 业务导航按工作场景分组；Settings / Workspace 移到左下角用户菜单。
+type NavItem = { to: string; label: string; i18n: string; icon: any };
+const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
+  { label: null, items: [{ to: '/home', label: '首页', i18n: 'nav.home', icon: Home }] },
+  {
+    label: '协同运营',
+    items: [
+      { to: '/copilot', label: '会话', i18n: 'nav.copilot', icon: MessageSquare },
+      { to: '/tasks', label: '任务', i18n: 'nav.tasks', icon: ListChecks },
+    ],
+  },
+  {
+    label: '智能编排',
+    items: [
+      { to: '/agents', label: '智能体', i18n: 'nav.agents', icon: Bot },
+      { to: '/workflows', label: '工作流', i18n: 'nav.workflows', icon: Workflow },
+    ],
+  },
+  {
+    label: '能力中心',
+    items: [
+      { to: '/knowledge', label: '知识', i18n: 'nav.knowledge', icon: BookOpen },
+      { to: '/skills', label: '技能', i18n: 'nav.skills', icon: Wrench },
+      { to: '/models', label: '模型', i18n: 'nav.models', icon: Brain },
+      { to: '/channels', label: '渠道', i18n: 'nav.channels', icon: Send },
+    ],
+  },
 ];
+const NAV = NAV_GROUPS.flatMap((group) => group.items);
 
 export function AppLayout() {
   const navigate = useNavigate();
@@ -43,7 +59,9 @@ export function AppLayout() {
   const { user, logout } = useAuthStore();
   const { current, setCurrent, setList } = useWorkspaceStore();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const workspaceMenuRef = useRef<HTMLDivElement>(null);
 
   const { data: workspaces } = useApiQuery<Workspace[]>(['workspaces'], '/api/workspaces');
   useEffect(() => {
@@ -53,16 +71,19 @@ export function AppLayout() {
     }
   }, [workspaces, current, setCurrent, setList]);
 
-  // 点击外部关闭用户菜单
+  // 点击外部关闭用户菜单与工作区切换器
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
         setUserMenuOpen(false);
       }
+      if (workspaceMenuRef.current && !workspaceMenuRef.current.contains(e.target as Node)) {
+        setWorkspaceMenuOpen(false);
+      }
     };
-    if (userMenuOpen) document.addEventListener('mousedown', handler);
+    if (userMenuOpen || workspaceMenuOpen) document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
-  }, [userMenuOpen]);
+  }, [userMenuOpen, workspaceMenuOpen]);
 
   const onLogout = () => {
     setUserMenuOpen(false);
@@ -75,7 +96,7 @@ export function AppLayout() {
   return (
     <div
       className="grid h-screen w-screen overflow-hidden bg-[var(--bg-elevated)] lg:[grid-template-columns:var(--sidebar-width)_1fr] lg:[grid-template-rows:60px_1fr]"
-      style={{ '--sidebar-width': sidebarCollapsed ? '72px' : '260px', gridTemplateRows: '60px 1fr' } as CSSProperties}
+      style={{ '--sidebar-width': sidebarCollapsed ? '72px' : '200px', gridTemplateRows: '60px 1fr' } as CSSProperties}
     >
       {/* Mobile Drawer Overlay */}
       {mobileDrawerOpen && (
@@ -110,6 +131,48 @@ export function AppLayout() {
           {!sidebarCollapsed && <span className="hidden sm:inline">数字员工平台</span>}
         </NavLink>
 
+        <div ref={workspaceMenuRef} className="relative hidden sm:block">
+          <button
+            type="button"
+            onClick={() => setWorkspaceMenuOpen((open) => !open)}
+            className={cn('flex h-8 max-w-[240px] items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 text-left text-xs transition-colors hover:border-[var(--brand)]', workspaceMenuOpen && 'border-[var(--brand)] bg-[var(--brand-light)]')}
+            aria-haspopup="menu"
+            aria-expanded={workspaceMenuOpen}
+          >
+            <Building2 className="h-3.5 w-3.5 shrink-0 text-[var(--brand)]" />
+            <span className="min-w-0 flex-1 truncate font-semibold">{current?.name ?? '选择工作区'}</span>
+            {current && <span className="hidden rounded bg-[var(--bg-elevated)] px-1 py-0.5 font-mono text-[9px] text-[var(--text-muted)] lg:inline">{current.region}</span>}
+            <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 text-[var(--text-muted)] transition-transform', workspaceMenuOpen && 'rotate-180')} />
+          </button>
+          {workspaceMenuOpen && (
+            <div role="menu" className="absolute left-0 top-full z-50 mt-2 w-[320px] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl">
+              <div className="border-b border-[var(--border)] px-3 py-2">
+                <div className="text-xs font-semibold">切换工作区</div>
+                <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">切换后会更新当前资源、成员权限与运行范围。</div>
+              </div>
+              <div className="max-h-[280px] overflow-y-auto p-1.5">
+                {(workspaces ?? []).map((workspace) => (
+                  <button
+                    key={workspace.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={workspace.id === current?.id}
+                    onClick={() => { setCurrent(workspace); setWorkspaceMenuOpen(false); }}
+                    className={cn('flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-[var(--bg-hover)]', workspace.id === current?.id && 'bg-[var(--brand-light)]')}
+                  >
+                    <span className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-md', workspace.id === current?.id ? 'bg-[var(--brand)] text-white' : 'bg-[var(--bg-elevated)] text-[var(--text-muted)]')}><Building2 className="h-3.5 w-3.5" /></span>
+                    <span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold">{workspace.name}</span><span className="block text-[10px] text-[var(--text-muted)]">{workspace.region} · {workspace.memberCount} 成员 · 合规 {workspace.complianceScore}</span></span>
+                    {workspace.id === current?.id && <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--brand)]" />}
+                  </button>
+                ))}
+              </div>
+              <div className="border-t border-[var(--border)] p-1.5">
+                <button type="button" onClick={() => { setWorkspaceMenuOpen(false); navigate('/workspaces'); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-xs font-semibold text-[var(--brand)] hover:bg-[var(--brand-light)]"><Settings2 className="h-3.5 w-3.5" />工作区管理</button>
+              </div>
+            </div>
+          )}
+        </div>
+
         {/* Breadcrumb */}
         {!sidebarCollapsed && (
           <div className="hidden items-center gap-2 text-[13px] text-[var(--text-muted)] sm:flex">
@@ -129,70 +192,42 @@ export function AppLayout() {
           'lg:relative lg:translate-x-0',
           'fixed top-0 bottom-0 left-0 z-50 w-[260px] transition-transform duration-200',
           mobileDrawerOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0',
-          sidebarCollapsed ? 'items-center lg:w-[72px]' : '',
+          sidebarCollapsed ? 'items-center lg:w-[72px]' : 'lg:w-[200px]',
         )}
       >
         {/* 主导航（占主要空间）*/}
         <nav className="flex-1 px-3 pt-4 pb-3 overflow-y-auto">
-          {!sidebarCollapsed && (
-            <div className="px-2 mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
-              <span>业务模块</span>
-              <span className="text-[9px] font-mono normal-case bg-[var(--bg-elevated)] px-1.5 py-0.5 rounded">
-                {NAV.length} 个
-              </span>
-            </div>
-          )}
-          {NAV.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              className={({ isActive }) =>
-                cn(
-                  'group flex items-center gap-3 rounded-md text-[13px] transition-all duration-150',
-                  sidebarCollapsed ? 'h-10 w-10 justify-center mx-auto' : 'px-3 py-2.5',
-                  isActive
-                    ? 'bg-[var(--brand-light)] text-[var(--brand)] font-semibold'
-                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]',
-                )
-              }
-              title={sidebarCollapsed ? `${item.code} · ${t(item.i18n)}` : undefined}
-            >
-              <item.icon
-                className={cn(
-                  'h-4 w-4 shrink-0 transition-colors',
-                  'group-hover:text-[var(--brand)]',
-                )}
-              />
-              {!sidebarCollapsed && (
-                <>
-                  <span className="flex-1 truncate">{t(item.i18n)}</span>
-                  <span className="text-[10px] font-mono text-[var(--text-muted)] group-hover:text-[var(--text-secondary)] shrink-0">
-                    {item.code}
-                  </span>
-                </>
+          {NAV_GROUPS.map((group, groupIndex) => (
+            <div key={group.label ?? 'home'} className={cn(groupIndex > 0 && (sidebarCollapsed ? 'mt-3 pt-3 border-t border-[var(--border)]' : 'mt-4'))}>
+              {!sidebarCollapsed && group.label && (
+                <div className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                  {group.label}
+                </div>
               )}
-            </NavLink>
+              <div className="space-y-0.5">
+                {group.items.map((item) => (
+                  <NavLink
+                    key={item.to}
+                    to={item.to}
+                    className={({ isActive }) =>
+                      cn(
+                        'group flex items-center gap-3 rounded-md text-[13px] transition-all duration-150',
+                        sidebarCollapsed ? 'h-10 w-10 justify-center mx-auto' : 'px-3 py-2.5',
+                        isActive
+                          ? 'bg-[var(--brand-light)] text-[var(--brand)] font-semibold'
+                          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]',
+                      )
+                    }
+                    title={sidebarCollapsed ? t(item.i18n) : undefined}
+                  >
+                    <item.icon className="h-4 w-4 shrink-0 transition-colors group-hover:text-[var(--brand)]" />
+                    {!sidebarCollapsed && <span className="flex-1 truncate">{t(item.i18n)}</span>}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
           ))}
         </nav>
-
-        {/* ============ 左下角：工作区指示器 + 用户触发器 ============ */}
-        {!sidebarCollapsed && current && (
-          <div className="border-t border-[var(--border)] bg-[var(--bg-elevated)]">
-            <button
-              className="flex w-full items-center gap-2.5 px-3 py-2.5 text-left hover:bg-[var(--bg-hover)] transition-colors"
-              title="切换工作区"
-            >
-              <Building2 className="h-3.5 w-3.5 text-[var(--brand)] shrink-0" />
-              <div className="min-w-0 flex-1">
-                <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider">当前工作区</div>
-                <div className="text-xs font-semibold truncate">{current.name}</div>
-              </div>
-              <Badge tone="brand" className="text-[9px] shrink-0">
-                {current.plan === 'enterprise_plus' ? 'EP' : current.plan === 'enterprise' ? 'E' : 'S'}
-              </Badge>
-            </button>
-          </div>
-        )}
 
         {/* ============ 左下角：用户触发器 + 菜单 ============ */}
         {user && (
@@ -255,7 +290,7 @@ export function AppLayout() {
                   onClick={() => { setUserMenuOpen(false); navigate('/workspaces'); }}
                 >
                   <span className="user-menu__icon-box"><Building2 className="h-3.5 w-3.5" /></span>
-                  <span className="user-menu__label">Workspace</span>
+                  <span className="user-menu__label">工作区管理</span>
                   <span className="user-menu__value">{current?.name ?? 'ACME'}</span>
                   <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                 </button>

@@ -16,6 +16,7 @@ import {
   AlertTriangle, CheckCircle2, Box, Star, Globe, Activity, History,
   Play, RefreshCw, Network, Lock, Cpu, Container, Eye, Terminal,
   Sparkles, Layers, Upload, Trash2, FileCode2,
+  Save,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import type { Skill } from '@de/web-types';
@@ -90,6 +91,8 @@ export default function Skills() {
   const [activeModal, setActiveModal] = useState<ModalKind>(null);
   const [batchConfirm, setBatchConfirm] = useState<'install' | 'upgrade' | null>(null);
   const [showDetails, setShowDetails] = useState(false);
+  const [showRuntimeConfig, setShowRuntimeConfig] = useState(false);
+  const [runtimeSettings, setRuntimeSettings] = useState<Record<string, { cacheable: boolean; timeout: string; retries: string }>>({});
 
   // 本地可写 state
   const [installed, setInstalled] = useState<any[]>(INITIAL_INSTALLED);
@@ -117,6 +120,16 @@ export default function Skills() {
   }, [tabList, filter, searchQ]);
 
   const active = tabList.find((s) => s.id === activeId);
+  const activeRuntimeSettings = active
+    ? runtimeSettings[active.id] ?? { cacheable: active.cacheable, timeout: '30', retries: '1' }
+    : null;
+
+  const openSkillDetails = (id: string, options?: { test?: boolean }) => {
+    setActiveId(id);
+    setShowDetails(true);
+    setShowRuntimeConfig(false);
+    setTestRunnerOpen(!!options?.test);
+  };
 
   const { data: trace } = useApiQuery<any>(['skill', activeId, 'trace'], activeId ? `/api/skills/${activeId}/trace` : '');
   const { data: versions = [] } = useApiQuery<any[]>(['skill', activeId, 'versions'], activeId ? `/api/skills/${activeId}/versions` : '');
@@ -325,9 +338,6 @@ export default function Skills() {
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowDetails(true)} disabled={!active}>
-                <Eye className="h-3.5 w-3.5" />技能详情
-              </Button>
               {selected.size > 0 && (
                 <div className="flex items-center gap-2 px-2 py-1 rounded-md bg-[var(--brand-light)] text-[var(--brand)] text-xs">
                   <span>已选 {selected.size}</span>
@@ -388,7 +398,7 @@ export default function Skills() {
                 return (
                   <div
                     key={s.id}
-                    onClick={() => setActiveId(s.id)}
+                    onClick={() => openSkillDetails(s.id)}
                     className={cn(
                       'tile-brandable relative rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4 cursor-pointer',
                       isActive && 'card-active',
@@ -452,6 +462,16 @@ export default function Skills() {
                         {isInInstalled ? <><CheckCircle2 className="h-3 w-3" />已安装</> : <><Download className="h-3 w-3" />安装</>}
                       </Button>
                     )}
+                    {tab !== 'store' && (
+                      <div className="mt-3 grid grid-cols-2 gap-1.5">
+                        <Button size="sm" variant="secondary" onClick={(e) => { e.stopPropagation(); openSkillDetails(s.id, { test: true }); }}>
+                          <Terminal className="h-3 w-3" />测试
+                        </Button>
+                        <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); openSkillDetails(s.id); }}>
+                          <Eye className="h-3 w-3" />详情
+                        </Button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -489,6 +509,35 @@ export default function Skills() {
                 </div>
               </div>
             </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <Button size="sm" variant="secondary" onClick={() => { setTestRunnerOpen(true); setShowRuntimeConfig(false); }}>
+                <Terminal className="h-3.5 w-3.5" />运行测试
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => { setShowRuntimeConfig((open) => !open); setTestRunnerOpen(false); }}>
+                <Settings className="h-3.5 w-3.5" />{showRuntimeConfig ? '收起配置' : '运行配置'}
+              </Button>
+            </div>
+
+            {showRuntimeConfig && activeRuntimeSettings && (
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="text-xs font-semibold">运行配置</div>
+                  <Badge tone={active.riskLevel === 'high' ? 'error' : active.riskLevel === 'mid' ? 'warn' : 'success'} className="text-[9px]">{active.riskLevel === 'high' ? '高风险变更受控' : '沙箱策略生效'}</Badge>
+                </div>
+                <div className="space-y-3 text-xs">
+                  <label className="flex items-center justify-between gap-3 rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2">
+                    <span><span className="block font-medium">结果缓存</span><span className="mt-0.5 block text-[10px] text-[var(--text-muted)]">相同请求命中隔离缓存</span></span>
+                    <input type="checkbox" checked={activeRuntimeSettings.cacheable} onChange={(e) => setRuntimeSettings((settings) => ({ ...settings, [active.id]: { ...activeRuntimeSettings, cacheable: e.target.checked } }))} className="h-4 w-4 accent-[var(--brand)]" />
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <label className="text-[10px] font-medium text-[var(--text-muted)]">超时（秒）<Input value={activeRuntimeSettings.timeout} onChange={(e) => setRuntimeSettings((settings) => ({ ...settings, [active.id]: { ...activeRuntimeSettings, timeout: e.target.value } }))} className="mt-1 h-8 font-mono text-xs" inputMode="numeric" /></label>
+                    <label className="text-[10px] font-medium text-[var(--text-muted)]">失败重试<Input value={activeRuntimeSettings.retries} onChange={(e) => setRuntimeSettings((settings) => ({ ...settings, [active.id]: { ...activeRuntimeSettings, retries: e.target.value } }))} className="mt-1 h-8 font-mono text-xs" inputMode="numeric" /></label>
+                  </div>
+                  <Button size="sm" className="w-full" onClick={() => setShowRuntimeConfig(false)}><Save className="h-3.5 w-3.5" />保存运行配置</Button>
+                </div>
+              </div>
+            )}
 
             <div className="rounded-lg border border-[var(--success)]/30 bg-[var(--success-bg)] p-3 text-xs">
               <div className="flex items-center gap-1.5 font-semibold text-[var(--success)]">

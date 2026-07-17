@@ -229,10 +229,15 @@ a:focus-visible,
   background: rgba(15, 23, 42, 0.42);
 }
 .copilot-header { position: relative; z-index: 25; }
+.copilot-work-header { width: min(100%, 1280px); margin-inline: auto; }
+.copilot-work-strip__inner { width: min(100%, 1280px); margin-inline: auto; }
+.copilot-work-strip__metrics { margin-left: auto; }
 .copilot-header__actions > button { flex-shrink: 0; }
 .copilot-header__actions { min-width: 0; }
 .copilot-header__actions > .copilot-mobile-toggle { flex-shrink: 0; }
 .copilot-header__meta { min-width: 0; }
+.copilot-work-title { font-size: 16px; line-height: 1.4; letter-spacing: -0.01em; }
+.copilot-work-next { font-size: 12px; line-height: 1.5; }
 .copilot-message-list .group > .flex-1 { min-width: 0; }
 .copilot-message-list .chat-bubble,
 .copilot-message-list .cite-block,
@@ -241,13 +246,16 @@ a:focus-visible,
 .copilot-message-list pre { max-width: 100%; }
 .copilot-message-list .chat-bubble { overflow-wrap: anywhere; }
 .copilot-message__content { min-width: 0; }
-.copilot-message__meta { min-height: 18px; }
+.copilot-message__meta { min-height: 18px; font-size: 12px; line-height: 1.45; }
 .copilot-message__body { min-width: 0; }
+.copilot-message__body { font-size: 15px; line-height: 1.75; }
+.copilot-message__body .md-content { font-size: inherit; line-height: inherit; }
 .copilot-message__body--pending { width: fit-content; min-width: 132px; }
 .copilot-message__actions { opacity: 0; transition: opacity 0.15s ease; }
 .copilot-message-list .group:hover .copilot-message__actions,
 .copilot-message-list .group:focus-within .copilot-message__actions { opacity: 1; }
 .copilot-composer { min-width: 0; }
+.copilot-composer > :not(.absolute) { width: min(100%, 1280px); margin-inline: auto; }
 .copilot-composer__context {
   display: flex;
   align-items: center;
@@ -256,7 +264,7 @@ a:focus-visible,
   min-width: 0;
   margin-bottom: 8px;
   color: var(--text-muted);
-  font-size: 10px;
+  font-size: 11px;
 }
 .copilot-composer__context-tools,
 .copilot-composer__usage { display: flex; align-items: center; gap: 6px; min-width: 0; }
@@ -268,7 +276,16 @@ a:focus-visible,
 .copilot-composer__usage--warning .copilot-composer__usage-bar > div { background: var(--warning); }
 .copilot-composer__usage--danger .copilot-composer__usage-bar > div { background: var(--danger); }
 .copilot-composer__editor { min-width: 0; overflow: hidden; }
-.copilot-composer__textarea { display: block; min-height: 74px; max-height: 180px; overflow-y: auto; }
+.copilot-composer__textarea { display: block; min-height: 74px; max-height: 180px; overflow-y: auto; font-size: 14px; line-height: 1.65; }
+.copilot-composer__editor:focus-within {
+  border-color: var(--border) !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+.copilot-composer__textarea:focus,
+.copilot-composer__textarea:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
 .copilot-composer__footer { min-width: 0; gap: 8px; }
 .copilot-composer__tools,
 .copilot-composer__send { min-width: 0; }
@@ -284,18 +301,19 @@ a:focus-visible,
 
 .copilot-message-scroll > * { min-width: 0; }
 .copilot-message-stream {
-  width: min(100%, 920px);
+  width: min(100%, 1280px);
   min-height: 100%;
   margin-inline: auto;
 }
 .copilot-conversation-intro { padding-bottom: 2px; }
-.copilot-message-list { display: flex; flex-direction: column; gap: 20px; }
+.copilot-message-list { display: flex; flex-direction: column; gap: 24px; padding-inline: clamp(16px, 3vw, 40px); }
 .copilot-message-list > * { min-width: 0; }
 .copilot-streaming-status { margin-top: 2px; }
 .copilot-empty-state { min-height: 100%; }
 .copilot-agent-details__inner { min-height: 100%; }
-.copilot-agent-details__header { background: var(--bg); }
+.copilot-agent-details__header { background: linear-gradient(180deg, var(--bg) 0%, var(--bg-elevated) 100%); }
 .copilot-agent-details__body { overscroll-behavior: contain; scrollbar-gutter: stable; }
+.copilot-context-overview { background: linear-gradient(180deg, rgba(79, 70, 229, 0.035), transparent); }
 .copilot-agent-details__section { min-width: 0; }
 .copilot-agent-details__section > * { min-width: 0; }
 .copilot-agent-details__section .font-mono { overflow-wrap: anywhere; }
@@ -346,6 +364,7 @@ a:focus-visible,
 @container copilot (max-width: 639px) {
   .copilot-header__meta { display: none; }
   .copilot-header__actions > :not(.copilot-mobile-toggle) { display: none; }
+  .copilot-header__actions > .copilot-header-action { display: inline-flex; }
   .copilot-citation-drawer { top: auto; right: 0; bottom: 0; width: 100%; height: min(88dvh, 680px); max-height: 88dvh; border-top: 1px solid var(--border); border-left: 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; padding: 20px 16px max(20px, env(safe-area-inset-bottom)); }
   .copilot-agent-details { top: auto; bottom: 0; width: 100%; height: min(88dvh, 680px); max-height: 88dvh; border-top: 1px solid var(--border); border-left: 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; transform: translateY(100%); }
   .copilot-agent-details[data-open="true"] { transform: translateY(0); }
@@ -360,6 +379,7 @@ a:focus-visible,
   .copilot-composer__model { overflow: hidden; text-overflow: ellipsis; }
   .copilot-composer__textarea { min-height: 68px; }
   .copilot-message-list { gap: 16px; }
+  .copilot-work-strip__metrics { margin-left: 0; }
   .copilot-message-list .group > .flex-1 { max-width: calc(100% - 48px); }
   .copilot-message-list .chat-bubble,
   .copilot-message-list .cite-block,
