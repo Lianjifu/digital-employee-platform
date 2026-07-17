@@ -6,6 +6,7 @@ import type {
   Agent,
   AuditItem,
   Channel,
+  ControlledTask,
   Conversation,
   KnowledgeDoc,
   KpiCard,
@@ -191,6 +192,144 @@ export const mockTasks: Task[] = [
   { id: 't6', code: 'TSK-20260712-018', title: '容量预测 - Q3 评估', priority: 'P3', status: 'completed', assignee: '周慧', agentId: 'a4', progress: { done: 4, total: 4 }, tags: ['容量'], createdAt: '2026-07-12T10:00:00Z', updatedAt: '2026-07-12T18:00:00Z' },
   { id: 't7', code: 'TSK-20260712-017', title: '变更辅助 - 网关灰度', priority: 'P2', status: 'completed', assignee: '孙博', agentId: 'a3', progress: { done: 6, total: 6 }, tags: ['灰度'], createdAt: '2026-07-12T09:15:00Z', updatedAt: '2026-07-12T11:30:00Z' },
 ];
+
+type TaskActor = { actor?: string; reason?: string };
+type TaskSeed = Task | ControlledTask;
+
+const cloneTask = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+function controlledTask(seed: TaskSeed): ControlledTask {
+  if ('lifecycleStage' in seed) return cloneTask(seed);
+
+  const task = cloneTask(seed);
+  const lifecycleStage = task.status === 'completed' ? 'completed'
+    : task.status === 'review' ? 'human_action'
+      : task.status === 'in_progress' ? 'running' : 'pending';
+  const approvalPending = task.id === 't2';
+  return {
+    ...task,
+    lifecycleStage,
+    source: 'manual',
+    sla: {
+      remainingMin: task.slaRemainingMin,
+      risk: task.slaRemainingMin !== undefined && task.slaRemainingMin < 0 ? 'overdue' : 'none',
+      escalated: false,
+    },
+    execution: { retryCount: 0, paused: false },
+    governance: {
+      approvalRequired: approvalPending,
+      approvalStatus: approvalPending ? 'pending' : 'not_required',
+    },
+    links: {},
+    auditEvents: [],
+    version: 1,
+  };
+}
+
+function statusFor(stage: ControlledTask['lifecycleStage']): Task['status'] {
+  if (stage === 'running' || stage === 'risk') return 'in_progress';
+  if (stage === 'human_action') return 'review';
+  if (stage === 'completed') return 'completed';
+  if (stage === 'archived') return 'archived';
+  return 'pending';
+}
+
+function stageFor(value: Task['status'] | ControlledTask['lifecycleStage']): ControlledTask['lifecycleStage'] {
+  if (value === 'in_progress') return 'running';
+  if (value === 'review') return 'human_action';
+  return value as ControlledTask['lifecycleStage'];
+}
+
+/** In-memory controlled-task aggregate used by both task and conversation routes. */
+export function createTaskDomain(seed: TaskSeed[] = mockTasks) {
+  const initial = seed.map(controlledTask);
+  let tasks = initial.map(cloneTask);
+
+  const find = (id: string) => {
+    const task = tasks.find((item) => item.id === id);
+    if (!task) throw new Error('任务不存在');
+    return task;
+  };
+  const write = (task: ControlledTask, action: string, meta: TaskActor = {}, tone: ControlledTask['auditEvents'][number]['tone'] = 'info') => {
+    const at = new Date().toISOString();
+    task.version += 1;
+    task.updatedAt = at;
+    task.auditEvents.push({ id: mockId('task_audit'), at, actor: meta.actor ?? '数字员工', action, detail: meta.reason, tone });
+    return task;
+  };
+
+  return {
+    list: () => tasks.map(cloneTask),
+    get: (id: string) => {
+      const task = tasks.find((item) => item.id === id);
+      return task ? cloneTask(task) : undefined;
+    },
+    create: (input: Partial<ControlledTask> & Pick<Task, 'title'>, meta: TaskActor = {}) => {
+      const now = new Date().toISOString();
+      const task = controlledTask({
+        id: input.id ?? mockId('task'),
+        code: input.code ?? `TSK-${now.slice(0, 10).replaceAll('-', '')}-${String(tasks.length + 1).padStart(3, '0')}`,
+        title: input.title,
+        description: input.description,
+        priority: input.priority ?? 'P1',
+        status: input.status ?? 'pending',
+        assignee: input.assignee,
+        agentId: input.agentId,
+        progress: input.progress ?? { done: 0, total: 1 },
+        slaRemainingMin: input.slaRemainingMin,
+        tags: input.tags ?? [],
+        relatedTaskCode: input.relatedTaskCode,
+        createdAt: now,
+        updatedAt: now,
+      });
+      Object.assign(task, input, { auditEvents: [], version: 0, createdAt: now, updatedAt: now });
+      tasks.unshift(task);
+      return cloneTask(write(task, '创建任务', meta, 'success'));
+    },
+    transition: (id: string, target: Task['status'] | ControlledTask['lifecycleStage'], meta: TaskActor = {}) => {
+      const task = find(id);
+      const stage = stageFor(target);
+      if (task.governance.approvalRequired && (stage === 'running' || stage === 'completed')) {
+        if (task.governance.approvalStatus === 'rejected') throw new Error('任务审批已拒绝');
+        if (task.governance.approvalStatus !== 'approved') throw new Error('任务等待人工审批');
+      }
+      if (task.lifecycleStage === 'risk' || task.sla.risk !== 'none') throw new Error('风险或失败任务仅允许重试或人工接管');
+      task.lifecycleStage = stage;
+      task.status = statusFor(stage);
+      return cloneTask(write(task, '状态流转', meta, stage === 'completed' ? 'success' : 'info'));
+    },
+    approve: (id: string, input: TaskActor & { approved?: boolean } = {}) => {
+      const task = find(id);
+      task.governance.approvalStatus = input.approved === false ? 'rejected' : 'approved';
+      return cloneTask(write(task, input.approved === false ? '审批拒绝' : '审批通过', input, input.approved === false ? 'error' : 'success'));
+    },
+    takeover: (id: string, meta: TaskActor = {}) => {
+      const task = find(id);
+      task.governance.takeoverBy = meta.actor ?? '人工操作员';
+      task.governance.takeoverReason = meta.reason;
+      task.lifecycleStage = 'human_action';
+      task.status = 'review';
+      task.execution.paused = true;
+      return cloneTask(write(task, '人工接管', meta, 'warn'));
+    },
+    retry: (id: string, meta: TaskActor = {}) => {
+      const task = find(id);
+      if (task.lifecycleStage !== 'risk' && task.sla.risk === 'none') throw new Error('仅失败或风险任务可以重试');
+      task.execution.retryCount += 1;
+      task.execution.error = undefined;
+      task.execution.paused = false;
+      task.lifecycleStage = 'running';
+      task.status = 'in_progress';
+      task.sla.risk = 'none';
+      return cloneTask(write(task, '重试任务', meta, 'info'));
+    },
+    audit: (id: string) => cloneTask(find(id).auditEvents),
+    reset: () => {
+      tasks = initial.map(cloneTask);
+      return { ok: true };
+    },
+  };
+}
 // Agent 扩展数据：版本历史 + 7 天调用趋势 + Top 排行
 export interface AgentVersion {
   version: string;
@@ -792,11 +931,11 @@ export const mockConversation: Conversation = {
 // 后续切换真实后端时，页面只需保留相同的 API 契约。
 type MockDomainEvent = { id: string; time: string; user: string; action: string; target: string; result: 'success' | 'failed' };
 const mockDomain = {
-  tasks: [...mockTasks] as any[],
   audits: mockAuditStream.map((event: any) => ({ ...event, result: event.result === 'failed' ? 'failed' as const : 'success' as const })),
   messages: [...mockMessageStream] as any[],
   actions: new Map<string, { id: string; conversationId: string; status: 'pending' | 'approved' | 'executed' | 'rejected'; taskId?: string }>(),
 };
+const taskDomain = createTaskDomain(mockTasks);
 
 function mockId(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
@@ -817,10 +956,16 @@ function appendDomainEvent(action: string, target: string, result: MockDomainEve
   return event;
 }
 
+function appendTaskDomainEvent(task: ControlledTask) {
+  const event = task.auditEvents.at(-1);
+  if (event) appendDomainEvent(event.action, task.code, event.tone === 'error' ? 'failed' : 'success');
+}
+
 // ============ Mock 路由 ============
 
 export async function mockHandler(path: string, opts: { method?: string; body?: unknown; query?: Record<string, any> }): Promise<unknown> {
   await sleep(80); // 模拟网络延迟
+  const method = opts.method?.toUpperCase() ?? 'GET';
 
   // 首页 KPI
   if (path === '/api/home/kpis') return mockKpis;
@@ -854,11 +999,28 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   }
   if (path === '/api/workspace-switch-history') return mockWorkspaceSwitchHistory;
 
-  // 任务
-  if (path === '/api/tasks') return mockDomain.tasks;
-  if (path.startsWith('/api/tasks/')) {
-    const id = path.split('/').pop();
-    return mockDomain.tasks.find((t) => t.id === id) ?? null;
+  // 任务：所有写操作都经由受控任务领域，保证版本、审计和通知一致。
+  if (path === '/api/tasks' && method === 'GET') return taskDomain.list();
+  if (path === '/api/tasks' && method === 'POST') {
+    const task = taskDomain.create((opts.body ?? {}) as Partial<ControlledTask> & Pick<Task, 'title'>, (opts.body ?? {}) as TaskActor);
+    appendTaskDomainEvent(task);
+    return task;
+  }
+  const taskRoute = path.match(/^\/api\/tasks\/([^/]+)(?:\/(transition|approve|takeover|retry|audit))?$/);
+  if (taskRoute) {
+    const [, id, action] = taskRoute;
+    if (!action && method === 'GET') return taskDomain.get(id) ?? null;
+    if (action === 'audit' && method === 'GET') return taskDomain.audit(id);
+    const body = (opts.body ?? {}) as TaskActor & { status?: Task['status']; stage?: ControlledTask['lifecycleStage']; approved?: boolean };
+    let task: ControlledTask | undefined;
+    if (action === 'transition' && method === 'POST') task = taskDomain.transition(id, body.stage ?? body.status ?? 'pending', body);
+    if (action === 'approve' && method === 'POST') task = taskDomain.approve(id, body);
+    if (action === 'takeover' && method === 'POST') task = taskDomain.takeover(id, body);
+    if (action === 'retry' && method === 'POST') task = taskDomain.retry(id, body);
+    if (task) {
+      appendTaskDomainEvent(task);
+      return task;
+    }
   }
 
   // 智能体
@@ -938,12 +1100,10 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path.startsWith('/api/conversations/') && path.endsWith('/tasks') && opts.method === 'POST') {
     const conversationId = path.split('/')[3];
     const body = (opts.body ?? {}) as { title?: string; priority?: string; assignee?: string };
-    const task = {
-      id: mockId('task'), code: `TSK-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}-${String(mockDomain.tasks.length + 1).padStart(3, '0')}`,
-      title: body.title ?? '数字员工会话行动项', description: `由会话 ${conversationId} 创建`, priority: body.priority ?? 'P1', status: 'pending', assignee: body.assignee ?? '王昊', agentId: 'a1', progress: { done: 0, total: 3 }, tags: ['会话转任务'], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
-    };
-    mockDomain.tasks.unshift(task);
-    appendDomainEvent('创建任务', task.code);
+    const task = taskDomain.create({
+      title: body.title ?? '数字员工会话行动项', description: `由会话 ${conversationId} 创建`, priority: (body.priority as Task['priority']) ?? 'P1', assignee: body.assignee ?? '王昊', agentId: 'a1', progress: { done: 0, total: 3 }, tags: ['会话转任务'], source: 'conversation', links: { conversationId },
+    }, { actor: '数字员工' });
+    appendTaskDomainEvent(task);
     return task;
   }
   if (path.startsWith('/api/actions/') && path.endsWith('/approve') && opts.method === 'POST') {
@@ -958,15 +1118,16 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     const actionId = path.split('/')[3];
     const body = (opts.body ?? {}) as { taskId?: string };
     const action = { ...(mockDomain.actions.get(actionId) ?? { id: actionId, conversationId: 'cv1', status: 'approved' as const }), taskId: body.taskId ?? mockDomain.actions.get(actionId)?.taskId };
-    const task = action.taskId ? mockDomain.tasks.find((item) => item.id === action.taskId) : undefined;
-    if (task) Object.assign(task, { status: 'completed', progress: { done: 3, total: 3 }, updatedAt: new Date().toISOString() });
+    const task = action.taskId ? taskDomain.get(action.taskId) : undefined;
+    const completedTask = task ? taskDomain.transition(task.id, 'completed', { actor: '数字员工', reason: '会话行动执行完成' }) : undefined;
+    if (completedTask) appendTaskDomainEvent(completedTask);
     const next = { ...action, status: 'executed' as const };
     mockDomain.actions.set(actionId, next);
-    appendDomainEvent('受控执行完成', task?.code ?? actionId);
-    return { ...next, task };
+    appendDomainEvent('受控执行完成', completedTask?.code ?? actionId);
+    return { ...next, task: completedTask };
   }
   if (path === '/api/mock/reset' && opts.method === 'POST') {
-    mockDomain.tasks.splice(0, mockDomain.tasks.length, ...mockTasks);
+    taskDomain.reset();
     mockDomain.audits.splice(0, mockDomain.audits.length, ...mockAuditStream);
     mockDomain.messages.splice(0, mockDomain.messages.length, ...mockMessageStream);
     mockDomain.actions.clear();
