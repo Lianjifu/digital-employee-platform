@@ -1,12 +1,44 @@
-node_modules
-dist
-build
-.turbo
-.cache
-.DS_Store
-*.log
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Build and test output
+dist/
+**/dist/
+build/
+**/build/
+coverage/
+.turbo/
+.cache/
+.vite/
+**/.vite/
+*.tsbuildinfo
+
+# Local environment and secrets
 .env
-.env.local
-.vite
-coverage
+.env.*
+!.env.example
+*.local
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Logs and runtime state
+*.log
+*.pid
+*.seed
+
+# Local worktrees and agent/brainstorm artifacts
 .worktrees/
+.superpowers/
+.codex/
+.agents/
+
+# Temporary exports and local captures
+tmp/
+temp/
+*.tmp
+*.swp
