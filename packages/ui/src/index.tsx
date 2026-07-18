@@ -19,18 +19,18 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 const btnBase =
   'inline-flex items-center justify-center gap-1.5 rounded-md font-medium transition-all duration-200 ' +
   'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]/30 focus-visible:ring-offset-1 ' +
-  'disabled:opacity-50 disabled:cursor-not-allowed select-none whitespace-nowrap';
+  'disabled:opacity-50 disabled:cursor-not-allowed active:translate-y-0 select-none whitespace-nowrap';
 
 const btnVariants: Record<ButtonVariant, string> = {
   primary:
-    'bg-gradient-to-br from-[var(--brand)] to-[var(--brand-hover)] text-white border border-transparent ' +
-    'shadow-[0_2px_8px_rgba(79,70,229,0.3)] hover:shadow-[0_4px_12px_rgba(79,70,229,0.4)] hover:-translate-y-px',
+    'bg-[var(--brand)] text-white border border-transparent shadow-[var(--shadow-sm)] ' +
+    'hover:bg-[var(--brand-hover)] hover:shadow-[var(--shadow-md)] hover:-translate-y-px',
   secondary:
     'bg-[var(--bg-elevated)] text-[var(--text)] border border-[var(--border)] hover:bg-[var(--bg-hover)]',
   ghost: 'bg-transparent text-[var(--text)] hover:bg-[var(--bg-elevated)]',
   danger:
-    'bg-gradient-to-br from-[var(--danger)] to-[#dc2626] text-white border border-transparent ' +
-    'shadow-[0_2px_8px_rgba(239,68,68,0.3)] hover:shadow-[0_4px_12px_rgba(239,68,68,0.4)]',
+    'bg-[var(--danger)] text-white border border-transparent shadow-[var(--shadow-sm)] ' +
+    'hover:bg-[#dc2626] hover:shadow-[var(--shadow-md)] hover:-translate-y-px',
   outline: 'border border-[var(--border)] bg-[var(--bg)] text-[var(--text)] hover:bg-[var(--bg-hover)] hover:-translate-y-px',
 };
 
@@ -307,20 +307,20 @@ export function Modal({
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
       <div
-        className="rounded-lg bg-[var(--surface-1)] border border-[var(--border)] shadow-xl"
+        className="rounded-2xl bg-[var(--surface-1)] border border-[var(--border)] shadow-[0_20px_60px_rgba(15,23,42,0.16)]"
         style={{ width }}
         onClick={(e) => e.stopPropagation()}
       >
         {title && (
-          <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4">
-            <div className="text-base font-semibold">{title}</div>
-            <button className="text-[var(--text-muted)] hover:text-[var(--text)]" onClick={onClose}>
+          <div className="flex items-center justify-between border-b border-[var(--border)] px-6 py-5">
+            <div className="text-[15px] font-semibold">{title}</div>
+            <button className="grid h-8 w-8 place-items-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)]" onClick={onClose}>
               ✕
             </button>
           </div>
         )}
-        <div className="p-5">{children}</div>
-        {footer && <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] px-5 py-3">{footer}</div>}
+        <div className="max-h-[72vh] overflow-y-auto bg-[var(--bg-elevated)]/20 p-6">{children}</div>
+        {footer && <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] bg-[var(--bg-elevated)]/50 px-6 py-4">{footer}</div>}
       </div>
     </div>
   );
@@ -391,18 +391,25 @@ const KPI_TONE_COLOR: Record<KpiTone, string> = {
 
 /** 顶部 KPI 卡（数字 + 标签 + 可选子文本 + 图标） */
 export function KpiCard({
-  label, value, sub, tone = 'brand', icon: Icon, className,
+  label, value, sub, tone = 'brand', icon: Icon, className, size = 'compact',
 }: {
   label: string; value: ReactNode; sub?: ReactNode; tone?: KpiTone; icon?: any; className?: string;
+  /** comfortable 用于页面级运营摘要，compact 保持原有紧凑布局 */
+  size?: 'compact' | 'comfortable';
 }) {
+  const comfortable = size === 'comfortable';
   return (
-    <div className={cn('rounded-md border border-[var(--border)] bg-[var(--bg)] p-2.5 flex items-center gap-2', className)}>
-      {Icon && <Icon className={cn('h-3.5 w-3.5 shrink-0', KPI_TONE_COLOR[tone])} />}
+    <div className={cn(
+      'border border-[var(--border)] bg-[var(--bg)] flex items-center',
+      comfortable ? 'rounded-xl p-4 gap-3 min-h-[84px] shadow-[0_2px_8px_rgba(15,23,42,0.04)]' : 'rounded-md p-2.5 gap-2',
+      className,
+    )}>
+      {Icon && <Icon className={cn(comfortable ? 'h-5 w-5' : 'h-3.5 w-3.5', 'shrink-0', KPI_TONE_COLOR[tone])} />}
       <div className="min-w-0">
-        <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-semibold leading-none">{label}</div>
-        <div className={cn('text-base font-bold font-mono leading-tight mt-0.5', KPI_TONE_COLOR[tone])}>
+        <div className={cn(comfortable ? 'text-xs' : 'text-[10px]', 'text-[var(--text-muted)] uppercase tracking-wider font-semibold leading-none')}>{label}</div>
+        <div className={cn(comfortable ? 'text-2xl mt-1' : 'text-base mt-0.5', 'font-bold font-mono leading-tight', KPI_TONE_COLOR[tone])}>
           {value}
-          {sub && <span className="text-[10px] text-[var(--text-muted)] font-normal ml-1">{sub}</span>}
+          {sub && <span className={cn(comfortable ? 'text-xs' : 'text-[10px]', 'text-[var(--text-muted)] font-normal ml-1')}>{sub}</span>}
         </div>
       </div>
     </div>
@@ -410,19 +417,19 @@ export function KpiCard({
 }
 
 /** 紧凑型 KPI 单元（无图标，更小） */
-export function KpiMini({ label, value, tone = 'neutral', className }: { label: string; value: ReactNode; tone?: KpiTone; className?: string }) {
+export function KpiMini({ label, value, tone = 'neutral', className, size = 'compact' }: { label: string; value: ReactNode; tone?: KpiTone; className?: string; size?: 'compact' | 'comfortable' }) {
   return (
-    <div className={cn('rounded bg-[var(--bg)] border border-[var(--border)] px-2 py-1', className)}>
-      <div className="text-[var(--text-muted)] text-[9px]">{label}</div>
-      <div className={cn('font-mono font-semibold text-[11px]', KPI_TONE_COLOR[tone])}>{value}</div>
+    <div className={cn(size === 'comfortable' ? 'rounded-lg bg-[var(--bg)] border border-[var(--border)] px-3 py-2' : 'rounded bg-[var(--bg)] border border-[var(--border)] px-2 py-1', className)}>
+      <div className={cn('text-[var(--text-muted)]', size === 'comfortable' ? 'text-xs' : 'text-[9px]')}>{label}</div>
+      <div className={cn('font-mono font-semibold', size === 'comfortable' ? 'text-sm mt-0.5' : 'text-[11px]', KPI_TONE_COLOR[tone])}>{value}</div>
     </div>
   );
 }
 
 /** label-value 行（统计页 / 详情面板用） */
-export function Row({ label, value, className }: { label: string; value: ReactNode; className?: string }) {
+export function Row({ label, value, className, size = 'compact' }: { label: string; value: ReactNode; className?: string; size?: 'compact' | 'comfortable' }) {
   return (
-    <div className={cn('flex items-center justify-between gap-2 text-[10px] py-0.5', className)}>
+    <div className={cn(size === 'comfortable' ? 'flex items-center justify-between gap-3 text-xs py-1.5' : 'flex items-center justify-between gap-2 text-[10px] py-0.5', className)}>
       <span className="text-[var(--text-muted)]">{label}</span>
       <span className="font-semibold text-right">{value}</span>
     </div>

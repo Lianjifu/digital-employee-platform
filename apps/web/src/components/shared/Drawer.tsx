@@ -10,6 +10,7 @@ export interface DrawerProps {
   side?: 'right' | 'left';
   width?: number;
   footer?: ReactNode;
+  flush?: boolean;
   children?: ReactNode;
 }
 
@@ -27,6 +28,7 @@ export function Drawer({
   side = 'right',
   width = 480,
   footer,
+  flush = false,
   children,
 }: DrawerProps) {
   useEffect(() => {
@@ -43,37 +45,38 @@ export function Drawer({
   return (
     <div className="fixed inset-0 z-[200]">
       <div
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-[fadeIn_0.15s_ease]"
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm animate-[drawerFadeIn_220ms_ease-out]"
         onClick={onClose}
       />
       <div
         className={cn(
-          'absolute top-0 h-full overflow-hidden border-[var(--border)] bg-[var(--surface-1)] shadow-2xl flex flex-col',
+          'absolute top-0 h-full overflow-hidden border-[var(--border)] bg-[var(--surface-1)] shadow-[-12px_0_40px_rgba(15,23,42,0.12)] flex flex-col animate-[drawerSlideIn_240ms_ease-out]',
           side === 'right' ? 'right-0 border-l' : 'left-0 border-r',
+          'max-sm:!left-0 max-sm:!right-0 max-sm:!w-full max-sm:border-l-0 max-sm:border-r-0',
         )}
         style={{ width, maxWidth: '92vw' }}
       >
         {/* Header */}
         {(title || description) && (
-          <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
+          <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] bg-[var(--surface-1)] px-6 py-5">
             <div className="min-w-0">
-              {title && <h3 className="text-sm font-semibold text-[var(--text)]">{title}</h3>}
-              {description && <p className="mt-0.5 text-xs text-[var(--text-muted)]">{description}</p>}
+              {title && <h3 className="text-[15px] font-semibold text-[var(--text)]">{title}</h3>}
+              {description && <p className="mt-1 text-[13px] text-[var(--text-muted)]">{description}</p>}
             </div>
             <button
               type="button"
               onClick={onClose}
-              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
         )}
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        <div className={cn('flex-1 overflow-y-auto bg-[var(--bg-elevated)]/20', flush ? 'px-0 py-0' : 'px-6 py-5')}>{children}</div>
         {/* Footer */}
         {footer && (
-          <div className="border-t border-[var(--border)] bg-[var(--bg)] px-5 py-3">{footer}</div>
+          <div className="border-t border-[var(--border)] bg-[var(--bg-elevated)]/50 px-6 py-4">{footer}</div>
         )}
       </div>
     </div>

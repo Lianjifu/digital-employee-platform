@@ -37,10 +37,33 @@ import {
 import type { Workflow, WorkflowNodeKind } from '@de/web-types';
 import { cn } from '@de/web-utils';
 import { Drawer, ConfirmDialog } from '@/components/shared';
+import { useApiMutation, useApiQuery } from '@/services/query';
 import { useAuthStore } from '@/stores/authStore';
 
 type SidePanelKey = 'library' | 'debug' | 'properties';
 type TabKey = 'canvas' | 'templates' | 'history';
+
+type GenerationResult = {
+  id: string;
+  prompt: string;
+  status: 'completed' | 'discarded';
+  model: string;
+  createdAt: string;
+  workflow: { nodes: Array<{ id: string; kind: WorkflowNodeKind; label: string; position: { x: number; y: number }; description?: string }>; edges: Array<{ id: string; source: string; target: string }> };
+  checks: { structure: 'passed' | 'review'; dependencies: 'passed' | 'review'; risk: 'passed' | 'review' };
+  dependencies: Array<{ type: 'tool' | 'mcp' | 'agent'; name: string; status: 'available' | 'missing'; reason?: string }>;
+  risks: Array<{ level: 'L1' | 'L2' | 'L3'; node: string; text: string; requiresApproval: boolean }>;
+  warnings: string[];
+  qualityScore: number;
+  requiresReview: boolean;
+};
+
+type GenerationVars = {
+  prompt: string;
+  constraints: { riskLevel: 'L1' | 'L2' | 'L3'; requireApproval: boolean; requireAudit: boolean; requireRollback: boolean };
+  workspaceId: string;
+  model: string;
+};
 
 /* ============ 节点元数据 ============ */
 const NODE_ICONS: Record<WorkflowNodeKind, any> = {
@@ -311,12 +334,36 @@ export default function Workflows() {
   // 模板预览
   const [previewTemplate, setPreviewTemplate] = useState<typeof TEMPLATES[number] | null>(null);
 
+  // AI 工作流生成：结果始终先进入预览，不覆盖当前画布
+  const [aiGenerateOpen, setAiGenerateOpen] = useState(false);
+  const [generationStep, setGenerationStep] = useState<'input' | 'preview'>('input');
+  const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
+  const [generationPrompt, setGenerationPrompt] = useState('当 Redis 触发 OOM 告警时自动处理，并通知负责人');
+  const [generationConstraints, setGenerationConstraints] = useState<GenerationVars['constraints']>({ riskLevel: 'L2', requireApproval: true, requireAudit: true, requireRollback: true });
+  const [generationModel, setGenerationModel] = useState('企业默认模型');
+  const { data: generationHistory = [] } = useApiQuery<GenerationResult[]>(['workflow-generations'], '/api/workflows/generations');
+
   // Toast
   const [toast, setToast] = useState<{ msg: string; tone: 'success' | 'error' | 'info' } | null>(null);
   const showToast = useCallback((msg: string, tone: 'success' | 'error' | 'info' = 'success') => {
     setToast({ msg, tone });
     setTimeout(() => setToast(null), 2200);
   }, []);
+
+  const generateWorkflowApi = useApiMutation<GenerationResult, GenerationVars>('/api/workflows/generate', {
+    onSuccess: (result) => {
+      setGenerationResult(result);
+      setGenerationStep('preview');
+      showToast('已生成工作流草稿，请完成校验后应用', 'success');
+    },
+    onError: () => showToast('生成失败，请调整描述后重试', 'error'),
+  });
+  const discardGenerationApi = useApiMutation<GenerationResult, { id: string }>((vars) => `/api/workflows/generations/${vars.id}/discard`, {
+    onSuccess: () => showToast('已放弃本次生成结果', 'info'),
+  });
+  const applyGenerationApi = useApiMutation<GenerationResult, { id: string }>(({ id }) => `/api/workflows/generations/${id}/apply`, {
+    onError: () => showToast('生成记录应用审计写入失败，但本地草稿已保留', 'error'),
+  });
 
   // 拖拽
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -575,8 +622,44 @@ export default function Workflows() {
   const runWorkflow = useCallback(() => {
     if (!canExecute) { showToast('当前账号没有工作流执行权限', 'error'); return; }
     if (!nodes.length) { showToast('画布为空，无法运行工作流', 'error'); return; }
+    if (!nodes.some((node) => node.data?.kind === 'trigger')) { showToast('工作流缺少触发器节点，无法运行', 'error'); return; }
+    const disconnected = nodes.filter((node) => nodes.length > 1 && !edges.some((edge) => edge.source === node.id || edge.target === node.id));
+    if (disconnected.length) { showToast(`存在 ${disconnected.length} 个未连线节点，请先完成流程连接`, 'error'); return; }
     showToast(`已触发工作流执行（本地演示），当前节点：双签审批（n4）`, 'success');
-  }, [canExecute, nodes.length, showToast]);
+  }, [canExecute, edges, nodes, showToast]);
+
+  const openAIGenerator = useCallback(() => {
+    setGenerationStep('input');
+    setGenerationResult(null);
+    setAiGenerateOpen(true);
+  }, []);
+  const submitGeneration = useCallback(() => {
+    if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
+    if (generationPrompt.trim().length < 8) { showToast('请至少描述 8 个字符的业务目标', 'error'); return; }
+    generateWorkflowApi.mutate({ prompt: generationPrompt.trim(), constraints: generationConstraints, workspaceId: 'prod-ops', model: generationModel });
+  }, [canWrite, generateWorkflowApi, generationConstraints, generationModel, generationPrompt, showToast]);
+  const applyGeneration = useCallback(() => {
+    if (!canWrite || !generationResult) return;
+    applyGenerationApi.mutate({ id: generationResult.id });
+    const snapshot: Snapshot = {
+      nodes: generationResult.workflow.nodes.map((node) => ({ id: node.id, type: 'custom', position: node.position, data: { kind: node.kind, label: node.label, desc: node.description } } as Node)),
+      edges: generationResult.workflow.edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
+    };
+    setNodes(snapshot.nodes);
+    setEdges(snapshot.edges);
+    pushHistory(snapshot);
+    setSelectedNodeId(snapshot.nodes[0]?.id ?? null);
+    setTab('canvas');
+    setSidePanel('properties');
+    setAiGenerateOpen(false);
+    showToast('已应用 AI 生成草稿，请检查节点配置后保存', 'success');
+  }, [applyGenerationApi, canWrite, generationResult, pushHistory, showToast]);
+  const discardGeneration = useCallback(() => {
+    if (generationResult) discardGenerationApi.mutate({ id: generationResult.id });
+    setAiGenerateOpen(false);
+    setGenerationResult(null);
+    setGenerationStep('input');
+  }, [discardGenerationApi, generationResult]);
   const exportWorkflow = useCallback(() => {
     const data = {
       version: '1.0',
@@ -694,7 +777,7 @@ export default function Workflows() {
         <div className="min-w-[148px] md:min-w-0"><Stat icon={<Activity className="h-4 w-4" />} label="今日总数" value={KPI.totalToday} sub="次" /></div>
         <div className="min-w-[148px] md:min-w-0"><Stat icon={<CheckCircle2 className="h-4 w-4 text-[var(--success)]" />} label="成功率" value={KPI.successRate} sub="%" tone="success" /></div>
         <div className="min-w-[148px] md:min-w-0"><Stat icon={<Clock className="h-4 w-4" />} label="平均完成" value={KPI.avgDuration} /></div>
-        <div className="min-w-[148px] md:min-w-0"><Stat icon={<Sparkles className="h-4 w-4 text-[var(--purple)]" />} label="MTTR 降低" value={`${KPI.mttrImprovement}%`} tone="purple" /></div>
+        <div className="min-w-[148px] md:min-w-0"><Stat icon={<ShieldCheck className="h-4 w-4 text-[var(--warning)]" />} label="待审批" value={KPI.running > 0 ? 1 : 0} sub="个" tone="warning" /></div>
       </div>
 
       {/* ======== Tab Bar（与 KPI 区分明确） ======== */}
@@ -702,8 +785,8 @@ export default function Workflows() {
         <div className="flex min-w-0 items-center justify-between gap-3">
           <div className="flex min-w-0 items-center gap-2">
             <h2 className="shrink-0 text-sm font-semibold text-[var(--text)]">工作流</h2>
-            <span className="truncate text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
-              {tab === 'canvas' ? `DAG 画布 · ${nodes.length} 节点 / ${edges.length} 连线` : tab === 'templates' ? `模板市场 · ${TEMPLATES.length} 套` : `执行历史 · ${RUNS.length} 条`}
+            <span className="truncate text-[10px] text-[var(--text-muted)]">
+              {tab === 'canvas' ? `DAG 画布 · ${nodes.length} 节点 / ${edges.length} 连线` : tab === 'templates' ? `模板库 · ${TEMPLATES.length} 套` : `执行历史 · ${RUNS.length} 条`}
             </span>
           </div>
           <div className="relative shrink-0">
@@ -780,7 +863,7 @@ export default function Workflows() {
         <div className="mt-2 flex min-w-0 items-center gap-1.5 overflow-x-auto border-t border-[var(--border)] pt-2">
           {([
             { k: 'canvas' as TabKey, label: '画布', icon: GitBranch },
-            { k: 'templates' as TabKey, label: '模板市场', icon: Layers },
+            { k: 'templates' as TabKey, label: '模板库', icon: Layers },
             { k: 'history' as TabKey, label: '执行历史', icon: History },
           ]).map((v) => (
             <button
@@ -856,6 +939,7 @@ export default function Workflows() {
             reactFlowRef={reactFlowRef}
             canWrite={canWrite}
             canExecute={canExecute}
+            openAIGenerator={openAIGenerator}
           />
         )}
 
@@ -893,6 +977,26 @@ export default function Workflows() {
           showToast={showToast}
         />
       )}
+
+      <WorkflowAIGeneratorDrawer
+        open={aiGenerateOpen}
+        step={generationStep}
+        result={generationResult}
+        history={generationHistory}
+        prompt={generationPrompt}
+        setPrompt={setGenerationPrompt}
+        constraints={generationConstraints}
+        setConstraints={setGenerationConstraints}
+        model={generationModel}
+        setModel={setGenerationModel}
+        loading={generateWorkflowApi.isPending}
+        onGenerate={submitGeneration}
+        onApply={applyGeneration}
+        onDiscard={discardGeneration}
+        onRegenerate={() => { setGenerationStep('input'); setGenerationResult(null); }}
+        onSelectHistory={(item) => { setGenerationResult(item); setGenerationStep('preview'); }}
+        onClose={() => setAiGenerateOpen(false)}
+      />
 
       {/* ======== 右键菜单 ======== */}
       {contextMenu && (
@@ -961,6 +1065,78 @@ export default function Workflows() {
   );
 }
 
+function WorkflowAIGeneratorDrawer({
+  open, step, result, history, prompt, setPrompt, constraints, setConstraints, model, setModel,
+  loading, onGenerate, onApply, onDiscard, onRegenerate, onSelectHistory, onClose,
+}: {
+  open: boolean;
+  step: 'input' | 'preview';
+  result: GenerationResult | null;
+  history: GenerationResult[];
+  prompt: string;
+  setPrompt: (value: string) => void;
+  constraints: GenerationVars['constraints'];
+  setConstraints: (value: GenerationVars['constraints']) => void;
+  model: string;
+  setModel: (value: string) => void;
+  loading: boolean;
+  onGenerate: () => void;
+  onApply: () => void;
+  onDiscard: () => void;
+  onRegenerate: () => void;
+  onSelectHistory: (item: GenerationResult) => void;
+  onClose: () => void;
+}) {
+  const toggle = (key: keyof GenerationVars['constraints']) => setConstraints({ ...constraints, [key]: !constraints[key] });
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      width={640}
+      title="AI 生成工作流"
+      description="将自然语言需求转换为可编辑草稿，生成结果不会自动执行或发布。"
+      footer={step === 'input' ? (
+        <div className="flex w-full items-center justify-between gap-2">
+          <span className="text-[11px] text-[var(--text-muted)]">需人工确认结构、权限与风险</span>
+          <div className="flex gap-2"><Button variant="ghost" onClick={onClose} disabled={loading}>取消</Button><Button variant="primary" onClick={onGenerate} loading={loading}>{loading ? '生成中…' : '生成草稿'}</Button></div>
+        </div>
+      ) : (
+        <div className="flex w-full justify-end gap-2"><Button variant="ghost" onClick={onDiscard}>放弃</Button><Button variant="outline" onClick={onRegenerate}>重新生成</Button><Button variant="primary" onClick={onApply} disabled={!result}>应用到新草稿</Button></div>
+      )}
+    >
+      {step === 'input' ? (
+        <div className="space-y-5">
+          <div>
+            <label className="mb-1.5 block text-xs font-semibold text-[var(--text)]">业务目标</label>
+            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} placeholder="例如：当生产 Redis 触发 OOM 告警时，检索 Runbook，经过双签后执行恢复，并写入审计和通知负责人" className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2.5 text-sm leading-6 text-[var(--text)] outline-none transition-[border-color,box-shadow] duration-200 focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]" />
+            <div className="mt-1 flex justify-between text-[10px] text-[var(--text-muted)]"><span>描述触发条件、处置动作、审批和通知</span><span>{prompt.length}/1000</span></div>
+          </div>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4">
+            <div className="mb-3 text-xs font-semibold text-[var(--text)]">生成约束</div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-xs text-[var(--text-secondary)]">风险等级<select value={constraints.riskLevel} onChange={(e) => setConstraints({ ...constraints, riskLevel: e.target.value as GenerationVars['constraints']['riskLevel'] })} className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs text-[var(--text)] outline-none transition-[border-color,box-shadow] duration-200 focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]"><option value="L1">L1 · 低风险</option><option value="L2">L2 · 受控操作</option><option value="L3">L3 · 高风险</option></select></label>
+              <label className="text-xs text-[var(--text-secondary)]">生成模型<select value={model} onChange={(e) => setModel(e.target.value)} className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs text-[var(--text)] outline-none transition-[border-color,box-shadow] duration-200 focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]"><option>企业默认模型</option><option>Qwen-Enterprise</option><option>Claude Sonnet</option></select></label>
+            </div>
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              {([['requireApproval', '需要审批'], ['requireAudit', '记录审计'], ['requireRollback', '支持回滚']] as const).map(([key, label]) => <button key={key} type="button" onClick={() => toggle(key)} className={cn('flex items-center gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors', constraints[key] ? 'border-[var(--brand)] bg-[var(--brand-light)] text-[var(--brand)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}><span className={cn('grid h-4 w-4 place-items-center rounded border text-[10px]', constraints[key] ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-[var(--border)]')}>{constraints[key] ? '✓' : ''}</span>{label}</button>)}
+            </div>
+          </div>
+          {history.length > 0 && <div><div className="mb-2 flex items-center justify-between"><span className="text-xs font-semibold text-[var(--text)]">最近生成</span><span className="text-[10px] text-[var(--text-muted)]">仅保留本地演示记录</span></div><div className="space-y-1.5">{history.slice(0, 3).map((item) => <button key={item.id} type="button" onClick={() => onSelectHistory(item)} className="flex w-full items-center justify-between rounded-md border border-[var(--border)] px-3 py-2 text-left hover:bg-[var(--bg-hover)]"><span className="truncate pr-3 text-xs text-[var(--text-secondary)]">{item.prompt}</span><Badge tone={item.qualityScore >= 85 ? 'success' : 'warn'} className="shrink-0 text-[10px]">{item.qualityScore} 分</Badge></button>)}</div></div>}
+        </div>
+      ) : result ? (
+        <div className="space-y-4">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="flex items-start justify-between gap-3"><div><div className="text-sm font-semibold text-[var(--text)]">生成草稿预览</div><div className="mt-1 text-xs leading-5 text-[var(--text-muted)]">{result.prompt}</div></div><div className="text-right"><div className="text-2xl font-semibold text-[var(--brand)]">{result.qualityScore}</div><div className="text-[10px] text-[var(--text-muted)]">质量评分</div></div></div><div className="mt-4 grid grid-cols-3 gap-2 text-center"><div className="rounded-md bg-[var(--bg-elevated)] px-2 py-2"><div className="text-base font-semibold">{result.workflow.nodes.length}</div><div className="text-[10px] text-[var(--text-muted)]">节点</div></div><div className="rounded-md bg-[var(--bg-elevated)] px-2 py-2"><div className="text-base font-semibold">{result.workflow.edges.length}</div><div className="text-[10px] text-[var(--text-muted)]">连线</div></div><div className="rounded-md bg-[var(--bg-elevated)] px-2 py-2"><div className="text-base font-semibold">{result.dependencies.length}</div><div className="text-[10px] text-[var(--text-muted)]">依赖</div></div></div></div>
+          <div className="grid gap-2 sm:grid-cols-3">{([['structure', '结构校验'], ['dependencies', '依赖检查'], ['risk', '风险扫描']] as const).map(([key, label]) => <div key={key} className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-[11px] text-[var(--text-muted)]">{label}</div><div className={cn('mt-1 text-xs font-semibold', result.checks[key] === 'passed' ? 'text-[var(--success)]' : 'text-[var(--warning)]')}>{result.checks[key] === 'passed' ? '通过' : '需要复核'}</div></div>)}</div>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="mb-3 text-xs font-semibold text-[var(--text)]">工具与 MCP 依赖</div><div className="space-y-2">{result.dependencies.map((dep) => <div key={`${dep.type}-${dep.name}`} className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--text-secondary)]">{dep.name}<span className="ml-2 text-[10px] text-[var(--text-muted)]">{dep.type.toUpperCase()}</span></span><Badge tone={dep.status === 'available' ? 'success' : 'warn'} className="text-[10px]">{dep.status === 'available' ? '可用' : '缺失权限'}</Badge></div>)}</div></div>
+          {result.risks.length > 0 && <div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] p-4"><div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[var(--warning)]"><AlertTriangle className="h-3.5 w-3.5" />风险与权限提示</div>{result.risks.map((risk) => <div key={risk.node} className="text-xs leading-5 text-[var(--text-secondary)]">{risk.level} · {risk.text}</div>)}</div>}
+          {result.warnings.length > 0 && <div><div className="mb-2 text-xs font-semibold text-[var(--text)]">生成建议</div><ul className="space-y-1 text-xs leading-5 text-[var(--text-muted)]">{result.warnings.map((warning) => <li key={warning}>• {warning}</li>)}</ul></div>}
+          <div className="flex items-center gap-2 rounded-md bg-[var(--info-bg)] px-3 py-2 text-[11px] text-[var(--info)]"><ShieldCheck className="h-3.5 w-3.5 shrink-0" />应用后仍需人工配置节点、保存版本并通过发布审批。</div>
+        </div>
+      ) : null}
+    </Drawer>
+  );
+}
+
 /* =============================================================
  *  CanvasView —— 画布主区域
  * ============================================================= */
@@ -1011,6 +1187,7 @@ function CanvasView(props: {
   reactFlowRef: React.MutableRefObject<any>;
   canWrite: boolean;
   canExecute: boolean;
+  openAIGenerator: () => void;
 }) {
   const {
     wrapperRef, rfNodes, rfEdges, onNodeClick, onNodeContextMenu, onNodesChange,
@@ -1020,7 +1197,7 @@ function CanvasView(props: {
     selectedNode, selectedNodeId, nodes, webhookEnabled, setWebhookEnabled,
     saveCanvas, runWorkflow, resetCanvas, clearCanvas,
     addNode, deleteNode, duplicateNode, disableNode, updateNodeLabel, updateNodeDescription, updateNodeNote, showToast,
-    onConnect, deleteEdge, undo, redo, canUndo, canRedo, exportWorkflow, reactFlowRef, canWrite, canExecute,
+    onConnect, deleteEdge, undo, redo, canUndo, canRedo, exportWorkflow, reactFlowRef, canWrite, canExecute, openAIGenerator,
   } = props;
 
   const [mobilePanelOpen, setMobilePanelOpen] = useState<SidePanelKey | null>(null);
@@ -1207,6 +1384,9 @@ function CanvasView(props: {
               <Redo2 className="h-3.5 w-3.5" />
             </button>
             <div className="mx-1 h-5 w-px bg-[var(--border)]" />
+              <Button size="sm" variant="primary" onClick={openAIGenerator} disabled={!canWrite} title={!canWrite ? '需要 workflow.write 权限' : undefined}>
+                <Sparkles className="h-3.5 w-3.5" />AI 生成
+              </Button>
               <Button size="sm" variant="outline" onClick={runWorkflow} disabled={!canExecute} title={!canExecute ? '需要 workflow.execute 权限' : undefined}>
                 <Play className="h-3.5 w-3.5" />运行
               </Button>
@@ -1432,7 +1612,6 @@ function InfoPanel({ nodes }: { nodes: Node[] }) {
             { label: '触发', value: '124', icon: Zap, color: 'text-[var(--brand)]' },
             { label: '成功率', value: '100%', icon: ShieldCheck, color: 'text-[var(--success)]' },
             { label: '平均完成', value: '38s', icon: Play, color: 'text-[var(--brand)]' },
-            { label: 'MTTR 降低', value: '-65%', icon: Sparkles, color: 'text-[var(--purple)]' },
           ].map((s) => (
             <div key={s.label} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 py-2">
               <div>
@@ -1729,7 +1908,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 /* =============================================================
- *  模板市场
+ *  工作流模板库
  * ============================================================= */
 function TemplatesView({
   filterGroup, setFilterGroup, filteredTemplates, showToast, onPreview, onUseTemplate,
@@ -1746,7 +1925,7 @@ function TemplatesView({
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-[var(--brand)]" />工作流模板市场
+            <Sparkles className="h-4 w-4 text-[var(--brand)]" />工作流模板库
           </h2>
           <p className="text-xs text-[var(--text-muted)] mt-0.5">{TEMPLATES.length} 套内置模板 · 按业务 / 系统 / 安全 / AI 分组</p>
         </div>
@@ -2236,8 +2415,8 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
 }
 
 /* ============================================================= */
-function Stat({ label, value, sub, tone, icon }: { label: string; value: any; sub?: string; tone?: 'primary' | 'success' | 'purple'; icon?: React.ReactNode }) {
-  const color = tone === 'success' ? 'text-[var(--success)]' : tone === 'primary' ? 'text-[var(--brand)]' : tone === 'purple' ? 'text-[var(--purple)]' : 'text-[var(--text)]';
+function Stat({ label, value, sub, tone, icon }: { label: string; value: any; sub?: string; tone?: 'primary' | 'success' | 'warning' | 'purple'; icon?: React.ReactNode }) {
+  const color = tone === 'success' ? 'text-[var(--success)]' : tone === 'warning' ? 'text-[var(--warning)]' : tone === 'primary' ? 'text-[var(--brand)]' : tone === 'purple' ? 'text-[var(--purple)]' : 'text-[var(--text)]';
   return (
     <div className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2">
       <div>

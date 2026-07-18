@@ -383,6 +383,46 @@ export const mockAgents: Agent[] = [
   { id: 'a10', name: '日志查询', category: 'AIOps', description: 'Loki · ES · S3 统一查询', version: '2.3.0', status: 'available', rating: 4.7, installCount: 880, tools: ['loki', 'opensearch'] },
 ];
 
+// 企业纳管字段：负责人、工作区和生命周期状态
+mockAgents.forEach((agent, index) => Object.assign(agent, {
+  owner: ['王昊', '李婷', '张睿'][index % 3],
+  workspace: index % 2 === 0 ? '生产运维' : '安全运营',
+  configStatus: agent.status === 'installed' ? 'configured' : 'pending',
+  evaluationStatus: agent.status === 'installed' ? 'passed' : 'pending',
+  publishStatus: agent.status === 'installed' ? 'published' : 'unpublished',
+  hasUpdate: index === 1 || index === 5,
+  lastRunAt: agent.status === 'installed' ? `${index + 2} 分钟前` : '—',
+}));
+
+// P5 智能体控制台：评测、实时调用和告警统一由 Mock API 提供。
+export const mockAgentEvaluations = [
+  { id: 'e01', name: '故障自愈-2026-W28-A', agentId: 'a1', agentName: 'Redis 故障自愈', version: '1.4.2', totalCases: 2400, accuracy: 92.4, recall: 90.1, p95Ms: 580, tokensPerCall: 820, rating: 4.7, calls: 12453, status: 'champion', passedAt: '2026-07-14T03:20:00Z', dataset: 'incident-v3', judgeModel: 'gpt-4o' },
+  { id: 'e02', name: '变更辅助-2026-W27', agentId: 'a3', agentName: '变更辅助', version: '1.2.5', totalCases: 1200, accuracy: 94.1, recall: 92.0, p95Ms: 520, tokensPerCall: 640, rating: 4.6, calls: 8210, status: 'champion', passedAt: '2026-07-08T09:00:00Z', dataset: 'changeqa-v2', judgeModel: 'claude-sonnet' },
+  { id: 'e03', name: '威胁狩猎-2026-W27', agentId: 'a5', agentName: '威胁狩猎', version: '1.6.0', totalCases: 800, accuracy: 87.3, recall: 91.2, p95Ms: 720, tokensPerCall: 980, rating: 4.4, calls: 5430, status: 'baseline', passedAt: '2026-07-07T08:30:00Z', dataset: 'threatbench-v1', judgeModel: 'gpt-4o' },
+];
+
+export const mockAgentLiveCalls = [
+  { id: 'lc01', agentId: 'a1', agent: 'Redis 故障自愈', ts: '14:55', latencyMs: 620, tokens: 880, status: 'ok', channel: 'api' },
+  { id: 'lc02', agentId: 'a3', agent: '变更辅助', ts: '14:54', latencyMs: 510, tokens: 640, status: 'ok', channel: 'cli' },
+  { id: 'lc03', agentId: 'a5', agent: '威胁狩猎', ts: '14:53', latencyMs: 880, tokens: 1020, status: 'ok', channel: 'mcp' },
+  { id: 'lc04', agentId: 'a1', agent: 'Redis 故障自愈', ts: '14:49', latencyMs: 1500, tokens: 880, status: 'timeout', channel: 'api' },
+];
+
+export const mockAgentAlerts = [
+  { id: 'al1', agent: 'Redis 故障自愈', agentId: 'a1', severity: 'warn', type: 'latency', title: 'P95 超阈值（800ms > 600ms）', ts: '14:32', acknowledged: false },
+  { id: 'al2', agent: '容量预测', agentId: 'a4', severity: 'warn', type: 'token', title: 'Token 用量超预算 80%', ts: '13:18', acknowledged: false },
+  { id: 'al3', agent: '威胁狩猎', agentId: 'a5', severity: 'error', type: 'approval', title: '高风险操作待双签', ts: '11:05', acknowledged: false },
+];
+
+const mockAgentRuntime = {
+  evaluations: [...mockAgentEvaluations] as any[],
+  liveCalls: [...mockAgentLiveCalls] as any[],
+  alerts: [...mockAgentAlerts] as any[],
+};
+
+// 智能体市场导入 / 审核 / 审计（前端开发阶段的可变 Mock 状态）
+const mockAgentImports: any[] = [];
+
 // ============ P6 工作流扩展数据 ============
 
 export interface WorkflowTemplate {
@@ -447,6 +487,46 @@ export const mockWorkflow: Workflow = {
     { id: 'e7', source: 'n7', target: 'n8' },
   ],
 };
+
+export type WorkflowGenerationRecord = {
+  id: string;
+  prompt: string;
+  status: 'completed' | 'discarded';
+  model: string;
+  createdAt: string;
+  workflow: { nodes: Array<{ id: string; kind: string; label: string; position: { x: number; y: number }; description?: string }>; edges: Array<{ id: string; source: string; target: string }> };
+  checks: { structure: 'passed' | 'review'; dependencies: 'passed' | 'review'; risk: 'passed' | 'review' };
+  dependencies: Array<{ type: 'tool' | 'mcp' | 'agent'; name: string; status: 'available' | 'missing'; reason?: string }>;
+  risks: Array<{ level: 'L1' | 'L2' | 'L3'; node: string; text: string; requiresApproval: boolean }>;
+  warnings: string[];
+  qualityScore: number;
+  requiresReview: boolean;
+};
+
+export const mockWorkflowGenerations: WorkflowGenerationRecord[] = [
+  {
+    id: 'gen_demo_001', prompt: '当 Redis 触发 OOM 告警时自动处理并通知负责人', status: 'completed', model: '企业默认模型', createdAt: '2026-07-18T09:20:00Z',
+    workflow: { nodes: [
+      { id: 'g1', kind: 'trigger', label: 'Redis OOM 告警', position: { x: 80, y: 120 }, description: '接收告警事件' },
+      { id: 'g2', kind: 'retrieve', label: '检索故障 Runbook', position: { x: 300, y: 120 }, description: '查询处置规范' },
+      { id: 'g3', kind: 'decision', label: 'Agent 研判', position: { x: 520, y: 120 }, description: '判断是否需要扩容' },
+      { id: 'g4', kind: 'approval', label: '双签审批', position: { x: 740, y: 120 }, description: '生产写操作需审批' },
+      { id: 'g5', kind: 'execute', label: '执行 Redis 恢复', position: { x: 960, y: 120 }, description: '调用 kubectl / redis-cli' },
+      { id: 'g6', kind: 'audit', label: '写入审计记录', position: { x: 1180, y: 120 }, description: '记录完整证据链' },
+      { id: 'g7', kind: 'notify', label: '通知负责人', position: { x: 1400, y: 120 }, description: '发送飞书通知' },
+    ], edges: [
+      { id: 'ge1', source: 'g1', target: 'g2' }, { id: 'ge2', source: 'g2', target: 'g3' }, { id: 'ge3', source: 'g3', target: 'g4' },
+      { id: 'ge4', source: 'g4', target: 'g5' }, { id: 'ge5', source: 'g5', target: 'g6' }, { id: 'ge6', source: 'g6', target: 'g7' },
+    ] },
+    checks: { structure: 'passed', dependencies: 'review', risk: 'review' },
+    dependencies: [
+      { type: 'tool', name: 'redis-cli', status: 'available' }, { type: 'mcp', name: 'kubernetes-mcp', status: 'missing', reason: '当前工作区未授权 kubectl 写权限' },
+      { type: 'agent', name: '故障自愈', status: 'available' },
+    ],
+    risks: [{ level: 'L2', node: '执行 Redis 恢复', text: '将对生产 Redis 执行写操作，需双签审批与回滚策略', requiresApproval: true }],
+    warnings: ['执行恢复节点需要 kubernetes-mcp 写权限', '请在保存前补充回滚分支'], qualityScore: 86, requiresReview: true,
+  },
+];
   // ============ P7 知识扩展数据 ============
 
 export const mockKbList = [
@@ -1024,7 +1104,78 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   }
 
   // 智能体
-  if (path === '/api/agents') return mockAgents;
+  if (path === '/api/agents' && method === 'GET') return mockAgents;
+  if (path === '/api/agents/imports' && method === 'GET') return mockAgentImports;
+  if (path === '/api/agents/import' && method === 'POST') {
+    const body = (opts.body ?? {}) as Record<string, any>;
+    const importId = mockId('import');
+    const agent = { id: mockId('agent'), name: body.name ?? '未命名导入智能体', category: body.category ?? 'AIOps', description: body.description ?? '', version: body.version ?? '0.1.0', status: 'available', lifecycleStatus: 'pending_review', source: body.source ?? '内部导入', rating: 0, installCount: 0, tools: body.tools ?? [] } as Agent & Record<string, any>;
+    mockAgents.unshift(agent);
+    const record = { id: importId, agentId: agent.id, agentName: agent.name, source: agent.source, status: 'pending_review', submittedBy: '当前用户', submittedAt: new Date().toISOString(), checks: body.checks ?? [{ key: 'format', label: '配置格式', status: 'passed' }, { key: 'dependencies', label: '依赖检查', status: 'review' }, { key: 'risk', label: '风险扫描', status: 'review' }], mapping: body.mapping ?? { tools: [], mcp: [] }, risks: body.risks ?? [], audit: [{ id: mockId('audit'), action: 'IMPORT_SUBMIT', actor: '当前用户', time: new Date().toISOString(), result: '待审核' }] };
+    mockAgentImports.unshift(record);
+    return { ...agent, ...record };
+  }
+  const importAction = path.match(/^\/api\/agents\/imports\/([^/]+)(?:\/(approve|reject|audit))?$/);
+  if (importAction) {
+    const record = mockAgentImports.find((item) => item.id === importAction[1]);
+    if (!record) return null;
+    if (importAction[2] === 'audit' && method === 'GET') return record.audit;
+    if ((importAction[2] === 'approve' || importAction[2] === 'reject') && method === 'POST') {
+      record.status = importAction[2] === 'approve' ? 'approved' : 'rejected';
+      record.audit.unshift({ id: mockId('audit'), action: importAction[2] === 'approve' ? 'IMPORT_APPROVE' : 'IMPORT_REJECT', actor: '当前用户', time: new Date().toISOString(), result: record.status });
+      const agent = mockAgents.find((item) => item.id === record.agentId) as (Agent & Record<string, any>) | undefined;
+      if (agent) agent.lifecycleStatus = record.status;
+      return record;
+    }
+    if (method === 'GET') return record;
+  }
+  if (path === '/api/agents' && method === 'POST') {
+    const body = (opts.body ?? {}) as Record<string, any>;
+    const agent = { id: mockId('agent'), name: body.name ?? '未命名智能体', category: body.category ?? 'AIOps', description: body.description ?? '', version: '0.1.0', status: 'available', rating: 0, installCount: 0, tools: body.tools ?? [] } as Agent;
+    mockAgents.unshift(agent);
+    return agent;
+  }
+  if (path === '/api/evaluations' && method === 'GET') return mockAgentRuntime.evaluations;
+  if (path === '/api/evaluations' && method === 'POST') {
+    const body = (opts.body ?? {}) as Record<string, any>;
+    const evaluation = { id: mockId('eval'), status: 'baseline', accuracy: 0, recall: 0, p95Ms: 0, calls: 0, passedAt: new Date().toISOString(), ...body };
+    mockAgentRuntime.evaluations.unshift(evaluation);
+    return evaluation;
+  }
+  if (path === '/api/agents/alerts' && method === 'GET') return mockAgentRuntime.alerts;
+  if (path === '/api/agents/calls/live' && method === 'GET') return mockAgentRuntime.liveCalls;
+  if (path === '/api/agents/calls/live' && method === 'POST') {
+    const call = { id: mockId('call'), ts: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), status: 'ok', ...((opts.body ?? {}) as Record<string, any>) };
+    mockAgentRuntime.liveCalls.unshift(call);
+    if (call.status === 'timeout' || call.status === 'error') mockAgentRuntime.alerts.unshift({ id: mockId('agent_alert'), agent: (call as any).agent ?? '智能体', agentId: (call as any).agentId, severity: call.status === 'timeout' ? 'warn' : 'error', type: 'latency', title: `运行${call.status === 'timeout' ? '超时' : '失败'}，需要关注`, ts: call.ts, acknowledged: false });
+    return call;
+  }
+  const agentAction = path.match(/^\/api\/agents\/([^/]+)\/(install|uninstall|enable|disable|publish|config|audit|metrics|calls)$/);
+  if (agentAction) {
+    const [, agentId, action] = agentAction;
+    const agent = mockAgents.find((item) => item.id === agentId);
+    if (action === 'audit' && method === 'GET') return mockAgentRuntime.alerts.filter((item) => item.agentId === agentId);
+    if (action === 'metrics' && method === 'GET') return { agentId, calls24h: mockAgentRuntime.liveCalls.filter((item) => item.agentId === agentId).length, successRate: 0.98, errorRate: 0.02, p95Ms: agent?.p95Ms ?? 0 };
+    if (action === 'calls' && method === 'GET') return mockAgentRuntime.liveCalls.filter((item) => item.agentId === agentId);
+    if (agent && method === 'POST') {
+      if (action === 'install' || action === 'enable' || action === 'publish') agent.status = 'installed';
+      if (action === 'uninstall' || action === 'disable') agent.status = 'available';
+      return agent;
+    }
+  }
+  const evaluationAction = path.match(/^\/api\/evaluations\/([^/]+)\/(run|stop|retry|report)$/);
+  if (evaluationAction) {
+    const evaluation = mockAgentRuntime.evaluations.find((item) => item.id === evaluationAction[1]);
+    if (!evaluation) return null;
+    if (evaluationAction[2] === 'report' && method === 'GET') return { ...evaluation, report: { passed: evaluation.accuracy >= 90, checks: ['准确率', '召回率', 'P95'] } };
+    if (method === 'POST') { evaluation.status = evaluationAction[2] === 'stop' ? 'failed' : evaluationAction[2] === 'run' ? 'running' : 'baseline'; return evaluation; }
+  }
+  const alertAction = path.match(/^\/api\/agents\/alerts\/([^/]+)\/acknowledge$/);
+  if (alertAction && method === 'POST') {
+    const alert = mockAgentRuntime.alerts.find((item) => item.id === alertAction[1]);
+    if (alert) alert.acknowledged = true;
+    return alert ?? null;
+  }
   if (path.startsWith('/api/agents/') && path.endsWith('/versions')) {
     const id = path.split('/')[3];
     return mockAgentVersions[id] ?? [];
@@ -1040,6 +1191,40 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/workflow-templates') return mockWorkflowTemplates;
   if (path === '/api/workflow-runs') return mockWorkflowRuns;
   if (path === '/api/workflow-kpi') return mockWorkflowKpi;
+  if (path === '/api/workflows/generations' && method === 'GET') return mockWorkflowGenerations;
+  if (path === '/api/workflows/generate' && method === 'POST') {
+    const body = (opts.body ?? {}) as Record<string, any>;
+    const prompt = String(body.prompt ?? '').trim();
+    const constraints = body.constraints ?? {};
+    const base = mockWorkflowGenerations[0];
+    const generated: WorkflowGenerationRecord = {
+      ...JSON.parse(JSON.stringify(base)),
+      id: mockId('gen'),
+      prompt: prompt || base.prompt,
+      model: body.model || '企业默认模型',
+      createdAt: new Date().toISOString(),
+      status: 'completed',
+      qualityScore: constraints.requireRollback ? 89 : 84,
+      requiresReview: true,
+      checks: { structure: 'passed', dependencies: 'review', risk: constraints.requireApproval === false ? 'passed' : 'review' },
+      warnings: [
+        '生成结果仅为可编辑草稿，不会自动执行或发布',
+        ...(constraints.requireRollback ? [] : ['建议补充回滚分支']),
+        '执行恢复节点需要 kubernetes-mcp 写权限',
+      ],
+      risks: constraints.requireApproval === false ? [] : base.risks,
+    };
+    mockWorkflowGenerations.unshift(generated);
+    return generated;
+  }
+  const generationAction = path.match(/^\/api\/workflows\/generations\/([^/]+)(?:\/(apply|discard))?$/);
+  if (generationAction) {
+    const record = mockWorkflowGenerations.find((item) => item.id === generationAction[1]);
+    if (!record) return null;
+    if (!generationAction[2] && method === 'GET') return record;
+    if (generationAction[2] === 'discard' && method === 'POST') { record.status = 'discarded'; return record; }
+    if (generationAction[2] === 'apply' && method === 'POST') return { ...record, status: 'completed', appliedAt: new Date().toISOString() };
+  }
 
   // 知识
   if (path === '/api/knowledge/docs') return mockKnowledgeDocs;

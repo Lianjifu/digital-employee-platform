@@ -59,31 +59,31 @@ export function Modal({
       {/* 弹窗本体 */}
       <div
         className={cn(
-          'relative w-full overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-2xl animate-[scaleIn_0.18s_ease]',
+          'relative w-full overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_20px_60px_rgba(15,23,42,0.16)] animate-[scaleIn_0.18s_ease]',
           SIZE_CLASS[size],
         )}
       >
         {/* Header */}
         {(title || description) && (
-          <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-3.5">
+          <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] bg-[var(--surface-1)] px-6 py-5">
             <div className="min-w-0">
-              {title && <h3 className="text-sm font-semibold text-[var(--text)]">{title}</h3>}
-              {description && <p className="mt-0.5 text-xs text-[var(--text-muted)]">{description}</p>}
+              {title && <h3 className="text-[15px] font-semibold text-[var(--text)]">{title}</h3>}
+              {description && <p className="mt-1 text-[13px] text-[var(--text-muted)]">{description}</p>}
             </div>
             <button
               type="button"
               onClick={onClose}
-              className="grid h-7 w-7 shrink-0 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
             >
               <X className="h-4 w-4" />
             </button>
           </div>
         )}
         {/* Body */}
-        <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>
+        <div className="max-h-[72vh] overflow-y-auto px-6 py-5">{children}</div>
         {/* Footer */}
         {footer && (
-          <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] bg-[var(--bg)] px-5 py-3">
+          <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] bg-[var(--bg-elevated)]/50 px-6 py-4">
             {footer}
           </div>
         )}

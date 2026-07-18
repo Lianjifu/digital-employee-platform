@@ -10,14 +10,14 @@
  * 编排能力在 P6 工作流页面提供，本页不重复。
  */
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { useApiQuery } from '@/services/query';
+import { useApiMutation, useApiQuery } from '@/services/query';
 import { Badge, Button, Modal, Avatar, Input, KpiCard, KpiMini, Row, FilterGroup, FilterRadio, ChipBtn, Section, FormField, CollapsedPanelHandle } from '@de/web-ui';
 import {
   Bot, Star, Download, Settings, Plus, X, Zap, ShieldCheck, Sparkles, GitCompare,
   TrendingUp, History, Award, Tag as TagIcon, CheckCircle2, Filter, Search, ChevronRight,
-  ChevronLeft, Activity, Wrench, Database, Lock, Cpu, BarChart3, MessageSquare,
+  ChevronLeft, Activity, Wrench, Database, Lock, Cpu, BarChart3, MessageSquare, FileCheck,
   ChevronDown, AlertTriangle, FileText, RefreshCw, Play, Pause, Network, Copy,
-  Layers, ArrowRight, Send, Beaker, Gauge, AlertOctagon, Clock, Hash, Eye, Pencil,
+  ArrowRight, Send, Beaker, Gauge, AlertOctagon, Clock, Hash, Eye, Pencil,
   Server, Boxes, FlaskConical, Monitor, LineChart as LineIcon, Brain,
   Users, Archive, RotateCcw,
 } from 'lucide-react';
@@ -96,6 +96,29 @@ interface AlertRow {
   acknowledged: boolean;
 }
 
+interface AgentImportRecord {
+  id: string;
+  agentId: string;
+  agentName: string;
+  source: string;
+  status: 'pending_review' | 'approved' | 'rejected';
+  submittedBy: string;
+  submittedAt: string;
+  checks: { key: string; label: string; status: string }[];
+  mapping: { tools: string[]; mcp: string[] };
+  risks: string[];
+  audit?: { id: string; action: string; actor: string; time: string; result: string }[];
+}
+
+function parseOpenClawPackage(raw: string) {
+  const parsed = JSON.parse(raw) as Record<string, any>;
+  const tools = Array.isArray(parsed.tools) ? parsed.tools.map((tool: any) => typeof tool === 'string' ? tool : tool.name).filter(Boolean) : [];
+  const mcp = Array.isArray(parsed.mcpServers) ? parsed.mcpServers.map((server: any) => typeof server === 'string' ? server : server.name).filter(Boolean) : Object.keys(parsed.mcp ?? {});
+  const permissions = Array.isArray(parsed.permissions) ? parsed.permissions : Object.keys(parsed.permissions ?? {});
+  const risks = permissions.filter((permission: string) => /shell|exec|write|network|filesystem|admin/i.test(permission));
+  return { name: parsed.name ?? parsed.agent?.name ?? 'OpenClaw 导入智能体', description: parsed.description ?? parsed.agent?.description ?? '', version: parsed.version ?? '0.1.0', model: parsed.model ?? parsed.agent?.model ?? '待映射', tools, mcp, permissions, risks };
+}
+
 const INITIAL_EVALUATIONS: EvalRow[] = [
   { id:'e01', name:'故障自愈-2026-W28-A', agentId:'a1', agentName:'故障自愈', version:'1.4.2', totalCases:2400, accuracy:92.4, recall:90.1, p95Ms:580, tokensPerCall:820, rating:4.7, calls:12453, status:'champion', passedAt:'2026-07-14T03:20:00Z', dataset:'incident-v3', judgeModel:'gpt-4o' },
   { id:'e02', name:'故障自愈-2026-W28-B', agentId:'a1', agentName:'故障自愈', version:'1.4.1', totalCases:2400, accuracy:89.8, recall:88.0, p95Ms:640, tokensPerCall:840, rating:4.5, calls:12011, status:'control', passedAt:'2026-07-14T03:20:00Z', dataset:'incident-v3', judgeModel:'gpt-4o' },
@@ -163,17 +186,23 @@ const TREND_FULL = Array.from({ length: 60 }, (_, i) => ({
 /* ============ 常量 ============ */
 
 const MAIN_TABS = [
-  { key: 'agents', label: '智能体', icon: Bot },
-  { key: 'evaluate', label: '评测', icon: FlaskConical },
-  { key: 'monitor', label: '监控', icon: Monitor },
+  { key: 'agents', label: '我的智能体', icon: Bot },
+  { key: 'store', label: '智能体市场', icon: Download },
+  { key: 'evaluate', label: '评测中心', icon: FlaskConical },
+  { key: 'monitor', label: '治理与监控', icon: Monitor },
 ] as const;
 type MainTab = typeof MAIN_TABS[number]['key'];
 
+const MAIN_TAB_META: Record<MainTab, { description: string; action?: string }> = {
+  agents: { description: '管理已纳管智能体的状态、配置与运行入口', action: '新建智能体' },
+  store: { description: '发现并纳管经过评估的企业智能体资产', action: '导入智能体' },
+  evaluate: { description: '通过评测任务和质量门禁判断智能体是否达标', action: '启动评测' },
+  monitor: { description: '持续跟踪生产健康、风险告警与调用审计' },
+};
+
 const AGENT_SUB_TABS = [
   { key: 'installed', label: '已安装', icon: CheckCircle2 },
-  { key: 'store', label: '商店', icon: Download },
-  { key: 'shared', label: '共享', icon: Users },
-  { key: 'archived', label: '已归档', icon: Archive },
+  { key: 'store', label: '待配置', icon: Download },
 ] as const;
 
 const RISK_TONE: Record<string, 'success' | 'info' | 'warn' | 'error'> = {
@@ -181,7 +210,7 @@ const RISK_TONE: Record<string, 'success' | 'info' | 'warn' | 'error'> = {
 };
 
 const CATEGORIES = ['全部', 'AIOps', 'SecOps', 'DevOps', 'DataOps', 'BizOps'] as const;
-const STATUS_FILTERS = ['全部', '已启用', '已停用', '有更新'] as const;
+const STATUS_FILTERS = ['全部', '已启用', '已停用', '待配置', '待评测', '有更新'] as const;
 const RATING_FILTERS = ['全部', '4.5+', '4.0+', '3.5+'] as const;
 
 /* ============ 页面 ============ */
@@ -198,13 +227,12 @@ export default function Agents() {
   const [showCompare, setShowCompare] = useState(false);
   const [compareId, setCompareId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [detailTab, setDetailTab] = useState<'meta' | 'prompt' | 'tools' | 'versions' | 'monitor'>('meta');
   const [compareOpen, setCompareOpen] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
 
-  // 补全（10 按钮接 handler）：
-  // 视图切换（行 286-287）
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  // 生命周期操作与详情状态
   // 评测 / 监控 / 运行 / 配置 / A/B 报告 / 等
   const [newEvalOpen, setNewEvalOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
@@ -213,16 +241,28 @@ export default function Agents() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [toolCfg, setToolCfg] = useState<{ open: boolean; toolKey: string | null }>({ open: false, toolKey: null });
   const [abReportOpen, setAbReportOpen] = useState(false);
+  const [publishConfirmOpen, setPublishConfirmOpen] = useState(false);
   // 数据层 state
   const [evaluations, setEvaluations] = useState<any[]>(INITIAL_EVALUATIONS);
   const [liveCalls, setLiveCalls] = useState<any[]>(INITIAL_LIVE_CALLS);
   const [alerts, setAlerts] = useState<any[]>(INITIAL_ALERTS);
+  const [imports, setImports] = useState<AgentImportRecord[]>([]);
   const { data: evalQ } = useApiQuery<any[]>(['evaluations'], '/api/evaluations');
   const { data: alertsQ } = useApiQuery<any[]>(['agents', 'alerts'], '/api/agents/alerts');
   const { data: callsQ } = useApiQuery<any[]>(['agents', 'liveCalls'], '/api/agents/calls/live');
+  const createAgentApi = useApiMutation<any, Record<string, any>>('/api/agents', { onSuccess: () => { setCreateOpen(false); setImportOpen(false); } });
+  const importAgentApi = useApiMutation<any, Record<string, any>>('/api/agents/import', { onSuccess: () => setImportOpen(false) });
+  const importReviewApi = useApiMutation<AgentImportRecord, { id: string; action: 'approve' | 'reject' }>(({ id, action }) => `/api/agents/imports/${id}/${action}`, { onSuccess: (record) => setImports((prev) => prev.map((item) => item.id === record.id ? record : item)) });
+  const createEvaluationApi = useApiMutation<any, Record<string, any>>('/api/evaluations', { onSuccess: (evaluation) => { setEvaluations((prev) => [evaluation, ...prev]); setNewEvalOpen(false); } });
+  const runAgentApi = useApiMutation<LiveCallRow, LiveCallRow>('/api/agents/calls/live', { onSuccess: (call) => setLiveCalls((prev) => [call, ...prev].slice(0, 24)) });
+  const saveAgentConfigApi = useApiMutation<any, Record<string, any>>(() => `/api/agents/${activeId ?? 'a1'}/config`, { onSuccess: () => setToolCfg({ open: false, toolKey: null }) });
+  const savePromptApi = useApiMutation<any, Record<string, any>>(() => `/api/agents/${activeId ?? 'a1'}/config`, {});
+  const lifecycleApi = useApiMutation<any, { id: string; action: 'install' | 'uninstall' | 'enable' | 'disable' | 'publish' }>(({ id, action }) => `/api/agents/${id}/${action}`, { onSuccess: () => setShowDetails(false) });
   useEffect(() => { if (evalQ && evalQ.length) setEvaluations(evalQ); }, [evalQ]);
   useEffect(() => { if (alertsQ && alertsQ.length) setAlerts(alertsQ); }, [alertsQ]);
   useEffect(() => { if (callsQ && callsQ.length) setLiveCalls(callsQ); }, [callsQ]);
+  const { data: importsQ } = useApiQuery<AgentImportRecord[]>(['agents', 'imports'], '/api/agents/imports');
+  useEffect(() => { if (importsQ) setImports(importsQ); }, [importsQ]);
 
   const { data: agents = [] } = useApiQuery<AgentFull[]>(['agents'], '/api/agents');
   const { data: versions = [] } = useApiQuery<AgentVersion[]>(['agent', activeId, 'versions'], `/api/agents/${activeId}/versions`);
@@ -245,6 +285,8 @@ export default function Agents() {
       if (cat !== '全部' && a.category !== cat) return false;
       if (status === '已启用' && a.status !== 'installed') return false;
       if (status === '已停用' && a.status === 'installed') return false;
+      if (status === '待配置' && (a.status === 'installed' || (a as any).lifecycleStatus === 'pending_review')) return false;
+      if (status === '待评测' && (a as any).lifecycleStatus !== 'pending_review') return false;
       if (rating === '4.5+' && a.rating < 4.5) return false;
       if (rating === '4.0+' && a.rating < 4.0) return false;
       if (rating === '3.5+' && a.rating < 3.5) return false;
@@ -283,201 +325,85 @@ export default function Agents() {
           <div className="flex items-center gap-2 min-w-0">
             <div className="min-w-0">
               <h1 className="text-sm font-semibold flex items-center gap-2">
-                {mainTab === 'evaluate' ? (
-                  <FlaskConical className="h-4 w-4 text-[var(--info)]" />
-                ) : mainTab === 'monitor' ? (
-                  <Monitor className="h-4 w-4 text-[var(--warning)]" />
-                ) : (
-                  <Bot className="h-4 w-4 text-[var(--brand)]" />
-                )}
-                {mainTab === 'evaluate' ? '评测中心' : mainTab === 'monitor' ? '运行监控' : '智能体控制台'}
-                <Badge tone="brand" className="text-[9px]">企业版</Badge>
+                <Bot className="h-4 w-4 text-[var(--brand)]" />
+                智能体
               </h1>
-              <div className="text-[10px] text-[var(--text-muted)] mt-0.5 font-mono">
-                {mainTab === 'evaluate'
-                  ? `12 评测批次 · 3 进行中 · 平均准确率 ${INITIAL_EVALUATIONS.length > 0 ? Math.round(INITIAL_EVALUATIONS.reduce((s, e) => s + e.accuracy, 0) / INITIAL_EVALUATIONS.length * 10) / 10 : 0}% · 满意度 4.6★`
-                  : mainTab === 'monitor'
-                  ? `8 Provider 运行中 · 1 高优告警 · 平均 P95 ${Math.round(TREND_FULL.reduce((s, d) => s + d.latency, 0) / TREND_FULL.length)}ms · 0 异常`
-                  : `${kpis.total} Agent · ${kpis.installed} 已启用 · ${kpis.totalCalls.toLocaleString()} 累计调用 · SLA ${kpis.avgRating}★`}
+              <div className="mt-1 text-xs text-[var(--text-muted)]">
+                {MAIN_TAB_META[mainTab].description}
               </div>
             </div>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            {mainTab !== 'monitor' && (
-              <>
-                <Button size="sm" variant="secondary" onClick={() => setCompareOpen(true)} className="hidden md:inline-flex">
-                  <GitCompare className="h-3.5 w-3.5" />对比
-                </Button>
-                <Button size="sm" variant="secondary" onClick={() => setCreateOpen(true)} className="hidden md:inline-flex">
-                  <Sparkles className="h-3.5 w-3.5" />从模板
-                </Button>
-              </>
-            )}
-            {mainTab === 'agents' && (
-              <Button size="sm" variant="outline" onClick={() => setShowDetails(true)} disabled={!active} className="hidden sm:inline-flex">
-                <Eye className="h-3.5 w-3.5" />详情
-              </Button>
-            )}
-            <Button size="sm" onClick={() => setCreateOpen(true)}>
-              <Plus className="h-3.5 w-3.5" />{mainTab === 'monitor' ? '新增' : '新建'}
-            </Button>
+            {MAIN_TAB_META[mainTab].action && <Button size="sm" onClick={() => mainTab === 'evaluate' ? setNewEvalOpen(true) : mainTab === 'store' ? setImportOpen(true) : setCreateOpen(true)}><Plus className="h-3.5 w-3.5" />{MAIN_TAB_META[mainTab].action}</Button>}
           </div>
         </div>
 
-        {/* ============ 顶部筛选条（先于模块/视图 Tab） ============ */}
+        {/* ============ 一级模块导航：先确定工作上下文 ============ */}
+        <div className="border-b border-[var(--border)] bg-[var(--bg)] px-5 pt-3">
+          <div className="flex items-center gap-1 flex-wrap">
+            {MAIN_TABS.map((t) => <button key={t.key} onClick={() => setMainTab(t.key)} className={cn('flex items-center gap-1.5 rounded-t-md px-3 py-2 text-[13px] transition-colors', mainTab === t.key ? 'bg-[var(--surface-1)] border border-[var(--border)] border-b-[var(--surface-1)] text-[var(--text)] font-semibold -mb-px' : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)]')}><t.icon className="h-3.5 w-3.5" />{t.label}</button>)}
+          </div>
+        </div>
+
+        {/* 生命周期摘要：先展示运营状态，再进入资产筛选 */}
         {mainTab === 'agents' && (
-          <div className="border-b border-[var(--border)] bg-[var(--bg)] px-4 py-2.5">
-            <div className="flex items-center gap-2 flex-wrap">
-              <div className="relative min-w-[180px] flex-1 max-w-[260px]">
+      <div className="border-b border-[var(--border)] bg-[var(--surface-1)] px-5 py-4">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h2 className="text-sm font-semibold text-[var(--text)]">生命周期摘要</h2>
+                <p className="mt-0.5 text-xs text-[var(--text-muted)]">快速了解智能体资产的纳管状态与生命周期待办</p>
+              </div>
+              <span className="hidden text-[11px] text-[var(--text-muted)] sm:inline">实时更新</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <KpiCard label="已启用" value={kpis.installed} sub="个" tone="success" icon={CheckCircle2} size="comfortable" className="border-l-2 border-l-[var(--success)]" />
+              <KpiCard label="待配置" value={agents.filter((a) => a.status !== 'installed' && (a as any).lifecycleStatus !== 'pending_review').length} sub="个" tone="warn" icon={Settings} size="comfortable" className="border-l-2 border-l-[var(--warning)]" />
+              <KpiCard label="待评测" value={agents.filter((a) => (a as any).lifecycleStatus === 'pending_review').length} sub="个" tone="info" icon={FlaskConical} size="comfortable" className="border-l-2 border-l-[var(--info)]" />
+              <KpiCard label="有新版本" value={agents.filter((a) => (a as any).hasUpdate).length} sub="个" tone="neutral" icon={RefreshCw} size="comfortable" />
+            </div>
+          </div>
+        )}
+
+        {/* ============ 资产筛选：只保留决策必需条件 ============ */}
+        {mainTab === 'agents' && (
+          <div className="border-b border-[var(--border)] bg-[var(--bg)] px-5 py-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <div className="relative min-w-[240px] flex-1 max-w-[360px]">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--text-muted)]" />
                 <input
                   value={searchQ}
                   onChange={(e) => setSearchQ(e.target.value)}
-                  placeholder="搜索 名称 / 工具 / 描述"
-                  className="h-7 w-full rounded-md border border-[var(--border)] bg-[var(--surface-1)] pl-7 pr-2 text-xs outline-none focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]"
+                  placeholder="搜索智能体名称、能力或描述"
+                  className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] pl-8 pr-3 text-[13px] outline-none focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]"
                 />
               </div>
-              <div className="flex items-center gap-1">
-                <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold mr-1">分类</span>
-                {CATEGORIES.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => setCat(c)}
-                    className={cn(
-                      'rounded-md border px-2 py-1 text-[11px] transition-colors whitespace-nowrap',
-                      cat === c
-                        ? 'bg-[var(--brand)] text-white border-[var(--brand)]'
-                        : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]',
-                    )}
-                  >
-                    {c} <span className="ml-0.5 font-mono opacity-70">({c === '全部' ? agents.length : agents.filter((a) => a.category === c).length})</span>
-                  </button>
-                ))}
+              <div className="flex items-center gap-1.5" role="group" aria-label="范围">
+                <span className="text-xs font-semibold text-[var(--text-secondary)] mr-1">范围</span>
+                {AGENT_SUB_TABS.map((t) => <button key={t.key} onClick={() => setAgentSubTab(t.key)} className={cn('flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs transition-colors', agentSubTab === t.key ? 'bg-[var(--brand)] text-white border-[var(--brand)]' : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]')}><t.icon className="h-3 w-3" />{t.label}</button>)}
               </div>
-              <div className="flex items-center gap-1">
-                <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold mr-1">评分</span>
-                {RATING_FILTERS.map((r) => (
-                  <button
-                    key={r}
-                    onClick={() => setRating(r)}
-                    className={cn(
-                      'rounded-md border px-2 py-1 text-[11px] font-mono transition-colors',
-                      rating === r ? 'bg-[var(--brand)] text-white border-[var(--brand)]' : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]',
-                    )}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
-              <div className="flex items-center gap-1">
-                <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold mr-1">状态</span>
+              <div className="flex items-center gap-1.5" role="group" aria-label="状态">
+                <span className="text-xs font-semibold text-[var(--text-secondary)] mr-1">状态</span>
                 {STATUS_FILTERS.map((s) => (
                   <button
                     key={s}
                     onClick={() => setStatus(s)}
                     className={cn(
-                      'rounded-md border px-2 py-1 text-[11px] transition-colors',
+                      'rounded-md border px-2.5 py-1.5 text-xs transition-colors',
                       status === s ? 'bg-[var(--brand)] text-white border-[var(--brand)]' : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]',
                     )}
                   >
-                    {s} <span className="ml-0.5 font-mono opacity-70">({s === '全部' ? agents.length : s === '已启用' ? agents.filter((a) => a.status === 'installed').length : s === '有更新' ? 2 : 0})</span>
+                    {s}
                   </button>
                 ))}
               </div>
               {activeFilterCount > 0 && (
                 <button
                   onClick={() => { setCat('全部'); setStatus('全部'); setRating('全部'); setTagFilter(null); setSearchQ(''); }}
-                  className="ml-auto rounded-md border border-[var(--danger)]/30 bg-[var(--danger-bg)] px-2 py-1 text-[11px] text-[var(--danger)] hover:bg-[var(--danger)] hover:text-white transition-colors flex items-center gap-1"
+                  className="ml-auto rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2.5 py-1.5 text-xs text-[var(--text-secondary)] hover:border-[var(--brand)] hover:text-[var(--brand)] transition-colors flex items-center gap-1"
                 >
-                  <X className="h-3 w-3" />重置 ({activeFilterCount})
+                  <X className="h-3 w-3" />重置筛选
                 </button>
               )}
-            </div>
-            {allTags.length > 0 && (
-              <div className="mt-2 flex items-start gap-2">
-                <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold mt-1">能力</span>
-                <div className="flex flex-wrap gap-1">
-                  <button
-                    onClick={() => setTagFilter(null)}
-                    className={cn(
-                      'rounded-full border px-2 py-0.5 text-[10px] font-mono transition-colors',
-                      !tagFilter ? 'bg-[var(--brand)] text-white border-[var(--brand)]' : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]',
-                    )}
-                  >
-                    全部
-                  </button>
-                  {allTags.map((t) => (
-                    <button
-                      key={t}
-                      onClick={() => setTagFilter(tagFilter === t ? null : t)}
-                      className={cn(
-                        'rounded-full border px-2 py-0.5 text-[10px] font-mono transition-colors',
-                        tagFilter === t ? 'bg-[var(--brand)] text-white border-[var(--brand)]' : 'bg-[var(--bg)] text-[var(--text-muted)] border-[var(--border)] hover:border-[var(--brand)]',
-                      )}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ============ 顶部模块 Tab + 视图子 Tab（视图仅智能体模块下显示） ============ */}
-        <div className="border-b border-[var(--border)] bg-[var(--bg)] px-5 pt-3">
-          <div className="flex items-center gap-1 flex-wrap">
-            <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold mr-2">模块</span>
-            {MAIN_TABS.map((t) => (
-              <button
-                key={t.key}
-                onClick={() => setMainTab(t.key)}
-                className={cn(
-                  'flex items-center gap-1.5 rounded-t-md px-3 py-1.5 text-xs transition-colors',
-                  mainTab === t.key
-                    ? 'bg-[var(--surface-1)] border border-[var(--border)] border-b-[var(--surface-1)] text-[var(--text)] font-semibold -mb-px'
-                    : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)]',
-                )}
-              >
-                <t.icon className="h-3.5 w-3.5" />
-                {t.label}
-              </button>
-            ))}
-          </div>
-          {mainTab === 'agents' && (
-            <div className="flex items-center gap-1 flex-wrap mt-1.5 pl-4">
-              <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold mr-2">视图</span>
-              {AGENT_SUB_TABS.map((t) => (
-                <button
-                  key={t.key}
-                  onClick={() => setAgentSubTab(t.key)}
-                  className={cn(
-                    'flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors',
-                    agentSubTab === t.key
-                      ? 'bg-[var(--brand)] text-white border border-[var(--brand)]'
-                      : 'bg-[var(--bg)] text-[var(--text-muted)] border border-[var(--border)] hover:border-[var(--brand)]',
-                  )}
-                >
-                  <t.icon className="h-3 w-3" />
-                  {t.label}
-                  <span className="font-mono opacity-70 text-[10px]">
-                    {t.key === 'installed' ? agents.filter((a) => a.status === 'installed').length : t.key === 'store' ? agents.filter((a) => a.status !== 'installed').length : 0}
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-
-        {/* KPI 矩阵 */}
-        {mainTab === 'agents' && (
-          <div className="border-b border-[var(--border)] bg-[var(--bg-elevated)]/40 px-5 py-3">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-              <KpiCard label="总 Agent" value={kpis.total} sub="个" tone="brand" icon={Bot} />
-              <KpiCard label="已启用" value={kpis.installed} sub="个" tone="success" icon={CheckCircle2} />
-              <KpiCard label="累计调用" value={kpis.totalCalls.toLocaleString()} sub="次" tone="info" icon={Zap} />
-              <KpiCard label="平均评分" value={kpis.avgRating} sub="★" tone="warn" icon={Star} />
-              <KpiCard label="平均 P95" value={kpis.avgP95} sub="ms" tone="info" icon={Activity} />
             </div>
           </div>
         )}
@@ -485,14 +411,8 @@ export default function Agents() {
         {/* 批量操作栏（选中时）— 简化版 */}
         {mainTab === 'agents' && (
           <div className="border-b border-[var(--border)] bg-[var(--surface-1)] px-5 py-2 flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
-            <span className="font-semibold text-[var(--text)]">{filtered.length} 个结果</span>
-            <span>·</span>
-            <span>显示 AIOps / SecOps / DevOps</span>
-            <div className="ml-auto flex items-center gap-1">
-              <span className="text-[10px]">视图</span>
-              <button className="grid h-6 w-6 place-items-center rounded bg-[var(--bg)] text-[var(--text)]"><Layers className="h-3 w-3" /></button>
-              <button className="grid h-6 w-6 place-items-center rounded text-[var(--text-muted)] hover:bg-[var(--bg)]"><ListChecks className="h-3 w-3" /></button>
-            </div>
+            <span className="font-semibold text-[var(--text)]">{filtered.length} 个智能体</span>
+            <span>当前资产范围</span>
           </div>
         )}
 
@@ -500,9 +420,9 @@ export default function Agents() {
         <div>
           {mainTab === 'agents' ? (
             <>
-              <AgentGridView agents={filtered} onSelect={setActiveId} activeId={activeId} agentSubTab={agentSubTab} />
+              <AgentGridView agents={filtered} onSelect={(id) => { setActiveId(id); setShowDetails(true); }} activeId={activeId} agentSubTab={agentSubTab} />
             </>
-          ) : mainTab === 'evaluate' ? <EvaluateView agents={agents} active={active} compare={compare} /> : <MonitorView agents={agents} />}
+          ) : mainTab === 'store' ? <AgentMarketView agents={agents.filter((agent) => agent.status !== 'installed')} imports={imports} onReview={(id, action) => importReviewApi.mutate({ id, action })} onSelect={(id) => { setActiveId(id); setShowDetails(true); }} activeId={activeId} /> : mainTab === 'evaluate' ? <EvaluateView agents={agents} active={active} compare={compare} evaluations={evaluations} /> : <MonitorView agents={agents} alerts={alerts} liveCalls={liveCalls} />}
         </div>
       </section>
 
@@ -510,9 +430,8 @@ export default function Agents() {
       <Drawer
         open={showDetails && !!active}
         onClose={() => setShowDetails(false)}
-        title={active ? `${active.name} · Agent 详情` : 'Agent 详情'}
-        description="配置、能力、版本、运行和监控信息"
-        width={520}
+        flush
+        width={560}
       >
         {active ? (
           <AgentDetailPanel
@@ -533,6 +452,9 @@ export default function Agents() {
             onPreviewOpen={() => setPreviewOpen(true)}
             onToolCfg={(key) => setToolCfg({ open: true, toolKey: key })}
             onABReportOpen={() => setAbReportOpen(true)}
+            onLifecycle={(action) => action === 'publish' ? setPublishConfirmOpen(true) : lifecycleApi.mutate({ id: active.id, action })}
+            onPromptSave={(prompt) => savePromptApi.mutate({ prompt })}
+            lifecyclePending={lifecycleApi.isPending}
           />
         ) : <EmptyState icon={Bot} title="选择 Agent 查看详情" />}
       </Drawer>
@@ -542,30 +464,14 @@ export default function Agents() {
         open={createOpen}
         onClose={() => setCreateOpen(false)}
         onSubmit={(form) => {
-          const id = `usr_${Math.random().toString(36).slice(2, 8)}`;
-          setEvaluations((prev) => [
-            {
-              id: `e_usr_${Math.random().toString(36).slice(2, 8)}`,
-              name: `${form.name}-初评`,
-              agentId: id,
-              agentName: form.name,
-              version: '0.1.0',
-              totalCases: 200,
-              accuracy: 0,
-              recall: 0,
-              p95Ms: 0,
-              tokensPerCall: 0,
-              rating: 0,
-              calls: 0,
-              status: 'baseline',
-              passedAt: new Date().toISOString(),
-              dataset: 'pending',
-              judgeModel: 'pending',
-            },
-            ...prev,
-          ]);
-          alert(`✓ Agent "${form.name}" 创建成功\n已自动创建基线评测（200 用例）`);
+          createAgentApi.mutate({ name: form.name, category: form.category, description: form.description, riskLevel: form.risk, tools: form.tools });
         }}
+      />
+      <ImportAgentModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        loading={importAgentApi.isPending}
+        onSubmit={(form) => importAgentApi.mutate({ name: form.name, category: form.category, description: form.description, riskLevel: form.risk, source: form.source, tools: form.tools, mapping: form.mapping, risks: form.risks })}
       />
 
       {/* ============ 对比 Modal ============ */}
@@ -576,29 +482,7 @@ export default function Agents() {
         open={newEvalOpen}
         onClose={() => setNewEvalOpen(false)}
         onSubmit={(form) => {
-          setEvaluations((prev) => [
-            {
-              id: `e_${Math.random().toString(36).slice(2, 8)}`,
-              name: form.name,
-              agentId: 'a1',
-              agentName: '待分配 Agent',
-              version: '1.0.0',
-              totalCases: form.totalCases,
-              accuracy: 0,
-              recall: 0,
-              p95Ms: 0,
-              tokensPerCall: 0,
-              rating: 0,
-              calls: 0,
-              status: 'baseline',
-              passedAt: new Date().toISOString(),
-              dataset: form.dataset,
-              judgeModel: form.judgeModel,
-            },
-            ...prev,
-          ]);
-          alert(`✓ 评测批次 ${form.name} 已创建，等待运行`);
-          setNewEvalOpen(false);
+          createEvaluationApi.mutate({ name: form.name, agentId: activeId ?? 'a1', agentName: active?.name ?? '待分配智能体', version: active?.version ?? '1.0.0', totalCases: form.totalCases, dataset: form.dataset, judgeModel: form.judgeModel, status: 'baseline' });
         }}
       />
 
@@ -607,10 +491,7 @@ export default function Agents() {
           <Button variant="ghost" onClick={() => setRunOpen(false)}>关闭</Button>
         </>
       }>
-        <RunAgentBody agent={agents.find((a) => a.id === activeId)} onComplete={(r) => {
-          setLiveCalls((prev) => [r, ...prev].slice(0, 24));
-          setAlerts((prev) => r.status === 'timeout' ? [{ id: `al_run_${Date.now().toString(36)}`, agent: r.agent, agentId: r.agentId, severity: 'warn', type: 'latency', title: `Agent 运行超时 ${r.latencyMs}ms`, ts: '刚刚', acknowledged: false }, ...prev] : prev);
-        }} />
+        <RunAgentBody agent={agents.find((a) => a.id === activeId)} onComplete={(r) => runAgentApi.mutate(r)} />
       </ModalX>
 
       <ModalX open={testOpen} onClose={() => setTestOpen(false)} title="Prompt 试运行" size="lg" footer={
@@ -628,7 +509,7 @@ export default function Agents() {
       <ModalX open={toolCfg.open} onClose={() => setToolCfg({ open: false, toolKey: null })} title={`工具配置 · ${toolCfg.toolKey ?? ''}`} size="sm" footer={
         <>
           <Button variant="ghost" onClick={() => setToolCfg({ open: false, toolKey: null })}>取消</Button>
-          <Button onClick={() => { alert('✓ 工具配置已保存'); setToolCfg({ open: false, toolKey: null }); }}>保存</Button>
+          <Button loading={saveAgentConfigApi.isPending} onClick={() => saveAgentConfigApi.mutate({ toolKey: toolCfg.toolKey, enabled: true, permission: 'approval' })}>保存</Button>
         </>
       }>
         <ToolConfigBody />
@@ -638,6 +519,9 @@ export default function Agents() {
         <Button onClick={() => setAbReportOpen(false)}>关闭</Button>
       }>
         <ABReportBody agent={agents.find((a) => a.id === activeId)} />
+      </ModalX>
+      <ModalX open={publishConfirmOpen} onClose={() => setPublishConfirmOpen(false)} title="申请发布" size="sm" footer={<><Button variant="ghost" onClick={() => setPublishConfirmOpen(false)}>取消</Button><Button loading={lifecycleApi.isPending} onClick={() => { if (active) lifecycleApi.mutate({ id: active.id, action: 'publish' }); setPublishConfirmOpen(false); }}>提交申请</Button></>}>
+        <div className="space-y-3 text-sm"><div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4"><div className="font-medium">确认申请发布「{active?.name ?? ''}」？</div><p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">申请将携带当前版本、评测结论和权限配置，提交后由发布流程继续处理。</p></div><div className="grid grid-cols-2 gap-2 text-xs"><div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3"><span className="text-[var(--text-muted)]">当前版本</span><div className="mt-1 font-mono font-medium">v{active?.version ?? '—'}</div></div><div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3"><span className="text-[var(--text-muted)]">评测状态</span><div className="mt-1 font-medium">{(active as any)?.evaluationStatus === 'passed' ? '已通过' : '待复核'}</div></div></div></div>
       </ModalX>
     </div>
   );
@@ -680,7 +564,7 @@ function AgentGridView({ agents, onSelect, activeId, agentSubTab }: {
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
             {items.map((a) => (
-              <AgentCard key={a.id} agent={a} active={a.id === activeId} onClick={() => onSelect(a.id)} />
+              <AgentCard key={a.id} agent={a} active={a.id === activeId} onClick={() => onSelect(a.id)} market={agentSubTab === 'store'} />
             ))}
           </div>
         </div>
@@ -689,72 +573,115 @@ function AgentGridView({ agents, onSelect, activeId, agentSubTab }: {
   );
 }
 
-function AgentCard({ agent, active, onClick }: { agent: AgentFull; active: boolean; onClick: () => void }) {
+function AgentMarketView({ agents, imports, onReview, onSelect, activeId }: { agents: AgentFull[]; imports: AgentImportRecord[]; onReview: (id: string, action: 'approve' | 'reject') => void; onSelect: (id: string) => void; activeId: string | null }) {
+  const [query, setQuery] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('全部来源');
+  const [section, setSection] = useState<'discover' | 'review' | 'audit'>('discover');
+  const approved = agents.filter((agent) => agent.status === 'available').length;
+  const beta = agents.filter((agent) => agent.status === 'beta').length;
+  const visibleAgents = agents.filter((agent) => {
+    const matchesQuery = !query || `${agent.name} ${agent.description} ${agent.tools.join(' ')}`.toLowerCase().includes(query.toLowerCase());
+    const source = agent.status === 'beta' ? '灰度资产' : '官方资产';
+    return matchesQuery && (sourceFilter === '全部来源' || source === sourceFilter);
+  });
+  return (
+    <div className="space-y-4 bg-[var(--bg-elevated)]/30 p-5 pb-10">
+      <div className="flex items-center gap-1 border-b border-[var(--border)]"><button onClick={() => setSection('discover')} className={cn('border-b-2 px-3 py-2 text-sm', section === 'discover' ? 'border-[var(--brand)] font-semibold text-[var(--brand)]' : 'border-transparent text-[var(--text-muted)]')}>市场发现</button><button onClick={() => setSection('review')} className={cn('border-b-2 px-3 py-2 text-sm', section === 'review' ? 'border-[var(--brand)] font-semibold text-[var(--brand)]' : 'border-transparent text-[var(--text-muted)]')}>待审核 {imports.filter((item) => item.status === 'pending_review').length > 0 && <span className="ml-1 rounded-full bg-[var(--warning-bg)] px-1.5 py-0.5 text-[10px] text-[var(--warning)]">{imports.filter((item) => item.status === 'pending_review').length}</span>}</button><button onClick={() => setSection('audit')} className={cn('border-b-2 px-3 py-2 text-sm', section === 'audit' ? 'border-[var(--brand)] font-semibold text-[var(--brand)]' : 'border-transparent text-[var(--text-muted)]')}>导入审计</button></div>
+      {section === 'review' ? <ImportReviewView imports={imports} onReview={onReview} /> : section === 'audit' ? <ImportAuditView imports={imports} /> : <>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-5 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-2xl">
+            <div className="flex items-center gap-2 text-base font-semibold text-[var(--text)]"><Download className="h-4 w-4 text-[var(--brand)]" />企业智能体市场</div>
+            <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">浏览已完成基础安全检查和能力说明的智能体。安装前可查看版本、依赖、风险等级与服务指标。</p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 text-center">
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-4 py-2.5"><div className="text-lg font-mono font-semibold text-[var(--brand)]">{approved}</div><div className="text-[11px] text-[var(--text-muted)]">可纳管</div></div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-4 py-2.5"><div className="text-lg font-mono font-semibold text-[var(--warning)]">{beta}</div><div className="text-[11px] text-[var(--text-muted)]">灰度中</div></div>
+          </div>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]"><span className="rounded-md bg-[var(--surface-1)] px-2.5 py-1.5">✓ 版本可追溯</span><span className="rounded-md bg-[var(--surface-1)] px-2.5 py-1.5">✓ 风险等级已标注</span><span className="rounded-md bg-[var(--surface-1)] px-2.5 py-1.5">✓ 安装后纳入治理</span></div>
+      </div>
+      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3">
+        <div className="relative min-w-[220px] flex-1"><Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索市场智能体" className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] pl-8 pr-3 text-sm outline-none focus:border-[var(--brand)]" /></div>
+        <div className="flex items-center gap-1.5 text-xs"><span className="font-semibold text-[var(--text-secondary)]">来源</span>{['全部来源', '官方资产', '灰度资产'].map((source) => <button key={source} onClick={() => setSourceFilter(source)} className={cn('rounded-md border px-2.5 py-1.5', sourceFilter === source ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--text-muted)]')}>{source}</button>)}</div>
+        <span className="text-xs text-[var(--text-muted)]">{visibleAgents.length} 个可引入资产</span>
+      </div>
+      <AgentGridView agents={visibleAgents} onSelect={onSelect} activeId={activeId} agentSubTab="store" />
+      </>}
+    </div>
+  );
+}
+
+function ImportReviewView({ imports, onReview }: { imports: AgentImportRecord[]; onReview: (id: string, action: 'approve' | 'reject') => void }) {
+  const pending = imports.filter((item) => item.status === 'pending_review');
+  return <div className="space-y-3"><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="text-sm font-semibold">导入审核</div><p className="mt-1 text-xs text-[var(--text-muted)]">审核来源可信度、依赖映射和风险项后，才能进入安装流程。</p></div>{pending.length === 0 ? <EmptyState icon={ShieldCheck} title="暂无待审核智能体" description="新的导入资产会出现在这里" /> : pending.map((item) => <div key={item.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-sm font-semibold">{item.agentName}</div><div className="mt-1 text-xs text-[var(--text-muted)]">{item.source} · {new Date(item.submittedAt).toLocaleString('zh-CN')}</div></div><Badge tone="warn" className="text-[10px]">待审核</Badge></div><div className="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-4"><div><span className="text-[var(--text-muted)]">工具映射</span><div className="mt-1 font-semibold">{item.mapping?.tools?.length ?? 0} 项</div></div><div><span className="text-[var(--text-muted)]">MCP 映射</span><div className="mt-1 font-semibold">{item.mapping?.mcp?.length ?? 0} 项</div></div><div><span className="text-[var(--text-muted)]">风险项</span><div className="mt-1 font-semibold text-[var(--warning)]">{item.risks?.length ?? 0} 项</div></div><div><span className="text-[var(--text-muted)]">提交人</span><div className="mt-1 font-semibold">{item.submittedBy}</div></div></div><div className="mt-3 flex justify-end gap-2"><Button size="sm" variant="secondary" onClick={() => onReview(item.id, 'reject')}>驳回</Button><Button size="sm" onClick={() => onReview(item.id, 'approve')}><CheckCircle2 className="h-3.5 w-3.5" />通过审核</Button></div></div>)}</div>;
+}
+
+function ImportAuditView({ imports }: { imports: AgentImportRecord[] }) {
+  return <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] overflow-hidden"><div className="border-b border-[var(--border)] px-4 py-3"><div className="text-sm font-semibold">导入审计记录</div><div className="mt-1 text-xs text-[var(--text-muted)]">记录来源、提交、审核和纳管动作</div></div>{imports.length === 0 ? <div className="p-8"><EmptyState icon={FileText} title="暂无导入记录" description="导入智能体后会自动生成审计记录" /></div> : <table className="w-full text-xs"><thead className="bg-[var(--bg-elevated)] text-[10px] text-[var(--text-muted)]"><tr><th className="p-3 text-left">智能体</th><th className="p-3 text-left">来源</th><th className="p-3 text-left">提交人</th><th className="p-3 text-left">时间</th><th className="p-3 text-left">状态</th></tr></thead><tbody>{imports.map((item) => <tr key={item.id} className="border-t border-[var(--border)]"><td className="p-3 font-medium">{item.agentName}</td><td className="p-3 text-[var(--text-muted)]">{item.source}</td><td className="p-3">{item.submittedBy}</td><td className="p-3 font-mono text-[var(--text-muted)]">{new Date(item.submittedAt).toLocaleString('zh-CN')}</td><td className="p-3"><Badge tone={item.status === 'approved' ? 'success' : item.status === 'rejected' ? 'error' : 'warn'} className="text-[10px]">{item.status === 'approved' ? '已通过' : item.status === 'rejected' ? '已驳回' : '待审核'}</Badge></td></tr>)}</tbody></table>}</div>;
+}
+
+function AgentCard({ agent, active, onClick, market = false }: { agent: AgentFull; active: boolean; onClick: () => void; market?: boolean }) {
   const isInstalled = agent.status === 'installed';
-  const isHot = (agent.todayCalls ?? 0) > 100;
   return (
     <button
       onClick={onClick}
       className={cn(
-        'group relative flex flex-col gap-2 rounded-lg border bg-[var(--surface-1)] p-3 text-left transition-all hover:border-[var(--brand)] hover:shadow-md',
-        active ? 'border-[var(--brand)] ring-1 ring-[var(--brand)]/30' : 'border-[var(--border)]',
+        'group relative flex min-h-[252px] flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_8px_24px_rgba(15,23,42,0.08)]',
+        active ? 'border-[var(--text-muted)]' : '',
       )}
     >
       {/* 头部：图标 + 状态徽标 */}
       <div className="flex items-start gap-2">
-        <div className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-md', agent.category === 'AIOps' ? 'bg-[var(--brand-light)] text-[var(--brand)]' : 'bg-[var(--warning-bg)] text-[var(--warning)]')}>
-          <Bot className="h-4.5 w-4.5" />
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--brand)]">
+          <Bot className="h-[18px] w-[18px]" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-1">
-            <span className="font-semibold text-sm truncate">{agent.name}</span>
-            {isHot && <span className="grid h-3.5 w-3.5 place-items-center rounded-full bg-[var(--danger)] text-white text-[8px]" title="高频">🔥</span>}
+          <div className="flex items-center gap-1.5">
+            <span className="font-semibold text-base truncate text-[var(--text)]">{agent.name}</span>
           </div>
-          <div className="text-[10px] text-[var(--text-muted)] font-mono truncate">v{agent.version} · {(agent as any).riskLevel ?? 'L1'}</div>
+          <div className="mt-1 flex items-center gap-1.5 text-xs text-[var(--text-muted)] truncate">
+            <span className="font-mono">v{agent.version}</span><span>·</span><span>风险 {(agent as any).riskLevel ?? 'L1'}</span>
+          </div>
         </div>
-        <div className="shrink-0 flex items-center gap-0.5 text-[var(--text-muted)]">
-          <Star className="h-3 w-3 fill-current text-amber-500" />
-          <span className="text-[10px] font-mono font-semibold text-[var(--text)]">{agent.rating}</span>
+        <div className="shrink-0">
+          {isInstalled ? <Badge tone="success" className="text-[10px]">已启用</Badge> : <Badge tone={agent.status === 'deprecated' ? 'error' : 'neutral'} className="text-[10px]">{agent.status === 'beta' ? '测试中' : agent.status === 'deprecated' ? '已弃用' : market ? '可安装' : '待配置'}</Badge>}
         </div>
       </div>
 
       {/* 描述 */}
-      <div className="text-[11px] text-[var(--text-muted)] line-clamp-2 leading-relaxed min-h-[2.4em]">{agent.description}</div>
+      <div className="text-[13px] text-[var(--text-secondary)] line-clamp-2 leading-relaxed min-h-[2.6em]">{agent.description}</div>
 
       {/* 能力栈 chip */}
-      <div className="flex flex-wrap gap-0.5">
+      <div className="flex min-h-[25px] flex-wrap gap-1">
         {agent.tools.slice(0, 4).map((t) => (
-          <span key={t} className="rounded bg-[var(--surface-3)] px-1.5 py-0.5 text-[9px] text-[var(--text-muted)] font-mono">{t}</span>
+          <span key={t} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-[11px] text-[var(--text-secondary)]">{t}</span>
         ))}
-        {agent.tools.length > 4 && <span className="text-[9px] text-[var(--text-muted)]">+{agent.tools.length - 4}</span>}
+        {agent.tools.length > 4 && <span className="self-center text-[11px] text-[var(--text-muted)]">+{agent.tools.length - 4}</span>}
       </div>
 
       {/* 指标：调用 / 缓存 / P95 */}
-      <div className="grid grid-cols-3 gap-1.5 text-[10px]">
-        <div className="rounded bg-[var(--bg-elevated)] px-1.5 py-1 text-center">
-          <div className="text-[var(--text-muted)]">调用</div>
-          <div className="font-mono font-semibold text-[var(--text)]">{(agent.installCount / 1000).toFixed(1)}k</div>
+      <div className="grid grid-cols-3 gap-2 border-y border-[var(--border)] py-2.5 text-xs">
+        <div className="text-center">
+          <div className="text-[var(--text-muted)]">调用量</div>
+          <div className="mt-0.5 text-sm font-mono font-semibold text-[var(--text)]">{(agent.installCount / 1000).toFixed(1)}k</div>
         </div>
-        <div className="rounded bg-[var(--bg-elevated)] px-1.5 py-1 text-center">
+        <div className="border-x border-[var(--border)] text-center">
           <div className="text-[var(--text-muted)]">缓存</div>
-          <div className="font-mono font-semibold text-[var(--success)]">{(agent as any).cacheHitRate ?? 32}%</div>
+          <div className="mt-0.5 text-sm font-mono font-semibold text-[var(--success)]">{(agent as any).cacheHitRate ?? 32}%</div>
         </div>
-        <div className="rounded bg-[var(--bg-elevated)] px-1.5 py-1 text-center">
+        <div className="text-center">
           <div className="text-[var(--text-muted)]">P95</div>
-          <div className="font-mono font-semibold text-[var(--text)]">{agent.p95Ms}ms</div>
+          <div className="mt-0.5 text-sm font-mono font-semibold text-[var(--text)]">{agent.p95Ms}ms</div>
         </div>
       </div>
 
       {/* 状态 + 风险 */}
-      <div className="flex items-center justify-between text-[10px]">
-        {isInstalled ? (
-          <Badge tone="success" className="text-[9px]"><CheckCircle2 className="mr-0.5 h-2.5 w-2.5" />已启用</Badge>
-        ) : (
-          <Badge tone="neutral" className="text-[9px]"><Download className="mr-0.5 h-2.5 w-2.5" />可安装</Badge>
-        )}
-        {(agent as any).sla && (
-          <span className="font-mono text-[var(--text-muted)]">SLA {(agent as any).sla}%</span>
-        )}
+      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-[var(--text-muted)]">
+        <span className="truncate">负责人：<span className="text-[var(--text-secondary)]">{(agent as any).owner ?? '未分配'}</span></span>
+        <span className="truncate text-right">工作区：<span className="text-[var(--text-secondary)]">{(agent as any).workspace ?? '未指定'}</span></span>
+        <span className="truncate">最近运行：<span className="text-[var(--text-secondary)]">{(agent as any).lastRunAt ?? '—'}</span></span>
+        <span className="truncate text-right">质量：<span className="inline-flex items-center gap-0.5 text-amber-500"><Star className="h-3 w-3 fill-current" />{agent.rating}</span></span>
       </div>
     </button>
   );
@@ -762,31 +689,67 @@ function AgentCard({ agent, active, onClick }: { agent: AgentFull; active: boole
 
 /* ==================== 评测视图 ==================== */
 
-function EvaluateView({ agents, active, compare }: { agents: AgentFull[]; active: AgentFull | undefined; compare: AgentFull | undefined }) {
+function EvaluateView({ agents, active, compare, evaluations }: { agents: AgentFull[]; active: AgentFull | undefined; compare: AgentFull | undefined; evaluations: EvalRow[] }) {
   const [localNewEvalOpen, setLocalNewEvalOpen] = useState(false);
+  const [releaseNotice, setReleaseNotice] = useState<string | null>(null);
+  const [selectedEvaluation, setSelectedEvaluation] = useState<EvalRow | null>(null);
+  const [qualityAction, setQualityAction] = useState<'review' | 'release' | null>(null);
+  const [evalFilter, setEvalFilter] = useState<'all' | 'champion' | 'review'>('all');
+  const [showAllEvaluations, setShowAllEvaluations] = useState(false);
+  const completed = evaluations.filter((e) => e.status === 'champion').length;
+  const pendingReview = evaluations.filter((e) => e.status !== 'champion').length;
+  const visibleEvaluations = evaluations.filter((evaluation) => evalFilter === 'all' || (evalFilter === 'champion' ? evaluation.status === 'champion' : evaluation.status !== 'champion')).slice(0, showAllEvaluations ? evaluations.length : 6);
   const submitEval = (form: { name: string; dataset: string; judgeModel: string; totalCases: number }) => {
-    alert(`✓ 评测批次 ${form.name} 已创建（${form.totalCases} 用例 · ${form.judgeModel}）`);
+    setReleaseNotice(`评测批次「${form.name}」已创建，正在等待数据准备（${form.totalCases} 用例 · ${form.judgeModel}）`);
     setLocalNewEvalOpen(false);
   };
   return (
     <div className="h-full overflow-y-auto p-5 space-y-4 bg-[var(--bg-elevated)]/30">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <EvalCard title="进行中评测" value="3" sub="批次" icon={FlaskConical} tone="info" />
-        <EvalCard title="平均准确率" value="92.4%" sub="↑ 1.2%" icon={CheckCircle2} tone="success" />
-        <EvalCard title="用户满意度" value="4.6" sub="★ / 5" icon={Star} tone="warn" />
+        <EvalCard title="质量门禁通过" value={completed} sub="批次" icon={CheckCircle2} tone="success" />
+        <EvalCard title="平均准确率" value="92.4%" sub="↑ 1.2%" icon={BarChart3} tone="success" />
+        <EvalCard title="待复核批次" value={pendingReview} sub="个" icon={FileCheck} tone="warn" />
       </div>
 
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-2.5">
-          <div className="text-xs font-semibold flex items-center gap-1.5"><GitCompare className="h-3.5 w-3.5 text-[var(--brand)]" />多模型对比 · A/B Test</div>
-          <Button size="sm" onClick={() => setLocalNewEvalOpen(true)}>
-            <Play className="h-3.5 w-3.5" />启动新评测
-          </Button>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-5 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-[15px] font-semibold"><ShieldCheck className="h-4 w-4 text-[var(--brand)]" />质量门禁</div>
+            <p className="mt-1 text-[13px] text-[var(--text-muted)]">统一校验准确率、延迟、风险策略与评测结论，判断智能体是否达标</p>
+          </div>
+          <Badge tone="warn" className="text-[10px]">{pendingReview} 个批次待复核</Badge>
         </div>
-        <table className="w-full text-xs">
-          <thead className="bg-[var(--bg-elevated)] text-[10px] uppercase tracking-wider text-[var(--text-muted)]">
+        <div className="mt-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+          {[
+            { label: '准确率 ≥ 90%', value: '通过', tone: 'success' as const, icon: CheckCircle2 },
+            { label: 'P95 ≤ 800ms', value: '通过', tone: 'success' as const, icon: Gauge },
+            { label: '风险策略校验', value: '需复核', tone: 'warn' as const, icon: AlertTriangle },
+            { label: '审批记录', value: '待补充', tone: 'warn' as const, icon: FileText },
+          ].map((gate) => (
+            <div key={gate.label} className={cn('min-h-[92px] rounded-xl border p-4 transition-colors', gate.tone === 'success' ? 'border-[var(--border)] bg-[var(--bg-elevated)] hover:border-[var(--success)]/40' : 'border-[var(--warning)]/25 bg-[var(--warning-bg)]/35 hover:border-[var(--warning)]/45')}>
+              <div className="flex items-center justify-between gap-2"><div className="text-[13px] font-medium text-[var(--text-secondary)]">{gate.label}</div><gate.icon className={cn('h-4 w-4', gate.tone === 'success' ? 'text-[var(--success)]' : 'text-[var(--warning)]')} /></div>
+              <div className={cn('mt-2 text-lg font-semibold', gate.tone === 'success' ? 'text-[var(--success)]' : 'text-[var(--warning)]')}>{gate.value}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={() => setQualityAction('review')}><ShieldCheck className="h-3.5 w-3.5" />提交质量复核</Button>
+          <Button size="sm" variant="secondary" onClick={() => setQualityAction('release')}><FileText className="h-3.5 w-3.5" />生成发布申请材料</Button>
+          {releaseNotice && <span className="text-[13px] text-[var(--brand)]">{releaseNotice}</span>}
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_2px_10px_rgba(15,23,42,0.04)] overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
+          <div><div className="text-sm font-semibold flex items-center gap-1.5"><GitCompare className="h-3.5 w-3.5 text-[var(--brand)]" />多模型对比 · A/B Test</div><div className="mt-1 text-xs text-[var(--text-muted)]">对比不同模型版本的质量、延迟与调用表现</div></div>
+          <div className="flex items-center gap-2"><Badge tone="success" className="text-[10px]">{completed} 个质量领先</Badge><span className="text-xs text-[var(--text-muted)]">共 {evaluations.length} 个评测批次</span></div>
+        </div>
+        <div className="flex items-center gap-2 border-b border-[var(--border)] px-5 py-3"><span className="text-xs font-medium text-[var(--text-secondary)]">批次筛选</span>{[{ key: 'all', label: '全部' }, { key: 'champion', label: '质量领先' }, { key: 'review', label: '待复核' }].map((filter) => <button key={filter.key} onClick={() => { setEvalFilter(filter.key as typeof evalFilter); setShowAllEvaluations(false); }} className={cn('rounded-md border px-2.5 py-1.5 text-xs', evalFilter === filter.key ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--text-muted)]')}>{filter.label}</button>)}</div>
+        <div className="overflow-x-auto px-3 pb-3"><table className="w-full min-w-[920px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] text-[13px]">
+          <thead className="bg-[var(--bg-elevated)] text-[11px] tracking-wide text-[var(--text-muted)]">
             <tr>
-              <th className="text-left p-2">Agent</th>
+              <th className="text-left p-2">智能体 / 评测批次</th>
               <th className="text-left p-2">版本</th>
               <th className="text-right p-2">准确率</th>
               <th className="text-right p-2">召回率</th>
@@ -794,77 +757,124 @@ function EvaluateView({ agents, active, compare }: { agents: AgentFull[]; active
               <th className="text-right p-2">Token / 次</th>
               <th className="text-right p-2">用户评分</th>
               <th className="text-right p-2">调用</th>
-              <th className="text-left p-2">状态</th>
+              <th className="text-left p-2">质量结论</th>
+              <th className="text-right p-2">操作</th>
             </tr>
           </thead>
           <tbody>
-            {INITIAL_EVALUATIONS.slice(0, 6).map((a, i) => {
+            {visibleEvaluations.map((a) => {
               const accuracy = a.accuracy;
               const recall = a.recall;
               const tokens = a.tokensPerCall;
               const statusLabel = a.status === 'champion' ? '冠军' : a.status === 'control' ? '对照' : '基线';
               const statusTone = a.status === 'champion' ? 'success' : a.status === 'control' ? 'info' : 'neutral';
               return (
-                <tr key={a.id} className="border-b border-[var(--border)] hover:bg-[var(--bg-hover)]">
-                  <td className="p-2"><div className="flex items-center gap-1.5"><Bot className="h-3.5 w-3.5 text-[var(--brand)]" /><span className="font-semibold">{a.agentName}</span></div></td>
-                  <td className="p-2 font-mono text-[var(--text-muted)]">v{a.version}</td>
-                  <td className="p-2 text-right font-mono text-[var(--success)]">{accuracy}%</td>
-                  <td className="p-2 text-right font-mono">{recall}%</td>
-                  <td className="p-2 text-right font-mono">{a.p95Ms}ms</td>
-                  <td className="p-2 text-right font-mono">{tokens}</td>
-                  <td className="p-2 text-right"><span className="inline-flex items-center gap-0.5 text-amber-500"><Star className="h-3 w-3 fill-current" />{a.rating}</span></td>
-                  <td className="p-2 text-right font-mono">{a.calls.toLocaleString()}</td>
-                  <td className="p-2"><Badge tone={statusTone as any} className="text-[9px]">{statusLabel}</Badge></td>
+                <tr key={a.id} className="border-b border-[var(--border)] transition-colors hover:bg-[var(--bg-hover)]">
+                  <td className="p-3"><div className="flex items-center gap-2"><Bot className="h-3.5 w-3.5 text-[var(--brand)]" /><span className="font-semibold">{a.agentName}</span></div></td>
+                  <td className="p-3 font-mono text-[var(--text-muted)]">v{a.version}</td>
+                  <td className="p-3 text-right font-mono text-[var(--success)]">{accuracy}%</td>
+                  <td className="p-3 text-right font-mono">{recall}%</td>
+                  <td className="p-3 text-right font-mono">{a.p95Ms}ms</td>
+                  <td className="p-3 text-right font-mono">{tokens}</td>
+                  <td className="p-3 text-right"><span className="inline-flex items-center gap-1 text-amber-500"><Star className="h-3.5 w-3.5 fill-current" />{a.rating}</span></td>
+                  <td className="p-3 text-right font-mono">{a.calls.toLocaleString()}</td>
+                  <td className="p-3"><Badge tone={statusTone as any} className="text-[10px]">{statusLabel}</Badge></td>
+                  <td className="p-3 text-right"><button onClick={() => setSelectedEvaluation(a)} className="rounded-md px-2 py-1 text-xs text-[var(--brand)] hover:bg-[var(--brand-light)]">查看报告</button></td>
                 </tr>
               );
             })}
           </tbody>
-        </table>
+        </table></div>
+        <div className="flex items-center justify-between border-t border-[var(--border)] px-5 py-3 text-xs text-[var(--text-muted)]"><span>显示 {visibleEvaluations.length ? 1 : 0}-{visibleEvaluations.length} / 共 {evaluations.length} 个评测批次</span><button onClick={() => setShowAllEvaluations((value) => !value)} className="text-[var(--brand)] hover:underline">{showAllEvaluations ? '收起列表' : '查看全部评测'}</button></div>
       </div>
 
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4">
-        <div className="flex items-center justify-between mb-3">
-          <div className="text-xs font-semibold flex items-center gap-1.5"><BarChart3 className="h-3.5 w-3.5 text-[var(--brand)]" />评分趋势（30 天）</div>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+          <div><div className="text-sm font-semibold flex items-center gap-1.5"><BarChart3 className="h-3.5 w-3.5 text-[var(--brand)]" />评分趋势</div><div className="mt-1 text-xs text-[var(--text-muted)]">对比版本在最近 30 天的质量评分变化</div></div>
+          <Badge tone="info" className="text-[10px]">最近 30 天</Badge>
         </div>
-        <ResponsiveContainer width="100%" height={180}>
+        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)]/45 p-3">
+        <ResponsiveContainer width="100%" height={210}>
           <LineChart data={INITIAL_TREND_DATA}>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="day" tick={{ fontSize: 9, fill: 'var(--text-muted)' }} interval={4} />
-            <YAxis tick={{ fontSize: 9, fill: 'var(--text-muted)' }} domain={[3, 5]} />
-            <Tooltip contentStyle={{ fontSize: 10, background: 'var(--surface-1)', border: '1px solid var(--border)' }} />
-            <Legend wrapperStyle={{ fontSize: 10 }} />
+            <XAxis dataKey="day" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} interval={4} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} domain={[3, 5]} axisLine={false} tickLine={false} />
+            <Tooltip contentStyle={{ fontSize: 12, background: 'var(--surface-1)', border: '1px solid var(--border)', borderRadius: 8, boxShadow: '0 4px 12px rgba(15,23,42,0.08)' }} />
+            <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} />
             <Line type="monotone" dataKey="a" name="故障自愈 v1.4.2" stroke="var(--brand)" strokeWidth={2} dot={false} />
             <Line type="monotone" dataKey="b" name="故障自愈 v1.4.1" stroke="var(--text-muted)" strokeWidth={1.5} dot={false} strokeDasharray="4 4" />
           </LineChart>
         </ResponsiveContainer>
+        </div>
       </div>
 
       <NewEvalModal open={localNewEvalOpen} onClose={() => setLocalNewEvalOpen(false)} onSubmit={submitEval} />
+      <ModalX open={!!selectedEvaluation} onClose={() => setSelectedEvaluation(null)} title="评测报告" size="md" footer={<Button onClick={() => setSelectedEvaluation(null)}>关闭</Button>}>
+        {selectedEvaluation && <div className="space-y-4"><div className="flex items-start justify-between rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4"><div><div className="text-[15px] font-semibold">{selectedEvaluation.agentName}</div><div className="mt-1 text-xs text-[var(--text-muted)]">{selectedEvaluation.name} · v{selectedEvaluation.version}</div></div><Badge tone={selectedEvaluation.status === 'champion' ? 'success' : 'warn'} className="text-[10px]">{selectedEvaluation.status === 'champion' ? '质量领先' : '待复核'}</Badge></div><div className="grid grid-cols-2 gap-3"><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">准确率</div><div className="mt-1 text-xl font-mono font-semibold text-[var(--success)]">{selectedEvaluation.accuracy}%</div></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">召回率</div><div className="mt-1 text-xl font-mono font-semibold">{selectedEvaluation.recall}%</div></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">P95 延迟</div><div className="mt-1 text-xl font-mono font-semibold">{selectedEvaluation.p95Ms}ms</div></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">测试用例</div><div className="mt-1 text-xl font-mono font-semibold">{selectedEvaluation.totalCases}</div></div></div><div className="rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5 text-xs text-[var(--text-muted)]">数据集：{selectedEvaluation.dataset} · 评测模型：{selectedEvaluation.judgeModel} · 完成时间：{selectedEvaluation.passedAt}</div></div>}
+      </ModalX>
+      <ModalX open={!!qualityAction} onClose={() => setQualityAction(null)} title={qualityAction === 'review' ? '提交质量复核' : '生成发布申请材料'} size="sm" footer={<><Button variant="ghost" onClick={() => setQualityAction(null)}>取消</Button><Button onClick={() => { setQualityAction(null); setReleaseNotice(qualityAction === 'review' ? '质量复核已提交，等待审核人处理' : '发布申请材料已生成，请在我的智能体详情中提交'); }}>确认</Button></>}>
+        <div className="space-y-3 text-sm"><div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4"><div className="font-medium">{qualityAction === 'review' ? '确认提交当前质量门禁结果？' : '确认生成发布申请材料？'}</div><div className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">{qualityAction === 'review' ? '提交后将由审核人复核风险策略、评测结论和审批记录。' : '材料将包含最新评测报告、版本信息和风险检查结果。'}</div></div></div>
+      </ModalX>
     </div>
   );
 }
 
 /* ==================== 监控视图 ==================== */
 
-function MonitorView({ agents }: { agents: AgentFull[] }) {
+function MonitorView({ agents, alerts, liveCalls }: { agents: AgentFull[]; alerts: AlertRow[]; liveCalls: LiveCallRow[] }) {
   const liveData = useMemo(() => TREND_FULL.map((d) => ({ ...d, t: `${d.t}` })), []);
   const totalCalls = liveData.reduce((s, d) => s + d.calls, 0);
   const avgLatency = Math.round(liveData.reduce((s, d) => s + d.latency, 0) / liveData.length);
   const errorRate = (liveData.reduce((s, d) => s + d.errors, 0) / totalCalls * 100).toFixed(2);
 
   // 告警列表 state（纯前端交互）
-  const [alertList, setAlertList] = useState<typeof INITIAL_ALERTS>(INITIAL_ALERTS);
+  const [alertList, setAlertList] = useState<AlertRow[]>(alerts);
+  const [alertPage, setAlertPage] = useState(1);
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditFilter, setAuditFilter] = useState<'all' | 'error'>('all');
+  const [selectedAlert, setSelectedAlert] = useState<AlertRow | null>(null);
+  const [selectedCall, setSelectedCall] = useState<LiveCallRow | null>(null);
+  const [selectedPolicy, setSelectedPolicy] = useState<{ name: string; desc: string; status: string; tone: 'success' | 'warn' } | null>(null);
+  const [exportNotice, setExportNotice] = useState(false);
+  useEffect(() => setAlertList(alerts), [alerts]);
   const ackAlert = (id: string) => setAlertList((prev) => prev.map((a) => a.id === id ? { ...a, acknowledged: true } : a));
+  const openAlerts = alertList.filter((alert) => !alert.acknowledged).length;
+  const activeAgents = agents.filter((a) => a.status === 'installed').length;
+  const failedCalls = liveCalls.filter((call) => call.status !== 'ok').length;
+  const pageSize = 5;
+  const alertTotalPages = Math.max(1, Math.ceil(alertList.length / pageSize));
+  const visibleAlerts = alertList.slice((alertPage - 1) * pageSize, alertPage * pageSize);
+  const filteredAudit = liveCalls.filter((call) => auditFilter === 'all' || call.status !== 'ok');
+  const auditTotalPages = Math.max(1, Math.ceil(filteredAudit.length / pageSize));
+  const visibleAudit = filteredAudit.slice((auditPage - 1) * pageSize, auditPage * pageSize);
+  useEffect(() => { if (alertPage > alertTotalPages) setAlertPage(alertTotalPages); }, [alertPage, alertTotalPages]);
+  useEffect(() => { if (auditPage > auditTotalPages) setAuditPage(auditTotalPages); }, [auditPage, auditTotalPages]);
   return (
     <div className="h-full overflow-y-auto p-5 space-y-4 bg-[var(--bg-elevated)]/30">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <KpiCard label="实时调用" value={totalCalls.toFixed(0)} sub="次/小时" tone="brand" icon={Zap} />
-        <KpiCard label="平均延迟" value={avgLatency} sub="ms" tone="info" icon={Clock} />
-        <KpiCard label="错误率" value={errorRate} sub="%" tone="error" icon={AlertOctagon} />
-        <KpiCard label="Token 消耗" value={(totalCalls * 480 / 1000).toFixed(1)} sub="K" tone="warn" icon={Hash} />
+        <KpiCard label="实时调用" value={totalCalls.toFixed(0)} sub="次/小时" tone="brand" icon={Zap} size="comfortable" />
+        <KpiCard label="平均延迟" value={avgLatency} sub="ms" tone="info" icon={Clock} size="comfortable" />
+        <KpiCard label="错误率" value={errorRate} sub="%" tone="error" icon={AlertOctagon} size="comfortable" />
+        <KpiCard label="Token 消耗" value={(totalCalls * 480 / 1000).toFixed(1)} sub="K" tone="warn" icon={Hash} size="comfortable" />
       </div>
 
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-5 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold"><ShieldCheck className="h-4 w-4 text-[var(--brand)]" />治理健康度</div>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">面向生产运营的智能体运行状态与治理待办</p>
+          </div>
+          <Badge tone={openAlerts > 0 ? 'warn' : 'success'} className="text-[10px]">{openAlerts > 0 ? '需要关注' : '运行正常'}</Badge>
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <div className="min-h-[108px] rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4 transition-colors hover:border-[var(--success)]/40"><div className="flex items-center justify-between"><div className="text-[13px] font-medium text-[var(--text-secondary)]">生产中智能体</div><Activity className="h-4 w-4 text-[var(--success)]" /></div><div className="mt-2 text-2xl font-mono font-semibold text-[var(--success)]">{activeAgents}<span className="ml-1 text-xs font-normal text-[var(--text-muted)]">个</span></div><div className="mt-1 text-[11px] text-[var(--text-muted)]">当前处于可调用状态</div></div>
+          <div className="min-h-[108px] rounded-xl border border-[var(--warning)]/25 bg-[var(--warning-bg)]/30 p-4 transition-colors hover:border-[var(--warning)]/45"><div className="flex items-center justify-between"><div className="text-[13px] font-medium text-[var(--text-secondary)]">未确认告警</div><AlertTriangle className="h-4 w-4 text-[var(--warning)]" /></div><div className="mt-2 text-2xl font-mono font-semibold text-[var(--warning)]">{openAlerts}<span className="ml-1 text-xs font-normal text-[var(--text-muted)]">项</span></div><div className="mt-1 text-[11px] text-[var(--text-muted)]">需要运营人员关注</div></div>
+          <div className="min-h-[108px] rounded-xl border border-[var(--danger)]/25 bg-[var(--danger-bg)]/30 p-4 transition-colors hover:border-[var(--danger)]/45"><div className="flex items-center justify-between"><div className="text-[13px] font-medium text-[var(--text-secondary)]">异常调用</div><AlertOctagon className="h-4 w-4 text-[var(--danger)]" /></div><div className="mt-2 text-2xl font-mono font-semibold text-[var(--danger)]">{failedCalls}<span className="ml-1 text-xs font-normal text-[var(--text-muted)]">次</span></div><div className="mt-1 text-[11px] text-[var(--text-muted)]">失败或超时调用</div></div>
+          <div className="min-h-[108px] rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4 transition-colors hover:border-[var(--text-muted)]"><div className="flex items-center justify-between"><div className="text-[13px] font-medium text-[var(--text-secondary)]">策略覆盖率</div><ShieldCheck className="h-4 w-4 text-[var(--brand)]" /></div><div className="mt-2 text-2xl font-mono font-semibold text-[var(--brand)]">96<span className="ml-1 text-xs font-normal text-[var(--text-muted)]">%</span></div><div className="mt-1 text-[11px] text-[var(--text-muted)]">已纳入治理策略</div></div>
+        </div>
+      </div>
+
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-5 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
         <div className="flex items-center justify-between mb-3">
           <div className="text-xs font-semibold flex items-center gap-1.5"><Activity className="h-3.5 w-3.5 text-[var(--brand)]" />实时调用 / 错误率（最近 60 分钟）</div>
           <Badge tone="success" className="text-[9px]"><span className="h-1.5 w-1.5 rounded-full bg-[var(--success)] animate-pulse mr-1" />LIVE</Badge>
@@ -891,70 +901,78 @@ function MonitorView({ agents }: { agents: AgentFull[] }) {
         </ResponsiveContainer>
       </div>
 
-      <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-5 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
         <div className="flex items-center justify-between mb-3">
-          <div className="text-xs font-semibold flex items-center gap-1.5">
+          <div className="text-sm font-semibold flex items-center gap-1.5">
             <AlertTriangle className="h-3.5 w-3.5 text-[var(--warning)]" />异常告警
-            <Badge tone="warn" className="text-[9px] ml-1">{alertList.filter((a) => !a.acknowledged).length}</Badge>
+            <Badge tone="warn" className="text-[10px] ml-1">{alertList.filter((a) => !a.acknowledged).length}</Badge>
           </div>
           <button
             onClick={() => setAlertList((prev) => prev.map((a) => ({ ...a, acknowledged: true })))}
             disabled={alertList.every((a) => a.acknowledged)}
-            className="text-[10px] text-[var(--brand)] hover:underline disabled:text-[var(--text-muted)] disabled:no-underline disabled:cursor-not-allowed"
+            className="text-xs text-[var(--brand)] hover:underline disabled:text-[var(--text-muted)] disabled:no-underline disabled:cursor-not-allowed"
           >
             全部 ACK
           </button>
         </div>
-        <div className="space-y-1.5">
-          {alertList.map((a) => (
-            <div key={a.id} className={cn(
-              'flex items-center gap-2 rounded border bg-[var(--bg-elevated)] px-2.5 py-1.5 text-[10px]',
-              a.acknowledged ? 'opacity-60 border-[var(--border)]' : 'border-[var(--warning)]/30',
-            )}>
-              <Badge tone={a.severity === 'error' ? 'error' : a.severity === 'warn' ? 'warn' : 'info'} className="text-[9px]">{a.ts}</Badge>
-              <Bot className="h-3 w-3 text-[var(--text-muted)]" />
-              <span className="flex-1 truncate">{a.agent} · {a.title}</span>
-              <button
-                onClick={() => ackAlert(a.id)}
-                disabled={a.acknowledged}
-                className={cn(
-                  'text-[10px] px-1.5 py-0.5 rounded',
-                  a.acknowledged
-                    ? 'text-[var(--text-muted)] cursor-not-allowed'
-                    : 'text-[var(--warning)] hover:bg-[var(--warning-bg)]',
-                )}
-              >
-                {a.acknowledged ? '已确认' : '确认'}
-              </button>
-            </div>
-          ))}
-        </div>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4">
-          <div className="text-xs font-semibold mb-3 flex items-center gap-1.5"><BarChart3 className="h-3.5 w-3.5 text-[var(--brand)]" />调用排行 Top 5</div>
-          <div className="space-y-1.5">
-            {agents.slice(0, 5).map((a, i) => (
-              <div key={a.id} className="flex items-center gap-2 text-[10px]">
-                <span className="font-mono text-[var(--text-muted)] w-4">{i + 1}</span>
-                <Bot className="h-3 w-3 text-[var(--brand)]" />
-                <span className="flex-1 truncate font-mono">{a.name}</span>
-                <div className="w-20 h-1.5 rounded-full bg-[var(--bg)] overflow-hidden">
-                  <div className="h-full bg-gradient-to-r from-[var(--brand)] to-[var(--purple)]" style={{ width: `${Math.max(20, 100 - i * 18)}%` }} />
+      <div className="space-y-2">
+          {visibleAlerts.map((a) => {
+            const SeverityIcon = a.severity === 'error' ? AlertOctagon : a.severity === 'warn' ? AlertTriangle : Activity;
+            const severityColor = a.severity === 'error' ? 'text-[var(--danger)]' : a.severity === 'warn' ? 'text-[var(--warning)]' : 'text-[var(--info)]';
+            return (
+              <div key={a.id} className={cn('flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] px-4 py-3 transition-colors hover:bg-[var(--bg-hover)]', a.acknowledged && 'opacity-60')}>
+                <div className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-[var(--surface-1)]', severityColor)}><SeverityIcon className="h-4 w-4" /></div>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-[13px] font-medium text-[var(--text)]">{a.title}</div>
+                  <div className="mt-1 flex items-center gap-2 text-xs text-[var(--text-muted)]"><span>{a.agent}</span><span>·</span><span className="font-mono">{a.ts}</span><Badge tone={a.severity === 'error' ? 'error' : a.severity === 'warn' ? 'warn' : 'info'} className="text-[10px]">{a.severity === 'error' ? '高风险' : a.severity === 'warn' ? '需关注' : '提示'}</Badge></div>
                 </div>
-                <span className="font-mono text-[var(--text-muted)] w-12 text-right">{a.installCount.toLocaleString()}</span>
+                <div className="flex shrink-0 items-center gap-1"><button onClick={() => setSelectedAlert(a)} className="rounded-md px-2 py-1.5 text-xs text-[var(--text-muted)] hover:bg-[var(--bg-hover)]">详情</button><button onClick={() => ackAlert(a.id)} disabled={a.acknowledged} className={cn('rounded-md px-2.5 py-1.5 text-xs transition-colors', a.acknowledged ? 'cursor-not-allowed text-[var(--text-muted)]' : 'text-[var(--brand)] hover:bg-[var(--brand-light)]')}>{a.acknowledged ? '已确认' : '确认告警'}</button></div>
               </div>
-            ))}
-          </div>
+            );
+          })}
+        </div>
+        <div className="mt-3 flex items-center justify-between border-t border-[var(--border)] pt-3 text-xs text-[var(--text-muted)]">
+          <span>{alertList.length ? `显示 ${(alertPage - 1) * pageSize + 1}-${Math.min(alertPage * pageSize, alertList.length)} / 共 ${alertList.length} 条` : '暂无告警'}</span>
+          <div className="flex items-center gap-1"><button onClick={() => setAlertPage((page) => Math.max(1, page - 1))} disabled={alertPage === 1} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] disabled:cursor-not-allowed disabled:opacity-40"><ChevronLeft className="h-3.5 w-3.5" /></button><span className="min-w-[52px] text-center font-mono">{alertPage} / {alertTotalPages}</span><button onClick={() => setAlertPage((page) => Math.min(alertTotalPages, page + 1))} disabled={alertPage === alertTotalPages} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] disabled:cursor-not-allowed disabled:opacity-40"><ChevronRight className="h-3.5 w-3.5" /></button></div>
         </div>
       </div>
+
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] overflow-hidden shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-4">
+          <div><div className="flex items-center gap-1.5 text-sm font-semibold"><FileText className="h-4 w-4 text-[var(--brand)]" />最近调用审计</div><div className="mt-1 text-xs text-[var(--text-muted)]">记录调用来源、执行结果与延迟，支持问题追溯</div></div>
+          <div className="flex items-center gap-2"><div className="flex rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-0.5"><button onClick={() => { setAuditFilter('all'); setAuditPage(1); }} className={cn('rounded px-2 py-1 text-xs', auditFilter === 'all' ? 'bg-[var(--surface-1)] font-medium text-[var(--text)] shadow-sm' : 'text-[var(--text-muted)]')}>全部</button><button onClick={() => { setAuditFilter('error'); setAuditPage(1); }} className={cn('rounded px-2 py-1 text-xs', auditFilter === 'error' ? 'bg-[var(--surface-1)] font-medium text-[var(--text)] shadow-sm' : 'text-[var(--text-muted)]')}>异常</button></div><button onClick={() => setExportNotice(true)} className="text-xs text-[var(--brand)] hover:underline">导出审计记录</button></div>
+        </div>
+        <div className="overflow-x-auto px-3 pb-3">
+          <table className="w-full min-w-[620px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] text-xs">
+            <thead className="bg-[var(--bg-elevated)] text-[11px] text-[var(--text-muted)]"><tr><th className="p-3 text-left font-medium">智能体</th><th className="p-3 text-left font-medium">时间</th><th className="p-3 text-left font-medium">来源</th><th className="p-3 text-right font-medium">延迟</th><th className="p-3 text-left font-medium">结果</th><th className="p-3 text-right font-medium">追溯</th></tr></thead>
+            <tbody>{visibleAudit.length ? visibleAudit.map((call) => <tr key={call.id} className="border-t border-[var(--border)] transition-colors hover:bg-[var(--bg-hover)]"><td className="p-3"><div className="font-medium">{call.agent}</div><div className="mt-0.5 text-[11px] text-[var(--text-muted)]">{call.id}</div></td><td className="p-3 font-mono text-[var(--text-muted)]">{call.ts}</td><td className="p-3 text-[var(--text-secondary)]"><span className="rounded bg-[var(--bg-elevated)] px-1.5 py-1 text-[11px]">{call.channel.toUpperCase()}</span></td><td className="p-3 text-right font-mono">{call.latencyMs ? `${call.latencyMs}ms` : '—'}</td><td className="p-3"><Badge tone={call.status === 'ok' ? 'success' : 'error'} className="text-[10px]">{call.status === 'ok' ? '成功' : call.status === 'timeout' ? '超时' : '失败'}</Badge></td><td className="p-3 text-right"><button onClick={() => setSelectedCall(call)} className="rounded-md px-2 py-1 text-xs text-[var(--brand)] hover:bg-[var(--brand-light)]">查看详情</button></td></tr>) : <tr><td colSpan={6} className="p-8 text-center text-xs text-[var(--text-muted)]">暂无符合条件的调用记录</td></tr>}</tbody>
+          </table>
+        </div>
+        <div className="flex items-center justify-between border-t border-[var(--border)] px-5 py-3 text-xs text-[var(--text-muted)]"><span>共 {filteredAudit.length} 条记录</span><div className="flex items-center gap-1"><button onClick={() => setAuditPage((page) => Math.max(1, page - 1))} disabled={auditPage === 1} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] disabled:cursor-not-allowed disabled:opacity-40"><ChevronLeft className="h-3.5 w-3.5" /></button><span className="min-w-[52px] text-center font-mono">{auditPage} / {auditTotalPages}</span><button onClick={() => setAuditPage((page) => Math.min(auditTotalPages, page + 1))} disabled={auditPage === auditTotalPages} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] disabled:cursor-not-allowed disabled:opacity-40"><ChevronRight className="h-3.5 w-3.5" /></button></div></div>
+      </div>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-5 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-1.5 text-sm font-semibold"><ShieldCheck className="h-4 w-4 text-[var(--brand)]" />治理策略</div><div className="mt-1 text-xs text-[var(--text-muted)]">控制工具调用、数据访问和高风险操作的生产策略</div></div><Badge tone="success" className="text-[10px]">覆盖率 96%</Badge></div>
+        <div className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-2">
+          {[{ name: '高风险操作双签', desc: '写入、变更和删除动作需双人审批', status: '已启用', tone: 'success' as const }, { name: '工具调用沙箱', desc: '生产工具调用统一运行在 gVisor 沙箱', status: '已启用', tone: 'success' as const }, { name: '敏感数据脱敏', desc: '输出内容自动过滤账号、密钥和个人信息', status: '需补充', tone: 'warn' as const }, { name: '成本预算控制', desc: '按工作区限制 Token 与调用预算', status: '已启用', tone: 'success' as const }].map((policy) => <button key={policy.name} onClick={() => setSelectedPolicy(policy)} className="flex w-full items-center gap-3 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-left transition-colors hover:bg-[var(--bg-hover)]"><div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-[var(--surface-1)]"><ShieldCheck className={cn('h-4 w-4', policy.tone === 'success' ? 'text-[var(--success)]' : 'text-[var(--warning)]')} /></div><div className="min-w-0 flex-1"><div className="text-[13px] font-medium">{policy.name}</div><div className="mt-0.5 truncate text-xs text-[var(--text-muted)]">{policy.desc}</div></div><Badge tone={policy.tone} className="shrink-0 text-[10px]">{policy.status}</Badge></button>)}
+        </div>
+      </div>
+      <ModalX open={!!selectedAlert} onClose={() => setSelectedAlert(null)} title="告警详情" size="sm" footer={<Button onClick={() => setSelectedAlert(null)}>关闭</Button>}>
+        {selectedAlert && <div className="space-y-3 text-sm"><div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3"><div className="font-medium">{selectedAlert.title}</div><div className="mt-1 text-xs text-[var(--text-muted)]">{selectedAlert.agent} · {selectedAlert.ts}</div></div><div className="grid grid-cols-2 gap-2 text-xs"><div><span className="text-[var(--text-muted)]">告警类型</span><div className="mt-1 font-medium">{selectedAlert.type}</div></div><div><span className="text-[var(--text-muted)]">处理状态</span><div className="mt-1 font-medium">{selectedAlert.acknowledged ? '已确认' : '待处理'}</div></div></div><p className="text-xs leading-relaxed text-[var(--text-secondary)]">建议检查对应智能体的运行指标和最近调用审计，并在确认影响范围后进行处置。</p></div>}
+      </ModalX>
+      <ModalX open={!!selectedCall} onClose={() => setSelectedCall(null)} title="调用审计详情" size="sm" footer={<Button onClick={() => setSelectedCall(null)}>关闭</Button>}>
+        {selectedCall && <div className="space-y-4 text-sm"><div className="flex items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--surface-1)] text-[var(--brand)]"><Activity className="h-5 w-5" /></div><div className="min-w-0 flex-1"><div className="text-[15px] font-semibold">{selectedCall.agent}</div><div className="mt-1 font-mono text-xs text-[var(--text-muted)]">{selectedCall.id} · {selectedCall.ts}</div></div><Badge tone={selectedCall.status === 'ok' ? 'success' : 'error'} className="text-[10px]">{selectedCall.status === 'ok' ? '成功' : selectedCall.status === 'timeout' ? '超时' : '失败'}</Badge></div><div className="grid grid-cols-2 gap-3"><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">调用延迟</div><div className="mt-1 text-lg font-mono font-semibold">{selectedCall.latencyMs ? `${selectedCall.latencyMs}ms` : '—'}</div></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">Token 消耗</div><div className="mt-1 text-lg font-mono font-semibold">{selectedCall.tokens.toLocaleString()}</div></div></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="mb-2 text-xs font-semibold text-[var(--text)]">调用上下文</div><div className="divide-y divide-[var(--border)]"><Row size="comfortable" label="调用来源" value={selectedCall.channel.toUpperCase()} /><Row size="comfortable" label="执行时间" value={selectedCall.ts} /><Row size="comfortable" label="结果状态" value={selectedCall.status === 'ok' ? '成功' : selectedCall.status === 'timeout' ? '超时' : '失败'} /><Row size="comfortable" label="审计标识" value={<span className="font-mono text-xs">{selectedCall.id}</span>} /></div></div><div className="rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5 text-xs leading-relaxed text-[var(--text-muted)]">该记录已纳入生产调用审计，可结合智能体、任务和告警记录进行问题追溯。</div></div>}
+      </ModalX>
+      <ModalX open={!!selectedPolicy} onClose={() => setSelectedPolicy(null)} title="治理策略详情" size="sm" footer={<Button onClick={() => setSelectedPolicy(null)}>关闭</Button>}>
+        {selectedPolicy && <div className="space-y-3 text-sm"><div className="flex items-center gap-2"><ShieldCheck className={cn('h-5 w-5', selectedPolicy.tone === 'success' ? 'text-[var(--success)]' : 'text-[var(--warning)]')} /><span className="font-semibold">{selectedPolicy.name}</span><Badge tone={selectedPolicy.tone} className="text-[10px]">{selectedPolicy.status}</Badge></div><p className="text-xs leading-relaxed text-[var(--text-secondary)]">{selectedPolicy.desc}</p><div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-xs text-[var(--text-muted)]">策略命中记录、适用工作区和负责人将在接入策略中心后展示。</div></div>}
+      </ModalX>
+      <ModalX open={exportNotice} onClose={() => setExportNotice(false)} title="导出审计记录" size="sm" footer={<Button onClick={() => setExportNotice(false)}>完成</Button>}><div className="space-y-3 text-sm"><div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3">已生成当前筛选条件下的审计记录导出任务。</div><p className="text-xs text-[var(--text-muted)]">Mock 环境中导出文件以任务记录形式模拟，生产环境将生成带签名的审计文件。</p></div></ModalX>
     </div>
   );
 }
 
 /* ==================== 详情面板 ==================== */
 
-function AgentDetailPanel({ agent, trendData, compare, compareTrendData, versions, rank, onClose, onCompareToggle, showCompare, tab, setTab, onConfigOpen, onRunOpen, onTestOpen, onPreviewOpen, onToolCfg, onABReportOpen }: {
+function AgentDetailPanel({ agent, trendData, compare, compareTrendData, versions, rank, onClose, onCompareToggle, showCompare, tab, setTab, onConfigOpen, onRunOpen, onTestOpen, onPreviewOpen, onToolCfg, onABReportOpen, onLifecycle, onPromptSave, lifecyclePending }: {
   agent: AgentFull;
   trendData: { day: string; calls: number }[];
   compare?: AgentFull;
@@ -972,122 +990,123 @@ function AgentDetailPanel({ agent, trendData, compare, compareTrendData, version
   onPreviewOpen: () => void;
   onToolCfg: (key: string) => void;
   onABReportOpen: () => void;
+  onLifecycle: (action: 'install' | 'uninstall' | 'enable' | 'disable' | 'publish') => void;
+  onPromptSave: (prompt: string) => void;
+  lifecyclePending: boolean;
 }) {
+  const statusTone = agent.status === 'installed' ? 'success' : agent.status === 'deprecated' ? 'error' : 'neutral';
+  const statusLabel = agent.status === 'installed' ? '已启用' : (agent as any).lifecycleStatus === 'pending_review' ? '待评测' : agent.status === 'available' ? '待配置' : agent.status === 'beta' ? '测试中' : '已弃用';
   return (
     <>
-      <div className="flex items-center justify-between border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2.5">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-md', agent.category === 'AIOps' ? 'bg-[var(--brand-light)] text-[var(--brand)]' : 'bg-[var(--warning-bg)] text-[var(--warning)]')}>
-            <Bot className="h-4 w-4" />
+      <div className="border-b border-[var(--border)] bg-[var(--surface-1)] px-6 py-5">
+        <div className="flex items-start gap-2 min-w-0">
+          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--brand)]">
+            <Bot className="h-[22px] w-[22px]" />
           </div>
           <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm font-semibold truncate">{agent.name}</span>
-              <Badge tone="brand" className="text-[9px]">v{agent.version}</Badge>
+            <div className="flex items-center gap-2">
+              <span className="text-lg font-semibold truncate text-[var(--text)]">{agent.name}</span>
+              <Badge tone={statusTone as any} className="text-[11px]">{statusLabel}</Badge>
             </div>
-            <div className="text-[10px] text-[var(--text-muted)] font-mono truncate">{agent.id}</div>
+            <div className="mt-1.5 flex items-center gap-2 text-[13px] text-[var(--text-muted)]">
+              <span>{agent.category}</span><span className="text-[var(--border-strong)]">·</span><span className="font-mono">v{agent.version}</span><span className="text-[var(--border-strong)]">·</span><span>风险 {(agent as any).riskLevel ?? 'L1'}</span>
+            </div>
           </div>
+          <button type="button" onClick={onClose} aria-label="关闭详情" className="ml-auto grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"><X className="h-4 w-4" /></button>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
-          <button
-            onClick={onCompareToggle}
-            className={cn('grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] hover:border-[var(--brand)] transition-colors', showCompare && 'border-[var(--brand)] bg-[var(--brand-light)] text-[var(--brand)]')}
-            title="对比"
-            aria-label="对比 Agent"
-          >
-            <GitCompare className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={onClose}
-            className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] hover:border-[var(--danger)] hover:bg-[var(--danger-bg)] hover:text-[var(--danger)] transition-colors"
-            aria-label="关闭详情"
-            title="关闭详情（Esc）"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-[var(--border)] pt-4">
+          <Button size="sm" variant="secondary" disabled={lifecyclePending} loading={lifecyclePending} onClick={() => onLifecycle(agent.status === 'installed' ? 'disable' : 'install')}>
+            {agent.status === 'installed' ? <Pause className="h-3.5 w-3.5" /> : <Download className="h-3.5 w-3.5" />}{agent.status === 'installed' ? '停用' : '安装'}
+          </Button>
+          <Button size="sm" variant="outline" disabled={lifecyclePending || agent.status !== 'installed'} onClick={() => onLifecycle('publish')}>申请发布</Button>
+          <Button size="sm" variant="secondary" className="ml-auto" onClick={onConfigOpen}><Settings className="h-3.5 w-3.5" />配置</Button>
+          <Button size="sm" onClick={onRunOpen}><Play className="h-3.5 w-3.5" />运行</Button>
+        </div>
+        <div className="mt-5 grid grid-cols-3 gap-3">
+          <KpiMini size="comfortable" className="min-h-[72px] bg-[var(--surface-1)] shadow-[0_2px_8px_rgba(15,23,42,0.04)]" label="调用量" value={`${(agent.installCount / 1000).toFixed(1)}k`} />
+          <KpiMini size="comfortable" className="min-h-[72px] bg-[var(--surface-1)] shadow-[0_2px_8px_rgba(15,23,42,0.04)]" label="P95 延迟" value={`${agent.p95Ms}ms`} />
+          <KpiMini size="comfortable" className="min-h-[72px] bg-[var(--surface-1)] shadow-[0_2px_8px_rgba(15,23,42,0.04)]" label="质量评分" value={`${agent.rating}/5`} />
         </div>
       </div>
 
-      <div className="flex border-b border-[var(--border)] bg-[var(--bg-elevated)]/40 overflow-x-auto">
+      <div className="agent-detail-tabs flex border-b border-[var(--border)] bg-[var(--bg-elevated)]/55 overflow-x-auto px-2">
         {([
-          { k: 'meta', label: '元数据', icon: FileText },
-          { k: 'prompt', label: 'Prompt', icon: Sparkles },
+          { k: 'meta', label: '概览', icon: FileText },
+          { k: 'prompt', label: '行为定义', icon: Sparkles },
           { k: 'tools', label: '工具与权限', icon: Wrench },
-          { k: 'versions', label: '版本与 A/B', icon: History },
-          { k: 'monitor', label: '监控', icon: Activity },
+          { k: 'versions', label: '版本与发布', icon: History },
+          { k: 'monitor', label: '运行监控', icon: Activity },
         ] as const).map((t) => (
-          <button key={t.k} onClick={() => setTab(t.k)} className={cn('relative flex items-center gap-1 px-3 py-2 text-[10px] whitespace-nowrap', tab === t.k ? 'text-[var(--brand)] font-semibold border-b-2 border-[var(--brand)]' : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>
-            <t.icon className="h-3 w-3" />{t.label}
+          <button key={t.k} onClick={() => setTab(t.k)} className={cn('relative flex items-center gap-1.5 rounded-t-lg px-4 py-3.5 text-[13px] whitespace-nowrap transition-colors', tab === t.k ? 'bg-[var(--brand-light)]/45 text-[var(--brand)] font-semibold after:absolute after:inset-x-2 after:bottom-0 after:h-0.5 after:rounded-full after:bg-[var(--brand)]' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]')}>
+            <t.icon className="h-3.5 w-3.5" />{t.label}
           </button>
         ))}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3 space-y-3 text-xs">
-        {tab === 'meta' && <MetaTab agent={agent} rank={rank} />}
-        {tab === 'prompt' && <PromptTab agent={agent} onTestOpen={onTestOpen} onPreviewOpen={onPreviewOpen} />}
+      <div className="flex-1 overflow-y-auto bg-[var(--bg-elevated)]/25 p-6 space-y-5 text-sm">
+        {tab === 'meta' && <MetaTab agent={agent} />}
+        {tab === 'prompt' && <PromptTab agent={agent} onTestOpen={onTestOpen} onPreviewOpen={onPreviewOpen} onSave={onPromptSave} />}
         {tab === 'tools' && <ToolsTab agent={agent} onToolCfg={onToolCfg} />}
-        {tab === 'versions' && <VersionsTab versions={versions} agent={agent} />}
+        {tab === 'versions' && <VersionsTab versions={versions} />}
         {tab === 'monitor' && <MonitorTab agent={agent} trendData={trendData} compare={compare} compareTrendData={compareTrendData} showCompare={showCompare} />}
       </div>
 
-      <div className="flex items-center gap-2 border-t border-[var(--border)] bg-[var(--bg)] p-3">
-        <Button size="sm" variant="secondary" className="flex-1" onClick={onConfigOpen}><Settings className="h-3.5 w-3.5" />配置</Button>
-        <Button size="sm" className="flex-1" onClick={onRunOpen}><Play className="h-3.5 w-3.5" />运行</Button>
-      </div>
     </>
   );
 }
 
-function MetaTab({ agent, rank }: { agent: AgentFull; rank: { rank: number; id: string; name: string; calls: number; change: number }[] }) {
-  const r = rank.find((x) => x.id === agent.id);
+function MetaTab({ agent }: { agent: AgentFull }) {
   return (
     <>
-      <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">基础</div>
-        <div className="space-y-1">
-          <Row label="名称" value={agent.name} />
-          <Row label="分类" value={<Badge tone="info" className="text-[9px]">{agent.category}</Badge>} />
-          <Row label="版本" value={<span className="font-mono">v{agent.version}</span>} />
-          <Row label="风险等级" value={<Badge tone={RISK_TONE[(agent as any).riskLevel ?? 'L1']} className="text-[9px]">{(agent as any).riskLevel ?? 'L1'}</Badge>} />
-          <Row label="评分" value={<span className="inline-flex items-center gap-0.5 text-amber-500"><Star className="h-3 w-3 fill-current" />{agent.rating} {((agent as any).ratingCount ? `(${(agent as any).ratingCount})` : '')}</span>} />
-          <Row label="状态" value={agent.status === 'installed' ? <Badge tone="success" className="text-[9px]">已启用</Badge> : <Badge tone="neutral" className="text-[9px]">可安装</Badge>} />
-          <Row label="排行" value={r ? `#${r.rank} (${r.change > 0 ? '↑' : r.change < 0 ? '↓' : '·'} ${Math.abs(r.change)})` : '—'} />
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold text-[var(--text)]"><FileText className="h-4 w-4 text-[var(--brand)]" />资产信息</div>
+        <div className="divide-y divide-[var(--border)]">
+          <Row size="comfortable" label="名称" value={agent.name} />
+          <Row size="comfortable" label="分类" value={<Badge tone="info" className="text-[10px]">{agent.category}</Badge>} />
+          <Row size="comfortable" label="版本" value={<span className="font-mono">v{agent.version}</span>} />
+          <Row size="comfortable" label="风险等级" value={<Badge tone={RISK_TONE[(agent as any).riskLevel ?? 'L1']} className="text-[10px]">{(agent as any).riskLevel ?? 'L1'}</Badge>} />
+          <Row size="comfortable" label="负责人" value={(agent as any).owner ?? '未分配'} />
+          <Row size="comfortable" label="所属工作区" value={(agent as any).workspace ?? '未指定'} />
+          <Row size="comfortable" label="质量评分" value={<span className="inline-flex items-center gap-1 text-amber-500"><Star className="h-3.5 w-3.5 fill-current" />{agent.rating} {((agent as any).ratingCount ? `(${(agent as any).ratingCount})` : '')}</span>} />
+          <Row size="comfortable" label="当前状态" value={agent.status === 'installed' ? <Badge tone="success" className="text-[10px]">已启用</Badge> : <Badge tone="neutral" className="text-[10px]">可安装</Badge>} />
+          <Row size="comfortable" label="配置状态" value={(agent as any).configStatus === 'configured' ? <Badge tone="success" className="text-[10px]">已完成</Badge> : <Badge tone="warn" className="text-[10px]">待配置</Badge>} />
+          <Row size="comfortable" label="评测状态" value={(agent as any).evaluationStatus === 'passed' ? <Badge tone="success" className="text-[10px]">已通过</Badge> : <Badge tone="warn" className="text-[10px]">待评测</Badge>} />
         </div>
       </div>
 
-      <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">SLA 与性能</div>
-        <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-          <KpiMini label="SLA" value={`${(agent as any).sla ?? 99}%`} />
-          <KpiMini label="P95" value={`${agent.p95Ms}ms`} />
-          <KpiMini label="安装" value={agent.installCount.toLocaleString()} />
-          <KpiMini label="缓存" value={`${(agent as any).cacheHitRate ?? 32}%`} />
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold text-[var(--text)]"><Gauge className="h-4 w-4 text-[var(--brand)]" />服务水平与性能</div>
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <KpiMini size="comfortable" label="SLA" value={`${(agent as any).sla ?? 99}%`} />
+          <KpiMini size="comfortable" label="P95" value={`${agent.p95Ms}ms`} />
+          <KpiMini size="comfortable" label="安装" value={agent.installCount.toLocaleString()} />
+          <KpiMini size="comfortable" label="缓存" value={`${(agent as any).cacheHitRate ?? 32}%`} />
         </div>
       </div>
 
-      <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">能力栈</div>
-        <div className="grid grid-cols-5 gap-1 text-[10px]">
-          <KpiMini label="工具" value={String((agent as any).capabilities?.tools ?? agent.tools.length)} />
-          <KpiMini label="MCP" value={String((agent as any).capabilities?.mcps ?? 0)} />
-          <KpiMini label="知识库" value={String((agent as any).capabilities?.knowledgeBases ?? 4)} />
-          <KpiMini label="技能" value={String((agent as any).capabilities?.skills ?? 0)} />
-          <KpiMini label="沙箱" value={String((agent as any).capabilities?.sandboxes ?? 1)} />
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold text-[var(--text)]"><Boxes className="h-4 w-4 text-[var(--brand)]" />能力与依赖</div>
+        <div className="grid grid-cols-5 gap-2 text-xs">
+          <KpiMini size="comfortable" label="工具" value={String((agent as any).capabilities?.tools ?? agent.tools.length)} />
+          <KpiMini size="comfortable" label="MCP" value={String((agent as any).capabilities?.mcps ?? 0)} />
+          <KpiMini size="comfortable" label="知识库" value={String((agent as any).capabilities?.knowledgeBases ?? 4)} />
+          <KpiMini size="comfortable" label="技能" value={String((agent as any).capabilities?.skills ?? 0)} />
+          <KpiMini size="comfortable" label="沙箱" value={String((agent as any).capabilities?.sandboxes ?? 1)} />
         </div>
       </div>
 
-      <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">认证</div>
-        <div className="flex flex-wrap gap-1">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold text-[var(--text)]"><ShieldCheck className="h-4 w-4 text-[var(--success)]" />合规与认证</div>
+        <div className="flex flex-wrap gap-2">
           {((agent as any).certifications as string[] | undefined)?.map((c) => (
             <Badge key={c} tone="success" className="text-[9px]"><ShieldCheck className="mr-0.5 h-2.5 w-2.5" />{c}</Badge>
           )) ?? <span className="text-[10px] text-[var(--text-muted)]">未配置</span>}
         </div>
       </div>
 
-      <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">权限</div>
-        <div className="grid grid-cols-2 gap-1 text-[10px]">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="mb-4 flex items-center gap-2 text-[13px] font-semibold text-[var(--text)]"><Lock className="h-4 w-4 text-[var(--warning)]" />访问权限</div>
+        <div className="grid grid-cols-2 gap-2 text-xs">
           {((agent as any).permissions as any ?? { canEdit: false, canApprove: false, canInvoke: true, canExport: false }).canEdit && <Badge tone="info" className="text-[9px]">编辑</Badge>}
           {((agent as any).permissions as any ?? {}).canApprove && <Badge tone="warn" className="text-[9px]">审批</Badge>}
           {((agent as any).permissions as any ?? { canInvoke: true }).canInvoke && <Badge tone="success" className="text-[9px]">调用</Badge>}
@@ -1096,45 +1115,46 @@ function MetaTab({ agent, rank }: { agent: AgentFull; rank: { rank: number; id: 
       </div>
 
       <div>
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1">描述</div>
-        <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5 text-[11px] leading-relaxed">{agent.description}</div>
+        <div className="mb-3 text-[13px] font-semibold text-[var(--text)]">职责说明</div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4 text-[13px] leading-relaxed text-[var(--text-secondary)]">{agent.description}</div>
       </div>
     </>
   );
 }
 
-function PromptTab({ agent, onTestOpen, onPreviewOpen }: { agent: AgentFull; onTestOpen: () => void; onPreviewOpen: () => void }) {
+function PromptTab({ agent, onTestOpen, onPreviewOpen, onSave }: { agent: AgentFull; onTestOpen: () => void; onPreviewOpen: () => void; onSave: (prompt: string) => void }) {
   const [template, setTemplate] = useState((agent as any).promptTemplate ?? '');
+  const [saved, setSaved] = useState(false);
   return (
     <>
-      <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
         <div className="flex items-center justify-between mb-1.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5"><Sparkles className="h-3 w-3" />Prompt 模板</div>
-          <Badge tone="info" className="text-[9px]">v{agent.version}</Badge>
+          <div className="text-sm font-semibold text-[var(--text)] flex items-center gap-1.5"><Sparkles className="h-3.5 w-3.5 text-[var(--brand)]" />行为定义</div>
+          <Badge tone="info" className="text-[10px]">v{agent.version}</Badge>
         </div>
         <textarea
           value={template}
           onChange={(e) => setTemplate(e.target.value)}
           rows={10}
-          className="w-full rounded-md border border-[var(--border)] bg-[var(--bg)] p-2 text-[11px] font-mono leading-relaxed resize-y"
+          className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-xs font-mono leading-relaxed resize-y outline-none focus:border-[var(--brand)]"
           placeholder="你是 ACME 的 {role}，负责 {responsibility}。&#10;&#10;## 上下文&#10;{context}&#10;&#10;## 输出&#10;{output_format}"
         />
-        <div className="mt-1.5 text-[10px] text-[var(--text-muted)]">支持变量：<code className="bg-[var(--bg)] px-1 rounded">{'{var}'}</code>、<code className="bg-[var(--bg)] px-1 rounded">{'{{var}}'}</code></div>
+        <div className="mt-2 text-xs text-[var(--text-muted)]">支持变量：<code className="rounded bg-[var(--bg-elevated)] px-1.5 py-0.5">{'{var}'}</code>、<code className="rounded bg-[var(--bg-elevated)] px-1.5 py-0.5">{'{{var}}'}</code></div>
       </div>
 
-      <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5 flex items-center gap-1.5"><Hash className="h-3 w-3" />变量</div>
-        <div className="space-y-1">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="text-sm font-semibold text-[var(--text)] mb-3 flex items-center gap-1.5"><Hash className="h-3.5 w-3.5 text-[var(--brand)]" />输入变量</div>
+        <div className="space-y-2">
           {[
             { name: 'role', type: 'enum', required: true, default: '故障自愈 Agent', options: ['故障自愈', '变更辅助', '威胁狩猎'], desc: 'Agent 角色定位' },
             { name: 'responsibility', type: 'string', required: true, default: '自动化故障定位与恢复', desc: '职责描述' },
             { name: 'context', type: 'string', required: false, default: '', desc: '运行时上下文（告警 / 资产 / 变更）' },
             { name: 'output_format', type: 'enum', required: false, default: 'markdown', options: ['markdown', 'json', 'table'], desc: '输出格式' },
           ].map((v) => (
-            <div key={v.name} className="flex items-center gap-2 text-[10px] rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5">
+            <div key={v.name} className="flex items-center gap-2 text-xs rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2">
               <code className="font-mono font-semibold text-[var(--brand)]">{`{{${v.name}}}`}</code>
-              <Badge tone="neutral" className="text-[8px]">{v.type}</Badge>
-              {v.required && <Badge tone="error" className="text-[8px]">必填</Badge>}
+              <Badge tone="neutral" className="text-[10px]">{v.type}</Badge>
+              {v.required && <Badge tone="error" className="text-[10px]">必填</Badge>}
               <span className="text-[var(--text-muted)] flex-1 truncate">默认: <span className="font-mono">{v.default}</span></span>
             </div>
           ))}
@@ -1144,7 +1164,7 @@ function PromptTab({ agent, onTestOpen, onPreviewOpen }: { agent: AgentFull; onT
       <div className="flex gap-1.5">
         <Button size="sm" variant="secondary" className="flex-1" onClick={onTestOpen}><Beaker className="h-3.5 w-3.5" />试运行</Button>
         <Button size="sm" variant="secondary" className="flex-1" onClick={onPreviewOpen}><Eye className="h-3.5 w-3.5" />预览</Button>
-        <Button size="sm" className="flex-1"><Pencil className="h-3.5 w-3.5" />保存</Button>
+        <Button size="sm" className="flex-1" onClick={() => { onSave(template); setSaved(true); setTimeout(() => setSaved(false), 1800); }}><Pencil className="h-3.5 w-3.5" />{saved ? '已保存' : '保存'}</Button>
       </div>
     </>
   );
@@ -1153,18 +1173,18 @@ function PromptTab({ agent, onTestOpen, onPreviewOpen }: { agent: AgentFull; onT
 function ToolsTab({ agent, onToolCfg }: { agent: AgentFull; onToolCfg: (key: string) => void }) {
   return (
     <>
-      <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5 flex items-center gap-1.5"><Wrench className="h-3 w-3" />工具 / MCP</div>
-        <div className="space-y-1">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="text-sm font-semibold text-[var(--text)] mb-3 flex items-center gap-1.5"><Wrench className="h-3.5 w-3.5 text-[var(--brand)]" />工具与 MCP</div>
+        <div className="space-y-2">
           {agent.tools.map((t) => (
-            <div key={t} className="rounded border border-[var(--border)] bg-[var(--bg)] p-2">
+            <div key={t} className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
               <div className="flex items-center gap-1.5">
-                <span className="font-mono text-[11px] font-semibold">{t}</span>
-                <Badge tone="success" className="text-[8px]">auto</Badge>
-                <Badge tone="info" className="text-[8px]"><Lock className="mr-0.5 h-2 w-2" />gvisor</Badge>
-                <span className="ml-auto text-[9px] font-mono text-[var(--text-muted)]">2,450 calls/24h</span>
+                <span className="font-mono text-xs font-semibold">{t}</span>
+                <Badge tone="success" className="text-[10px]">自动</Badge>
+                <Badge tone="info" className="text-[10px]"><Lock className="mr-0.5 h-2.5 w-2.5" />gVisor</Badge>
+                <span className="ml-auto text-[11px] font-mono text-[var(--text-muted)]">2,450 次 / 24h</span>
               </div>
-              <div className="mt-1 flex items-center gap-1.5 text-[9px] text-[var(--text-muted)]">
+              <div className="mt-2 flex items-center gap-1.5 text-xs text-[var(--text-muted)]">
                 <span>权限: 自动</span>
                 <span>·</span>
                 <span>沙箱: gVisor</span>
@@ -1177,9 +1197,9 @@ function ToolsTab({ agent, onToolCfg }: { agent: AgentFull; onToolCfg: (key: str
         </div>
       </div>
 
-      <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5 flex items-center gap-1.5"><Database className="h-3 w-3" />知识库绑定</div>
-        <div className="space-y-1">
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="text-sm font-semibold text-[var(--text)] mb-3 flex items-center gap-1.5"><Database className="h-3.5 w-3.5 text-[var(--brand)]" />知识库绑定</div>
+        <div className="space-y-2">
           {[
             { name: 'Redis 故障 Runbook v3.2', docs: 142, rerank: 'bge-reranker-large', cron: '0 2 * * *' },
             { name: 'CMDB 全量资产清单', docs: 8420, rerank: 'bge-reranker-large', cron: '0 4 * * *' },
@@ -1198,25 +1218,24 @@ function ToolsTab({ agent, onToolCfg }: { agent: AgentFull; onToolCfg: (key: str
   );
 }
 
-function VersionsTab({ versions, agent }: { versions: AgentVersion[]; agent: AgentFull }) {
+function VersionsTab({ versions }: { versions: AgentVersion[] }) {
   return (
     <>
-      <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-        <div className="flex items-center justify-between mb-1.5">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5"><History className="h-3 w-3" />版本历史</div>
-          <Button size="sm" variant="secondary"><GitCompare className="h-3 w-3" />对比</Button>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+          <div className="flex items-center justify-between mb-4">
+          <div className="text-[13px] font-semibold text-[var(--text)] flex items-center gap-2"><History className="h-4 w-4 text-[var(--brand)]" />版本历史</div>
         </div>
-        <div className="space-y-1.5">
-          {versions.length === 0 && <div className="text-[10px] text-[var(--text-muted)]">暂无版本记录</div>}
+        <div className="space-y-2">
+          {versions.length === 0 && <div className="rounded-lg bg-[var(--bg-elevated)] p-4 text-xs text-[var(--text-muted)]">暂无版本记录</div>}
           {versions.slice(0, 4).map((v) => (
-            <div key={v.version} className={cn('rounded border p-2 text-[10px]', v.status === 'current' ? 'border-[var(--brand)]/40 bg-[var(--brand-light)]/30' : 'border-[var(--border)] bg-[var(--bg)]')}>
-              <div className="flex items-center gap-1.5 mb-1">
-                <span className="font-mono font-semibold">v{v.version}</span>
-                <Badge tone={v.type === 'major' ? 'error' : v.type === 'minor' ? 'warn' : 'neutral'} className="text-[8px]">{v.type}</Badge>
-                <Badge tone={v.status === 'current' ? 'success' : v.status === 'beta' ? 'warn' : 'neutral'} className="text-[8px]">{v.status === 'current' ? '当前' : v.status === 'beta' ? '灰度' : v.status === 'deprecated' ? '废弃' : '稳定'}</Badge>
-                <span className="ml-auto text-[var(--text-muted)] font-mono">{v.date}</span>
+            <div key={v.version} className={cn('rounded-lg border p-3 text-xs', v.status === 'current' ? 'border-[var(--brand)]/30 bg-[var(--brand-light)]/25' : 'border-[var(--border)] bg-[var(--bg-elevated)]')}>
+              <div className="flex items-center gap-2 mb-2">
+                <span className="font-mono font-semibold text-[13px]">v{v.version}</span>
+                <Badge tone={v.type === 'major' ? 'error' : v.type === 'minor' ? 'warn' : 'neutral'} className="text-[10px]">{v.type}</Badge>
+                <Badge tone={v.status === 'current' ? 'success' : v.status === 'beta' ? 'warn' : 'neutral'} className="text-[10px]">{v.status === 'current' ? '当前' : v.status === 'beta' ? '灰度' : v.status === 'deprecated' ? '废弃' : '稳定'}</Badge>
+                <span className="ml-auto text-[var(--text-muted)] font-mono text-[11px]">{v.date}</span>
               </div>
-              <ul className="space-y-0.5 text-[10px] text-[var(--text-muted)]">
+              <ul className="space-y-1 text-xs leading-relaxed text-[var(--text-muted)]">
                 {v.changelog.map((c, i) => <li key={i}>· {c}</li>)}
               </ul>
             </div>
@@ -1224,21 +1243,6 @@ function VersionsTab({ versions, agent }: { versions: AgentVersion[]; agent: Age
         </div>
       </div>
 
-      <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5 flex items-center gap-1.5"><Beaker className="h-3 w-3" />A/B Test</div>
-        <div className="text-[10px] text-[var(--text-muted)] mb-1.5">将流量按 50/50 分到 v{agent.version} 与 v{(parseFloat(agent.version) - 0.1).toFixed(1)}，对比准确率与延迟</div>
-        <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-          <div className="rounded border border-[var(--brand)]/30 bg-[var(--brand-light)]/30 p-2">
-            <div className="font-semibold mb-0.5">A · v{agent.version}</div>
-            <div className="text-[var(--text-muted)]">流量 50% · 准确率 92.4% · P95 580ms</div>
-          </div>
-          <div className="rounded border border-[var(--border)] bg-[var(--bg)] p-2">
-            <div className="font-semibold mb-0.5">B · v{(parseFloat(agent.version) - 0.1).toFixed(1)}</div>
-            <div className="text-[var(--text-muted)]">流量 50% · 准确率 89.8% · P95 640ms</div>
-          </div>
-        </div>
-        <Button size="sm" className="w-full mt-1.5">查看详细 A/B 报告</Button>
-      </div>
     </>
   );
 }
@@ -1246,9 +1250,9 @@ function VersionsTab({ versions, agent }: { versions: AgentVersion[]; agent: Age
 function MonitorTab({ agent, trendData, compare, compareTrendData, showCompare }: { agent: AgentFull; trendData: { day: string; calls: number }[]; compare?: AgentFull; compareTrendData: { day: string; calls: number }[]; showCompare: boolean }) {
   return (
     <>
-      <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5 flex items-center gap-1.5"><TrendingUp className="h-3 w-3" />7 天调用趋势{showCompare && compare && ' · 对比'}</div>
-        <ResponsiveContainer width="100%" height={140}>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="mb-4 flex items-center justify-between"><div className="text-[13px] font-semibold text-[var(--text)] flex items-center gap-2"><TrendingUp className="h-4 w-4 text-[var(--brand)]" />7 天调用趋势{showCompare && compare && ' · 对比'}</div><span className="text-xs text-[var(--text-muted)]">调用次数</span></div>
+        <div className="rounded-lg bg-[var(--bg-elevated)]/45 p-2"><ResponsiveContainer width="100%" height={170}>
           <AreaChart data={trendData}>
             <defs>
               <linearGradient id="grad-a" x1="0" y1="0" x2="0" y2="1">
@@ -1261,23 +1265,23 @@ function MonitorTab({ agent, trendData, compare, compareTrendData, showCompare }
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-            <XAxis dataKey="day" tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
-            <YAxis tick={{ fontSize: 9, fill: 'var(--text-muted)' }} />
-            <Tooltip contentStyle={{ fontSize: 10, background: 'var(--surface-1)', border: '1px solid var(--border)' }} />
+            <XAxis dataKey="day" tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+            <YAxis tick={{ fontSize: 11, fill: 'var(--text-muted)' }} axisLine={false} tickLine={false} />
+            <Tooltip contentStyle={{ fontSize: 12, background: 'var(--surface-1)', border: '1px solid var(--border)', borderRadius: 8 }} />
             <Area type="monotone" dataKey="calls" name={agent.name} stroke="var(--brand)" fill="url(#grad-a)" strokeWidth={2} />
             {showCompare && compare && <Area type="monotone" dataKey="calls" name={compare.name} stroke="var(--text-muted)" fill="url(#grad-b)" strokeWidth={1.5} />}
           </AreaChart>
-        </ResponsiveContainer>
+        </ResponsiveContainer></div>
       </div>
-      <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-        <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">实时指标</div>
-        <div className="grid grid-cols-2 gap-1.5 text-[10px]">
-          <KpiMini label="今日调用" value={String((agent as any).todayCalls ?? 320)} />
-          <KpiMini label="错误率 24h" value={`${((agent as any).errorRate24h ?? 1.2).toFixed(2)}%`} />
-          <KpiMini label="P95" value={`${agent.p95Ms}ms`} />
-          <KpiMini label="Token" value="780" />
-          <KpiMini label="双签" value={String((agent as any).approvalCount ?? 1)} />
-          <KpiMini label="满意度" value={`${agent.rating}★`} />
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="mb-4 text-[13px] font-semibold text-[var(--text)]">实时指标</div>
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <KpiMini size="comfortable" label="今日调用" value={String((agent as any).todayCalls ?? 320)} />
+          <KpiMini size="comfortable" label="错误率 24h" value={`${((agent as any).errorRate24h ?? 1.2).toFixed(2)}%`} />
+          <KpiMini size="comfortable" label="P95" value={`${agent.p95Ms}ms`} />
+          <KpiMini size="comfortable" label="Token" value="780" />
+          <KpiMini size="comfortable" label="双签" value={String((agent as any).approvalCount ?? 1)} />
+          <KpiMini size="comfortable" label="满意度" value={`${agent.rating}★`} />
         </div>
       </div>
     </>
@@ -1289,19 +1293,55 @@ function MonitorTab({ agent, trendData, compare, compareTrendData, showCompare }
 function EvalCard({ title, value, sub, icon: Icon, tone }: { title: string; value: any; sub?: string; icon: any; tone: 'success' | 'warn' | 'info' | 'error' }) {
   const color = tone === 'success' ? 'text-[var(--success)]' : tone === 'info' ? 'text-[var(--info)]' : tone === 'warn' ? 'text-[var(--warning)]' : 'text-[var(--danger)]';
   return (
-    <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3 flex items-center gap-3">
+    <div className="min-h-[88px] rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)] flex items-center gap-3">
       <div className={cn('grid h-9 w-9 place-items-center rounded-md bg-[var(--bg-elevated)]', color)}>
         <Icon className="h-4 w-4" />
       </div>
       <div>
-        <div className="text-[10px] text-[var(--text-muted)] uppercase tracking-wider font-semibold">{title}</div>
-        <div className={cn('text-xl font-bold font-mono', color)}>{value} <span className="text-[10px] text-[var(--text-muted)] font-normal">{sub}</span></div>
+        <div className="text-xs text-[var(--text-muted)] font-semibold">{title}</div>
+        <div className={cn('mt-1 text-2xl font-bold font-mono', color)}>{value} <span className="text-xs text-[var(--text-muted)] font-normal">{sub}</span></div>
       </div>
     </div>
   );
 }
 
 /* ==================== 新建 Agent Modal ==================== */
+
+function ImportAgentModal({ open, onClose, onSubmit, loading }: { open: boolean; onClose: () => void; onSubmit: (form: { name: string; category: string; risk: string; description: string; source: string; tools: string[]; mapping: { tools: string[]; mcp: string[] }; risks: string[] }) => void; loading?: boolean }) {
+  const [step, setStep] = useState<1 | 2>(1);
+  const [source, setSource] = useState('本地配置包');
+  const [name, setName] = useState('');
+  const [category, setCategory] = useState('AIOps');
+  const [risk, setRisk] = useState('L1');
+  const [description, setDescription] = useState('');
+  const [reference, setReference] = useState('');
+  const [parseError, setParseError] = useState('');
+  const [mapping, setMapping] = useState<{ tools: string[]; mcp: string[] }>({ tools: [], mcp: [] });
+  const [risks, setRisks] = useState<string[]>([]);
+  const submit = () => { if (!name.trim()) return; onSubmit({ name: name.trim(), category, risk, description: description || '待补充智能体职责说明', source: `${source}${reference ? ` · ${reference}` : ''}`, tools: mapping.tools, mapping, risks }); };
+  const close = () => { setStep(1); onClose(); };
+  const handlePackage = async (file?: File) => { if (!file) return; try { const parsed = parseOpenClawPackage(await file.text()); setName(parsed.name); setDescription(parsed.description); setReference(file.name); setMapping({ tools: parsed.tools, mcp: parsed.mcp }); setRisks(parsed.risks); setParseError(''); } catch { setParseError('无法解析配置包，请上传合法 JSON 格式的 OpenClaw 配置文件'); } };
+  return (
+    <ModalX open={open} onClose={close} title="导入智能体" size="md" footer={<><Button variant="ghost" onClick={close}>取消</Button>{step === 1 ? <Button disabled={!name.trim() || !reference.trim()} onClick={() => setStep(2)}>检查配置<ChevronRight className="h-3.5 w-3.5" /></Button> : <Button loading={loading} onClick={submit}><ShieldCheck className="h-3.5 w-3.5" />提交审核</Button>}</>}>
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 text-[11px] text-[var(--text-muted)]"><span className={cn('rounded-full px-2 py-1', step === 1 ? 'bg-[var(--brand)] text-white' : 'bg-[var(--bg-elevated)]')}>1 基本信息</span><span className="h-px flex-1 bg-[var(--border)]" /><span className={cn('rounded-full px-2 py-1', step === 2 ? 'bg-[var(--brand)] text-white' : 'bg-[var(--bg-elevated)]')}>2 兼容性检查</span></div>
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-xs text-[var(--text-secondary)]">导入后将进入“待审核”状态，完成依赖检查和评测后才能安装到生产环境。</div>
+        {step === 2 ? <div className="space-y-3"><div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="text-sm font-semibold">{name}</div><div className="mt-1 text-xs text-[var(--text-muted)]">{source}{reference ? ` · ${reference}` : ''} · {category} · 风险 {risk}</div></div><div className="space-y-2">{[{ label: '配置格式解析', status: '通过', tone: 'success' as const }, { label: `工具映射（${mapping.tools.length}）/ MCP（${mapping.mcp.length}）`, status: mapping.tools.length || mapping.mcp.length ? '需复核' : '待检查', tone: 'warn' as const }, { label: '风险与权限扫描', status: risks.length ? `${risks.length} 项需复核` : '通过', tone: risks.length ? 'warn' as const : 'success' as const }].map((check) => <div key={check.label} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2.5 text-xs"><span className="flex items-center gap-2"><ShieldCheck className={cn('h-3.5 w-3.5', check.tone === 'success' ? 'text-[var(--success)]' : 'text-[var(--warning)]')} />{check.label}</span><Badge tone={check.tone} className="text-[10px]">{check.status}</Badge></div>)}</div><p className="text-xs leading-relaxed text-[var(--text-muted)]">提交后将生成导入审计记录，并由管理员完成权限和风险复核。</p></div> : <>
+        <FormField label="导入来源">
+          <div className="grid grid-cols-2 gap-2">{['本地配置包', 'OpenClaw 配置包', '企业 Git', '内部注册中心'].map((item) => <button key={item} onClick={() => setSource(item)} className={cn('rounded-md border px-3 py-2 text-xs transition-colors', source === item ? 'border-[var(--brand)] bg-[var(--brand-light)] text-[var(--brand)]' : 'border-[var(--border)] bg-[var(--bg)] text-[var(--text-muted)]')}>{item}</button>)}</div>
+        </FormField>
+        {(source === '本地配置包' || source === 'OpenClaw 配置包') && <FormField label="配置包文件 *"><input type="file" accept=".json,.jsonl,.yaml,.yml" onChange={(e) => handlePackage(e.target.files?.[0])} className="block w-full rounded-md border border-dashed border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs text-[var(--text-muted)]" />{parseError && <div className="mt-1 text-xs text-[var(--danger)]">{parseError}</div>}<div className="mt-1 text-[11px] text-[var(--text-muted)]">当前支持 JSON 配置解析；YAML 文件需先转换为 JSON。</div></FormField>}
+        <FormField label={source === '本地配置包' ? '配置包名称 *' : '仓库或注册中心地址 *'}>
+          <input value={source === '本地配置包' ? name : reference} onChange={(e) => source === '本地配置包' ? setName(e.target.value) : setReference(e.target.value)} placeholder={source === '本地配置包' ? '例如：故障自愈智能体' : '输入受信任的企业来源地址'} className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 text-sm outline-none focus:border-[var(--brand)]" />
+        </FormField>
+        {source !== '本地配置包' && <FormField label="智能体名称 *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="输入智能体名称" className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 text-sm outline-none focus:border-[var(--brand)]" /></FormField>}
+        <div className="grid grid-cols-2 gap-3"><FormField label="业务领域"><select value={category} onChange={(e) => setCategory(e.target.value)} className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-sm"><option>AIOps</option><option>SecOps</option><option>DevOps</option><option>DataOps</option></select></FormField><FormField label="风险等级"><select value={risk} onChange={(e) => setRisk(e.target.value)} className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-sm"><option>L0</option><option>L1</option><option>L2</option><option>L3</option></select></FormField></div>
+        <FormField label="职责说明"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="说明智能体解决的问题和适用范围" className="w-full resize-none rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm" /></FormField>
+      </>}
+      </div>
+    </ModalX>
+  );
+}
 
 function CreateAgentModal({ open, onClose, onSubmit }: { open: boolean; onClose: () => void; onSubmit?: (form: any) => void }) {
   const [step, setStep] = useState(1);
@@ -1485,8 +1525,6 @@ function CompareModal({ open, onClose, agents, active }: { open: boolean; onClos
     </Modal>
   );
 }
-
-const ListChecks = Sparkles as any;
 
 /* ==================== 补全：6 个 Modal/Drawer 子组件 ==================== */
 
