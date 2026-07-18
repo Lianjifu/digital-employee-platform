@@ -488,6 +488,20 @@ export const mockWorkflow: Workflow = {
   ],
 };
 
+// 工作流控制台运行态 Mock：保存草稿、校验、执行、版本和审计共享同一份状态。
+const mockWorkflowControl = {
+  draft: JSON.parse(JSON.stringify(mockWorkflow)) as any,
+  versions: [{ id: 'v4', label: 'v4 · 当前草稿', time: '刚刚', desc: '当前工作流草稿' }] as any[],
+  audits: [{ id: 'wa1', action: 'WORKFLOW_LOAD', actor: '系统', target: mockWorkflow.name, time: new Date().toISOString(), result: 'success' }] as any[],
+  runs: [...mockWorkflowRuns] as any[],
+};
+
+function workflowAudit(action: string, target: string, result: 'success' | 'failed' = 'success') {
+  const event = { id: mockId('wf_audit'), action, actor: '当前用户', target, time: new Date().toISOString(), result };
+  mockWorkflowControl.audits.unshift(event);
+  return event;
+}
+
 export type WorkflowGenerationRecord = {
   id: string;
   prompt: string;
@@ -1225,6 +1239,51 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     if (generationAction[2] === 'discard' && method === 'POST') { record.status = 'discarded'; return record; }
     if (generationAction[2] === 'apply' && method === 'POST') return { ...record, status: 'completed', appliedAt: new Date().toISOString() };
   }
+  const workflowDetail = path.match(/^\/api\/workflows\/([^/]+)(?:\/(validate|run|audit|versions|publish|rollback|draft))?$/);
+  if (workflowDetail && workflowDetail[1] !== 'generate' && workflowDetail[1] !== 'generations') {
+    const action = workflowDetail[2];
+    if (!action && method === 'GET') return mockWorkflowControl.draft;
+    if (action === 'draft' && method === 'PUT') {
+      mockWorkflowControl.draft = { ...mockWorkflowControl.draft, ...((opts.body ?? {}) as Record<string, any>) };
+      workflowAudit('WORKFLOW_SAVE', workflowDetail[1]);
+      return mockWorkflowControl.draft;
+    }
+    if (action === 'validate' && method === 'POST') {
+      const draft = mockWorkflowControl.draft;
+      const checks = {
+        structure: draft.nodes?.length > 0 && draft.nodes.some((n: any) => n.kind === 'trigger') ? 'passed' : 'failed',
+        connections: draft.nodes?.every((n: any) => draft.nodes.length <= 1 || draft.edges?.some((e: any) => e.source === n.id || e.target === n.id)) ? 'passed' : 'failed',
+        dependencies: 'review',
+        permissions: 'review',
+        risk: draft.nodes?.some((n: any) => n.kind === 'execute') ? 'review' : 'passed',
+        approval: draft.nodes?.some((n: any) => n.kind === 'approval') ? 'passed' : 'review',
+        audit: draft.nodes?.some((n: any) => n.kind === 'audit') ? 'passed' : 'review',
+        rollback: draft.nodes?.some((n: any) => String(n.data?.label ?? n.label ?? '').includes('回滚')) ? 'passed' : 'review',
+      };
+      const passed = Object.values(checks).every((value) => value !== 'failed');
+      workflowAudit('WORKFLOW_VALIDATE', workflowDetail[1], passed ? 'success' : 'failed');
+      return { passed, checks, warnings: checks.dependencies === 'review' ? ['存在依赖或权限需要人工确认'] : [] };
+    }
+    if (action === 'run' && method === 'POST') {
+      const run = { id: mockId('run'), time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), trigger: mockWorkflowControl.draft.name ?? '工作流', status: 'running', duration: 0, steps: mockWorkflowControl.draft.nodes?.length ?? 0, who: '当前用户' };
+      mockWorkflowControl.runs.unshift(run);
+      workflowAudit('WORKFLOW_RUN', workflowDetail[1]);
+      return run;
+    }
+    if (action === 'versions' && method === 'GET') return mockWorkflowControl.versions;
+    if (action === 'publish' && method === 'POST') { workflowAudit('WORKFLOW_PUBLISH', workflowDetail[1]); return { ...mockWorkflowControl.draft, status: 'published' }; }
+    if (action === 'rollback' && method === 'POST') { workflowAudit('WORKFLOW_ROLLBACK', workflowDetail[1]); return mockWorkflowControl.draft; }
+    if (action === 'audit' && method === 'GET') return mockWorkflowControl.audits;
+  }
+  const workflowRunAction = path.match(/^\/api\/workflows\/([^/]+)\/runs\/([^/]+)\/(retry|resume)$/);
+  if (workflowRunAction && method === 'POST') {
+    const run = mockWorkflowControl.runs.find((item) => item.id === workflowRunAction[2]);
+    if (!run) return null;
+    run.status = 'running';
+    workflowAudit(`WORKFLOW_RUN_${workflowRunAction[3].toUpperCase()}`, workflowRunAction[2]);
+    return run;
+  }
+  if (path.match(/^\/api\/workflows\/[^/]+\/runs$/) && method === 'GET') return mockWorkflowControl.runs;
 
   // 知识
   if (path === '/api/knowledge/docs') return mockKnowledgeDocs;

@@ -30,7 +30,7 @@ import {
   Play, Save, Download, Zap, ShieldCheck, Cpu, GitBranch, Bell, FileText,
   Wrench, Database, PlayCircle, ChevronRight, Activity, CheckCircle2, Clock,
   AlertTriangle, Plus, Sparkles, Settings, Pause, RotateCcw,
-  Eye, Bug, Webhook, Layers, Search, History, X, Trash2,
+  Eye, Bug, Webhook, Layers, Search, History, X, Trash2, GitCompare,
   Edit3, Copy, Box, ArrowRight, GripVertical, RefreshCw,
   Undo2, Redo2, FileJson, MessageSquare, StepForward, StepBack, SkipForward, SkipBack, History as HistoryIcon,
 } from 'lucide-react';
@@ -64,6 +64,13 @@ type GenerationVars = {
   workspaceId: string;
   model: string;
 };
+
+type WorkflowValidation = {
+  passed: boolean;
+  checks: Record<string, 'passed' | 'review' | 'failed'>;
+  warnings: string[];
+};
+type WorkflowRun = { id: string; time: string; trigger: string; status: string; duration: number; steps: number; who: string; error?: string };
 
 /* ============ 节点元数据 ============ */
 const NODE_ICONS: Record<WorkflowNodeKind, any> = {
@@ -325,6 +332,7 @@ export default function Workflows() {
   // 版本选择
   const [activeVersion, setActiveVersion] = useState('v4');
   const [versionMenuOpen, setVersionMenuOpen] = useState(false);
+  const [versionDiffOpen, setVersionDiffOpen] = useState(false);
   const [versions, setVersions] = useState<VersionSnapshot[]>(() => VERSIONS.map((version) => ({
     ...version,
     nodes: cloneSnapshot({ nodes: INITIAL_NODES, edges: INITIAL_EDGES }).nodes,
@@ -342,6 +350,8 @@ export default function Workflows() {
   const [generationConstraints, setGenerationConstraints] = useState<GenerationVars['constraints']>({ riskLevel: 'L2', requireApproval: true, requireAudit: true, requireRollback: true });
   const [generationModel, setGenerationModel] = useState('企业默认模型');
   const { data: generationHistory = [] } = useApiQuery<GenerationResult[]>(['workflow-generations'], '/api/workflows/generations');
+  const [preflightOpen, setPreflightOpen] = useState(false);
+  const [preflightResult, setPreflightResult] = useState<WorkflowValidation | null>(null);
 
   // Toast
   const [toast, setToast] = useState<{ msg: string; tone: 'success' | 'error' | 'info' } | null>(null);
@@ -363,6 +373,21 @@ export default function Workflows() {
   });
   const applyGenerationApi = useApiMutation<GenerationResult, { id: string }>(({ id }) => `/api/workflows/generations/${id}/apply`, {
     onError: () => showToast('生成记录应用审计写入失败，但本地草稿已保留', 'error'),
+  });
+  const validateWorkflowApi = useApiMutation<WorkflowValidation, { nodes: unknown[]; edges: unknown[] }>('/api/workflows/wf1/validate', {
+    onSuccess: (result) => { setPreflightResult(result); setPreflightOpen(true); },
+    onError: () => showToast('运行前校验失败，请稍后重试', 'error'),
+  });
+  const runWorkflowApi = useApiMutation<WorkflowRun, Record<string, unknown>>('/api/workflows/wf1/run', {
+    onSuccess: (run) => { setPreflightOpen(false); showToast(`已创建执行记录 ${run.id}`, 'success'); },
+    onError: () => showToast('工作流执行请求失败', 'error'),
+  });
+  const saveWorkflowApi = useApiMutation<Workflow, { nodes: unknown[]; edges: unknown[]; version: string }>('/api/workflows/wf1/draft', {
+    onError: () => showToast('服务端保存失败，本地草稿仍已保留', 'error'),
+  });
+  const publishWorkflowApi = useApiMutation<Workflow, { version: string }>('/api/workflows/wf1/publish', {
+    onSuccess: () => { setVersionMenuOpen(false); showToast('已提交发布，等待发布治理流程', 'success'); },
+    onError: () => showToast('发布提交失败，请先完成运行前校验', 'error'),
   });
 
   // 拖拽
@@ -607,8 +632,13 @@ export default function Workflows() {
       time: '刚刚',
       desc: '保存当前本地草稿',
     } : item));
+    saveWorkflowApi.mutate({
+      nodes: nodes.map((node) => ({ id: node.id, kind: node.data?.kind, label: node.data?.label, data: node.data, position: node.position })),
+      edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
+      version: id,
+    });
     showToast(`已保存 ${version?.label ?? id}（本地演示草稿）`, 'success');
-  }, [activeVersion, canWrite, edges, nodes, showToast, versions]);
+  }, [activeVersion, canWrite, edges, nodes, saveWorkflowApi, showToast, versions]);
 
   const loadSnapshot = useCallback((snapshot: Snapshot, versionId: string) => {
     const next = cloneSnapshot(snapshot);
@@ -625,8 +655,8 @@ export default function Workflows() {
     if (!nodes.some((node) => node.data?.kind === 'trigger')) { showToast('工作流缺少触发器节点，无法运行', 'error'); return; }
     const disconnected = nodes.filter((node) => nodes.length > 1 && !edges.some((edge) => edge.source === node.id || edge.target === node.id));
     if (disconnected.length) { showToast(`存在 ${disconnected.length} 个未连线节点，请先完成流程连接`, 'error'); return; }
-    showToast(`已触发工作流执行（本地演示），当前节点：双签审批（n4）`, 'success');
-  }, [canExecute, edges, nodes, showToast]);
+    validateWorkflowApi.mutate({ nodes: nodes.map((node) => ({ id: node.id, kind: node.data?.kind, label: node.data?.label, data: node.data })), edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })) });
+  }, [canExecute, edges, nodes, showToast, validateWorkflowApi]);
 
   const openAIGenerator = useCallback(() => {
     setGenerationStep('input');
@@ -768,6 +798,11 @@ export default function Workflows() {
   }, [addNode]);
 
   const filteredNodes = nodes; // 留作以后按筛选条件过滤
+  const activeSnapshot = versions.find((version) => version.id === activeVersion);
+  const isDirty = useMemo(() => {
+    if (!activeSnapshot) return true;
+    return JSON.stringify({ nodes, edges }) !== JSON.stringify({ nodes: activeSnapshot.nodes, edges: activeSnapshot.edges });
+  }, [activeSnapshot, edges, nodes]);
 
   return (
     <div className="workflow-page flex h-full min-w-0 flex-col overflow-hidden bg-[var(--bg-elevated)]">
@@ -788,8 +823,9 @@ export default function Workflows() {
             <span className="truncate text-[10px] text-[var(--text-muted)]">
               {tab === 'canvas' ? `DAG 画布 · ${nodes.length} 节点 / ${edges.length} 连线` : tab === 'templates' ? `模板库 · ${TEMPLATES.length} 套` : `执行历史 · ${RUNS.length} 条`}
             </span>
+            {tab === 'canvas' && isDirty && <Badge tone="warn" className="shrink-0 text-[9px]">未保存</Badge>}
           </div>
-          <div className="relative shrink-0">
+          <div className={cn('relative shrink-0', tab !== 'canvas' && 'hidden')}>
             <button
               onClick={() => setVersionMenuOpen(!versionMenuOpen)}
               className="flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[11px] hover:border-[var(--brand)]"
@@ -853,6 +889,12 @@ export default function Workflows() {
                       showToast(`已另存为 ${nextId}（本地快照）`, 'success');
                     }} disabled={!canWrite}>
                       <Save className="h-3 w-3" />另存
+                    </Button>
+                    <Button size="sm" variant="outline" className="flex-1" onClick={() => setVersionDiffOpen(true)}>
+                      <GitCompare className="h-3 w-3" />差异
+                    </Button>
+                    <Button size="sm" variant="primary" className="flex-1" onClick={() => publishWorkflowApi.mutate({ version: activeVersion })} loading={publishWorkflowApi.isPending} disabled={!canWrite || isDirty}>
+                      发布
                     </Button>
                   </div>
                 </div>
@@ -918,6 +960,7 @@ export default function Workflows() {
             webhookEnabled={webhookEnabled}
             setWebhookEnabled={setWebhookEnabled}
             saveCanvas={saveCanvas}
+            saving={saveWorkflowApi.isPending}
             runWorkflow={runWorkflow}
             resetCanvas={resetCanvas}
             clearCanvas={clearCanvas}
@@ -977,6 +1020,46 @@ export default function Workflows() {
           showToast={showToast}
         />
       )}
+
+      <Drawer
+        open={preflightOpen}
+        onClose={() => setPreflightOpen(false)}
+        width={520}
+        title="运行前检查"
+        description="确认结构、权限和风险后，才会创建执行记录。"
+        footer={(
+          <div className="flex w-full items-center justify-between gap-2">
+            <span className="text-[11px] text-[var(--text-muted)]">执行后仍可在执行历史中追踪</span>
+            <div className="flex gap-2"><Button variant="ghost" onClick={() => setPreflightOpen(false)}>取消</Button><Button variant="primary" onClick={() => runWorkflowApi.mutate({ workflowId: 'wf1', version: activeVersion })} loading={runWorkflowApi.isPending} disabled={!preflightResult?.passed}>{runWorkflowApi.isPending ? '创建中…' : '确认运行'}</Button></div>
+          </div>
+        )}
+      >
+        {preflightResult && (
+          <div className="space-y-4">
+            <div className={cn('rounded-lg border p-3 text-sm font-semibold', preflightResult.passed ? 'border-[var(--success)]/30 bg-[var(--success-bg)] text-[var(--success)]' : 'border-[var(--danger)]/30 bg-[var(--danger-bg)] text-[var(--danger)]')}>
+              {preflightResult.passed ? '检查完成，可以运行' : '检查未通过，请修正阻断项'}
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {Object.entries(preflightResult.checks).map(([key, status]) => <div key={key} className="flex items-center justify-between rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2.5"><span className="text-xs text-[var(--text-secondary)]">{({ structure: '结构', connections: '连线', dependencies: '依赖', permissions: '权限', risk: '风险', approval: '审批', audit: '审计', rollback: '回滚' } as Record<string, string>)[key] ?? key}</span><Badge tone={status === 'passed' ? 'success' : status === 'failed' ? 'error' : 'warn'}>{status === 'passed' ? '通过' : status === 'failed' ? '阻断' : '需复核'}</Badge></div>)}
+            </div>
+            {preflightResult.warnings.length > 0 && <div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] p-3 text-xs leading-5 text-[var(--text-secondary)]"><div className="mb-1 font-semibold text-[var(--warning)]">复核提示</div>{preflightResult.warnings.map((warning) => <div key={warning}>• {warning}</div>)}</div>}
+          </div>
+        )}
+      </Drawer>
+
+      <Drawer
+        open={versionDiffOpen}
+        onClose={() => setVersionDiffOpen(false)}
+        width={480}
+        title="版本差异"
+        description={`${activeVersion} · 当前未保存修改将不会计入发布版本`}
+      >
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-2"><div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-[11px] text-[var(--text-muted)]">当前节点</div><div className="mt-1 text-xl font-semibold">{nodes.length}</div></div><div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-[11px] text-[var(--text-muted)]">当前连线</div><div className="mt-1 text-xl font-semibold">{edges.length}</div></div></div>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="mb-2 text-xs font-semibold">当前草稿内容</div><div className="space-y-2 text-xs text-[var(--text-secondary)]">{nodes.map((node) => <div key={node.id} className="flex items-center justify-between"><span>{node.data?.label ?? node.id}</span><span className="font-mono text-[10px] text-[var(--text-muted)]">{node.data?.kind}</span></div>)}</div></div>
+          <div className="rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]">发布前请确认依赖、权限、审批、审计和回滚检查均已通过。</div>
+        </div>
+      </Drawer>
 
       <WorkflowAIGeneratorDrawer
         open={aiGenerateOpen}
@@ -1166,6 +1249,7 @@ function CanvasView(props: {
   webhookEnabled: boolean;
   setWebhookEnabled: (b: boolean) => void;
   saveCanvas: () => void;
+  saving: boolean;
   runWorkflow: () => void;
   resetCanvas: () => void;
   clearCanvas: () => void;
@@ -1195,7 +1279,7 @@ function CanvasView(props: {
     librarySearchQ, setLibrarySearchQ, canvasSearchQ, setCanvasSearchQ, searchMatch, focusNode,
     filteredLibrary, setDraggedKind,
     selectedNode, selectedNodeId, nodes, webhookEnabled, setWebhookEnabled,
-    saveCanvas, runWorkflow, resetCanvas, clearCanvas,
+    saveCanvas, saving, runWorkflow, resetCanvas, clearCanvas,
     addNode, deleteNode, duplicateNode, disableNode, updateNodeLabel, updateNodeDescription, updateNodeNote, showToast,
     onConnect, deleteEdge, undo, redo, canUndo, canRedo, exportWorkflow, reactFlowRef, canWrite, canExecute, openAIGenerator,
   } = props;
@@ -1390,7 +1474,7 @@ function CanvasView(props: {
               <Button size="sm" variant="outline" onClick={runWorkflow} disabled={!canExecute} title={!canExecute ? '需要 workflow.execute 权限' : undefined}>
                 <Play className="h-3.5 w-3.5" />运行
               </Button>
-              <Button size="sm" variant="outline" onClick={saveCanvas} disabled={!canWrite} title={!canWrite ? '需要 workflow.write 权限' : undefined}>
+              <Button size="sm" variant="outline" onClick={saveCanvas} loading={saving} disabled={!canWrite || saving} title={!canWrite ? '需要 workflow.write 权限' : undefined}>
                 <Save className="h-3.5 w-3.5" />保存
               </Button>
             <Button size="sm" variant="outline" onClick={exportWorkflow}>
@@ -2113,12 +2197,14 @@ function TemplatePreviewModalInner({
  *  执行历史（含时序图 + 单步回放控制）
  * ============================================================= */
 function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' | 'error' | 'info') => void }) {
+  const { data: runsFromApi = [] } = useApiQuery<typeof RUNS>(['workflow-runs'], '/api/workflow-runs');
+  const runs = runsFromApi.length > 0 ? runsFromApi : RUNS;
   const [selectedRunId, setSelectedRunId] = useState<string>('r1');
   const [step, setStep] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [mobileReplayOpen, setMobileReplayOpen] = useState(false);
 
-  const selectedRun = RUNS.find((r) => r.id === selectedRunId) ?? RUNS[0];
+  const selectedRun = runs.find((r) => r.id === selectedRunId) ?? runs[0];
   const totalSteps = selectedRun.steps;
 
   // 自动播放
@@ -2140,20 +2226,20 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
   }, [selectedRunId]);
 
   return (
-    <div className="grid h-full grid-cols-1 gap-0 overflow-hidden bg-[var(--bg-elevated)] lg:grid-cols-[minmax(0,1fr)_420px]">
+    <div className="h-full overflow-hidden bg-[var(--bg-elevated)]">
       {/* 左侧：历史列表 */}
       <div className="overflow-y-auto p-6">
         <div className="mb-4">
           <h2 className="text-base font-semibold flex items-center gap-2">
             <Clock className="h-4 w-4 text-[var(--text-muted)]" />执行历史
           </h2>
-          <p className="text-xs text-[var(--text-muted)] mt-0.5">最近 {RUNS.length} 次执行 · 点击查看单步回放</p>
+            <p className="text-xs text-[var(--text-muted)] mt-0.5">最近 {runs.length} 次执行 · 点击查看单步回放</p>
         </div>
         <div className="space-y-2">
-          {RUNS.map((r) => (
+          {runs.map((r) => (
             <div
               key={r.id}
-              onClick={() => setSelectedRunId(r.id)}
+              onClick={() => { setSelectedRunId(r.id); setMobileReplayOpen(true); }}
               className={cn(
                 'cursor-pointer rounded-lg border bg-[var(--bg)] p-4 transition-colors',
                 selectedRunId === r.id ? 'border-[var(--brand)] ring-2 ring-[var(--brand-light)]' : 'border-[var(--border)] hover:border-[var(--brand)]',
@@ -2226,7 +2312,7 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
       </div>
 
       {/* 右侧：单步回放控制台 */}
-      <div className="hidden border-l border-[var(--border)] bg-[var(--bg)] lg:flex lg:flex-col">
+      <div className="hidden">
         <div className="border-b border-[var(--border)] px-4 py-3">
           <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold mb-1">单步回放</div>
           <div className="text-sm font-semibold">{selectedRun.trigger}</div>
@@ -2363,7 +2449,7 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
         onClose={() => setMobileReplayOpen(false)}
         title="单步回放"
         description={`${selectedRun.trigger} · ${selectedRun.time} · ${selectedRun.who}`}
-        width={360}
+        width={520}
       >
         <div className="space-y-3 p-4">
           <div className="flex gap-0.5 h-3 rounded overflow-hidden bg-[var(--bg-hover)]">
