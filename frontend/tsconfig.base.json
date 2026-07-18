@@ -20,7 +20,7 @@
     "useDefineForClassFields": true,
     "baseUrl": ".",
     "paths": {
-      "@web/*": ["apps/web/src/*"],
+      "@web/*": ["web/src/*"],
       "@web-ui/*": ["packages/ui/src/*"],
       "@web-api/*": ["packages/api/src/*"],
       "@web-types/*": ["packages/types/src/*"],

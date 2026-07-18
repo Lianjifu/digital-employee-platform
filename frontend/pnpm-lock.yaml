@@ -8,23 +8,89 @@ importers:
 
   .: {}
 
-  apps/web:
+  packages/api:
+    dependencies:
+      '@de/web-types':
+        specifier: workspace:*
+        version: link:../types
+      '@de/web-utils':
+        specifier: workspace:*
+        version: link:../utils
+    devDependencies:
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.9
+        version: 2.1.9(@types/node@20.19.43)(jsdom@26.1.0)
+
+  packages/hooks:
+    dependencies:
+      '@de/web-types':
+        specifier: workspace:*
+        version: link:../types
+      react:
+        specifier: ^18.3.0
+        version: 18.3.1
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.0
+        version: 18.3.31
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
+  packages/types:
+    devDependencies:
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
+  packages/ui:
+    dependencies:
+      '@de/web-utils':
+        specifier: workspace:*
+        version: link:../utils
+      react:
+        specifier: ^18.3.0
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.0
+        version: 18.3.1(react@18.3.1)
+    devDependencies:
+      '@types/react':
+        specifier: ^18.3.0
+        version: 18.3.31
+      '@types/react-dom':
+        specifier: ^18.3.0
+        version: 18.3.7(@types/react@18.3.31)
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
+  packages/utils:
+    devDependencies:
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
+  web:
     dependencies:
       '@de/web-api':
         specifier: workspace:*
-        version: link:../../packages/api
+        version: link:../packages/api
       '@de/web-hooks':
         specifier: workspace:*
-        version: link:../../packages/hooks
+        version: link:../packages/hooks
       '@de/web-types':
         specifier: workspace:*
-        version: link:../../packages/types
+        version: link:../packages/types
       '@de/web-ui':
         specifier: workspace:*
-        version: link:../../packages/ui
+        version: link:../packages/ui
       '@de/web-utils':
         specifier: workspace:*
-        version: link:../../packages/utils
+        version: link:../packages/utils
       '@tanstack/react-query':
         specifier: ^5.51.0
         version: 5.101.2(react@18.3.1)
@@ -92,72 +158,6 @@ importers:
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@20.19.43)(jsdom@26.1.0)
-
-  packages/api:
-    dependencies:
-      '@de/web-types':
-        specifier: workspace:*
-        version: link:../types
-      '@de/web-utils':
-        specifier: workspace:*
-        version: link:../utils
-    devDependencies:
-      typescript:
-        specifier: ^5.5.0
-        version: 5.9.3
-      vitest:
-        specifier: ^2.1.9
-        version: 2.1.9(@types/node@20.19.43)(jsdom@26.1.0)
-
-  packages/hooks:
-    dependencies:
-      '@de/web-types':
-        specifier: workspace:*
-        version: link:../types
-      react:
-        specifier: ^18.3.0
-        version: 18.3.1
-    devDependencies:
-      '@types/react':
-        specifier: ^18.3.0
-        version: 18.3.31
-      typescript:
-        specifier: ^5.5.0
-        version: 5.9.3
-
-  packages/types:
-    devDependencies:
-      typescript:
-        specifier: ^5.5.0
-        version: 5.9.3
-
-  packages/ui:
-    dependencies:
-      '@de/web-utils':
-        specifier: workspace:*
-        version: link:../utils
-      react:
-        specifier: ^18.3.0
-        version: 18.3.1
-      react-dom:
-        specifier: ^18.3.0
-        version: 18.3.1(react@18.3.1)
-    devDependencies:
-      '@types/react':
-        specifier: ^18.3.0
-        version: 18.3.31
-      '@types/react-dom':
-        specifier: ^18.3.0
-        version: 18.3.7(@types/react@18.3.31)
-      typescript:
-        specifier: ^5.5.0
-        version: 5.9.3
-
-  packages/utils:
-    devDependencies:
-      typescript:
-        specifier: ^5.5.0
-        version: 5.9.3
 
 packages:
 

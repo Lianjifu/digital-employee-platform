@@ -1,10 +1,10 @@
 {
-  "extends": "../../tsconfig.base.json",
+  "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "types": ["vite/client", "node"],
-    "baseUrl": "../..",
+    "baseUrl": "..",
     "paths": {
-      "@/*": ["apps/web/src/*"],
+      "@/*": ["web/src/*"],
       "@de/web-ui": ["packages/ui/src/index.tsx"],
       "@de/web-api": ["packages/api/src/index.ts"],
       "@de/web-types": ["packages/types/src/index.ts"],

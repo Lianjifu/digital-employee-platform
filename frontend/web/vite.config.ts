@@ -2,8 +2,8 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
 
-const ROOT = path.resolve(__dirname, '../..');
-const SRC = path.join(ROOT, 'apps/web/src');
+const ROOT = path.resolve(__dirname, '..');
+const SRC = path.join(ROOT, 'web/src');
 const PKG = (p: string) => path.join(ROOT, 'packages', p);
 
 export default defineConfig({
