@@ -1,12 +1,7 @@
 /**
  * P6 工作流（企业级优化版）
  *
- * 页面结构（自上而下）：
- *   1. 顶部 KPI 概览（5 张卡）
- *   2. 主内容区
- *      · 左侧画布（DAG + Webhook 触发器 + 流程时序）
- *      · 右侧节点库 / 调试 / 属性三栏切换
- *   3. 底部三 Tab（画布 / 模板市场 / 执行历史）
+ * 页面结构：页面头部、一级功能导航、单一主画布与按需抽屉。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactFlow, {
@@ -30,7 +25,7 @@ import {
   Play, Save, Download, Zap, ShieldCheck, Cpu, GitBranch, Bell, FileText,
   Wrench, Database, PlayCircle, ChevronRight, Activity, CheckCircle2, Clock,
   AlertTriangle, Plus, Sparkles, Settings, Pause, RotateCcw,
-  Eye, Bug, Webhook, Layers, Search, History, X, Trash2, GitCompare,
+  Eye, Bug, Webhook, Layers, Search, History, X, Trash2, GitCompare, MoreHorizontal,
   Edit3, Copy, Box, ArrowRight, GripVertical, RefreshCw,
   Undo2, Redo2, FileJson, MessageSquare, StepForward, StepBack, SkipForward, SkipBack, History as HistoryIcon,
 } from 'lucide-react';
@@ -271,15 +266,6 @@ const VERSIONS = [
   { id: 'v1', label: 'v1', time: '昨天 18:42', desc: '初始版本 · 故障自愈' },
 ];
 
-/* ============ KPI ============ */
-const KPI = {
-  running: 3,
-  totalToday: 47,
-  successRate: 97.8,
-  avgDuration: '42s',
-  mttrImprovement: -65,
-};
-
 type Snapshot = { nodes: Node[]; edges: Edge[] };
 type VersionSnapshot = Snapshot & { id: string; label: string; time: string; desc: string };
 
@@ -352,6 +338,7 @@ export default function Workflows() {
   const { data: generationHistory = [] } = useApiQuery<GenerationResult[]>(['workflow-generations'], '/api/workflows/generations');
   const [preflightOpen, setPreflightOpen] = useState(false);
   const [preflightResult, setPreflightResult] = useState<WorkflowValidation | null>(null);
+  const [nodeLibraryOpen, setNodeLibraryOpen] = useState(false);
 
   // Toast
   const [toast, setToast] = useState<{ msg: string; tone: 'success' | 'error' | 'info' } | null>(null);
@@ -806,31 +793,23 @@ export default function Workflows() {
 
   return (
     <div className="workflow-page flex h-full min-w-0 flex-col overflow-hidden bg-[var(--bg-elevated)]">
-      {/* ======== 顶部 KPI（5 张） ======== */}
-      <div className="flex shrink-0 gap-2 overflow-x-auto border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2 md:grid md:grid-cols-3 md:gap-3 md:px-6 lg:grid-cols-5">
-        <div className="min-w-[148px] md:min-w-0"><Stat icon={<Play className="h-4 w-4 text-[var(--brand)]" />} label="执行中" value={KPI.running} sub="个" tone="primary" /></div>
-        <div className="min-w-[148px] md:min-w-0"><Stat icon={<Activity className="h-4 w-4" />} label="今日总数" value={KPI.totalToday} sub="次" /></div>
-        <div className="min-w-[148px] md:min-w-0"><Stat icon={<CheckCircle2 className="h-4 w-4 text-[var(--success)]" />} label="成功率" value={KPI.successRate} sub="%" tone="success" /></div>
-        <div className="min-w-[148px] md:min-w-0"><Stat icon={<Clock className="h-4 w-4" />} label="平均完成" value={KPI.avgDuration} /></div>
-        <div className="min-w-[148px] md:min-w-0"><Stat icon={<ShieldCheck className="h-4 w-4 text-[var(--warning)]" />} label="待审批" value={KPI.running > 0 ? 1 : 0} sub="个" tone="warning" /></div>
-      </div>
-
-      {/* ======== Tab Bar（与 KPI 区分明确） ======== */}
+      {/* ======== 一级功能导航 ======== */}
       <div className="shrink-0 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2 md:px-6">
         <div className="flex min-w-0 items-center justify-between gap-3">
-          <div className="flex min-w-0 items-center gap-2">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 className="shrink-0 text-sm font-semibold text-[var(--text)]">工作流</h2>
             <span className="truncate text-[10px] text-[var(--text-muted)]">
-              {tab === 'canvas' ? `DAG 画布 · ${nodes.length} 节点 / ${edges.length} 连线` : tab === 'templates' ? `模板库 · ${TEMPLATES.length} 套` : `执行历史 · ${RUNS.length} 条`}
+              {tab === 'canvas' ? `DAG 画布 · ${nodes.length} 节点 / ${edges.length} 连线` : tab === 'templates' ? `模版库 · ${TEMPLATES.length} 套` : `执行历史 · ${RUNS.length} 条`}
             </span>
             {tab === 'canvas' && isDirty && <Badge tone="warn" className="shrink-0 text-[9px]">未保存</Badge>}
           </div>
-          <div className={cn('relative shrink-0', tab !== 'canvas' && 'hidden')}>
+          <div className="hidden">
             <button
               onClick={() => setVersionMenuOpen(!versionMenuOpen)}
               className="flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[11px] hover:border-[var(--brand)]"
             >
               <HistoryIcon className="h-3 w-3 text-[var(--text-muted)]" />
+              <span className="text-[11px] font-medium text-[var(--text-secondary)]">工作流版本管理</span>
               <span className="font-mono font-semibold">{versions.find((v) => v.id === activeVersion)?.label ?? activeVersion}</span>
               <ChevronRight className="h-3 w-3 rotate-90 text-[var(--text-muted)]" />
             </button>
@@ -839,7 +818,7 @@ export default function Workflows() {
                 <div className="fixed inset-0 z-40" onClick={() => setVersionMenuOpen(false)} />
                 <div className="absolute right-0 top-full z-50 mt-1 max-w-[calc(100vw-24px)] min-w-[260px] rounded-md border border-[var(--border)] bg-[var(--surface-1)] py-1 shadow-xl">
                   <div className="border-b border-[var(--border)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                    版本历史 · 共 {versions.length} 版
+                    工作流版本管理 · 共 {versions.length} 版
                   </div>
                   {versions.map((v) => (
                     <button
@@ -905,7 +884,7 @@ export default function Workflows() {
         <div className="mt-2 flex min-w-0 items-center gap-1.5 overflow-x-auto border-t border-[var(--border)] pt-2">
           {([
             { k: 'canvas' as TabKey, label: '画布', icon: GitBranch },
-            { k: 'templates' as TabKey, label: '模板库', icon: Layers },
+            { k: 'templates' as TabKey, label: '模版库', icon: Layers },
             { k: 'history' as TabKey, label: '执行历史', icon: History },
           ]).map((v) => (
             <button
@@ -983,6 +962,20 @@ export default function Workflows() {
             canWrite={canWrite}
             canExecute={canExecute}
             openAIGenerator={openAIGenerator}
+            nodeLibraryOpen={nodeLibraryOpen}
+            setNodeLibraryOpen={setNodeLibraryOpen}
+            validating={validateWorkflowApi.isPending}
+            versionMenuOpen={versionMenuOpen}
+            setVersionMenuOpen={setVersionMenuOpen}
+            versions={versions}
+            activeVersion={activeVersion}
+            loadSnapshot={loadSnapshot}
+            setVersions={setVersions}
+            setActiveVersion={setActiveVersion}
+            setVersionDiffOpen={setVersionDiffOpen}
+            publishVersion={() => publishWorkflowApi.mutate({ version: activeVersion })}
+            publishing={publishWorkflowApi.isPending}
+            isDirty={isDirty}
           />
         )}
 
@@ -1272,6 +1265,20 @@ function CanvasView(props: {
   canWrite: boolean;
   canExecute: boolean;
   openAIGenerator: () => void;
+  nodeLibraryOpen: boolean;
+  setNodeLibraryOpen: (open: boolean) => void;
+  validating: boolean;
+  versionMenuOpen: boolean;
+  setVersionMenuOpen: (open: boolean) => void;
+  versions: VersionSnapshot[];
+  activeVersion: string;
+  loadSnapshot: (snapshot: Snapshot, versionId: string) => void;
+  setVersions: React.Dispatch<React.SetStateAction<VersionSnapshot[]>>;
+  setActiveVersion: (version: string) => void;
+  setVersionDiffOpen: (open: boolean) => void;
+  publishVersion: () => void;
+  publishing: boolean;
+  isDirty: boolean;
 }) {
   const {
     wrapperRef, rfNodes, rfEdges, onNodeClick, onNodeContextMenu, onNodesChange,
@@ -1281,11 +1288,12 @@ function CanvasView(props: {
     selectedNode, selectedNodeId, nodes, webhookEnabled, setWebhookEnabled,
     saveCanvas, saving, runWorkflow, resetCanvas, clearCanvas,
     addNode, deleteNode, duplicateNode, disableNode, updateNodeLabel, updateNodeDescription, updateNodeNote, showToast,
-    onConnect, deleteEdge, undo, redo, canUndo, canRedo, exportWorkflow, reactFlowRef, canWrite, canExecute, openAIGenerator,
+    onConnect, deleteEdge, undo, redo, canUndo, canRedo, exportWorkflow, reactFlowRef, canWrite, canExecute, openAIGenerator, nodeLibraryOpen, setNodeLibraryOpen, validating,
+    versionMenuOpen, setVersionMenuOpen, versions, activeVersion, loadSnapshot, setVersions, setActiveVersion, setVersionDiffOpen, publishVersion, publishing, isDirty,
   } = props;
 
   const [mobilePanelOpen, setMobilePanelOpen] = useState<SidePanelKey | null>(null);
-  const [nodePaletteOpen, setNodePaletteOpen] = useState(true);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [nodeInspectorTab, setNodeInspectorTab] = useState<'overview' | 'config' | 'debug'>('config');
   const handleNodeClick: NodeMouseHandler = useCallback((event, node) => {
     onNodeClick(event, node);
@@ -1293,8 +1301,28 @@ function CanvasView(props: {
     setMobilePanelOpen('properties');
   }, [onNodeClick]);
 
+  const actionToolbar = (
+    <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2">
+      <Button size="sm" variant="outline" onClick={() => setVersionMenuOpen(true)}><HistoryIcon className="h-3.5 w-3.5" />工作流版本管理</Button>
+      <Button size="sm" variant="outline" onClick={() => setNodeLibraryOpen(!nodeLibraryOpen)} aria-expanded={nodeLibraryOpen}><Box className="h-3.5 w-3.5" />{nodeLibraryOpen ? '收起节点库' : '节点库'}</Button>
+      <div className="mx-1 h-5 w-px bg-[var(--border)]" />
+      <Button size="sm" variant="primary" onClick={openAIGenerator} disabled={!canWrite}><Sparkles className="h-3.5 w-3.5" />AI 生成</Button>
+      <Button size="sm" variant="outline" onClick={runWorkflow} disabled={!canExecute || validating} loading={validating}><Play className="h-3.5 w-3.5" />运行试验</Button>
+      <Button size="sm" variant="outline" onClick={saveCanvas} loading={saving} disabled={!canWrite || saving}><Save className="h-3.5 w-3.5" />保存草稿</Button>
+      <div className="relative">
+        <Button size="sm" variant="outline" onClick={() => setMoreMenuOpen((open) => !open)} aria-expanded={moreMenuOpen}><MoreHorizontal className="h-3.5 w-3.5" />更多</Button>
+        {moreMenuOpen && <><div className="fixed inset-0 z-30" onClick={() => setMoreMenuOpen(false)} /><div className="absolute left-0 top-full z-40 mt-1 w-44 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-1.5 shadow-lg"><button type="button" onClick={() => { exportWorkflow(); setMoreMenuOpen(false); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"><FileJson className="h-3.5 w-3.5" />导出工作流</button><button type="button" onClick={() => { resetCanvas(); setMoreMenuOpen(false); }} disabled={!canWrite} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-40"><RefreshCw className="h-3.5 w-3.5" />重置画布</button><div className="my-1 border-t border-[var(--border)]" /><button type="button" onClick={() => { clearCanvas(); setMoreMenuOpen(false); }} disabled={!canWrite} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-[var(--danger)] hover:bg-[var(--danger-bg)] disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" />清空画布</button></div></>}
+      </div>
+    </div>
+  );
+
   return (
-    <div className="flex h-full min-h-0 min-w-0">
+    <div className="flex h-full min-h-0 min-w-0 flex-col">
+      {actionToolbar}
+      <Drawer open={versionMenuOpen} onClose={() => setVersionMenuOpen(false)} width={520} title="工作流版本管理" description={`当前版本 ${activeVersion} · 版本切换仅影响画布草稿`} footer={<div className="flex w-full gap-2"><Button size="sm" variant="outline" className="flex-1" onClick={() => setVersionDiffOpen(true)}>查看差异</Button><Button size="sm" variant="primary" className="flex-1" onClick={publishVersion} loading={publishing} disabled={!canWrite || isDirty}>发布</Button></div>}>
+        <div className="space-y-2">{versions.map((version) => <button key={version.id} type="button" onClick={() => { loadSnapshot(version, version.id); setVersionMenuOpen(false); showToast(`已加载 ${version.label}（本地快照）`, 'info'); }} className={cn('flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left transition-colors hover:bg-[var(--bg-hover)]', version.id === activeVersion ? 'border-[var(--brand)] bg-[var(--brand-light)]' : 'border-[var(--border)] bg-[var(--surface-1)]')}><span className="font-mono text-sm font-semibold text-[var(--brand)]">{version.label}</span><span className="min-w-0 flex-1"><span className="block text-[11px] text-[var(--text-muted)]">{version.time}</span><span className="block truncate text-xs text-[var(--text-secondary)]">{version.desc}</span></span>{version.id === activeVersion && <Badge tone="success">当前</Badge>}</button>)}</div>
+        <div className="mt-4 grid grid-cols-2 gap-2"><Button size="sm" variant="outline" onClick={() => { const current = versions.find((version) => version.id === activeVersion); if (current) loadSnapshot(current, current.id); setVersionMenuOpen(false); showToast('已回滚到当前版本', 'info'); }} disabled={!canWrite}><RotateCcw className="h-3 w-3" />回滚当前</Button><Button size="sm" variant="secondary" onClick={() => { const nextId = `v${versions.length + 1}`; setVersions((prev) => [...prev, { id: nextId, label: `${nextId} · 草稿`, time: '刚刚', desc: '从当前画布另存的本地快照', nodes: cloneSnapshot({ nodes: props.nodes as Node[], edges: props.rfEdges }).nodes, edges: cloneSnapshot({ nodes: props.nodes as Node[], edges: props.rfEdges }).edges }]); setActiveVersion(nextId); setVersionMenuOpen(false); showToast(`已另存为 ${nextId}`, 'success'); }} disabled={!canWrite}><Save className="h-3 w-3" />另存版本</Button></div>
+      </Drawer>
       {/* —— 左侧：节点库 —— */}
       <div className="hidden">
         <div className="border-b border-[var(--border)] p-3">
@@ -1351,18 +1379,6 @@ function CanvasView(props: {
 
       {/* —— 中间：DAG 画布 + Webhook + 操作按钮 —— */}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--surface-2)]">
-        <div className="flex shrink-0 items-center gap-2 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2">
-          <Button size="sm" variant="outline" onClick={() => setNodePaletteOpen((open) => !open)}>
-            <Box className="h-3.5 w-3.5" />{nodePaletteOpen ? '收起节点库' : '节点库'}
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => {
-            setNodeInspectorTab(selectedNode ? 'config' : 'overview');
-            setMobilePanelOpen(selectedNode ? 'properties' : 'library');
-          }}>
-            <Settings className="h-3.5 w-3.5" />{selectedNode ? '节点详情' : '节点库'}
-          </Button>
-        </div>
-
         <Drawer
           open={mobilePanelOpen !== null}
           onClose={() => setMobilePanelOpen(null)}
@@ -1467,25 +1483,6 @@ function CanvasView(props: {
             >
               <Redo2 className="h-3.5 w-3.5" />
             </button>
-            <div className="mx-1 h-5 w-px bg-[var(--border)]" />
-              <Button size="sm" variant="primary" onClick={openAIGenerator} disabled={!canWrite} title={!canWrite ? '需要 workflow.write 权限' : undefined}>
-                <Sparkles className="h-3.5 w-3.5" />AI 生成
-              </Button>
-              <Button size="sm" variant="outline" onClick={runWorkflow} disabled={!canExecute} title={!canExecute ? '需要 workflow.execute 权限' : undefined}>
-                <Play className="h-3.5 w-3.5" />运行
-              </Button>
-              <Button size="sm" variant="outline" onClick={saveCanvas} loading={saving} disabled={!canWrite || saving} title={!canWrite ? '需要 workflow.write 权限' : undefined}>
-                <Save className="h-3.5 w-3.5" />保存
-              </Button>
-            <Button size="sm" variant="outline" onClick={exportWorkflow}>
-              <FileJson className="h-3.5 w-3.5" />导出
-            </Button>
-              <Button size="sm" variant="outline" onClick={resetCanvas} disabled={!canWrite} title={!canWrite ? '需要 workflow.write 权限' : undefined}>
-                <RefreshCw className="h-3.5 w-3.5" />重置
-              </Button>
-              <Button size="sm" variant="danger" onClick={clearCanvas} disabled={!canWrite} title={!canWrite ? '需要 workflow.write 权限' : undefined}>
-                <Trash2 className="h-3.5 w-3.5" />清空
-              </Button>
           </div>
         </div>
 
@@ -1526,7 +1523,7 @@ function CanvasView(props: {
           </ReactFlowProvider>
 
           {/* 画布内节点库：可直接拖放到任意画布位置 */}
-          {nodePaletteOpen && (
+          {nodeLibraryOpen && (
             <div className="absolute left-3 top-3 z-20 w-[232px] rounded-lg border border-[var(--border)] bg-[var(--bg)]/95 p-2 shadow-lg backdrop-blur">
               <div className="mb-2 flex items-center gap-1.5 px-1 text-[11px] font-semibold">
                 <Box className="h-3.5 w-3.5 text-[var(--brand)]" />节点库
@@ -1992,7 +1989,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 /* =============================================================
- *  工作流模板库
+ *  工作流模版库
  * ============================================================= */
 function TemplatesView({
   filterGroup, setFilterGroup, filteredTemplates, showToast, onPreview, onUseTemplate,
@@ -2009,7 +2006,7 @@ function TemplatesView({
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-[var(--brand)]" />工作流模板库
+            <Sparkles className="h-4 w-4 text-[var(--brand)]" />工作流模版库
           </h2>
           <p className="text-xs text-[var(--text-muted)] mt-0.5">{TEMPLATES.length} 套内置模板 · 按业务 / 系统 / 安全 / AI 分组</p>
         </div>
@@ -2496,22 +2493,6 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
           </div>
         </div>
       </Drawer>
-    </div>
-  );
-}
-
-/* ============================================================= */
-function Stat({ label, value, sub, tone, icon }: { label: string; value: any; sub?: string; tone?: 'primary' | 'success' | 'warning' | 'purple'; icon?: React.ReactNode }) {
-  const color = tone === 'success' ? 'text-[var(--success)]' : tone === 'warning' ? 'text-[var(--warning)]' : tone === 'primary' ? 'text-[var(--brand)]' : tone === 'purple' ? 'text-[var(--purple)]' : 'text-[var(--text)]';
-  return (
-    <div className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2">
-      <div>
-        <div className="text-[10px] text-[var(--text-muted)] font-semibold uppercase tracking-wide">{label}</div>
-        <div className={cn('mt-0.5 text-lg font-bold font-mono', color)}>
-          {value}<span className="ml-0.5 text-[10px] text-[var(--text-muted)] font-normal">{sub}</span>
-        </div>
-      </div>
-      {icon}
     </div>
   );
 }
