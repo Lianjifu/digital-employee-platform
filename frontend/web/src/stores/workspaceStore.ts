@@ -6,6 +6,7 @@ import type { Workspace } from '@de/web-types';
 
 interface WorkspaceState {
   current: Workspace | null;
+  currentWorkspaceId: string | null;
   list: Workspace[];
   setCurrent: (w: Workspace) => void;
   setList: (list: Workspace[]) => void;
@@ -14,6 +15,7 @@ interface WorkspaceState {
 export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   current: null,
   list: [],
-  setCurrent: (w) => set({ current: w }),
+  currentWorkspaceId: null,
+  setCurrent: (w) => set({ current: w, currentWorkspaceId: w.id }),
   setList: (list) => set({ list }),
 }));

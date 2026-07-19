@@ -155,7 +155,7 @@ export default function Knowledge() {
           <div className="knowledge-header-main">
             <div className="knowledge-header-copy">
               <div className="knowledge-workbench-eyebrow">企业知识运营</div>
-              <h1 className="mt-1 flex items-center gap-2 text-lg font-semibold"><BookOpen className="h-5 w-5 text-[var(--brand)]" />知识库中心</h1>
+              <h1 className="mt-1 flex items-center gap-2 text-lg font-semibold"><BookOpen className="h-5 w-5 text-[var(--brand)]" />知识中心</h1>
               <p className="mt-1 text-xs text-[var(--text-muted)]">统一管理企业知识内容、接入加工、检索评测、图谱关联与引用治理。</p>
             </div>
           </div>

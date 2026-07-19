@@ -50,6 +50,7 @@ import type {
   Workflow,
   WorkflowSkill,
   Workspace,
+  WorkspaceAuditEvent, WorkspaceBinding, WorkspaceEnvironment, WorkspaceMember, WorkspacePolicy, WorkspaceQuota, WorkspaceRuntimeEvent,
 } from '@de/web-types';
 import { sleep } from '@de/web-utils';
 
@@ -102,11 +103,17 @@ export const mockWorkspaceSwitchHistory = [
 ];
 
 export const mockWorkspaces: Workspace[] = [
-  { id: 'w1', name: 'ACME 生产', region: 'cn-east-1', plan: 'enterprise_plus', memberCount: 18, complianceScore: 98, createdAt: '2024-03-12T00:00:00Z' },
-  { id: 'w2', name: 'ACME 预发', region: 'cn-east-1', plan: 'enterprise', memberCount: 6, complianceScore: 92, createdAt: '2024-05-08T00:00:00Z' },
-  { id: 'w3', name: 'ACME 安全', region: 'cn-east-1', plan: 'enterprise_plus', memberCount: 4, complianceScore: 100, createdAt: '2024-06-01T00:00:00Z' },
-  { id: 'w4', name: '外协沙箱', region: 'cn-south-1', plan: 'standard', memberCount: 2, complianceScore: 85, createdAt: '2025-01-15T00:00:00Z' },
+  { id: 'w1', tenantId: 'tenant-acme', ownerId: 'u1', status: 'active', name: 'ACME 生产', region: 'cn-east-1', plan: 'enterprise_plus', memberCount: 18, complianceScore: 98, createdAt: '2024-03-12T00:00:00Z' },
+  { id: 'w2', tenantId: 'tenant-acme', ownerId: 'u1', status: 'active', name: 'ACME 预发', region: 'cn-east-1', plan: 'enterprise', memberCount: 6, complianceScore: 92, createdAt: '2024-05-08T00:00:00Z' },
+  { id: 'w3', tenantId: 'tenant-acme', ownerId: 'u1', status: 'active', name: 'ACME 安全', region: 'cn-east-1', plan: 'enterprise_plus', memberCount: 4, complianceScore: 100, createdAt: '2024-06-01T00:00:00Z' },
+  { id: 'w4', tenantId: 'tenant-acme', ownerId: 'u1', status: 'active', name: '外协沙箱', region: 'cn-south-1', plan: 'standard', memberCount: 2, complianceScore: 85, createdAt: '2025-01-15T00:00:00Z' },
 ];
+const workspaceBindings: WorkspaceBinding[] = [{ id: 'wb1', workspaceId: 'w1', environment: 'production', kind: 'agent', name: '故障自愈', status: 'active' }, { id: 'wb2', workspaceId: 'w1', environment: 'production', kind: 'model', name: 'P0 路由策略', status: 'active' }];
+const workspaceEnvironments: WorkspaceEnvironment[] = ['sandbox', 'staging', 'production'].map((kind) => ({ id: `w1-${kind}`, workspaceId: 'w1', kind: kind as WorkspaceEnvironment['kind'], approvalRequired: kind === 'production', canaryPercent: kind === 'production' ? 10 : 100, status: 'ready' }));
+const workspacePolicies: WorkspacePolicy[] = [{ workspaceId: 'w1', dataClassification: 'restricted', egressAllowed: false, toolAllowlist: ['kubectl', 'cmdb-tool'], retentionDays: 365, exceptionStatus: 'none' }];
+const workspaceQuotas: WorkspaceQuota[] = [{ workspaceId: 'w1', seats: { used: 18, limit: 50 }, agents: { used: 6, limit: 20 }, concurrency: { used: 4, limit: 20 }, tokens: { used: 1240000, limit: 5000000 }, budgetUsd: { used: 1240, limit: 3000 } }];
+const workspaceAudits: WorkspaceAuditEvent[] = [];
+const workspaceRuntimeEvents: WorkspaceRuntimeEvent[] = [];
 
 // ============ 首页扩展数据 ============
 export interface HomeExtra {
@@ -1496,21 +1503,29 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     ];
   }
 
-  // 工作区
-  if (path === '/api/workspaces') return mockWorkspaces;
+  // 工作区控制面：当前 Mock 登录用户仅能访问 tenant-acme 的成员工作区。
+  const workspaceContext = () => ({ workspaceId: opts.headers?.['x-workspace-id'] ?? 'w1', actor: opts.headers?.['x-mock-actor'] ?? '王昊', canWrite: opts.headers?.['x-mock-permissions'] ? opts.headers['x-mock-permissions'].includes('workspace.write') : true });
+  const workspaceAudit = (workspaceId: string, action: string, target: string, result: 'success' | 'failed' = 'success', reason?: string) => { const context = workspaceContext(); const event: WorkspaceAuditEvent = { id: mockId('workspace_audit'), workspaceId, time: new Date().toISOString(), actor: context.actor, action, target, result, reason, correlationId: mockId('workspace_corr') }; workspaceAudits.unshift(event); return event; };
+  const requireWorkspace = (workspaceId: string, write = false) => { const context = workspaceContext(); const workspace = mockWorkspaces.find((item) => item.id === workspaceId && item.tenantId === 'tenant-acme'); if (!workspace) throw new Error('E_WORKSPACE_NOT_FOUND'); if (context.workspaceId !== workspaceId) throw new Error('E_WORKSPACE_SCOPE: 无权访问其他工作区资源'); if (write && !context.canWrite) throw new Error('E_WORKSPACE_WRITE_FORBIDDEN'); return workspace; };
+  if (path === '/api/workspaces' && method === 'GET') return mockWorkspaces.filter((item) => item.tenantId === 'tenant-acme');
+  if (path === '/api/workspaces' && method === 'POST') { const context = workspaceContext(); if (!context.canWrite) throw new Error('E_WORKSPACE_WRITE_FORBIDDEN'); const body = (opts.body ?? {}) as Partial<Workspace>; if (!body.name?.trim()) throw new Error('E_WORKSPACE_NAME_REQUIRED'); const item: Workspace = { id: mockId('workspace'), tenantId: 'tenant-acme', ownerId: 'u1', status: 'active', name: body.name.trim(), region: body.region ?? 'cn-east-1', plan: body.plan ?? 'enterprise', memberCount: 1, complianceScore: 80, createdAt: new Date().toISOString() }; mockWorkspaces.unshift(item); workspaceAudit(item.id, '创建工作区', item.name); return item; }
+  const workspaceAction = path.match(/^\/api\/workspaces\/([^/]+)\/(freeze|archive|transfer|runtime|report|impact)$/);
+  if (workspaceAction) { const [, id, action] = workspaceAction; const workspace = requireWorkspace(id, action !== 'impact' && action !== 'report'); const body = (opts.body ?? {}) as any; if (action === 'impact') return { blocked: workspaceBindings.some((item) => item.workspaceId === id && item.status === 'active'), bindings: workspaceBindings.filter((item) => item.workspaceId === id) }; if (action === 'report') return { workspace, quota: workspaceQuotas.find((item) => item.workspaceId === id), governanceScore: workspace.complianceScore, auditCount: workspaceAudits.filter((item) => item.workspaceId === id).length }; if (action === 'freeze' || action === 'archive') { if (workspaceBindings.some((item) => item.workspaceId === id && item.status === 'active') && !body.force) throw new Error('E_WORKSPACE_IN_USE'); workspace.status = action === 'freeze' ? 'frozen' : 'archived'; workspaceAudit(id, action === 'freeze' ? '冻结工作区' : '归档工作区', workspace.name, 'success', body.reason); return workspace; } if (action === 'transfer') { if (!body.ownerId) throw new Error('E_WORKSPACE_OWNER_REQUIRED'); workspace.ownerId = body.ownerId; workspaceAudit(id, '移交工作区负责人', workspace.name, 'success', body.reason); return workspace; } const event: WorkspaceRuntimeEvent = { id: mockId('runtime'), workspaceId: id, type: body.type ?? 'incident', status: 'open', detail: body.detail ?? '运行治理动作', createdAt: new Date().toISOString() }; workspaceRuntimeEvents.unshift(event); workspaceAudit(id, `运行治理：${event.type}`, workspace.name, 'success', body.reason); return event; }
   if (path.startsWith('/api/workspaces/') && path.endsWith('/agents')) {
-    const id = path.split('/')[3];
+    const id = path.split('/')[3]; requireWorkspace(id);
     return mockWorkspaceAgents[id as keyof typeof mockWorkspaceAgents] ?? [];
   }
   if (path.startsWith('/api/workspaces/') && path.endsWith('/tools')) {
-    const id = path.split('/')[3];
+    const id = path.split('/')[3]; requireWorkspace(id);
     return mockWorkspaceTools[id as keyof typeof mockWorkspaceTools] ?? null;
   }
   if (path.startsWith('/api/workspaces/') && path.endsWith('/members')) {
-    const id = path.split('/')[3];
+    const id = path.split('/')[3]; requireWorkspace(id);
     return mockWorkspaceMembers[id as keyof typeof mockWorkspaceMembers] ?? [];
   }
   if (path === '/api/workspace-switch-history') return mockWorkspaceSwitchHistory;
+  const workspaceResource = path.match(/^\/api\/workspaces\/([^/]+)\/(bindings|environments|policy|quota|audit)$/);
+  if (workspaceResource) { const [, id, resource] = workspaceResource; requireWorkspace(id, method !== 'GET'); const records: Record<string, any> = { bindings: workspaceBindings.filter((item) => item.workspaceId === id), environments: workspaceEnvironments.filter((item) => item.workspaceId === id), policy: workspacePolicies.find((item) => item.workspaceId === id), quota: workspaceQuotas.find((item) => item.workspaceId === id), audit: workspaceAudits.filter((item) => item.workspaceId === id) }; if (method === 'GET') return records[resource]; const body = (opts.body ?? {}) as any; if (resource === 'bindings') { const binding: WorkspaceBinding = { id: mockId('binding'), workspaceId: id, environment: body.environment ?? 'sandbox', kind: body.kind, name: body.name, status: 'active' }; workspaceBindings.unshift(binding); workspaceAudit(id, '绑定资源', binding.name); return binding; } if (resource === 'policy') { if ((body.dataClassification === 'restricted' || records.policy?.dataClassification === 'restricted') && body.egressAllowed) throw new Error('E_WORKSPACE_EGRESS_BLOCKED'); const policy = workspacePolicies.find((item) => item.workspaceId === id); if (policy) Object.assign(policy, body); else workspacePolicies.push({ workspaceId: id, dataClassification: 'internal', egressAllowed: false, toolAllowlist: [], retentionDays: 365, exceptionStatus: 'none', ...body }); workspaceAudit(id, '更新工作区策略', id); return workspacePolicies.find((item) => item.workspaceId === id); } return records[resource]; }
 
   // 任务：所有写操作都经由受控任务领域，保证版本、审计和通知一致。
   if (path === '/api/tasks' && method === 'GET') return taskDomain.list();

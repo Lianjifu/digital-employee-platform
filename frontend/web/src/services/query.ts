@@ -3,6 +3,7 @@
  */
 import { useQuery, useMutation, useQueryClient, type UseQueryOptions, type UseMutationOptions } from '@tanstack/react-query';
 import { getApiClient } from '@de/web-api';
+import { useWorkspaceStore } from '@/stores/workspaceStore';
 
 export function useApiQuery<T>(
   key: readonly unknown[],
@@ -10,8 +11,9 @@ export function useApiQuery<T>(
   params?: { query?: Record<string, any>; body?: unknown; method?: 'GET' | 'POST' },
   options?: Omit<UseQueryOptions<T>, 'queryKey' | 'queryFn'>,
 ) {
+  const workspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
   const q = useQuery<T>({
-    queryKey: key,
+    queryKey: [...key, workspaceId],
     queryFn: async () => {
       const c = getApiClient();
       return c.request<T>(path, {

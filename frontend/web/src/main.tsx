@@ -8,6 +8,7 @@ import './styles/global.css';
 import 'reactflow/dist/style.css';
 import { setApiClient, ApiClient } from '@de/web-api';
 import { mockHandler } from '@de/web-api';
+import { useWorkspaceStore } from './stores/workspaceStore';
 
 // 初始化 API 客户端（mock 模式 — 前端可独立运行）
 setApiClient(
@@ -15,6 +16,7 @@ setApiClient(
     import.meta.env.VITE_API_BASE ?? '/api',
     () => localStorage.getItem('token'),
     import.meta.env.VITE_USE_MOCK !== 'false' ? mockHandler : undefined,
+    () => ({ 'x-workspace-id': useWorkspaceStore.getState().currentWorkspaceId ?? 'w1' }),
   ),
 );
 

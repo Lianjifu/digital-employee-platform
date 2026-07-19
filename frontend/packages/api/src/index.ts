@@ -27,12 +27,14 @@ export class ApiClient {
     private baseURL: string,
     private getAuthToken: () => string | null = () => null,
     private mockHandler?: (path: string, opts: RequestOptions) => Promise<unknown>,
+    private getContextHeaders: () => Record<string, string> = () => ({}),
   ) {}
 
   async request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     const token = this.getAuthToken();
     const requestHeaders: Record<string, string> = {
       ...opts.headers,
+      ...this.getContextHeaders(),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
     if (this.mockHandler) {

@@ -53,13 +53,25 @@ export type WorkspacePlan = 'enterprise' | 'enterprise_plus' | 'standard';
 
 export interface Workspace {
   id: ID;
+  tenantId: ID;
   name: string;
   region: 'cn-east-1' | 'cn-south-1' | 'global';
   plan: WorkspacePlan;
   memberCount: number;
   complianceScore: number; // 0-100
   createdAt: ISODate;
+  ownerId: ID;
+  status: 'active' | 'frozen' | 'archived';
 }
+
+export type WorkspaceEnvironmentKind = 'sandbox' | 'staging' | 'production';
+export interface WorkspaceMember { id: ID; workspaceId: ID; name: string; email: string; role: Role; mfa: boolean; expiresAt?: ISODate; lastActive: string; }
+export interface WorkspaceBinding { id: ID; workspaceId: ID; environment: WorkspaceEnvironmentKind; kind: 'agent' | 'workflow' | 'knowledge' | 'skill' | 'model' | 'channel'; name: string; status: 'active' | 'paused'; }
+export interface WorkspaceEnvironment { id: ID; workspaceId: ID; kind: WorkspaceEnvironmentKind; approvalRequired: boolean; canaryPercent: number; status: 'ready' | 'blocked'; }
+export interface WorkspacePolicy { workspaceId: ID; dataClassification: 'internal' | 'restricted'; egressAllowed: boolean; toolAllowlist: string[]; retentionDays: number; exceptionStatus: 'none' | 'pending' | 'approved'; }
+export interface WorkspaceQuota { workspaceId: ID; seats: { used: number; limit: number }; agents: { used: number; limit: number }; concurrency: { used: number; limit: number }; tokens: { used: number; limit: number }; budgetUsd: { used: number; limit: number }; }
+export interface WorkspaceAuditEvent { id: ID; workspaceId: ID; time: ISODate; actor: string; action: string; target: string; result: 'success' | 'failed'; reason?: string; correlationId: string; }
+export interface WorkspaceRuntimeEvent { id: ID; workspaceId: ID; type: 'handoff' | 'paused' | 'emergency_stop' | 'incident'; status: 'open' | 'resolved'; detail: string; createdAt: ISODate; }
 
 // ============ 任务 P3 ============
 export type Priority = 'P0' | 'P1' | 'P2' | 'P3';

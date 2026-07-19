@@ -12,7 +12,7 @@
  *  9. 跨工作区切换历史
  * 10. 合规基线检查
  */
-import { useState, useMemo } from 'react';
+import { useState } from 'react';
 import { useApiQuery } from '@/services/query';
 import { Badge, Button, Progress, Avatar } from '@de/web-ui';
 import {
@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import type { Workspace } from '@de/web-types';
+import { useWorkspaceStore } from '@/stores/workspaceStore';
 
 const COMPLIANCE_BAR = [
   { label: '数据出境', status: 'pass' },
@@ -34,37 +35,30 @@ const COMPLIANCE_BAR = [
 ];
 
 export default function Workspaces() {
-  const [activeWs, setActiveWs] = useState('w1');
+  const { current, setCurrent } = useWorkspaceStore();
+  const activeWs = current?.id ?? 'w1';
   const [showWizard, setShowWizard] = useState(false);
-  const [tab, setTab] = useState<'overview' | 'members' | 'agents' | 'tools' | 'compliance'>('overview');
+  const [tab, setTab] = useState<'overview' | 'members' | 'agents' | 'tools' | 'compliance' | 'quota' | 'runtime' | 'audit' | 'settings'>('overview');
 
   const { data: list } = useApiQuery<Workspace[]>(['workspaces'], '/api/workspaces');
   const { data: members = [] } = useApiQuery<any[]>(['ws', activeWs, 'members'], `/api/workspaces/${activeWs}/members`);
   const { data: agents = [] } = useApiQuery<string[]>(['ws', activeWs, 'agents'], `/api/workspaces/${activeWs}/agents`);
   const { data: tools } = useApiQuery<any>(['ws', activeWs, 'tools'], `/api/workspaces/${activeWs}/tools`);
+  const { data: environments = [] } = useApiQuery<any[]>(['ws', activeWs, 'environments'], `/api/workspaces/${activeWs}/environments`);
+  const { data: quota } = useApiQuery<any>(['ws', activeWs, 'quota'], `/api/workspaces/${activeWs}/quota`);
+  const { data: audit = [] } = useApiQuery<any[]>(['ws', activeWs, 'audit'], `/api/workspaces/${activeWs}/audit`);
   const { data: switchHistory = [] } = useApiQuery<any[]>(['ws-switch-history'], '/api/workspace-switch-history');
 
   const active = list?.find((w) => w.id === activeWs);
 
-  // KPI 计算
-  const kpis = useMemo(() => {
-    const totalAgents = list?.reduce((s, w) => s + w.memberCount, 0) ?? 0;
-    const onlineAgents = (list ?? []).filter((w) => w.plan !== 'standard').length;
-    return [
-      { label: '工作区', value: `${list?.length ?? 0}/${list?.[0]?.plan ? '12' : '0'}`, sub: `${onlineAgents} 在线`, tone: 'brand' as const },
-      { label: '成员', value: String(totalAgents), sub: '4 角色', tone: 'purple' as const },
-      { label: '智能体', value: '8', sub: '已启用', tone: 'success' as const },
-      { label: '技能调用', value: '8.2k', sub: '次/日', tone: 'warning' as const },
-    ];
-  }, [list]);
-
   return (
     <div className="workspaces-page h-full min-w-0 overflow-y-auto bg-[var(--bg-elevated)]">
       {/* Header */}
-      <div className="mx-auto w-full max-w-[1480px] px-4 pt-5 sm:px-6">
-        <div className="flex items-start justify-between mb-5">
+      <div className="workspace-shell">
+      <header className="workspace-header-panel">
+        <div className="workspace-header-row">
           <div>
-            <h1 className="page-header__title">工作区 · 多租户管理</h1>
+            <div className="workspace-eyebrow">ENTERPRISE CONTROL PLANE</div><h1 className="page-header__title">工作区</h1>
             <p className="page-header__sub">
               {list?.length ?? 0} 个工作区 · 跨团队隔离 · 独立 Agent/知识/工具
             </p>
@@ -72,7 +66,7 @@ export default function Workspaces() {
           <div className="flex items-center gap-2">
             <label className="hidden items-center gap-2 text-xs text-[var(--text-muted)] md:flex">
               当前工作区
-              <select value={activeWs} onChange={(e) => setActiveWs(e.target.value)} className="h-9 max-w-[220px] rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs font-medium text-[var(--text)]">
+              <select value={activeWs} onChange={(e) => { const target = list?.find((item) => item.id === e.target.value); if (target) setCurrent(target); }} className="h-9 max-w-[220px] rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs font-medium text-[var(--text)]">
                 {(list ?? []).map((workspace) => <option key={workspace.id} value={workspace.id}>{workspace.name} · {workspace.region}</option>)}
               </select>
             </label>
@@ -85,20 +79,10 @@ export default function Workspaces() {
           </div>
         </div>
 
-        {/* Todo 3: 4 KPI */}
-        <div className="grid grid-cols-4 gap-3 mb-5">
-          {kpis.map((k) => (
-            <div key={k.label} className={cn('kpi-card', `kpi-card--${k.tone}`)}>
-              <div className="kpi-card__label">{k.label}</div>
-              <div className="kpi-card__value">{k.value}</div>
-              <div className="kpi-card__sub">{k.sub}</div>
-            </div>
-          ))}
-        </div>
-      </div>
+      </header>
 
-      {/* 单一主面板 */}
-      <div className="mx-auto w-full max-w-[1480px] px-4 pb-6 sm:px-6">
+      {/* 独立治理内容面板 */}
+      <main className="workspace-main-panel">
         {/* Todo 1: 左侧 4 工作区切换器 */}
         <aside className="hidden">
           <div>
@@ -110,7 +94,7 @@ export default function Workspaces() {
               {(list ?? []).map((w) => (
                 <button
                   key={w.id}
-                  onClick={() => setActiveWs(w.id)}
+                  onClick={() => setCurrent(w)}
                   className={cn(
                     'block w-full rounded-lg border p-3 text-left transition-all',
                     w.id === activeWs ? 'card-active' : 'border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)]',
@@ -158,25 +142,12 @@ export default function Workspaces() {
         </aside>
 
         {/* 中间：当前工作区详情 + Tabs */}
-        <section className="w-full rounded-lg border border-[var(--border)] bg-[var(--bg)]">
+        <section className="workspace-content-panel">
           {active && (
             <>
-              <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-base font-semibold">{active.name}</h2>
-                    <Badge tone="brand">{active.plan.replace('_', ' ')}</Badge>
-                    <Badge tone={active.complianceScore >= 95 ? 'success' : 'warn'}>
-                      合规 {active.complianceScore}
-                    </Badge>
-                  </div>
-                  <div className="mt-0.5 text-xs text-[var(--text-muted)]">
-                    {active.region} · 创建于 {active.createdAt.slice(0, 10)} · {active.memberCount} 成员
-                  </div>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <div className="flex rounded-md border border-[var(--border)] overflow-hidden">
-                    {(['overview', 'members', 'agents', 'tools', 'compliance'] as const).map((t) => (
+              <div className="workspace-control-layout">
+                  <nav className="workspace-tabs" aria-label="工作区管理分区">
+                    {(['overview', 'members', 'agents', 'tools', 'compliance', 'quota', 'runtime', 'audit', 'settings'] as const).map((t) => (
                       <button
                         key={t}
                         onClick={() => setTab(t)}
@@ -185,14 +156,11 @@ export default function Workspaces() {
                           tab === t ? 'bg-[var(--brand)] text-white' : 'hover:bg-[var(--bg-hover)] text-[var(--text-muted)]',
                         )}
                       >
-                        {t === 'overview' ? '概览' : t === 'members' ? '成员' : t === 'agents' ? 'Agent' : t === 'tools' ? '工具' : '合规'}
+                        {t === 'overview' ? '概览' : t === 'members' ? '成员与权限' : t === 'agents' ? '资源目录' : t === 'tools' ? '环境与发布' : t === 'compliance' ? '策略与合规' : t === 'quota' ? '配额与成本' : t === 'runtime' ? '运行治理' : t === 'audit' ? '工作区审计' : '工作区设置'}
                       </button>
                     ))}
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 sm:p-5">
+                  </nav>
+              <div className="workspace-panel-body">
                 {/* Tab: 概览 */}
                 {tab === 'overview' && (
                   <div className="space-y-4">
@@ -333,6 +301,7 @@ export default function Workspaces() {
                         </div>
                       ))}
                     </div>
+                    <div className="mt-4 grid grid-cols-3 gap-2">{environments.map((environment) => <div key={environment.id} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-xs"><div className="font-semibold">{environment.kind === 'production' ? '生产' : environment.kind === 'staging' ? '预发' : '沙箱'}</div><div className="mt-1 text-[10px] text-[var(--text-muted)]">{environment.approvalRequired ? '发布需审批' : '可直接发布'} · 灰度 {environment.canaryPercent}%</div></div>)}</div>
                   </div>
                 )}
 
@@ -367,7 +336,12 @@ export default function Workspaces() {
                     </div>
                   </div>
                 )}
-              </div>
+
+                {tab === 'quota' && <div className="grid grid-cols-2 gap-3">{quota && Object.entries(quota).map(([name, value]: any) => <KpiInline key={name} label={name === 'budgetUsd' ? '模型预算' : name === 'tokens' ? 'Token' : name === 'concurrency' ? '并发' : name === 'agents' ? '数字员工' : '席位'} value={`${value.used}/${value.limit}`} sub={`使用率 ${Math.round(value.used / value.limit * 100)}%`} tone={value.used / value.limit > .8 ? 'brand' : 'success'} />)}</div>}
+                {tab === 'runtime' && <div className="space-y-3"><div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] p-4 text-xs"><strong>运行治理</strong><p className="mt-1 text-[var(--text-muted)]">支持人工接管、熔断、暂停和事件复盘；所有动作需要原因并写入工作区审计。</p></div><Button size="sm" variant="secondary">发起人工接管</Button><Button size="sm" variant="secondary">暂停高风险运行</Button></div>}
+                {tab === 'audit' && <div className="divide-y overflow-hidden rounded-md border border-[var(--border)]">{audit.length ? audit.map((event) => <div key={event.id} className="flex gap-3 px-3 py-2 text-xs"><span className="font-mono text-[var(--text-muted)]">{event.time.slice(11, 19)}</span><span>{event.actor}</span><strong>{event.action}</strong><span className="text-[var(--text-muted)]">{event.target}</span></div>) : <div className="p-8 text-center text-xs text-[var(--text-muted)]">暂无工作区审计事件</div>}</div>}
+                {tab === 'settings' && <div className="space-y-3 rounded-lg border border-[var(--border)] p-4 text-xs"><div><strong>工作区负责人</strong><p className="mt-1 text-[var(--text-muted)]">负责人变更、冻结与归档均需记录原因和影响范围。</p></div><div className="flex gap-2"><Button size="sm" variant="secondary">移交负责人</Button><Button size="sm" variant="secondary">冻结工作区</Button></div></div>}
+              </div></div>
             </>
           )}
         </section>
@@ -418,7 +392,7 @@ export default function Workspaces() {
             </div>
           </div>
         </aside>
-      </div>
+      </main></div>
 
       {/* Todo 7: 创建向导 Modal */}
       {showWizard && <CreateWizard onClose={() => setShowWizard(false)} />}
