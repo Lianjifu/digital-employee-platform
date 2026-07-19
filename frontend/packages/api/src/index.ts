@@ -30,8 +30,14 @@ export class ApiClient {
   ) {}
 
   async request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
+    const token = this.getAuthToken();
+    const requestHeaders: Record<string, string> = {
+      ...opts.headers,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
     if (this.mockHandler) {
-      const data = await this.mockHandler(path, opts);
+      // Mock 也接收同一认证上下文，避免演示路径绕过控制面权限校验。
+      const data = await this.mockHandler(path, { ...opts, headers: requestHeaders });
       return data as T;
     }
     const controller = new AbortController();
@@ -43,12 +49,10 @@ export class ApiClient {
           if (v !== undefined) url.searchParams.set(k, String(v));
         }
       }
-      const token = this.getAuthToken();
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
-        ...opts.headers,
+        ...requestHeaders,
       };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
 
       const res = await fetch(url.toString(), {
         method: opts.method ?? 'GET',

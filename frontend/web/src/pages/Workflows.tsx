@@ -25,11 +25,11 @@ import {
   Play, Save, Download, Zap, ShieldCheck, Cpu, GitBranch, Bell, FileText,
   Wrench, Database, PlayCircle, ChevronRight, Activity, CheckCircle2, Clock,
   AlertTriangle, Plus, Sparkles, Settings, Pause, RotateCcw,
-  Eye, Bug, Webhook, Layers, Search, History, X, Trash2, GitCompare, MoreHorizontal,
+  Eye, Bug, Webhook, Layers, Search, History, X, Trash2, GitCompare, MoreHorizontal, ChevronLeft,
   Edit3, Copy, Box, ArrowRight, GripVertical, RefreshCw,
   Undo2, Redo2, FileJson, MessageSquare, StepForward, StepBack, SkipForward, SkipBack, History as HistoryIcon,
 } from 'lucide-react';
-import type { Workflow, WorkflowNodeKind } from '@de/web-types';
+import type { KnowledgePackage, KnowledgeRetrievalProfile, Workflow, WorkflowNodeKind } from '@de/web-types';
 import { cn } from '@de/web-utils';
 import { Drawer, ConfirmDialog } from '@/components/shared';
 import { useApiMutation, useApiQuery } from '@/services/query';
@@ -41,8 +41,12 @@ type TabKey = 'canvas' | 'templates' | 'history';
 type GenerationResult = {
   id: string;
   prompt: string;
-  status: 'completed' | 'discarded';
+  status: 'generated' | 'review_required' | 'applied' | 'discarded' | 'expired';
   model: string;
+  revisionId?: string;
+  promptDigest?: string;
+  policyVersion?: string;
+  expiresAt?: string;
   createdAt: string;
   workflow: { nodes: Array<{ id: string; kind: WorkflowNodeKind; label: string; position: { x: number; y: number }; description?: string }>; edges: Array<{ id: string; source: string; target: string }> };
   checks: { structure: 'passed' | 'review'; dependencies: 'passed' | 'review'; risk: 'passed' | 'review' };
@@ -69,31 +73,71 @@ type WorkflowRun = { id: string; time: string; trigger: string; status: string; 
 
 /* ============ 节点元数据 ============ */
 const NODE_ICONS: Record<WorkflowNodeKind, any> = {
-  trigger: PlayCircle, retrieve: Database, decision: Cpu, approval: ShieldCheck,
-  branch: GitBranch, execute: Wrench, audit: FileText, notify: Bell,
+  trigger: PlayCircle, schedule: Clock, event: Bell,
+  retrieve: Database, transform: Wrench,
+  decision: Cpu, condition: GitBranch, approval: ShieldCheck, policy: ShieldCheck,
+  branch: GitBranch, parallel: GitBranch,
+  execute: Wrench, http: Webhook, mcp: Cpu, task: FileText,
+  retry: RefreshCw, compensate: RotateCcw, audit: FileText, notify: Bell,
 };
 const NODE_LABELS: Record<WorkflowNodeKind, string> = {
-  trigger: '触发器', retrieve: '知识检索', decision: 'Agent 决策', approval: '双签审批',
-  branch: '条件分支', execute: '执行恢复', audit: '审计日志', notify: '通知收尾',
+  trigger: 'Webhook 触发', schedule: '定时调度', event: '告警事件',
+  retrieve: '知识检索', transform: '数据转换',
+  decision: 'Agent 决策', condition: '条件判断', approval: '人工审批', policy: '风险策略',
+  branch: '条件分支', parallel: '并行编排',
+  execute: 'Skill 执行', http: 'HTTP / API', mcp: 'MCP 工具', task: '创建任务',
+  retry: '重试策略', compensate: '补偿回滚', audit: '审计留痕', notify: '结果通知',
 };
 const NODE_COLORS: Record<WorkflowNodeKind, string> = {
-  trigger: '#3b82f6', retrieve: '#10b981', decision: '#a78bfa', approval: '#f59e0b',
-  branch: '#06b6d4', execute: '#ef4444', audit: '#64748b', notify: '#38bdf8',
+  trigger: '#3b82f6', schedule: '#3b82f6', event: '#3b82f6',
+  retrieve: '#10b981', transform: '#10b981',
+  decision: '#8b5cf6', condition: '#8b5cf6', approval: '#f59e0b', policy: '#f59e0b',
+  branch: '#06b6d4', parallel: '#06b6d4',
+  execute: '#ef4444', http: '#ef4444', mcp: '#ef4444', task: '#ef4444',
+  retry: '#f59e0b', compensate: '#f59e0b', audit: '#64748b', notify: '#38bdf8',
 };
 const NODE_DESCS: Record<WorkflowNodeKind, string> = {
-  trigger: '事件 / 定时 / Webhook',
-  retrieve: 'RAG 检索（Milvus）',
-  decision: 'LangGraph 决策',
-  approval: '双人复核（等保 3）',
-  branch: '条件 / 并行 / 合并',
-  execute: 'Skill / MCP / Tool',
-  audit: 'SignedLog 写入',
-  notify: '飞书 / 企微 / SMS',
+  trigger: '接收外部系统 Webhook 请求', schedule: '按 Cron 或日历规则发起流程', event: '订阅监控告警或消息事件',
+  retrieve: '查询知识库、运行手册与历史证据', transform: '映射、清洗并标准化上下文数据',
+  decision: '由数字员工分析上下文并生成处置决策', condition: '基于表达式判断后续路径', approval: '按审批人、超时与签名规则复核', policy: '校验风险等级、权限和变更策略',
+  branch: '按条件选择唯一处置路径', parallel: '并发执行多个独立步骤并汇聚',
+  execute: '调用已纳管 Skill 完成处置动作', http: '调用企业内部或第三方 API', mcp: '调用受控 MCP 工具', task: '创建人工处置任务并回传结果',
+  retry: '按退避策略自动重试可恢复失败', compensate: '执行补偿动作或回滚变更', audit: '写入可追溯的审计证据', notify: '通过飞书、企微、短信等通知结果',
 };
-const NODE_LIB: WorkflowNodeKind[] = [
-  'trigger', 'retrieve', 'decision', 'approval',
-  'branch', 'execute', 'audit', 'notify',
+
+type NodeLibraryCategory = 'trigger' | 'context' | 'decision' | 'action' | 'governance' | 'reliability';
+type NodeRisk = 'standard' | 'review' | 'sensitive';
+
+const NODE_LIBRARY_GROUPS: Array<{ id: NodeLibraryCategory; label: string; desc: string; kinds: WorkflowNodeKind[] }> = [
+  { id: 'trigger', label: '触发与输入', desc: '定义数字员工何时开始工作', kinds: ['trigger', 'schedule', 'event'] },
+  { id: 'context', label: '上下文与数据', desc: '补齐处置所需的证据与变量', kinds: ['retrieve', 'transform'] },
+  { id: 'decision', label: '智能决策', desc: '由规则或 Agent 决定处置路径', kinds: ['decision', 'condition', 'branch', 'parallel'] },
+  { id: 'action', label: '执行与协同', desc: '调用受控能力或派发人工工作', kinds: ['execute', 'http', 'mcp', 'task'] },
+  { id: 'governance', label: '人工与治理', desc: '在关键动作前实施权限和审批控制', kinds: ['policy', 'approval', 'audit'] },
+  { id: 'reliability', label: '可靠性与收尾', desc: '处理失败、补偿并通知相关人员', kinds: ['retry', 'compensate', 'notify'] },
 ];
+
+const NODE_LIBRARY_META: Record<WorkflowNodeKind, { category: NodeLibraryCategory; risk: NodeRisk; badge?: string }> = {
+  trigger: { category: 'trigger', risk: 'standard' }, schedule: { category: 'trigger', risk: 'standard' }, event: { category: 'trigger', risk: 'standard' },
+  retrieve: { category: 'context', risk: 'standard' }, transform: { category: 'context', risk: 'standard' },
+  decision: { category: 'decision', risk: 'review', badge: 'AI' }, condition: { category: 'decision', risk: 'standard' }, branch: { category: 'decision', risk: 'standard' }, parallel: { category: 'decision', risk: 'standard' },
+  execute: { category: 'action', risk: 'sensitive', badge: '外部写入' }, http: { category: 'action', risk: 'sensitive', badge: '外部调用' }, mcp: { category: 'action', risk: 'sensitive', badge: '受控工具' }, task: { category: 'action', risk: 'review', badge: '人工协同' },
+  policy: { category: 'governance', risk: 'review', badge: '策略' }, approval: { category: 'governance', risk: 'review', badge: '需审批' }, audit: { category: 'governance', risk: 'standard' },
+  retry: { category: 'reliability', risk: 'review', badge: '失败处理' }, compensate: { category: 'reliability', risk: 'sensitive', badge: '回滚' }, notify: { category: 'reliability', risk: 'standard' },
+};
+
+const NODE_LIB = NODE_LIBRARY_GROUPS.flatMap((group) => group.kinds);
+
+function recommendedNodeKinds(sourceKind?: WorkflowNodeKind): WorkflowNodeKind[] {
+  if (!sourceKind) return ['trigger', 'event', 'schedule', 'retrieve', 'decision'];
+  const category = NODE_LIBRARY_META[sourceKind].category;
+  if (category === 'trigger') return ['retrieve', 'transform', 'decision', 'condition'];
+  if (category === 'context') return ['decision', 'condition', 'branch', 'policy'];
+  if (category === 'decision') return ['policy', 'approval', 'execute', 'http', 'mcp', 'task'];
+  if (category === 'action') return ['audit', 'retry', 'compensate', 'notify'];
+  if (category === 'governance') return ['execute', 'http', 'mcp', 'audit', 'notify'];
+  return ['audit', 'notify', 'task', 'compensate'];
+}
 
 /* ============ 初始工作流数据（mock） ============ */
 const INITIAL_NODES: Node[] = [
@@ -190,7 +234,7 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
   return (
     <div
       className={cn(
-        'relative rounded-md border-2 bg-[var(--surface-1)] px-3 py-2 min-w-[140px] text-center shadow-sm transition-all',
+        'workflow-node relative rounded-md border-2 bg-[var(--surface-1)] px-3 py-2 min-w-[140px] text-center shadow-sm transition-all',
         selected && 'ring-2 ring-[var(--brand)]',
         data.disabled && 'opacity-50 grayscale',
         isExecuting && 'animate-pulse',
@@ -213,16 +257,16 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
         style={{ background: color, right: -7 }}
       />
       <Icon className="h-3.5 w-3.5 mx-auto" style={{ color }} />
-      <div className="text-[10px] uppercase tracking-wide opacity-70 mt-0.5">{data.kind}</div>
-      <div className="text-xs font-semibold text-[var(--text)]">{data.label || NODE_LABELS[data.kind as WorkflowNodeKind]}</div>
+      <div className="workflow-node__kind text-[10px] uppercase tracking-wide opacity-70 mt-0.5">{data.kind}</div>
+      <div className="workflow-node__label text-xs font-semibold text-[var(--text)]">{data.label || NODE_LABELS[data.kind as WorkflowNodeKind]}</div>
       {data.note && (
         <div className="mt-1 flex items-center justify-center gap-0.5 rounded bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-700/50 px-1 py-0.5">
           <MessageSquare className="h-2.5 w-2.5 text-amber-600 shrink-0" />
-          <span className="text-[8px] text-amber-700 dark:text-amber-300 truncate max-w-[110px]">{data.note}</span>
+          <span className="workflow-node__note text-[9px] text-amber-700 dark:text-amber-300 truncate max-w-[110px]">{data.note}</span>
         </div>
       )}
       {isExecuting && (
-        <span className="absolute -top-1.5 -right-1.5 grid h-3.5 w-3.5 place-items-center rounded-full bg-[var(--brand)] text-[8px] font-bold text-white">●</span>
+        <span className="absolute -top-1.5 -right-1.5 grid h-3.5 w-3.5 place-items-center rounded-full bg-[var(--brand)] text-[9px] font-bold text-white">●</span>
       )}
     </div>
   );
@@ -232,22 +276,13 @@ const nodeTypes = { custom: CustomNode };
 
 /* ============ Mock 模板 ============ */
 const TEMPLATES = [
-  { id: 't1', name: '故障自愈', category: 'system', description: 'Redis/K8s 故障自动定位→双签→Skill 执行→回滚→审计→通知', nodes: 10, installs: 1284, rating: 4.9 },
-  { id: 't2', name: '灰度发布', category: 'system', description: '金丝雀 5%→25%→100%，异常自动回滚 + 双签保护', nodes: 8, installs: 962, rating: 4.8 },
-  { id: 't3', name: 'CVE 漏洞修复', category: 'security', description: 'CVE 情报 → 影响面评估 → 离线补丁 → 灰度 → 验证 → 通知', nodes: 12, installs: 743, rating: 4.7 },
-  { id: 't4', name: '容量预测', category: 'ai', description: '历史指标 → Prophet/LSTM 预测 → 触发扩容建议 → 自动下单', nodes: 7, installs: 612, rating: 4.6 },
-  { id: 't5', name: '报告生成', category: 'business', description: '数据采集 → LLM 总结 → Markdown 报告 → 飞书/邮件分发', nodes: 6, installs: 1502, rating: 4.9 },
-  { id: 't6', name: '工单分诊', category: 'business', description: '用户工单 → Agent 分类 → SLA 派发 → 升级 → 关闭', nodes: 9, installs: 884, rating: 4.7 },
+  { id: 't1', name: '故障自愈', version: 'v2.4', category: 'system', description: 'Redis/K8s 故障自动定位、受控处置、补偿回滚与证据留存', nodes: 10, installs: 1284, rating: 4.9, owner: 'SRE 平台组', verifiedAt: '2026-07-16', risk: 'L3', dependencies: ['redis-cli', 'kubernetes-mcp'], health: '需授权', successRate: '98.6%', sequence: ['event', 'retrieve', 'decision', 'policy', 'approval', 'execute', 'compensate', 'audit', 'notify'] as WorkflowNodeKind[] },
+  { id: 't2', name: '灰度发布', version: 'v1.8', category: 'system', description: '金丝雀发布、指标验证、审批门禁与异常自动补偿', nodes: 8, installs: 962, rating: 4.8, owner: '交付工程组', verifiedAt: '2026-07-14', risk: 'L3', dependencies: ['release-skill', 'prometheus-mcp'], health: '健康', successRate: '97.9%', sequence: ['event', 'policy', 'approval', 'parallel', 'condition', 'execute', 'compensate', 'audit', 'notify'] as WorkflowNodeKind[] },
+  { id: 't3', name: 'CVE 漏洞修复', version: 'v3.1', category: 'security', description: 'CVE 情报、影响面评估、人工复核、灰度修复与审计', nodes: 12, installs: 743, rating: 4.7, owner: '安全运营组', verifiedAt: '2026-07-12', risk: 'L3', dependencies: ['cve-kb', 'patch-skill'], health: '健康', successRate: '96.8%', sequence: ['event', 'retrieve', 'decision', 'policy', 'approval', 'task', 'execute', 'compensate', 'audit', 'notify'] as WorkflowNodeKind[] },
+  { id: 't4', name: '容量预测', version: 'v1.6', category: 'ai', description: '历史趋势研判、扩容建议、人工确认与结果通知', nodes: 7, installs: 612, rating: 4.6, owner: '容量运营组', verifiedAt: '2026-07-10', risk: 'L2', dependencies: ['capacity-agent'], health: '健康', successRate: '95.4%', sequence: ['schedule', 'retrieve', 'decision', 'policy', 'task', 'audit', 'notify'] as WorkflowNodeKind[] },
+  { id: 't5', name: '报告生成', version: 'v2.2', category: 'business', description: '数据汇总、LLM 摘要、人工校对与多渠道分发', nodes: 6, installs: 1502, rating: 4.9, owner: '运营效能组', verifiedAt: '2026-07-17', risk: 'L1', dependencies: ['report-agent'], health: '健康', successRate: '99.2%', sequence: ['schedule', 'retrieve', 'decision', 'transform', 'audit', 'notify'] as WorkflowNodeKind[] },
+  { id: 't6', name: '工单分诊', version: 'v2.0', category: 'business', description: '工单分类、SLA 路由、人工接管与关闭通知', nodes: 9, installs: 884, rating: 4.7, owner: '服务运营组', verifiedAt: '2026-07-15', risk: 'L2', dependencies: ['ticket-mcp'], health: '健康', successRate: '98.1%', sequence: ['event', 'transform', 'decision', 'condition', 'task', 'retry', 'audit', 'notify'] as WorkflowNodeKind[] },
 ];
-
-const TEMPLATE_SEQUENCES: Record<string, WorkflowNodeKind[]> = {
-  t1: ['trigger', 'retrieve', 'decision', 'approval', 'branch', 'execute', 'audit', 'notify', 'execute', 'audit'],
-  t2: ['trigger', 'retrieve', 'branch', 'execute', 'execute', 'audit', 'notify', 'notify'],
-  t3: ['trigger', 'retrieve', 'decision', 'execute', 'approval', 'execute', 'execute', 'audit', 'notify', 'audit', 'notify', 'execute'],
-  t4: ['trigger', 'retrieve', 'decision', 'branch', 'execute', 'audit', 'notify'],
-  t5: ['trigger', 'retrieve', 'decision', 'execute', 'audit', 'notify'],
-  t6: ['trigger', 'retrieve', 'decision', 'branch', 'execute', 'execute', 'audit', 'notify', 'execute'],
-};
 
 /* ============ Mock 历史 ============ */
 const RUNS = [
@@ -277,7 +312,7 @@ function cloneSnapshot(snapshot: Snapshot): Snapshot {
 }
 
 function templateSnapshot(template: typeof TEMPLATES[number]): Snapshot {
-  const sequence = TEMPLATE_SEQUENCES[template.id] ?? ['trigger'];
+  const sequence = template.sequence;
   const nodes = sequence.map((kind, index) => ({
     id: `n${index + 1}`,
     type: 'custom',
@@ -336,6 +371,7 @@ export default function Workflows() {
   const [generationConstraints, setGenerationConstraints] = useState<GenerationVars['constraints']>({ riskLevel: 'L2', requireApproval: true, requireAudit: true, requireRollback: true });
   const [generationModel, setGenerationModel] = useState('企业默认模型');
   const { data: generationHistory = [] } = useApiQuery<GenerationResult[]>(['workflow-generations'], '/api/workflows/generations');
+  const { data: templateAssets = [] } = useApiQuery<typeof TEMPLATES>(['workflow-templates'], '/api/workflow-templates');
   const [preflightOpen, setPreflightOpen] = useState(false);
   const [preflightResult, setPreflightResult] = useState<WorkflowValidation | null>(null);
   const [nodeLibraryOpen, setNodeLibraryOpen] = useState(false);
@@ -359,9 +395,9 @@ export default function Workflows() {
     onSuccess: () => showToast('已放弃本次生成结果', 'info'),
   });
   const applyGenerationApi = useApiMutation<GenerationResult, { id: string }>(({ id }) => `/api/workflows/generations/${id}/apply`, {
-    onError: () => showToast('生成记录应用审计写入失败，但本地草稿已保留', 'error'),
+    onError: () => showToast('生成草稿与审计未提交，当前画布未变更', 'error'),
   });
-  const validateWorkflowApi = useApiMutation<WorkflowValidation, { nodes: unknown[]; edges: unknown[] }>('/api/workflows/wf1/validate', {
+  const validateWorkflowApi = useApiMutation<WorkflowValidation, { revisionId?: string; nodes: unknown[]; edges: unknown[] }>('/api/workflows/wf1/validate', {
     onSuccess: (result) => { setPreflightResult(result); setPreflightOpen(true); },
     onError: () => showToast('运行前校验失败，请稍后重试', 'error'),
   });
@@ -447,7 +483,8 @@ export default function Workflows() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedNodeId, contextMenu, versionMenuOpen, previewTemplate, undo, redo]);
 
-  const filteredTemplates = TEMPLATES.filter((t) => filterGroup === 'all' || t.category === filterGroup);
+  const availableTemplates = templateAssets.length > 0 ? templateAssets : TEMPLATES;
+  const filteredTemplates = availableTemplates.filter((t) => filterGroup === 'all' || t.category === filterGroup);
   const filteredLibrary = NODE_LIB.filter((k) =>
     !librarySearchQ || NODE_LABELS[k].includes(librarySearchQ) || NODE_DESCS[k].toLowerCase().includes(librarySearchQ.toLowerCase()),
   );
@@ -639,10 +676,10 @@ export default function Workflows() {
   const runWorkflow = useCallback(() => {
     if (!canExecute) { showToast('当前账号没有工作流执行权限', 'error'); return; }
     if (!nodes.length) { showToast('画布为空，无法运行工作流', 'error'); return; }
-    if (!nodes.some((node) => node.data?.kind === 'trigger')) { showToast('工作流缺少触发器节点，无法运行', 'error'); return; }
+    if (!nodes.some((node) => ['trigger', 'schedule', 'event'].includes(node.data?.kind))) { showToast('工作流缺少触发节点，无法运行', 'error'); return; }
     const disconnected = nodes.filter((node) => nodes.length > 1 && !edges.some((edge) => edge.source === node.id || edge.target === node.id));
     if (disconnected.length) { showToast(`存在 ${disconnected.length} 个未连线节点，请先完成流程连接`, 'error'); return; }
-    validateWorkflowApi.mutate({ nodes: nodes.map((node) => ({ id: node.id, kind: node.data?.kind, label: node.data?.label, data: node.data })), edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })) });
+    validateWorkflowApi.mutate({ revisionId: activeVersion.startsWith('rev_') ? activeVersion : undefined, nodes: nodes.map((node) => ({ id: node.id, kind: node.data?.kind, label: node.data?.label, data: node.data })), edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })) });
   }, [canExecute, edges, nodes, showToast, validateWorkflowApi]);
 
   const openAIGenerator = useCallback(() => {
@@ -655,28 +692,51 @@ export default function Workflows() {
     if (generationPrompt.trim().length < 8) { showToast('请至少描述 8 个字符的业务目标', 'error'); return; }
     generateWorkflowApi.mutate({ prompt: generationPrompt.trim(), constraints: generationConstraints, workspaceId: 'prod-ops', model: generationModel });
   }, [canWrite, generateWorkflowApi, generationConstraints, generationModel, generationPrompt, showToast]);
-  const applyGeneration = useCallback(() => {
+  const applyGeneration = useCallback(async () => {
     if (!canWrite || !generationResult) return;
-    applyGenerationApi.mutate({ id: generationResult.id });
+    const activeSnapshot = versions.find((version) => version.id === activeVersion);
+    const hasUnsavedChanges = !activeSnapshot || JSON.stringify({ nodes, edges }) !== JSON.stringify({ nodes: activeSnapshot.nodes, edges: activeSnapshot.edges });
+    if (hasUnsavedChanges && !window.confirm('当前画布存在未保存修改。AI 流程将另存为新的草稿版本，是否继续？')) return;
+    const applied = await applyGenerationApi.mutateAsync({ id: generationResult.id });
+    if (!applied.revisionId) { showToast('服务端未返回草稿版本，未应用生成结果', 'error'); return; }
     const snapshot: Snapshot = {
-      nodes: generationResult.workflow.nodes.map((node) => ({ id: node.id, type: 'custom', position: node.position, data: { kind: node.kind, label: node.label, desc: node.description } } as Node)),
-      edges: generationResult.workflow.edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
+      nodes: applied.workflow.nodes.map((node) => ({ id: node.id, type: 'custom', position: node.position, data: { kind: node.kind, label: node.label, desc: node.description } } as Node)),
+      edges: applied.workflow.edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
     };
     setNodes(snapshot.nodes);
     setEdges(snapshot.edges);
+    setVersions((previous) => previous.some((version) => version.id === applied.revisionId) ? previous : [{ id: applied.revisionId!, label: `${applied.revisionId} · AI 草稿`, time: '刚刚', desc: `AI 生成 · ${applied.promptDigest ?? applied.id}`, nodes: cloneSnapshot(snapshot).nodes, edges: cloneSnapshot(snapshot).edges }, ...previous]);
+    setActiveVersion(applied.revisionId);
     pushHistory(snapshot);
     setSelectedNodeId(snapshot.nodes[0]?.id ?? null);
     setTab('canvas');
     setSidePanel('properties');
     setAiGenerateOpen(false);
-    showToast('已应用 AI 生成草稿，请检查节点配置后保存', 'success');
-  }, [applyGenerationApi, canWrite, generationResult, pushHistory, showToast]);
+    showToast(`已创建隔离草稿 ${applied.revisionId}，请完成配置与校验后试运行`, 'success');
+  }, [activeVersion, applyGenerationApi, canWrite, edges, generationResult, nodes, pushHistory, showToast, versions]);
   const discardGeneration = useCallback(() => {
     if (generationResult) discardGenerationApi.mutate({ id: generationResult.id });
     setAiGenerateOpen(false);
     setGenerationResult(null);
     setGenerationStep('input');
   }, [discardGenerationApi, generationResult]);
+  const createTemplateDraft = useCallback((template: typeof TEMPLATES[number]) => {
+    if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
+    const snapshot = templateSnapshot(template);
+    const currentSnapshot = versions.find((version) => version.id === activeVersion);
+    const hasUnsavedChanges = !currentSnapshot || JSON.stringify({ nodes, edges }) !== JSON.stringify({ nodes: currentSnapshot.nodes, edges: currentSnapshot.edges });
+    if (hasUnsavedChanges && !window.confirm('当前画布存在未保存修改。模板将创建为新的隔离草稿，是否继续？')) return;
+    const revisionId = `tpl_${template.id}_${Date.now().toString(36)}`;
+    setNodes(snapshot.nodes);
+    setEdges(snapshot.edges);
+    setVersions((previous) => [{ id: revisionId, label: `${template.version} · 模板草稿`, time: '刚刚', desc: `基于「${template.name}」· ${template.owner}`, nodes: cloneSnapshot(snapshot).nodes, edges: cloneSnapshot(snapshot).edges }, ...previous]);
+    setActiveVersion(revisionId);
+    pushHistory(snapshot);
+    setSelectedNodeId(snapshot.nodes[0]?.id ?? null);
+    setTab('canvas');
+    setSidePanel('properties');
+    showToast(`已基于「${template.name}」创建隔离草稿`, 'success');
+  }, [activeVersion, canWrite, edges, nodes, pushHistory, showToast, versions]);
   const exportWorkflow = useCallback(() => {
     const data = {
       version: '1.0',
@@ -792,16 +852,34 @@ export default function Workflows() {
   }, [activeSnapshot, edges, nodes]);
 
   return (
-    <div className="workflow-page flex h-full min-w-0 flex-col overflow-hidden bg-[var(--bg-elevated)]">
+    <div className="workflow-page flex h-full min-w-0 flex-col gap-3 overflow-hidden bg-[var(--bg-elevated)] p-3 md:p-4 lg:p-5">
       {/* ======== 一级功能导航 ======== */}
-      <div className="shrink-0 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2 md:px-6">
+      <div className="shrink-0 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.03)] md:px-6">
         <div className="flex min-w-0 items-center justify-between gap-3">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <h2 className="shrink-0 text-sm font-semibold text-[var(--text)]">工作流</h2>
-            <span className="truncate text-[10px] text-[var(--text-muted)]">
-              {tab === 'canvas' ? `DAG 画布 · ${nodes.length} 节点 / ${edges.length} 连线` : tab === 'templates' ? `模版库 · ${TEMPLATES.length} 套` : `执行历史 · ${RUNS.length} 条`}
-            </span>
-            {tab === 'canvas' && isDirty && <Badge tone="warn" className="shrink-0 text-[9px]">未保存</Badge>}
+          <div className="flex min-w-0 flex-wrap items-center gap-2.5">
+            <div className="flex shrink-0 items-center gap-2">
+              <span className="grid h-7 w-7 place-items-center rounded-lg bg-[var(--brand-light)] text-[var(--brand)]">
+                <GitBranch className="h-3.5 w-3.5" />
+              </span>
+              <div className="leading-tight">
+                <h2 className="text-sm font-semibold tracking-[-0.01em] text-[var(--text)]">工作流编排</h2>
+                <p className="mt-1 text-xs font-normal text-[var(--text-muted)]">搭建、治理并运行企业级自动化流程</p>
+              </div>
+            </div>
+            {tab === 'canvas' ? (
+              <>
+                <span className="hidden h-4 w-px bg-[var(--border)] sm:block" />
+                <span className="inline-flex items-center gap-1.5 rounded-md bg-[var(--bg-elevated)] px-2 py-1 text-[10px] font-medium text-[var(--text-secondary)]">
+                  <Box className="h-3 w-3 text-[var(--text-muted)]" />画布结构
+                  <span className="text-[var(--text-muted)]">{nodes.length} 节点 · {edges.length} 连线</span>
+                </span>
+                {isDirty && <Badge tone="warn" className="shrink-0 text-[9px]">草稿未保存</Badge>}
+              </>
+            ) : (
+              <span className="truncate text-[10px] text-[var(--text-muted)]">
+                {tab === 'templates' ? `模板库 · ${TEMPLATES.length} 套` : `执行历史 · ${RUNS.length} 条`}
+              </span>
+            )}
           </div>
           <div className="hidden">
             <button
@@ -881,37 +959,35 @@ export default function Workflows() {
             )}
           </div>
         </div>
-        <div className="mt-2 flex min-w-0 items-center gap-1.5 overflow-x-auto border-t border-[var(--border)] pt-2">
-          {([
-            { k: 'canvas' as TabKey, label: '画布', icon: GitBranch },
-            { k: 'templates' as TabKey, label: '模版库', icon: Layers },
-            { k: 'history' as TabKey, label: '执行历史', icon: History },
-          ]).map((v) => (
-            <button
-              key={v.k}
-              onClick={() => setTab(v.k)}
-              className={cn(
-                'flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition-colors',
-                tab === v.k
-                  ? 'bg-[var(--brand)] text-white'
-                  : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]',
-              )}
-            >
-              <v.icon className="h-3.5 w-3.5" />
-              {v.label}
-              <span className={cn(
-                'ml-1 rounded px-1.5 text-[10px] font-mono',
-                tab === v.k ? 'bg-white/20 text-white' : 'bg-[var(--bg-hover)] text-[var(--text-muted)]',
-              )}>
-                {v.k === 'canvas' ? nodes.length : v.k === 'templates' ? TEMPLATES.length : RUNS.length}
-              </span>
-            </button>
-          ))}
-        </div>
+        <nav className="mt-3 -mx-3 -mb-2 flex min-w-0 items-end overflow-x-auto px-3 md:-mx-6 md:px-6" aria-label="工作流视图">
+          <div className="flex min-w-max items-center gap-1">
+            {([
+              { k: 'canvas' as TabKey, label: '画布', icon: GitBranch },
+              { k: 'templates' as TabKey, label: '模板库', icon: Layers },
+              { k: 'history' as TabKey, label: '执行历史', icon: History },
+            ]).map((v) => (
+              <button
+                key={v.k}
+                type="button"
+                onClick={() => setTab(v.k)}
+                aria-current={tab === v.k ? 'page' : undefined}
+                className={cn(
+                  'flex items-center gap-1.5 rounded-t-md px-3 py-2 text-[13px] transition-colors',
+                  tab === v.k
+                    ? 'z-10 -mb-px border border-[var(--border)] border-b-[var(--surface-1)] bg-[var(--surface-1)] font-semibold text-[var(--text)]'
+                    : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]',
+                )}
+              >
+                <v.icon className="h-3.5 w-3.5" />
+                {v.label}
+              </button>
+            ))}
+          </div>
+        </nav>
       </div>
 
       {/* ======== 主内容区 ======== */}
-      <div className="flex-1 overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
         {tab === 'canvas' && (
           <CanvasView
             wrapperRef={wrapperRef}
@@ -986,17 +1062,7 @@ export default function Workflows() {
             filteredTemplates={filteredTemplates}
             showToast={showToast}
             onPreview={(t) => setPreviewTemplate(t)}
-            onUseTemplate={(t) => {
-              if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
-              const snapshot = templateSnapshot(t);
-              setNodes(snapshot.nodes);
-              setEdges(snapshot.edges);
-              pushHistory(snapshot);
-              setSelectedNodeId(snapshot.nodes[0]?.id ?? null);
-              setTab('canvas');
-              setSidePanel('properties');
-              showToast(`已加载「${t.name}」为本地草稿`, 'success');
-            }}
+            onUseTemplate={createTemplateDraft}
           />
         )}
 
@@ -1011,6 +1077,7 @@ export default function Workflows() {
           template={previewTemplate}
           onClose={() => setPreviewTemplate(null)}
           showToast={showToast}
+          onUseTemplate={createTemplateDraft}
         />
       )}
 
@@ -1177,7 +1244,7 @@ function WorkflowAIGeneratorDrawer({
           <div className="flex gap-2"><Button variant="ghost" onClick={onClose} disabled={loading}>取消</Button><Button variant="primary" onClick={onGenerate} loading={loading}>{loading ? '生成中…' : '生成草稿'}</Button></div>
         </div>
       ) : (
-        <div className="flex w-full justify-end gap-2"><Button variant="ghost" onClick={onDiscard}>放弃</Button><Button variant="outline" onClick={onRegenerate}>重新生成</Button><Button variant="primary" onClick={onApply} disabled={!result}>应用到新草稿</Button></div>
+        <div className="flex w-full justify-end gap-2"><Button variant="ghost" onClick={onDiscard}>放弃</Button><Button variant="outline" onClick={onRegenerate}>重新生成</Button><Button variant="primary" onClick={onApply} disabled={!result || !['generated', 'review_required'].includes(result.status)}>创建隔离草稿</Button></div>
       )}
     >
       {step === 'input' ? (
@@ -1191,10 +1258,11 @@ function WorkflowAIGeneratorDrawer({
             <div className="mb-3 text-xs font-semibold text-[var(--text)]">生成约束</div>
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="text-xs text-[var(--text-secondary)]">风险等级<select value={constraints.riskLevel} onChange={(e) => setConstraints({ ...constraints, riskLevel: e.target.value as GenerationVars['constraints']['riskLevel'] })} className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs text-[var(--text)] outline-none transition-[border-color,box-shadow] duration-200 focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]"><option value="L1">L1 · 低风险</option><option value="L2">L2 · 受控操作</option><option value="L3">L3 · 高风险</option></select></label>
-              <label className="text-xs text-[var(--text-secondary)]">生成模型<select value={model} onChange={(e) => setModel(e.target.value)} className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs text-[var(--text)] outline-none transition-[border-color,box-shadow] duration-200 focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]"><option>企业默认模型</option><option>Qwen-Enterprise</option><option>Claude Sonnet</option></select></label>
+              <label className="text-xs text-[var(--text-secondary)]">生成模型<select value={model} onChange={(e) => setModel(e.target.value)} className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs text-[var(--text)] outline-none transition-[border-color,box-shadow] duration-200 focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]"><option>企业默认模型</option><option>Qwen-Enterprise</option></select></label>
             </div>
             <div className="mt-4 grid gap-2 sm:grid-cols-3">
-              {([['requireApproval', '需要审批'], ['requireAudit', '记录审计'], ['requireRollback', '支持回滚']] as const).map(([key, label]) => <button key={key} type="button" onClick={() => toggle(key)} className={cn('flex items-center gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors', constraints[key] ? 'border-[var(--brand)] bg-[var(--brand-light)] text-[var(--brand)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}><span className={cn('grid h-4 w-4 place-items-center rounded border text-[10px]', constraints[key] ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-[var(--border)]')}>{constraints[key] ? '✓' : ''}</span>{label}</button>)}
+              {([['requireApproval', '优先需要审批'], ['requireRollback', '支持回滚']] as const).map(([key, label]) => <button key={key} type="button" onClick={() => toggle(key)} className={cn('flex items-center gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors', constraints[key] ? 'border-[var(--brand)] bg-[var(--brand-light)] text-[var(--brand)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}><span className={cn('grid h-4 w-4 place-items-center rounded border text-[10px]', constraints[key] ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-[var(--border)]')}>{constraints[key] ? '✓' : ''}</span>{label}</button>)}
+              <div className="flex items-center gap-2 rounded-md border border-[var(--success)]/30 bg-[var(--success-bg)] px-3 py-2 text-xs text-[var(--success)]"><ShieldCheck className="h-4 w-4" />审计留痕（策略强制）</div>
             </div>
           </div>
           {history.length > 0 && <div><div className="mb-2 flex items-center justify-between"><span className="text-xs font-semibold text-[var(--text)]">最近生成</span><span className="text-[10px] text-[var(--text-muted)]">仅保留本地演示记录</span></div><div className="space-y-1.5">{history.slice(0, 3).map((item) => <button key={item.id} type="button" onClick={() => onSelectHistory(item)} className="flex w-full items-center justify-between rounded-md border border-[var(--border)] px-3 py-2 text-left hover:bg-[var(--bg-hover)]"><span className="truncate pr-3 text-xs text-[var(--text-secondary)]">{item.prompt}</span><Badge tone={item.qualityScore >= 85 ? 'success' : 'warn'} className="shrink-0 text-[10px]">{item.qualityScore} 分</Badge></button>)}</div></div>}
@@ -1294,7 +1362,17 @@ function CanvasView(props: {
 
   const [mobilePanelOpen, setMobilePanelOpen] = useState<SidePanelKey | null>(null);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [libraryView, setLibraryView] = useState<'recommended' | 'all'>('recommended');
   const [nodeInspectorTab, setNodeInspectorTab] = useState<'overview' | 'config' | 'debug'>('config');
+  const selectedLibraryKind = selectedNode?.data?.kind as WorkflowNodeKind | undefined;
+  const recommendedLibrary = useMemo(
+    () => recommendedNodeKinds(selectedLibraryKind).filter((kind) => filteredLibrary.includes(kind)),
+    [filteredLibrary, selectedLibraryKind],
+  );
+  const visibleLibrary = libraryView === 'recommended' ? recommendedLibrary : filteredLibrary;
+  const visibleLibraryGroups = NODE_LIBRARY_GROUPS
+    .map((group) => ({ ...group, kinds: group.kinds.filter((kind) => visibleLibrary.includes(kind)) }))
+    .filter((group) => group.kinds.length > 0);
   const handleNodeClick: NodeMouseHandler = useCallback((event, node) => {
     onNodeClick(event, node);
     setNodeInspectorTab('config');
@@ -1302,16 +1380,35 @@ function CanvasView(props: {
   }, [onNodeClick]);
 
   const actionToolbar = (
-    <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-[var(--border)] bg-[var(--bg)] px-3 py-2">
-      <Button size="sm" variant="outline" onClick={() => setVersionMenuOpen(true)}><HistoryIcon className="h-3.5 w-3.5" />工作流版本管理</Button>
-      <Button size="sm" variant="outline" onClick={() => setNodeLibraryOpen(!nodeLibraryOpen)} aria-expanded={nodeLibraryOpen}><Box className="h-3.5 w-3.5" />{nodeLibraryOpen ? '收起节点库' : '节点库'}</Button>
-      <div className="mx-1 h-5 w-px bg-[var(--border)]" />
-      <Button size="sm" variant="primary" onClick={openAIGenerator} disabled={!canWrite}><Sparkles className="h-3.5 w-3.5" />AI 生成</Button>
-      <Button size="sm" variant="outline" onClick={runWorkflow} disabled={!canExecute || validating} loading={validating}><Play className="h-3.5 w-3.5" />运行试验</Button>
-      <Button size="sm" variant="outline" onClick={saveCanvas} loading={saving} disabled={!canWrite || saving}><Save className="h-3.5 w-3.5" />保存草稿</Button>
-      <div className="relative">
-        <Button size="sm" variant="outline" onClick={() => setMoreMenuOpen((open) => !open)} aria-expanded={moreMenuOpen}><MoreHorizontal className="h-3.5 w-3.5" />更多</Button>
-        {moreMenuOpen && <><div className="fixed inset-0 z-30" onClick={() => setMoreMenuOpen(false)} /><div className="absolute left-0 top-full z-40 mt-1 w-44 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-1.5 shadow-lg"><button type="button" onClick={() => { exportWorkflow(); setMoreMenuOpen(false); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"><FileJson className="h-3.5 w-3.5" />导出工作流</button><button type="button" onClick={() => { resetCanvas(); setMoreMenuOpen(false); }} disabled={!canWrite} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-40"><RefreshCw className="h-3.5 w-3.5" />重置画布</button><div className="my-1 border-t border-[var(--border)]" /><button type="button" onClick={() => { clearCanvas(); setMoreMenuOpen(false); }} disabled={!canWrite} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-[var(--danger)] hover:bg-[var(--danger-bg)] disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" />清空画布</button></div></>}
+    <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-[var(--border)] bg-[var(--surface-1)] px-3 py-2.5 md:px-5">
+      {/* 画布专属操作：先确定版本，再选择构建方式。 */}
+      <div className="flex flex-wrap items-center gap-0.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-1 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
+        <Button size="sm" variant="outline" className="rounded-lg border-transparent bg-[var(--brand-light)] px-2.5 text-[var(--brand)] shadow-none hover:border-transparent hover:bg-[var(--brand-light)]" onClick={() => setVersionMenuOpen(true)} aria-label="切换或管理当前画布版本">
+          <HistoryIcon className="h-3.5 w-3.5" />
+          <span className="font-mono">{versions.find((version) => version.id === activeVersion)?.label ?? activeVersion}</span>
+          <ChevronRight className="h-3.5 w-3.5 rotate-90" />
+        </Button>
+        <div className="mx-1 h-5 w-px bg-[var(--border)]" aria-hidden="true" />
+        <Button size="sm" variant="ghost" className="rounded-lg px-2.5 text-[var(--text-secondary)]" onClick={() => setNodeLibraryOpen(!nodeLibraryOpen)} aria-expanded={nodeLibraryOpen}>
+          <Box className="h-3.5 w-3.5" />{nodeLibraryOpen ? '收起节点库' : '节点库'}
+        </Button>
+        <Button size="sm" variant="ghost" className="rounded-lg px-2.5 text-[var(--brand)] hover:bg-[var(--brand-light)] hover:text-[var(--brand)]" onClick={openAIGenerator} disabled={!canWrite}>
+          <Sparkles className="h-3.5 w-3.5" />AI 生成
+        </Button>
+      </div>
+
+      {/* 提交与验证紧邻，明确“保存后再试运行”的操作路径。 */}
+      <div className="flex flex-wrap items-center gap-1.5 md:ml-auto">
+        <Button size="sm" variant={isDirty ? 'primary' : 'secondary'} className="rounded-lg px-3.5" onClick={saveCanvas} loading={saving} disabled={!canWrite || saving || !isDirty}>
+          <Save className="h-3.5 w-3.5" />{isDirty ? '保存草稿' : '已保存'}
+        </Button>
+        <Button size="sm" variant="secondary" className="rounded-lg px-3.5" onClick={runWorkflow} disabled={!canExecute || validating || isDirty} loading={validating} title={isDirty ? '请先保存草稿后再运行试验' : undefined}>
+          <Play className="h-3.5 w-3.5" />运行试验
+        </Button>
+        <div className="relative">
+          <Button size="sm" variant="ghost" className="rounded-lg px-2.5 text-[var(--text-secondary)]" onClick={() => setMoreMenuOpen((open) => !open)} aria-expanded={moreMenuOpen}><MoreHorizontal className="h-3.5 w-3.5" />更多</Button>
+          {moreMenuOpen && <><div className="fixed inset-0 z-30" onClick={() => setMoreMenuOpen(false)} /><div className="absolute right-0 top-full z-40 mt-1 w-44 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-1.5 shadow-lg"><button type="button" onClick={() => { exportWorkflow(); setMoreMenuOpen(false); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]"><FileJson className="h-3.5 w-3.5" />导出工作流</button><button type="button" onClick={() => { resetCanvas(); setMoreMenuOpen(false); }} disabled={!canWrite} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] disabled:opacity-40"><RefreshCw className="h-3.5 w-3.5" />重置画布</button><div className="my-1 border-t border-[var(--border)]" /><button type="button" onClick={() => { clearCanvas(); setMoreMenuOpen(false); }} disabled={!canWrite} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs text-[var(--danger)] hover:bg-[var(--danger-bg)] disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" />清空画布</button></div></>}
+        </div>
       </div>
     </div>
   );
@@ -1425,13 +1522,16 @@ function CanvasView(props: {
           )}
         </Drawer>
 
-        {/* Webhook + 操作 */}
-        <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-4 py-2 flex-wrap">
-          <div className="flex items-center gap-2 min-w-0">
-            <Webhook className="h-3.5 w-3.5 text-[var(--info)] shrink-0" />
-            <span className="font-mono text-[11px] truncate">POST /webhook/redis-oom</span>
+        {/* 画布上下文 + 快捷工具 */}
+        <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] bg-[var(--bg)] px-4 py-2.5 flex-wrap">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--info-bg)] px-2 py-1 text-[10px] font-medium text-[var(--info)]"><Webhook className="h-3.5 w-3.5 shrink-0" /><span className="font-mono">POST</span></span>
+            <span className="max-w-[220px] truncate font-mono text-[11px] font-medium text-[var(--text-secondary)]">/webhook/redis-oom</span>
             <button
+              type="button"
               onClick={() => setWebhookEnabled(!webhookEnabled)}
+              aria-pressed={webhookEnabled}
+              aria-label={webhookEnabled ? '停用 Webhook 触发器' : '启用 Webhook 触发器'}
               className={cn(
                 'relative h-4 w-7 rounded-full transition-colors shrink-0',
                 webhookEnabled ? 'bg-[var(--success)]' : 'bg-[var(--border-strong)]',
@@ -1442,7 +1542,10 @@ function CanvasView(props: {
                 webhookEnabled ? 'left-3.5' : 'left-0.5',
               )} />
             </button>
-            <span className="text-[10px] text-[var(--text-muted)] shrink-0">{webhookEnabled ? '已启用' : '已禁用'}</span>
+            <span className={cn('text-[10px] font-medium shrink-0', webhookEnabled ? 'text-[var(--success)]' : 'text-[var(--text-muted)]')}>{webhookEnabled ? '触发已启用' : '触发已停用'}</span>
+            <span className="hidden h-4 w-px bg-[var(--border)] sm:block" />
+            <span className="hidden text-[10px] text-[var(--text-muted)] sm:inline">{rfNodes.length} 节点 · {rfEdges.length} 连线</span>
+            {isDirty && <Badge tone="warn" className="text-[9px]">草稿待保存</Badge>}
           </div>
           <div className="flex items-center gap-1 flex-wrap">
             {/* 画布节点搜索定位 */}
@@ -1524,34 +1627,29 @@ function CanvasView(props: {
 
           {/* 画布内节点库：可直接拖放到任意画布位置 */}
           {nodeLibraryOpen && (
-            <div className="absolute left-3 top-3 z-20 w-[232px] rounded-lg border border-[var(--border)] bg-[var(--bg)]/95 p-2 shadow-lg backdrop-blur">
-              <div className="mb-2 flex items-center gap-1.5 px-1 text-[11px] font-semibold">
-                <Box className="h-3.5 w-3.5 text-[var(--brand)]" />节点库
-                <span className="ml-auto font-mono text-[10px] text-[var(--text-muted)]">拖拽添加</span>
+            <div className="absolute left-3 top-3 z-20 flex max-h-[calc(100%-24px)] w-[318px] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--bg)]/95 shadow-xl backdrop-blur">
+              <div className="border-b border-[var(--border)] p-3">
+                <div className="flex items-center gap-1.5 text-xs font-semibold">
+                  <span className="grid h-6 w-6 place-items-center rounded-lg bg-[var(--brand-light)] text-[var(--brand)]"><Box className="h-3.5 w-3.5" /></span>
+                  节点库
+                  <span className="ml-auto text-[10px] font-normal text-[var(--text-muted)]">点击或拖拽添加</span>
+                </div>
+                <div className="relative mt-2">
+                  <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
+                  <input value={librarySearchQ} onChange={(event) => setLibrarySearchQ(event.target.value)} placeholder="搜索节点、能力或系统" className="h-8 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] pl-8 pr-2 text-[11px] outline-none focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]" />
+                </div>
+                <div className="mt-2 flex items-center gap-1 rounded-lg bg-[var(--bg-elevated)] p-1">
+                  {(['recommended', 'all'] as const).map((view) => <button key={view} type="button" onClick={() => setLibraryView(view)} className={cn('flex-1 rounded-md px-2 py-1 text-[10px] font-medium transition-colors', libraryView === view ? 'bg-[var(--surface-1)] text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>{view === 'recommended' ? '推荐下一步' : '全部节点'}</button>)}
+                </div>
+                {libraryView === 'recommended' && <p className="mt-2 text-[10px] leading-relaxed text-[var(--text-muted)]">{selectedLibraryKind ? `基于「${NODE_LABELS[selectedLibraryKind]}」推荐可接入节点` : '从触发器或常用能力开始搭建流程'}</p>}
               </div>
-              <div className="grid grid-cols-2 gap-1">
-                {filteredLibrary.map((kind) => {
+              <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+                {visibleLibraryGroups.length > 0 ? <div className="space-y-3">{visibleLibraryGroups.map((group) => <section key={group.id}><div className="mb-1.5 flex items-center gap-2 px-0.5"><span className="text-[10px] font-semibold text-[var(--text-secondary)]">{group.label}</span><span className="truncate text-[9px] text-[var(--text-muted)]">{group.desc}</span></div><div className="grid grid-cols-2 gap-1.5">{group.kinds.map((kind) => {
                   const Icon = NODE_ICONS[kind];
                   const color = NODE_COLORS[kind];
-                  return (
-                    <button
-                      key={kind}
-                      draggable
-                      onDragStart={(event) => {
-                        event.dataTransfer.setData('application/wf-node', kind);
-                        event.dataTransfer.effectAllowed = 'move';
-                        setDraggedKind(kind);
-                      }}
-                      onDragEnd={() => setDraggedKind(null)}
-                      onClick={() => addNode(kind)}
-                      className="flex cursor-grab items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1.5 text-left text-[10px] transition-colors hover:border-[var(--brand)] hover:bg-[var(--brand-light)] active:cursor-grabbing"
-                      title={`${NODE_DESCS[kind]} · 拖拽到画布添加`}
-                    >
-                      <Icon className="h-3.5 w-3.5 shrink-0" style={{ color }} />
-                      <span className="truncate">{NODE_LABELS[kind]}</span>
-                    </button>
-                  );
-                })}
+                  const meta = NODE_LIBRARY_META[kind];
+                  return <button key={kind} draggable onDragStart={(event) => { event.dataTransfer.setData('application/wf-node', kind); event.dataTransfer.effectAllowed = 'move'; setDraggedKind(kind); }} onDragEnd={() => setDraggedKind(null)} onClick={() => addNode(kind)} className="group flex min-w-0 cursor-grab flex-col gap-1 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-2 text-left transition-all hover:-translate-y-px hover:border-[var(--brand)] hover:shadow-sm active:cursor-grabbing" title={`${NODE_DESCS[kind]} · 拖拽到画布添加`}><span className="flex items-center gap-1.5"><span className="grid h-6 w-6 shrink-0 place-items-center rounded-md" style={{ backgroundColor: `${color}1a`, color }}><Icon className="h-3.5 w-3.5" /></span><span className="truncate text-[10px] font-semibold text-[var(--text)]">{NODE_LABELS[kind]}</span></span><span className="line-clamp-2 min-h-[26px] text-[9px] leading-[13px] text-[var(--text-muted)]">{NODE_DESCS[kind]}</span>{meta.badge && <span className={cn('w-fit rounded px-1.5 py-0.5 text-[8px] font-medium', meta.risk === 'sensitive' ? 'bg-[var(--warning-bg)] text-[var(--warning)]' : meta.risk === 'review' ? 'bg-[var(--brand-light)] text-[var(--brand)]' : 'bg-[var(--bg-hover)] text-[var(--text-muted)]')}>{meta.badge}</span>}</button>;
+                })}</div></section>)}</div> : <div className="grid min-h-28 place-items-center px-5 text-center text-[11px] text-[var(--text-muted)]">未找到匹配节点，请调整搜索条件。</div>}
               </div>
             </div>
           )}
@@ -1565,10 +1663,10 @@ function CanvasView(props: {
             </div>
           )}
 
-          {/* 画布右下角状态 */}
-          <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg)]/95 px-2 py-1 text-[10px] text-[var(--text-muted)] backdrop-blur">
+          {/* 画布运行观察 */}
+          <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg)]/95 px-2.5 py-1.5 text-[10px] text-[var(--text-muted)] shadow-[0_2px_8px_rgba(15,23,42,0.06)] backdrop-blur">
             <span className="h-1.5 w-1.5 rounded-full bg-[var(--success)] animate-pulse" />
-            执行中 · <span className="font-mono font-semibold">n4 双签审批</span>
+            <span>运行观察</span><span className="h-3 w-px bg-[var(--border)]" /><span className="font-mono font-semibold text-[var(--text-secondary)]">n4 双签审批</span><span className="text-[var(--success)]">执行中</span>
           </div>
 
           {/* 快捷键提示 */}
@@ -1743,7 +1841,7 @@ function NodeOverview({ selectedNode }: { selectedNode: Node }) {
       {selectedNode.data?.note && <section className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] p-2.5 text-[11px]"><div className="mb-1 flex items-center gap-1 font-semibold text-[var(--warning)]"><MessageSquare className="h-3.5 w-3.5" />运行批注</div><p className="leading-relaxed text-[var(--text-secondary)]">{selectedNode.data.note}</p></section>}
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3">
         <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">配置提示</div>
-        <p className="text-[11px] leading-relaxed text-[var(--text-secondary)]">{kind === 'approval' ? '请设置审批组、签名人数和审批超时；任何写操作均应保留回滚分支。' : kind === 'execute' ? '请确认执行工具、目标资源、参数及重试策略；高风险操作建议串联双签节点。' : kind === 'branch' ? '请配置分支表达式和各出口的目标节点，确保默认路径可追踪。' : '在“配置”页更新节点名称、描述与运行批注；变更后需点击应用修改。'}</p>
+        <p className="text-[11px] leading-relaxed text-[var(--text-secondary)]">{kind === 'approval' ? '请设置审批组、签名人数和审批超时；任何写操作均应保留回滚分支。' : ['execute', 'http', 'mcp'].includes(kind) ? '请确认调用目标、凭据权限、参数与重试策略；高风险动作建议先串联风险策略或双签审批。' : kind === 'policy' ? '请配置风险等级、允许动作与越权处理方式；策略命中结果会写入运行审计。' : ['retry', 'compensate'].includes(kind) ? '请明确可重试错误、退避次数或补偿动作，避免失败后重复写入或产生不可逆变更。' : ['branch', 'condition', 'parallel'].includes(kind) ? '请配置判断表达式、出口与汇聚规则，确保默认路径和异常路径都可以追溯。' : '在“配置”页更新节点名称、描述与运行批注；变更后需点击应用修改。'}</p>
       </section>
     </div>
   );
@@ -1859,11 +1957,17 @@ function PropertiesPanel({
   const [label, setLabel] = useState(selectedNode?.data?.label ?? '');
   const [desc, setDesc] = useState(selectedNode?.data?.desc ?? '');
   const [note, setNote] = useState(selectedNode?.data?.note ?? '');
+  const [knowledgePackageId, setKnowledgePackageId] = useState('');
+  const [noResultPolicy, setNoResultPolicy] = useState<'clarify' | 'handoff' | 'block'>('block');
+  const { data: knowledgePackages = [] } = useApiQuery<KnowledgePackage[]>(['workflow-properties', 'knowledge-packages'], '/api/knowledge/packages');
+  const { data: retrievalProfiles = [] } = useApiQuery<KnowledgeRetrievalProfile[]>(['workflow-properties', 'retrieval-profiles'], '/api/knowledge/retrieval-profiles');
+  const bindKnowledgeMutation = useApiMutation<any, { packageId: string; consumerType: 'workflow'; consumerId: string; consumerName: string; environment: 'production'; profileId: string; noResultPolicy: 'clarify' | 'handoff' | 'block' }>('/api/knowledge/bindings', { onSuccess: (binding) => showToast(`已绑定 ${binding.packageName} ${binding.packageVersion}`, 'success') });
 
   useEffect(() => {
     setLabel(selectedNode?.data?.label ?? '');
     setDesc(selectedNode?.data?.desc ?? '');
     setNote(selectedNode?.data?.note ?? '');
+    setKnowledgePackageId('');
   }, [selectedNode?.id]);
 
   if (!selectedNode) {
@@ -1880,6 +1984,8 @@ function PropertiesPanel({
   const kind = selectedNode.data?.kind as WorkflowNodeKind;
   const Icon = NODE_ICONS[kind];
   const color = NODE_COLORS[kind];
+  const nodeMeta = NODE_LIBRARY_META[kind];
+  const requiresReview = nodeMeta.risk === 'review' || nodeMeta.risk === 'sensitive';
 
   const apply = () => {
     updateNodeLabel(selectedNode.id, label);
@@ -1889,24 +1995,31 @@ function PropertiesPanel({
   };
 
   return (
-    <div className="space-y-3">
-      <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] p-3">
+    <div className="space-y-4">
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
         <div className="flex items-center gap-2">
           <div
-            className="grid h-8 w-8 place-items-center rounded-md"
+            className="grid h-10 w-10 place-items-center rounded-xl"
             style={{ backgroundColor: `${color}1a`, color }}
           >
-            <Icon className="h-4 w-4" />
+            <Icon className="h-5 w-5" />
           </div>
-          <div>
-            <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-mono">{kind}</div>
-            <div className="text-sm font-semibold">{NODE_LABELS[kind]}</div>
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5"><span className="rounded-md px-1.5 py-0.5 font-mono text-[9px] font-medium" style={{ backgroundColor: `${color}1a`, color }}>{kind}</span>{nodeMeta.badge && <span className="rounded-md bg-[var(--bg-elevated)] px-1.5 py-0.5 text-[9px] font-medium text-[var(--text-muted)]">{nodeMeta.badge}</span>}</div>
+            <div className="mt-1 text-sm font-semibold text-[var(--text)]">{selectedNode.data?.label || NODE_LABELS[kind]}</div>
           </div>
         </div>
-      </div>
+        <p className="mt-3 text-[11px] leading-5 text-[var(--text-muted)]">{selectedNode.data?.desc || NODE_DESCS[kind]}</p>
+      </section>
 
-      <Field label="节点 ID">
-        <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1.5 font-mono text-[11px] text-[var(--text-muted)]">
+      {requiresReview && <section className={cn('rounded-xl border p-3 text-[11px]', nodeMeta.risk === 'sensitive' ? 'border-[var(--warning)]/30 bg-[var(--warning-bg)]' : 'border-[var(--info)]/25 bg-[var(--info-bg)]')}><div className={cn('flex items-center gap-1.5 font-semibold', nodeMeta.risk === 'sensitive' ? 'text-[var(--warning)]' : 'text-[var(--info)]')}><ShieldCheck className="h-3.5 w-3.5" />{nodeMeta.risk === 'sensitive' ? '受控执行节点' : '需要治理复核'}</div><p className="mt-1.5 leading-5 text-[var(--text-secondary)]">{nodeMeta.risk === 'sensitive' ? '请确认目标系统、调用权限与补偿策略；运行前应串联审批或风险策略。' : '请确认策略、审批人或失败路径配置，变更将写入工作流审计。'}</p></section>}
+
+      {kind === 'retrieve' && <section className="space-y-3 rounded-xl border border-[var(--brand)]/25 bg-[var(--brand-light)]/35 p-4"><div><div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text)]"><Database className="h-3.5 w-3.5 text-[var(--brand)]" />知识包引用</div><p className="mt-1 text-[10px] leading-4 text-[var(--text-muted)]">仅可引用知识库中心已发布的版本；运行记录将保留证据与版本。</p></div><Field label="已发布知识包"><select value={knowledgePackageId} onChange={(event) => setKnowledgePackageId(event.target.value)} className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px]"><option value="">请选择知识包</option>{knowledgePackages.filter((item) => item.status === 'published' && item.currentVersion.status === 'published').map((item) => <option key={item.id} value={item.id}>{item.name} · {item.currentVersion.version}</option>)}</select></Field><Field label="无结果策略"><select value={noResultPolicy} onChange={(event) => setNoResultPolicy(event.target.value as typeof noResultPolicy)} className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px]"><option value="block">阻断后续执行</option><option value="handoff">转人工接管</option><option value="clarify">请求补充信息</option></select></Field><Button size="sm" className="w-full" disabled={!knowledgePackageId || bindKnowledgeMutation.isPending} onClick={() => { const profile = retrievalProfiles.find((item) => item.packageId === knowledgePackageId); if (!profile) { showToast('该知识包尚未配置检索策略', 'error'); return; } bindKnowledgeMutation.mutate({ packageId: knowledgePackageId, consumerType: 'workflow', consumerId: 'wf1', consumerName: `工作流节点 ${selectedNode.id}`, environment: 'production', profileId: profile.id, noResultPolicy }); }}><ShieldCheck className="h-3.5 w-3.5" />{bindKnowledgeMutation.isPending ? '绑定中…' : '绑定并锁定当前版本'}</Button></section>}
+
+      <section className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+      <div className="text-xs font-semibold text-[var(--text)]">基础配置</div>
+      <Field label="节点标识">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[11px] text-[var(--text-muted)]">
           {selectedNode.id}
         </div>
       </Field>
@@ -1915,7 +2028,7 @@ function PropertiesPanel({
         <input
           value={label}
           onChange={(e) => setLabel(e.target.value)}
-          className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 text-[12px] outline-none focus:border-[var(--brand)]"
+          className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] outline-none transition-[border-color,box-shadow] focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]"
         />
       </Field>
 
@@ -1924,46 +2037,55 @@ function PropertiesPanel({
           value={desc}
           onChange={(e) => setDesc(e.target.value)}
           rows={2}
-          className="w-full rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1.5 text-[12px] outline-none focus:border-[var(--brand)] resize-none"
+          className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2 text-[12px] outline-none transition-[border-color,box-shadow] focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]"
         />
       </Field>
+      </section>
 
-      <Field label="批注 (note)">
+      <section className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+      <div className="text-xs font-semibold text-[var(--text)]">运行说明</div>
+      <Field label="运维批注">
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
           rows={2}
           placeholder="如：高峰期需手确认、双签必须 5 分钟内…"
-          className="w-full rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1.5 text-[12px] outline-none focus:border-[var(--brand)] resize-none"
+          className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2 text-[12px] outline-none transition-[border-color,box-shadow] focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]"
         />
         <div className="mt-1 text-[9px] text-[var(--text-muted)] flex items-center gap-1">
           <MessageSquare className="h-3 w-3" />
-          节点卡片下方会显示此批注
+          执行人与审计人员可在节点上下文中查看此批注
         </div>
       </Field>
+      </section>
 
-      <Field label="位置">
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+      <div className="mb-3 text-xs font-semibold text-[var(--text)]">画布上下文</div>
+      <Field label="画布位置">
         <div className="grid grid-cols-2 gap-1.5 text-[11px]">
-          <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1.5 font-mono">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[var(--text-secondary)]">
             x: {Math.round(selectedNode.position.x)}
           </div>
-          <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1.5 font-mono">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 font-mono text-[var(--text-secondary)]">
             y: {Math.round(selectedNode.position.y)}
           </div>
         </div>
       </Field>
 
-      <Field label="运行时行为">
-        <div className="rounded-md border border-[var(--border)] bg-[var(--surface-2)] px-2 py-1.5 text-[11px]">
+      <Field label="运行状态">
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-[11px]">
           {selectedNode.data?.disabled
-            ? <span className="text-[var(--danger)]">⏸ 已禁用（运行时跳过）</span>
-            : <span className="text-[var(--success)]">▶ 正常执行</span>}
+            ? <span className="text-[var(--danger)]">已禁用 · 运行时将跳过此节点</span>
+            : <span className="text-[var(--success)]">已启用 · 将按编排路径执行</span>}
         </div>
       </Field>
+      </section>
 
-      <Button className="w-full" onClick={apply}>
+      <div className="sticky bottom-0 -mx-1 border-t border-[var(--border)] bg-[var(--surface-1)] px-1 pt-3">
+      <Button className="w-full rounded-lg" onClick={apply}>
         <Save className="h-3.5 w-3.5" />应用修改
       </Button>
+      </div>
     </div>
   );
 }
@@ -2001,17 +2123,34 @@ function TemplatesView({
   onPreview: (t: typeof TEMPLATES[number]) => void;
   onUseTemplate: (t: typeof TEMPLATES[number]) => void;
 }) {
+  const [query, setQuery] = useState('');
+  const [scope, setScope] = useState<'all' | 'healthy' | 'review'>('all');
+  const [page, setPage] = useState(1);
+  const visibleTemplates = filteredTemplates.filter((template) => {
+    const matchesQuery = !query.trim() || `${template.name} ${template.description} ${template.owner} ${template.dependencies.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase());
+    const matchesScope = scope === 'all' || (scope === 'healthy' ? template.health === '健康' : template.risk !== 'L1' || template.health !== '健康');
+    return matchesQuery && matchesScope;
+  });
+  const pageSize = 8;
+  const pageCount = Math.max(1, Math.ceil(visibleTemplates.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pagedTemplates = visibleTemplates.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, scope, filteredTemplates]);
+
   return (
-    <div className="overflow-y-auto p-6 bg-[var(--bg-elevated)] h-full">
-      <div className="mb-4 flex items-center justify-between">
+    <div className="workflow-template-page h-full overflow-y-auto bg-[var(--bg-elevated)] p-6">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-base font-semibold flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-[var(--brand)]" />工作流模版库
           </h2>
-          <p className="text-xs text-[var(--text-muted)] mt-0.5">{TEMPLATES.length} 套内置模板 · 按业务 / 系统 / 安全 / AI 分组</p>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">{filteredTemplates.length} 套受治理模板 · 按业务 / 系统 / 安全 / AI 分组</p>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold mr-1">分组</span>
+          <span className="mr-1 text-xs font-semibold leading-5 text-[var(--text-muted)]">分组</span>
           {([
             { k: 'all' as const, label: '全部' },
             { k: 'business' as const, label: '业务' },
@@ -2023,7 +2162,7 @@ function TemplatesView({
               key={g.k}
               onClick={() => setFilterGroup(g.k)}
               className={cn(
-                'rounded-md px-2.5 py-1 text-[11px] transition-colors',
+                'rounded-md px-2.5 py-1 text-xs leading-5 transition-colors',
                 filterGroup === g.k
                   ? 'bg-[var(--brand)] text-white'
                   : 'bg-[var(--bg)] text-[var(--text-muted)] border border-[var(--border)] hover:border-[var(--brand)]',
@@ -2035,43 +2174,84 @@ function TemplatesView({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-        {filteredTemplates.map((t) => (
-          <div
-            key={t.id}
-            className="tile-brandable rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4"
-          >
-            <div className="flex items-start gap-3 mb-3">
-              <div className={cn(
-                'grid h-10 w-10 place-items-center rounded-md shrink-0',
-                t.category === 'business' ? 'bg-[var(--info-bg)] text-[var(--info)]' :
-                t.category === 'system' ? 'bg-[var(--success-bg)] text-[var(--success)]' :
-                t.category === 'security' ? 'bg-[var(--danger-bg)] text-[var(--danger)]' :
-                'bg-[var(--purple-bg)] text-[var(--purple)]',
-              )}>
-                <Sparkles className="h-4 w-4" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-sm font-semibold">{t.name}</div>
-                <div className="mt-1 text-[11px] text-[var(--text-muted)] line-clamp-2">{t.description}</div>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-2 pt-3 border-t border-[var(--border)] text-[10px]">
-              <Mini label="节点" value={t.nodes} />
-              <Mini label="安装" value={t.installs} />
-              <Mini label="评分" value={`★ ${t.rating}`} tone="warn" />
-            </div>
-            <div className="mt-3 flex gap-1.5">
-              <Button size="sm" variant="secondary" className="flex-1" onClick={() => onPreview(t)}>
-                <Eye className="h-3 w-3" />预览
-              </Button>
-              <Button size="sm" className="flex-1" onClick={() => onUseTemplate(t)}>
-                <Download className="h-3 w-3" />使用
-              </Button>
-            </div>
-          </div>
-        ))}
+      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3">
+        <div className="relative min-w-[220px] flex-1"><Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模板、维护团队或依赖" className="h-8 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] pl-8 pr-3 text-xs outline-none focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]" /></div>
+        <div className="flex items-center gap-1 rounded-lg bg-[var(--bg-elevated)] p-1" role="group" aria-label="模板健康度">
+          {([['all', '全部资产'], ['healthy', '可直接复用'], ['review', '需复核']] as const).map(([key, label]) => <button key={key} type="button" onClick={() => setScope(key)} className={cn('rounded-md px-2.5 py-1 text-xs leading-5 font-medium transition-colors', scope === key ? 'bg-[var(--surface-1)] text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>{label}</button>)}
+        </div>
+        <span className="text-xs leading-5 text-[var(--text-muted)]">{visibleTemplates.length} 个可发现模板</span>
       </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {pagedTemplates.map((t) => {
+          const categoryStyle = t.category === 'business'
+            ? 'bg-[var(--info-bg)] text-[var(--info)]'
+            : t.category === 'system'
+              ? 'bg-[var(--success-bg)] text-[var(--success)]'
+              : t.category === 'security'
+                ? 'bg-[var(--danger-bg)] text-[var(--danger)]'
+                : 'bg-[var(--purple-bg)] text-[var(--purple)]';
+          const categoryName = t.category === 'business' ? '业务自动化' : t.category === 'system' ? '系统运维' : t.category === 'security' ? '安全响应' : '智能分析';
+
+          return (
+            <article
+              key={t.id}
+              className="workflow-template-card group flex min-h-[292px] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-all duration-200 hover:-translate-y-1 hover:border-[var(--border-strong)] hover:shadow-[0_14px_30px_rgba(15,23,42,0.10)]"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <div className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl ring-1 ring-inset ring-black/[0.03]', categoryStyle)}>
+                    <Sparkles className="h-4 w-4" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <h3 className="truncate text-sm font-semibold tracking-[-0.01em] text-[var(--text)]">{t.name}</h3>
+                      <span className="rounded-md bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--text-muted)]">{t.version}</span>
+                    </div>
+                    <div className="mt-1 text-[11px] text-[var(--text-muted)]">{categoryName} · {t.owner}</div>
+                  </div>
+                </div>
+                <Badge tone={t.health === '健康' ? 'success' : 'warn'} className="shrink-0 text-[10px]">{t.health}</Badge>
+              </div>
+
+              <p className="mt-4 min-h-[34px] text-[12px] leading-[18px] text-[var(--text-secondary)] line-clamp-2">{t.description}</p>
+
+              <div className="mt-4 rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5">
+                <div className="mb-2 flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)]"><span>流程能力</span><span>{t.nodes} 个节点</span></div>
+                <div className="flex items-center gap-1.5 overflow-hidden">
+                  {t.sequence.slice(0, 4).map((kind, index) => {
+                    const StageIcon = NODE_ICONS[kind];
+                    return (
+                      <div key={`${kind}-${index}`} className="flex min-w-0 items-center gap-1.5">
+                        {index > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-[var(--border-strong)]" />}
+                        <span title={NODE_LABELS[kind]} className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-[var(--surface-1)] text-[var(--text-secondary)] shadow-[0_1px_1px_rgba(15,23,42,0.04)]"><StageIcon className="h-3 w-3" /></span>
+                      </div>
+                    );
+                  })}
+                  {t.sequence.length > 4 && <span className="ml-0.5 shrink-0 text-[11px] font-medium text-[var(--text-muted)]">+{t.sequence.length - 4}</span>}
+                </div>
+              </div>
+
+              <div className="mt-4 flex items-center gap-3 border-t border-[var(--border)] pt-3">
+                <div className="min-w-0 flex-1"><div className="text-[11px] text-[var(--text-muted)]">验证成功率</div><div className="mt-0.5 font-mono text-sm font-semibold text-[var(--text)]">{t.successRate}</div></div>
+                <div className="h-7 w-px bg-[var(--border)]" />
+                <div className="min-w-0 flex-1"><div className="text-[11px] text-[var(--text-muted)]">治理等级</div><div className="mt-0.5 flex items-center gap-1.5"><Badge tone={t.risk === 'L3' ? 'warn' : t.risk === 'L2' ? 'info' : 'success'} className="text-[10px]">{t.risk} 风险</Badge><span className="truncate text-[11px] text-[var(--text-muted)]">{t.dependencies.length} 依赖</span></div></div>
+              </div>
+
+              <div className="mt-auto flex items-center justify-between gap-2 pt-4">
+                <button type="button" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]/30" onClick={() => onPreview(t)}>
+                  <Eye className="h-3.5 w-3.5" />查看架构
+                </button>
+                <Button size="sm" className="rounded-lg px-3" onClick={() => onUseTemplate(t)}>
+                  创建草稿<ArrowRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+      {visibleTemplates.length > 0 && <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4 text-xs text-[var(--text-muted)]"><span>显示第 {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, visibleTemplates.length)} 套，共 {visibleTemplates.length} 套模板</span><nav className="flex items-center gap-1" aria-label="模板库分页"><button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="grid h-8 w-8 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="上一页"><ChevronLeft className="h-3.5 w-3.5" /></button>{Array.from({ length: pageCount }, (_, index) => index + 1).map((item) => <button key={item} type="button" onClick={() => setPage(item)} aria-current={item === currentPage ? 'page' : undefined} className={cn('grid h-8 min-w-8 place-items-center rounded-md px-2 font-medium transition-colors', item === currentPage ? 'bg-[var(--brand)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}>{item}</button>)}<button type="button" disabled={currentPage === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} className="grid h-8 w-8 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="下一页"><ChevronRight className="h-3.5 w-3.5" /></button></nav></div>}
+      {visibleTemplates.length === 0 && <div className="mt-10 text-center text-sm text-[var(--text-muted)]">没有符合当前条件的模板，请调整搜索或健康度筛选。</div>}
     </div>
   );
 }
@@ -2080,112 +2260,73 @@ function TemplatesView({
  *  模板预览弹窗
  * ============================================================= */
 function TemplatePreviewModal({
-  template, onClose, showToast,
+  template, onClose, showToast, onUseTemplate,
 }: {
   template: typeof TEMPLATES[number] | null;
   onClose: () => void;
   showToast: (msg: string, tone?: 'success' | 'error' | 'info') => void;
+  onUseTemplate: (template: typeof TEMPLATES[number]) => void;
 }) {
   if (!template) return null;
-  return <TemplatePreviewModalInner template={template} onClose={onClose} showToast={showToast} />;
+  return <TemplatePreviewModalInner template={template} onClose={onClose} showToast={showToast} onUseTemplate={onUseTemplate} />;
 }
 
 function TemplatePreviewModalInner({
-  template, onClose, showToast,
+  template, onClose, showToast, onUseTemplate,
 }: {
   template: typeof TEMPLATES[number];
   onClose: () => void;
   showToast: (msg: string, tone?: 'success' | 'error' | 'info') => void;
+  onUseTemplate: (template: typeof TEMPLATES[number]) => void;
 }) {
   const [zoom, setZoom] = useState(0.7);
 
-  // 根据模板节点数生成预览 DAG（必须放在组件顶层，且早期不 return）
-  const previewSeq: WorkflowNodeKind[] = useMemo(() => {
-    if (template.id === 't1') {
-      return ['trigger', 'retrieve', 'decision', 'approval', 'branch', 'execute', 'audit', 'notify', 'execute', 'audit'];
-    }
-    if (template.id === 't2') return ['trigger', 'retrieve', 'branch', 'execute', 'execute', 'audit', 'notify'];
-    if (template.id === 't3') return ['trigger', 'retrieve', 'decision', 'execute', 'approval', 'execute', 'execute', 'audit', 'notify', 'audit', 'notify', 'execute'];
-    if (template.id === 't4') return ['trigger', 'retrieve', 'decision', 'branch', 'execute', 'audit', 'notify'];
-    if (template.id === 't5') return ['trigger', 'retrieve', 'decision', 'execute', 'audit', 'notify'];
-    if (template.id === 't6') return ['trigger', 'retrieve', 'decision', 'branch', 'execute', 'execute', 'audit', 'notify', 'execute'];
-    const seq: WorkflowNodeKind[] = ['trigger'];
-    const pool: WorkflowNodeKind[] = ['retrieve', 'decision', 'execute', 'audit', 'notify'];
-    while (seq.length < template.nodes) seq.push(pool[seq.length % pool.length]);
-    return seq;
-  }, [template.id, template.nodes]);
+  const previewSeq = template.sequence;
+  const categoryStyle = template.category === 'business'
+    ? 'bg-[var(--info-bg)] text-[var(--info)]'
+    : template.category === 'system'
+      ? 'bg-[var(--success-bg)] text-[var(--success)]'
+      : template.category === 'security'
+        ? 'bg-[var(--danger-bg)] text-[var(--danger)]'
+        : 'bg-[var(--purple-bg)] text-[var(--purple)]';
+  const categoryName = template.category === 'business' ? '业务自动化' : template.category === 'system' ? '系统运维' : template.category === 'security' ? '安全响应' : '智能分析';
+  const governanceChecks = template.risk === 'L3' ? 4 : template.risk === 'L2' ? 3 : 2;
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50" onClick={onClose}>
-      <div
-        className="w-[min(960px,calc(100%-32px))] h-[min(640px,calc(100%-32px))] rounded-xl border border-[var(--border)] bg-[var(--bg)] shadow-2xl flex flex-col overflow-hidden"
+      <section
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="template-preview-title"
+        className="flex h-[min(800px,calc(100%-32px))] w-[min(1240px,calc(100%-32px))] flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-[var(--border)] px-5 py-3">
-          <div className="flex items-center gap-3">
-            <div className={cn(
-              'grid h-9 w-9 place-items-center rounded-md',
-              template.category === 'business' ? 'bg-[var(--info-bg)] text-[var(--info)]' :
-              template.category === 'system' ? 'bg-[var(--success-bg)] text-[var(--success)]' :
-              template.category === 'security' ? 'bg-[var(--danger-bg)] text-[var(--danger)]' :
-              'bg-[var(--purple-bg)] text-[var(--purple)]',
-            )}>
-              <Sparkles className="h-4 w-4" />
-            </div>
-            <div>
-              <div className="text-sm font-semibold flex items-center gap-2">
-                {template.name}
-                <Badge tone="brand" className="text-[9px]">预览</Badge>
-              </div>
-              <div className="text-[11px] text-[var(--text-muted)] mt-0.5">{template.description}</div>
-            </div>
+        <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--surface-1)] px-6 py-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl ring-1 ring-inset ring-black/[0.03]', categoryStyle)}><Sparkles className="h-4 w-4" /></div>
+            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 id="template-preview-title" className="truncate text-base font-semibold tracking-[-0.01em] text-[var(--text)]">{template.name}</h2><span className="rounded-md bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--text-muted)]">{template.version}</span><Badge tone={template.health === '健康' ? 'success' : 'warn'} className="text-[9px]">{template.health}</Badge></div><p className="mt-1 text-xs text-[var(--text-muted)]">{categoryName} · {template.description}</p></div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" variant="outline" onClick={() => setZoom((z) => Math.max(0.3, z - 0.1))}>−</Button>
-            <span className="font-mono text-[11px] text-[var(--text-muted)] w-12 text-center">{Math.round(zoom * 100)}%</span>
-            <Button size="sm" variant="outline" onClick={() => setZoom((z) => Math.min(1.5, z + 0.1))}>+</Button>
-            <div className="mx-1 h-5 w-px bg-[var(--border)]" />
-            <Button size="sm" onClick={() => { showToast(`已基于「${template.name}」创建工作流（草稿）`, 'success'); onClose(); }}>
-              <Download className="h-3 w-3" />使用此模板
-            </Button>
-            <button onClick={onClose} className="grid h-7 w-7 place-items-center rounded hover:bg-[var(--bg-hover)]">
-              <X className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
+          <button type="button" onClick={onClose} aria-label="关闭模板预览" className="grid h-8 w-8 place-items-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"><X className="h-4 w-4" /></button>
+        </header>
 
-        {/* DAG 预览区 */}
-        <div className="relative flex-1 overflow-auto bg-[var(--surface-2)] p-6">
-          <div className="flex items-center gap-3 flex-wrap" style={{ transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
-            {previewSeq.map((kind, i) => {
-              const Icon = NODE_ICONS[kind];
-              const color = NODE_COLORS[kind];
-              return (
-                <div key={i} className="flex items-center gap-3">
-                  <div className="rounded-md border-2 bg-[var(--bg)] px-3 py-2 min-w-[120px] text-center" style={{ borderColor: color }}>
-                    <Icon className="h-3.5 w-3.5 mx-auto" style={{ color }} />
-                    <div className="text-[10px] uppercase tracking-wide opacity-70 mt-0.5">{kind}</div>
-                    <div className="text-xs font-semibold">{NODE_LABELS[kind]}</div>
-                  </div>
-                  {i < previewSeq.length - 1 && <ChevronRight className="h-4 w-4 text-[var(--text-muted)]" />}
-                </div>
-              );
-            })}
-          </div>
-        </div>
+        <main className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-elevated)]">
+          <div className="mx-auto w-full max-w-[1180px] space-y-5 p-6">
+            <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+              <div><div className="text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">模板概览</div><div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--text-secondary)]"><span>{template.nodes} 个编排节点</span><span className="hidden h-3 w-px bg-[var(--border)] sm:block" /><span>{governanceChecks} 项治理检查</span><span className="hidden h-3 w-px bg-[var(--border)] sm:block" /><span>维护团队：{template.owner}</span></div></div>
+              <div className="flex items-center gap-2"><Badge tone={template.risk === 'L3' ? 'warn' : template.risk === 'L2' ? 'info' : 'success'} className="text-[9px]">{template.risk} 风险</Badge><span className="text-[11px] text-[var(--text-muted)]">最近验证 {template.verifiedAt}</span></div>
+            </section>
 
-        {/* Footer */}
-        <div className="flex items-center justify-between border-t border-[var(--border)] px-5 py-2.5 bg-[var(--bg)] text-[11px] text-[var(--text-muted)]">
-          <div className="flex items-center gap-4">
-            <span>📦 <strong className="text-[var(--text)] font-mono">{template.nodes}</strong> 节点</span>
-            <span>📥 <strong className="text-[var(--text)] font-mono">{template.installs}</strong> 次安装</span>
-            <span>⭐ <strong className="text-[var(--text)] font-mono">{template.rating}</strong></span>
-            <span className="capitalize">分类: <strong className="text-[var(--text)]">{template.category === 'business' ? '业务' : template.category === 'system' ? '系统' : template.category === 'security' ? '安全' : 'AI'}</strong></span>
+            <section className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3.5"><div><h3 className="text-sm font-semibold text-[var(--text)]">流程结构</h3><p className="mt-0.5 text-[11px] text-[var(--text-muted)]">只读预览，展示从触发、决策到执行与治理的完整路径</p></div><div className="flex items-center gap-1"><button type="button" className="grid h-7 w-7 place-items-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]" onClick={() => setZoom((z) => Math.max(0.5, z - 0.1))} aria-label="缩小流程预览">−</button><span className="w-10 text-center font-mono text-[10px] text-[var(--text-muted)]">{Math.round(zoom * 100)}%</span><button type="button" className="grid h-7 w-7 place-items-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]" onClick={() => setZoom((z) => Math.min(1.2, z + 0.1))} aria-label="放大流程预览">+</button></div></div>
+              <div className="overflow-x-auto bg-[var(--bg-elevated)] p-5"><div className="flex min-h-[220px] min-w-max items-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface-1)] px-6 py-5"><div className="flex items-center gap-3" style={{ transform: `scale(${zoom})`, transformOrigin: 'left center' }}>{previewSeq.map((kind, index) => { const Icon = NODE_ICONS[kind]; const color = NODE_COLORS[kind]; const isGovernance = ['policy', 'approval', 'audit', 'compensate'].includes(kind); return <div key={`${kind}-${index}`} className="flex items-center gap-3"><div className="w-[132px] rounded-xl border bg-[var(--surface-1)] px-3 py-3 text-center shadow-[0_1px_2px_rgba(15,23,42,0.05)]" style={{ borderColor: color }}><div className="mb-2 flex items-center justify-between"><span className="font-mono text-[9px] text-[var(--text-muted)]">{String(index + 1).padStart(2, '0')}</span>{isGovernance && <ShieldCheck className="h-3.5 w-3.5" style={{ color }} />}</div><Icon className="mx-auto h-4 w-4" style={{ color }} /><div className="mt-1.5 text-[9px] font-medium uppercase tracking-wide text-[var(--text-muted)]">{kind}</div><div className="mt-0.5 text-xs font-semibold text-[var(--text)]">{NODE_LABELS[kind]}</div></div>{index < previewSeq.length - 1 && <ChevronRight className="h-4 w-4 shrink-0 text-[var(--border-strong)]" />}</div>; })}</div></div></div>
+            </section>
+
+            <section className="grid gap-3 lg:grid-cols-3"><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="flex items-center gap-2 text-xs font-semibold text-[var(--text)]"><CheckCircle2 className="h-4 w-4 text-[var(--success)]" />验证与维护</div><div className="mt-3 text-sm font-semibold text-[var(--text)]">{template.successRate}</div><p className="mt-0.5 text-[11px] text-[var(--text-muted)]">最近验证成功率 · {template.verifiedAt}</p><p className="mt-3 border-t border-[var(--border)] pt-3 text-[11px] text-[var(--text-secondary)]">由 {template.owner} 维护</p></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-xs font-semibold text-[var(--text)]"><Box className="h-4 w-4 text-[var(--info)]" />依赖就绪度</div><Badge tone={template.health === '健康' ? 'success' : 'warn'} className="text-[9px]">{template.health}</Badge></div><div className="mt-3 space-y-2">{template.dependencies.map((dependency) => <div key={dependency} className="flex items-center gap-2 text-[11px] text-[var(--text-secondary)]"><CheckCircle2 className={cn('h-3.5 w-3.5', template.health === '健康' ? 'text-[var(--success)]' : 'text-[var(--warning)]')} />{dependency}</div>)}</div></div><div className={cn('rounded-xl border p-4', template.risk === 'L3' ? 'border-[var(--warning)]/30 bg-[var(--warning-bg)]' : 'border-[var(--info)]/25 bg-[var(--info-bg)]')}><div className={cn('flex items-center gap-2 text-xs font-semibold', template.risk === 'L3' ? 'text-[var(--warning)]' : 'text-[var(--info)]')}><ShieldCheck className="h-4 w-4" />{template.risk} 治理门禁</div><p className="mt-2 text-[11px] leading-5 text-[var(--text-secondary)]">创建后将生成隔离草稿；外部执行前需完成依赖授权、审批、审计与补偿校验。</p></div></section>
           </div>
-          <span className="font-mono text-[10px]">template_id = {template.id}</span>
-        </div>
-      </div>
+        </main>
+
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] bg-[var(--surface-1)] px-6 py-3.5"><div className="text-[11px] text-[var(--text-muted)]">创建后将另存为草稿，不影响当前工作流</div><div className="flex items-center gap-2"><Button size="sm" variant="ghost" onClick={onClose}>取消</Button><Button size="sm" onClick={() => { onUseTemplate(template); onClose(); }}><Download className="h-3.5 w-3.5" />创建隔离草稿</Button></div></footer>
+      </section>
     </div>
   );
 }
@@ -2194,15 +2335,30 @@ function TemplatePreviewModalInner({
  *  执行历史（含时序图 + 单步回放控制）
  * ============================================================= */
 function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' | 'error' | 'info') => void }) {
-  const { data: runsFromApi = [] } = useApiQuery<typeof RUNS>(['workflow-runs'], '/api/workflow-runs');
+  const { data: runsFromApi = [], refetch } = useApiQuery<typeof RUNS>(['workflow-runs'], '/api/workflow-runs');
   const runs = runsFromApi.length > 0 ? runsFromApi : RUNS;
   const [selectedRunId, setSelectedRunId] = useState<string>('r1');
   const [step, setStep] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [mobileReplayOpen, setMobileReplayOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed' | 'running'>('all');
+  const [page, setPage] = useState(1);
+  const retryRunApi = useApiMutation<any, { id: string }>((vars) => `/api/workflows/wf1/runs/${vars.id}/retry`, {
+    onSuccess: () => { showToast('已创建重试尝试，运行状态已刷新', 'success'); refetch(); },
+    onError: () => showToast('重试请求失败，请检查权限或运行状态', 'error'),
+  });
 
   const selectedRun = runs.find((r) => r.id === selectedRunId) ?? runs[0];
   const totalSteps = selectedRun.steps;
+  const stepNames = ['事件触发', '上下文检索', 'Agent 决策', '人工审批', '条件分支', '受控执行', '补偿回滚', '审计留痕', '结果通知', '结束'];
+  const visibleRuns = runs.filter((run) => (statusFilter === 'all' || run.status === statusFilter) && (!query.trim() || `${run.id} ${run.trigger} ${run.who}`.toLowerCase().includes(query.trim().toLowerCase())));
+  const pageSize = 10;
+  const pageCount = Math.max(1, Math.ceil(visibleRuns.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pagedRuns = visibleRuns.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const firstItem = visibleRuns.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const lastItem = Math.min(currentPage * pageSize, visibleRuns.length);
 
   // 自动播放
   useEffect(() => {
@@ -2222,6 +2378,10 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
     setPlaying(false);
   }, [selectedRunId]);
 
+  useEffect(() => {
+    setPage(1);
+  }, [query, statusFilter]);
+
   return (
     <div className="h-full overflow-hidden bg-[var(--bg-elevated)]">
       {/* 左侧：历史列表 */}
@@ -2230,82 +2390,43 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
           <h2 className="text-base font-semibold flex items-center gap-2">
             <Clock className="h-4 w-4 text-[var(--text-muted)]" />执行历史
           </h2>
-            <p className="text-xs text-[var(--text-muted)] mt-0.5">最近 {runs.length} 次执行 · 点击查看单步回放</p>
+          <p className="text-xs text-[var(--text-muted)] mt-0.5">{runs.length} 次运行记录 · 点击查看执行证据与单步回放</p>
         </div>
-        <div className="space-y-2">
-          {runs.map((r) => (
-            <div
-              key={r.id}
-              onClick={() => { setSelectedRunId(r.id); setMobileReplayOpen(true); }}
-              className={cn(
-                'cursor-pointer rounded-lg border bg-[var(--bg)] p-4 transition-colors',
-                selectedRunId === r.id ? 'border-[var(--brand)] ring-2 ring-[var(--brand-light)]' : 'border-[var(--border)] hover:border-[var(--brand)]',
-              )}
-            >
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="font-mono text-[10px] text-[var(--text-muted)]">{r.time}</span>
-                  <span className="font-semibold text-sm">{r.trigger}</span>
-                  <Badge tone={r.status === 'success' ? 'success' : 'error'} className="text-[10px]">
-                    {r.duration}s · {r.steps}/10 步
-                  </Badge>
-                  {r.status === 'failed' && (
-                    <Badge tone="error" className="text-[10px]">失败</Badge>
-                  )}
-                </div>
-                <div className="flex items-center gap-2 text-[11px]">
-                  <span className="text-[var(--text-muted)]">{r.who}</span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="lg:hidden"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedRunId(r.id);
-                      setMobileReplayOpen(true);
-                    }}
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="relative min-w-[220px] flex-1"><Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索运行 ID、触发源或执行人" className="h-8 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] pl-8 pr-3 text-xs leading-5 outline-none focus:border-[var(--brand)]" /></div><div className="flex rounded-lg bg-[var(--bg-elevated)] p-1" role="group" aria-label="运行状态">{([['all', '全部'], ['success', '成功'], ['failed', '失败'], ['running', '运行中']] as const).map(([key, label]) => <button key={key} type="button" onClick={() => setStatusFilter(key)} className={cn('rounded-md px-2.5 py-1 text-xs font-medium leading-5 transition-colors', statusFilter === key ? 'bg-[var(--surface-1)] text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>{label}</button>)}</div><span className="text-xs leading-5 text-[var(--text-muted)]">{visibleRuns.length} 条结果</span></div>
+        {visibleRuns.length > 0 ? (
+          <>
+            <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+              {pagedRuns.map((r, rowIndex) => {
+                const reachedStages = r.status === 'success' ? 5 : Math.max(1, Math.min(4, Math.ceil((r.steps / stepNames.length) * 5)));
+                return (
+                  <article
+                    key={r.id}
+                    onClick={() => { setSelectedRunId(r.id); setMobileReplayOpen(true); }}
+                    className={cn(
+                      'group cursor-pointer px-4 py-4 transition-colors',
+                      rowIndex > 0 && 'border-t border-[var(--border)]',
+                      selectedRunId === r.id ? 'bg-[var(--brand-light)]/55' : 'hover:bg-[var(--bg-elevated)]',
+                    )}
                   >
-                    <Eye className="h-3 w-3" />回放
-                  </Button>
-                  {r.status === 'failed' && (
-                    <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); showToast('已从失败步骤重新执行', 'success'); }}>
-                      <RotateCcw className="h-3 w-3" />重跑
-                    </Button>
-                  )}
-                </div>
-              </div>
-              <div className="flex gap-0.5 h-2.5 rounded overflow-hidden bg-[var(--bg-hover)]">
-                {Array.from({ length: 10 }).map((_, i) => {
-                  const isCompleted = i < r.steps;
-                  const isFailed = r.status === 'failed' && i === r.steps - 1;
-                  return (
-                    <div
-                      key={i}
-                      title={`步骤 ${i + 1}`}
-                      className={cn(
-                        'flex-1 transition-all',
-                        isFailed ? 'bg-[var(--danger)]' : isCompleted ? 'bg-[var(--success)]' : 'bg-[var(--bg-hover)]',
-                      )}
-                    />
-                  );
-                })}
-              </div>
-              <div className="mt-1.5 flex justify-between text-[9px] text-[var(--text-muted)] font-mono">
-                <span>触发</span>
-                <span>决策</span>
-                <span>执行</span>
-                <span>审计</span>
-                <span>通知</span>
-              </div>
-              {r.error && (
-                <div className="mt-3 flex items-start gap-2 rounded-md bg-[var(--danger-bg)] border border-[var(--danger)]/30 px-2 py-1.5 text-[11px] text-[var(--danger)]">
-                  <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-                  <span>{r.error}</span>
-                </div>
-              )}
+                    <div className="grid items-center gap-4 xl:grid-cols-[minmax(260px,1.4fr)_minmax(170px,0.8fr)_minmax(150px,0.65fr)_auto]">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', r.status === 'success' ? 'bg-[var(--success)]' : r.status === 'failed' ? 'bg-[var(--danger)]' : 'animate-pulse bg-[var(--info)]')} />
+                        <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-semibold text-[var(--text)]">{r.trigger}</span><Badge tone={r.status === 'success' ? 'success' : r.status === 'failed' ? 'error' : 'info'} className="text-[9px]">{r.status === 'success' ? '已完成' : r.status === 'failed' ? '执行失败' : '运行中'}</Badge></div><div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-[var(--text-muted)]"><span className="font-mono">{r.id}</span><span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" /><span>{r.time}</span><span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" /><span>{r.who}</span></div></div>
+                      </div>
+                      <div className="hidden xl:block"><div className="mb-1.5 flex items-center justify-between text-[9px] font-medium text-[var(--text-muted)]"><span>执行阶段</span><span>{r.steps} 步</span></div><div className="flex gap-1" aria-label={`执行阶段：${reachedStages} / 5`}>
+                        {Array.from({ length: 5 }).map((_, index) => { const failedStage = r.status === 'failed' && index === reachedStages - 1; const completed = r.status === 'success' || index < reachedStages - (r.status === 'failed' ? 1 : 0); return <span key={index} className={cn('h-1.5 flex-1 rounded-full', failedStage ? 'bg-[var(--danger)]' : completed ? 'bg-[var(--success)]' : 'bg-[var(--border)]')} />; })}
+                      </div></div>
+                      <div className="flex items-center gap-5 text-[10px] text-[var(--text-muted)]"><div><div>耗时</div><div className="mt-0.5 font-mono text-xs font-semibold text-[var(--text)]">{r.status === 'running' ? '处理中' : `${r.duration}s`}</div></div><div><div>步骤</div><div className="mt-0.5 font-mono text-xs font-semibold text-[var(--text)]">{r.steps}</div></div></div>
+                      <div className="flex shrink-0 items-center gap-1.5"><Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); setSelectedRunId(r.id); setMobileReplayOpen(true); }}><Eye className="h-3 w-3" />查看</Button>{r.status === 'failed' && <Button size="sm" variant="secondary" className="rounded-lg" onClick={(e) => { e.stopPropagation(); retryRunApi.mutate({ id: r.id }); }} loading={retryRunApi.isPending}><RotateCcw className="h-3 w-3" />重跑</Button>}</div>
+                    </div>
+                    {r.error && <div className="ml-5 mt-3 flex items-start gap-2 rounded-lg bg-[var(--danger-bg)] px-3 py-2 text-[11px] text-[var(--danger)] xl:ml-0"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span><span className="font-semibold">异常：</span>{r.error}</span></div>}
+                  </article>
+                );
+              })}
             </div>
-          ))}
-        </div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-[11px] text-[var(--text-muted)]"><span>显示第 {firstItem}–{lastItem} 条，共 {visibleRuns.length} 条运行记录</span><nav className="flex items-center gap-1" aria-label="执行历史分页"><button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="上一页"><ChevronLeft className="h-3.5 w-3.5" /></button>{Array.from({ length: pageCount }, (_, index) => index + 1).map((item) => <button key={item} type="button" onClick={() => setPage(item)} aria-current={item === currentPage ? 'page' : undefined} className={cn('grid h-7 min-w-7 place-items-center rounded-md px-1.5 text-[11px] font-medium transition-colors', item === currentPage ? 'bg-[var(--brand)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}>{item}</button>)}<button type="button" disabled={currentPage === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="下一页"><ChevronRight className="h-3.5 w-3.5" /></button></nav></div>
+          </>
+        ) : <div className="grid min-h-48 place-items-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface-1)] text-sm text-[var(--text-muted)]">没有符合当前筛选条件的运行记录。</div>}
       </div>
 
       {/* 右侧：单步回放控制台 */}
@@ -2321,7 +2442,7 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
         {/* 进度条 + 步骤高亮 */}
         <div className="px-4 py-3 border-b border-[var(--border)]">
           <div className="flex gap-0.5 h-3 rounded overflow-hidden bg-[var(--bg-hover)] mb-2">
-            {Array.from({ length: 10 }).map((_, i) => {
+            {Array.from({ length: totalSteps }).map((_, i) => {
               const isCompleted = i < step;
               const isCurrent = i === step;
               const isFailed = selectedRun.status === 'failed' && i === selectedRun.steps - 1;
@@ -2352,10 +2473,10 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
 
         {/* 步骤详情 */}
         <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {Array.from({ length: 10 }).map((_, i) => {
+          {Array.from({ length: totalSteps }).map((_, i) => {
             const isDone = i < step;
             const isCurrent = i === step;
-            const stepName = ['Webhook 触发', 'Milvus 检索', 'Agent 决策', '等保 3 双签', '分支判定', 'Skill 执行', '回滚兜底', '审计日志', '通知发送', '审计结束'][i] ?? `步骤 ${i + 1}`;
+            const stepName = stepNames[i] ?? `步骤 ${i + 1}`;
             const isFailedStep = selectedRun.status === 'failed' && i === selectedRun.steps - 1;
             return (
               <div
@@ -2449,8 +2570,10 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
         width={520}
       >
         <div className="space-y-3 p-4">
+          <div className="grid grid-cols-2 gap-2 text-xs"><div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3"><div className="text-[10px] text-[var(--text-muted)]">运行结果</div><div className="mt-1"><Badge tone={selectedRun.status === 'success' ? 'success' : selectedRun.status === 'failed' ? 'error' : 'info'}>{selectedRun.status === 'success' ? '成功' : selectedRun.status === 'failed' ? '失败' : '运行中'}</Badge></div></div><div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3"><div className="text-[10px] text-[var(--text-muted)]">执行证据</div><div className="mt-1 font-mono text-[11px] text-[var(--text-secondary)]">run:{selectedRun.id}</div></div></div>
+          {selectedRun.error && <div className="rounded-lg border border-[var(--danger)]/30 bg-[var(--danger-bg)] p-3 text-xs text-[var(--danger)]"><div className="flex items-center gap-1.5 font-semibold"><AlertTriangle className="h-3.5 w-3.5" />失败原因</div><div className="mt-1">{selectedRun.error}</div></div>}
           <div className="flex gap-0.5 h-3 rounded overflow-hidden bg-[var(--bg-hover)]">
-            {Array.from({ length: 10 }).map((_, i) => (
+            {Array.from({ length: totalSteps }).map((_, i) => (
               <div
                 key={i}
                 className={cn(
@@ -2470,7 +2593,7 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
             当前步骤: <span className="font-mono font-semibold text-[var(--brand)]">{step} / {totalSteps}</span>
           </div>
           <div className="space-y-2">
-            {['Webhook 触发', 'Milvus 检索', 'Agent 决策', '等保 3 双签', '分支判定', 'Skill 执行', '回滚兜底', '审计日志', '通知发送', '审计结束'].map((name, i) => (
+            {stepNames.slice(0, totalSteps).map((name, i) => (
               <div
                 key={name}
                 className={cn(

@@ -1,883 +1,139 @@
-/**
- * P9 模型（企业级优化版）— 全交互增强
- */
-import { useState, useMemo } from 'react';
-import { useApiQuery } from '@/services/query';
-import { Badge, Button, Input } from '@de/web-ui';
-import {
-  Cloud, Server, Globe, Plus, Key, Settings, Activity, DollarSign,
-  ShieldCheck, CheckCircle2, AlertTriangle, Zap, Globe2, RefreshCw,
-  Play, ArrowRight, FileText, History, GitCompare, Settings2,
-  Sparkles, BarChart3, Layers, TrendingUp, Eye, Trash2, Search,
-} from 'lucide-react';
-import { cn } from '@de/web-utils';
-import type { Provider, ProviderTier } from '@de/web-types';
-import { Modal, Drawer, ConfirmDialog, EmptyState, Sparkline } from '@/components/shared';
+import { useMemo, useState } from 'react';
+import { Activity, AlertTriangle, CheckCircle2, Cloud, FileKey2, FlaskConical, History, Network, Plus, RefreshCw, Route, ShieldCheck, Trash2 } from 'lucide-react';
+import { Badge, Button, Input, toast } from '@de/web-ui';
+import type { ModelAuditEvent, ModelProvider, ProviderImpact, ProviderTier, RoutingPolicyDraft, RoutingPolicyVersion } from '@de/web-types';
+import { useApiMutation, useApiQuery } from '@/services/query';
+import { ConfirmDialog, Drawer, EmptyState } from '@/components/shared';
+import { useAuthStore } from '@/stores/authStore';
+import { modelQueryState, policyStatusLabel, providerLifecycleAction } from '@/features/models/model-ui';
 
-const TIER_ICON: Record<ProviderTier, any> = { official: Cloud, self_hosted: Server, connectable: Globe };
+type Workspace = 'access' | 'routing' | 'governance' | 'audit';
+
+const WORKSPACES: Array<{ key: Workspace; label: string; icon: typeof Cloud }> = [
+  { key: 'access', label: '模型接入', icon: Cloud },
+  { key: 'routing', label: '模型路由', icon: Route },
+  { key: 'governance', label: '模型治理', icon: Activity },
+  { key: 'audit', label: '模型审计', icon: History },
+];
+
 const TIER_LABEL: Record<ProviderTier, string> = { official: '官方 API', self_hosted: '自部署', connectable: '可接入' };
 
-const INITIAL_ROUTES = [
-  { level: 'P0', label: 'P0 推理', primary: 'Sonnet-4', f1: 'GPT-4o', f2: 'Opus-4', cross: true, primaryTone: 'error' as const },
-  { level: 'P1', label: 'P1 摘要', primary: 'Sonnet-4', f1: 'Qwen2.5-72B', f2: '—', cross: true, primaryTone: 'warn' as const },
-  { level: 'P2', label: 'P2 检索', primary: 'Qwen2.5-72B', f1: '—', f2: '—', cross: false, primaryTone: 'info' as const },
-  { level: 'P3', label: 'P3 离线', primary: 'Qwen2.5-72B', f1: '—', f2: '—', cross: false, primaryTone: 'info' as const },
-  { level: 'audit', label: 'Audit', primary: '审计专用通道', f1: '—', f2: '—', cross: false, primaryTone: 'neutral' as const },
-];
-
-const PROVIDER_TEMPLATES = [
-  { name: 'Anthropic', tier: 'official' as const, region: 'us-west-2', model: 'Claude Sonnet-4' },
-  { name: 'Azure OpenAI', tier: 'official' as const, region: 'eastasia', model: 'GPT-4o' },
-  { name: 'Google Vertex', tier: 'official' as const, region: 'us-central1', model: 'Gemini 2.5 Pro' },
-  { name: 'AWS Bedrock', tier: 'official' as const, region: 'ap-east-1', model: 'Claude Opus-4' },
-  { name: 'Qwen2.5-72B (本地)', tier: 'self_hosted' as const, region: 'cn-east-1', model: 'Qwen2.5-72B-Instruct' },
-  { name: 'DeepSeek-V3 (本地)', tier: 'self_hosted' as const, region: 'cn-north-1', model: 'DeepSeek-V3' },
-  { name: 'Mistral-7B', tier: 'self_hosted' as const, region: 'eu-west-1', model: 'Mistral-7B-Instruct' },
-  { name: 'Ollama (本地)', tier: 'self_hosted' as const, region: 'local', model: 'llama3.1-8b' },
-];
-
-const FULL_AUDIT_LOG = [
-  { id: 'a1', time: '14:32', user: '王昊', action: '查询', model: 'Claude Sonnet-4', tokens: 1840, key: 'k-prod-001' },
-  { id: 'a2', time: '14:30', user: '李婷', action: '轮转', model: 'GPT-4o', tokens: 0, key: 'k-dev-002' },
-  { id: 'a3', time: '14:28', user: '张博', action: '查询', model: 'Qwen2.5-72B', tokens: 920, key: 'k-prod-001' },
-  { id: 'a4', time: '14:25', user: '陈雷', action: '查询', model: 'DeepSeek-V3', tokens: 2400, key: 'k-test-003' },
-  { id: 'a5', time: '14:20', user: '王昊', action: '查询', model: 'Claude Sonnet-4', tokens: 1100, key: 'k-prod-001' },
-  { id: 'a6', time: '14:15', user: '李婷', action: '查询', model: 'Gemini 2.5 Pro', tokens: 3500, key: 'k-prod-002' },
-  { id: 'a7', time: '14:10', user: '张博', action: '轮转', model: 'Mistral-7B', tokens: 0, key: 'k-dev-002' },
-  { id: 'a8', time: '14:05', user: '王昊', action: '查询', model: 'Claude Sonnet-4', tokens: 680, key: 'k-prod-001' },
-  { id: 'a9', time: '14:00', user: '陈雷', action: '查询', model: 'DeepSeek-V3', tokens: 1820, key: 'k-test-003' },
-  { id: 'a10', time: '13:55', user: '李婷', action: '查询', model: 'GPT-4o', tokens: 2100, key: 'k-prod-002' },
-];
-
-const USAGE_SPARK = [42, 48, 52, 47, 56, 62, 58, 64, 70, 68, 72, 78, 82, 79, 85, 92];
-
-type ModalKind = 'newProvider' | 'newTemplate' | 'editRoute' | 'routeFlow' | 'allAudit' | null;
-
 export default function Models() {
-  const [activeId, setActiveId] = useState('p1');
-  const [showHealth, setShowHealth] = useState(true);
-  const [activeModal, setActiveModal] = useState<ModalKind>(null);
-  const [routeToEdit, setRouteToEdit] = useState<any | null>(null);
-  const [deleteRouteConfirm, setDeleteRouteConfirm] = useState<string | null>(null);
-  const [providerToDelete, setProviderToDelete] = useState<string | null>(null);
-  const [testSwitchResult, setTestSwitchResult] = useState<{ level: string; from: string; to: string; reason: string } | null>(null);
-  const [auditFilter, setAuditFilter] = useState<string>('all');
-  const [showDetails, setShowDetails] = useState(false);
-  const [providerSearch, setProviderSearch] = useState('');
+  const { user } = useAuthStore();
+  const canWrite = Boolean(user?.permissions.includes('model.write'));
+  const scopeKey = `${user?.workspaceId ?? 'anonymous'}:${user?.id ?? 'anonymous'}`;
+  const [workspace, setWorkspace] = useState<Workspace>('access');
+  const [providerDrawer, setProviderDrawer] = useState<'new' | string | null>(null);
+  const [policyDrawer, setPolicyDrawer] = useState<string | null>(null);
+  const [publishPolicy, setPublishPolicy] = useState<RoutingPolicyDraft | null>(null);
+  const [deleteProvider, setDeleteProvider] = useState<ModelProvider | null>(null);
+  const [auditFilter, setAuditFilter] = useState<'all' | 'success' | 'failed'>('all');
 
-  // 本地可写 state
-  const [routes, setRoutes] = useState<any[]>(INITIAL_ROUTES);
-  const [providers, setProviders] = useState<Provider[] | null>(null);
-  const [templates, setTemplates] = useState<any[] | null>(null);
+  const providersQuery = useApiQuery<ModelProvider[]>(['model-providers', scopeKey], '/api/model-providers');
+  const policiesQuery = useApiQuery<RoutingPolicyDraft[]>(['model-routing-policies', scopeKey], '/api/model-routing/policies');
+  const governanceQuery = useApiQuery<{ activeProviders: number; publishedRoutes: number; budgetRisk: string; updatedAt: string }>(['model-governance', scopeKey], '/api/model-governance/overview');
+  const auditQuery = useApiQuery<ModelAuditEvent[]>(['model-audit', scopeKey], '/api/model-audit');
+  const activeProvider = providerDrawer && providerDrawer !== 'new' ? providersQuery.data?.find((item) => item.id === providerDrawer) : undefined;
+  const impactQuery = useApiQuery<ProviderImpact>(['model-provider-impact', scopeKey, activeProvider?.id], `/api/model-providers/${activeProvider?.id ?? '__none__'}/impact`, undefined, { enabled: Boolean(activeProvider) });
+  const versionsQuery = useApiQuery<RoutingPolicyVersion[]>(['model-policy-versions', scopeKey, policyDrawer], `/api/model-routing/policies/${policyDrawer ?? '__none__'}/versions`, undefined, { enabled: Boolean(policyDrawer) });
 
-  const { data: fetchedProviders } = useApiQuery<Provider[]>(['providers'], '/api/providers');
-  const { data: health } = useApiQuery<any>(['provider-health'], '/api/provider-health');
-  const { data: fetchedTemplates = [] } = useApiQuery<any[]>(['prompt-templates'], '/api/prompt-templates');
-  const { data: routeFlow = [] } = useApiQuery<any[]>(['route-flow'], '/api/route-flow');
-  const { data: exportRoutes } = useApiQuery<any>(['export-routes'], '/api/export-routes');
-  const { data: compare = [] } = useApiQuery<any[]>(['model-compare'], '/api/model-compare');
-  const { data: audit = [] } = useApiQuery<any[]>(['model-audit'], '/api/model-audit');
+  const createProvider = useApiMutation<ModelProvider, Record<string, unknown>>('/api/model-providers');
+  const testProvider = useApiMutation<{ status: string }, { id: string; reason: string }>((value) => `/api/model-providers/${value.id}/test`);
+  const disableProvider = useApiMutation<ModelProvider, { id: string; reason: string }>((value) => `/api/model-providers/${value.id}/disable`);
+  const removeProvider = useApiMutation<{ id: string }, { id: string; reason: string }>((value) => `/api/model-providers/${value.id}`, undefined, 'DELETE');
+  const updatePolicy = useApiMutation<RoutingPolicyDraft, Record<string, unknown>>((value: any) => `/api/model-routing/policies/${value.id}/draft`, undefined, 'PATCH');
+  const validatePolicy = useApiMutation<RoutingPolicyDraft, { id: string }>((value) => `/api/model-routing/policies/${value.id}/validate`);
+  const publish = useApiMutation<RoutingPolicyVersion, { id: string; reason: string }>((value) => `/api/model-routing/policies/${value.id}/publish`);
+  const rollback = useApiMutation<RoutingPolicyVersion, { id: string; versionId: string; reason: string }>((value) => `/api/model-routing/policies/${value.id}/rollback`);
+  const runDrill = useApiMutation<{ status: string }, { policyId: string; scope: 'sandbox'; reason: string }>('/api/model-routing/failover-tests');
 
-  // 首次填充本地 state
-  useMemo(() => {
-    if (fetchedProviders && !providers) setProviders(fetchedProviders);
-    if (fetchedTemplates.length && !templates) setTemplates(fetchedTemplates);
-  }, [fetchedProviders, fetchedTemplates, providers, templates]);
-
-  const provs = providers ?? fetchedProviders ?? [];
-  const tpls = templates ?? fetchedTemplates;
-  const active = provs.find((p) => p.id === activeId);
-  const filteredProviders = provs.filter((provider) => (
-    !providerSearch || provider.name.toLowerCase().includes(providerSearch.toLowerCase()) || provider.models.some((model) => model.toLowerCase().includes(providerSearch.toLowerCase()))
-  ));
-
-  const groups: { tier: ProviderTier; items: Provider[] }[] = [
-    { tier: 'official', items: provs.filter((p) => p.tier === 'official') },
-    { tier: 'self_hosted', items: provs.filter((p) => p.tier === 'self_hosted') },
-    { tier: 'connectable', items: provs.filter((p) => p.tier === 'connectable') },
-  ];
-
-  // 测试切换：随机选一个等级，把主路由换到下一档
-  const handleTestSwitch = () => {
-    const target = routes[Math.floor(Math.random() * routes.length)];
-    if (!target || !target.f1 || target.f1 === '—') {
-      setTestSwitchResult({ level: target?.level ?? 'P?', from: target?.primary ?? '?', to: '无可降级', reason: '当前路由无备选，跳过测试' });
-      return;
-    }
-    setTestSwitchResult({
-      level: target.level,
-      from: target.primary,
-      to: target.f1,
-      reason: '模拟主 Provider 503 故障',
-    });
-  };
-
-  const handleNewProvider = (form: { name: string; tier: ProviderTier; region: string; model: string }) => {
-    const id = `p_${Date.now().toString(36)}`;
-    setProviders((prev) => [
-      ...(prev ?? fetchedProviders ?? []),
-      {
-        id,
-        name: form.name,
-        tier: form.tier,
-        models: [form.model],
-        region: form.region,
-        status: 'standby',
-        monthlyTokens: 0,
-        monthlyCostUsd: 0,
-      } as Provider,
-    ]);
-    setActiveId(id);
-    setActiveModal(null);
-  };
-
-  const handleDeleteProvider = () => {
-    if (!providerToDelete) return;
-    setProviders((prev) => (prev ?? fetchedProviders ?? []).filter((p) => p.id !== providerToDelete));
-    if (providerToDelete === activeId) setActiveId((provs[0]?.id) ?? '');
-    setProviderToDelete(null);
-  };
-
-  const handleNewTemplate = (form: { name: string; category: string; preview: string }) => {
-    setTemplates((prev) => [
-      ...(prev ?? fetchedTemplates),
-      {
-        id: `tpl_${Date.now().toString(36)}`,
-        name: form.name,
-        category: form.category,
-        preview: form.preview,
-        uses: 0,
-        rating: 0,
-      },
-    ]);
-    setActiveModal(null);
-  };
-
-  const handleSaveRoute = (updated: any) => {
-    setRoutes((prev) => prev.map((r) => (r.level === updated.level ? updated : r)));
-    setRouteToEdit(null);
-  };
-
-  const handleDeleteRoute = () => {
-    if (!deleteRouteConfirm) return;
-    setRoutes((prev) => prev.filter((r) => r.level !== deleteRouteConfirm));
-    setDeleteRouteConfirm(null);
-  };
-
-  const filteredAudit = useMemo(() => {
-    const src = FULL_AUDIT_LOG.length > 0 ? FULL_AUDIT_LOG : audit;
-    if (auditFilter === 'all') return src;
-    return src.filter((a) => a.action === auditFilter);
-  }, [auditFilter, audit]);
+  const models = useMemo(() => providersQuery.data?.flatMap((provider) => provider.models) ?? [], [providersQuery.data]);
+  const selectedPolicy = policiesQuery.data?.find((item) => item.id === policyDrawer);
+  const filteredAudit = (auditQuery.data ?? []).filter((event) => auditFilter === 'all' || event.result === auditFilter);
+  const queryState = modelQueryState({ isLoading: providersQuery.isLoading || policiesQuery.isLoading, isError: providersQuery.isError || policiesQuery.isError || governanceQuery.isError || auditQuery.isError, data: [...(providersQuery.data ?? []), ...(policiesQuery.data ?? [])] });
+  const reportError = (error: unknown) => toast.error(error instanceof Error ? error.message : '模型控制面操作失败');
+  const refetchControlPlane = () => { void providersQuery.refetch(); void policiesQuery.refetch(); void governanceQuery.refetch(); void auditQuery.refetch(); };
 
   return (
-    <div className="models-page h-full min-w-0 overflow-y-auto overscroll-contain bg-[var(--bg-elevated)]">
-      {/* 左侧 Provider */}
-      <aside className="hidden">
-        <div className="p-3 flex items-center justify-between border-b border-[var(--border)]">
-          <div className="text-xs font-semibold">Provider ({provs.length})</div>
-          <button
-            onClick={() => setActiveModal('newProvider')}
-            className="grid h-6 w-6 place-items-center rounded hover:bg-[var(--bg-elevated)]"
-            title="新增 Provider"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-        </div>
-        {groups.map((g) => (
-          <div key={g.tier} className="p-2">
-            <div className="px-2 mb-1.5 text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold">
-              {TIER_LABEL[g.tier]} ({g.items.length})
-            </div>
-            {g.items.map((p) => {
-              const Icon = TIER_ICON[p.tier];
-              const h = health?.[p.id];
-              const isActive = p.id === activeId;
-              return (
-                <div
-                  key={p.id}
-                  className={cn(
-                    'group flex w-full items-center gap-2.5 rounded-md p-2.5 text-left text-xs transition-all mb-1 cursor-pointer',
-                    isActive ? 'card-active' : 'hover:bg-[var(--bg-elevated)] border border-transparent',
-                  )}
-                  onClick={() => setActiveId(p.id)}
-                >
-                  <Icon className="h-4 w-4 shrink-0 text-[var(--brand)]" />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-xs font-semibold truncate">{p.name}</div>
-                    <div className="text-[10px] text-[var(--text-muted)] truncate font-mono">{p.models?.[0] ?? '—'}</div>
-                  </div>
-                  <div className="flex flex-col items-end gap-0.5">
-                    {p.status === 'active' ? (
-                      <span className="h-2 w-2 rounded-full bg-[var(--success)] animate-pulse" />
-                    ) : p.status === 'standby' ? (
-                      <span className="h-2 w-2 rounded-full bg-[var(--warning)]" />
-                    ) : (
-                      <span className="h-2 w-2 rounded-full bg-[var(--text-muted)]" />
-                    )}
-                    {h && h.latency > 0 && (
-                      <span className="text-[9px] text-[var(--text-muted)] font-mono">{h.latency}ms</span>
-                    )}
-                  </div>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setProviderToDelete(p.id); }}
-                    className="opacity-0 group-hover:opacity-100 transition-opacity grid h-5 w-5 place-items-center rounded hover:bg-[var(--bg-hover)] text-[var(--text-muted)]"
-                    title="删除 Provider"
-                  >
-                    <Trash2 className="h-3 w-3" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </aside>
-
-      {/* 单一主面板 */}
-      <section className="mx-auto w-full max-w-[1680px]">
-        <div className="border-b border-[var(--border)] bg-[var(--bg)] px-4 py-4 sm:px-5">
-          <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+    <div className="models-page h-full overflow-y-auto bg-[var(--bg-elevated)] p-3 md:p-5">
+      <main className="mx-auto max-w-[1440px] rounded-xl border border-[var(--border)] bg-[var(--bg)] shadow-[var(--shadow-xs)]" aria-label="模型中心">
+        <header className="border-b border-[var(--border)] px-4 py-4 sm:px-6">
+          <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <h1 className="text-lg font-semibold flex items-center gap-2">
-                <Cloud className="h-5 w-5 text-[var(--brand)]" />
-                模型路由与 Provider 管理
-              </h1>
-              <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                统一管理 Provider、路由策略、模型成本与数据出境规则。
-              </p>
+              <h1 className="flex items-center gap-2 text-lg font-semibold"><Cloud className="h-5 w-5 text-[var(--brand)]" />模型中心</h1>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">统一管理企业模型接入、路由策略、运行治理与审计追溯。</p>
             </div>
-            <div className="flex items-center gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowDetails(true)}>
-                <Activity className="h-3.5 w-3.5" />运行详情
-              </Button>
-              <Button variant="secondary" size="sm" onClick={handleTestSwitch}>
-                <RefreshCw className="h-3.5 w-3.5" />测试切换
-              </Button>
-              <Badge tone="success"><CheckCircle2 className="mr-1 inline h-3 w-3" />自动映射已启用</Badge>
-            </div>
+            <Badge tone="warn"><AlertTriangle className="mr-1 h-3 w-3" />当前为 Mock 治理演示，真实授权与 KMS 由服务端执行</Badge>
           </div>
+          <div className="mt-4 flex flex-wrap gap-1 rounded-lg bg-[var(--bg-elevated)] p-1" role="tablist" aria-label="模型控制面工作区">
+            {WORKSPACES.map(({ key, label, icon: Icon }) => <button key={key} id={`model-workspace-tab-${key}`} type="button" role="tab" aria-controls={`model-workspace-${key}`} aria-selected={workspace === key} onClick={() => setWorkspace(key)} className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-colors ${workspace === key ? 'bg-white text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]'}`}><Icon className="h-3.5 w-3.5" />{label}</button>)}
+          </div>
+        </header>
 
-          <div className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative w-full sm:w-44">
-                <Search className="absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--text-muted)]" />
-                <Input value={providerSearch} onChange={(event) => setProviderSearch(event.target.value)} placeholder="筛选 Provider 或模型" className="h-8 pl-7 text-xs" />
-              </div>
-              <div className="models-provider-picker flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pb-0.5">
-                {filteredProviders.map((provider) => {
-                  const ProviderIcon = TIER_ICON[provider.tier];
-                  const isActive = provider.id === activeId;
-                  return <button key={provider.id} onClick={() => setActiveId(provider.id)} className={cn(
-                    'flex h-8 shrink-0 items-center gap-1.5 rounded-md border px-2.5 text-[11px] transition-colors',
-                    isActive ? 'border-[var(--brand)]/40 bg-[var(--brand-light)] font-semibold text-[var(--brand)]' : 'border-transparent bg-[var(--bg)] text-[var(--text-secondary)] hover:border-[var(--border-strong)] hover:bg-[var(--bg-hover)]',
-                  )}>
-                    <ProviderIcon className="h-3.5 w-3.5" />{provider.name}
-                    <span className={cn('h-1.5 w-1.5 rounded-full', provider.status === 'active' ? 'bg-[var(--success)]' : provider.status === 'standby' ? 'bg-[var(--warning)]' : 'bg-[var(--text-muted)]')} />
-                  </button>;
-                })}
-              </div>
-              <Button size="sm" variant="ghost" onClick={() => setActiveModal('newProvider')}><Plus className="h-3.5 w-3.5" />新增</Button>
-            </div>
-          </div>
+        <section className="grid gap-3 border-b border-[var(--border)] bg-[var(--bg-elevated)]/40 p-4 sm:grid-cols-3 sm:px-6">
+          <Metric label="可用 Provider" value={String(governanceQuery.data?.activeProviders ?? 0)} tone="brand" />
+          <Metric label="已发布路由" value={String(governanceQuery.data?.publishedRoutes ?? 0)} tone="success" />
+          <Metric label="预算状态" value={governanceQuery.data?.budgetRisk === 'normal' ? '正常' : '关注'} tone={governanceQuery.data?.budgetRisk === 'normal' ? 'success' : 'warn'} />
+        </section>
 
-          {/* 测试切换结果提示 */}
-          {testSwitchResult && (
-            <div className="mb-3 rounded-md border border-[var(--brand)]/40 bg-[var(--brand-light)] px-3 py-2 text-xs flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Zap className="h-3.5 w-3.5 text-[var(--brand)]" />
-                <span>
-                  <strong>{testSwitchResult.level}</strong> 路由测试：
-                  主 <span className="font-mono">{testSwitchResult.from}</span> → 降级到 <span className="font-mono text-[var(--brand)]">{testSwitchResult.to}</span>
-                  <span className="text-[var(--text-muted)] ml-2">({testSwitchResult.reason})</span>
-                </span>
-              </div>
-              <button onClick={() => setTestSwitchResult(null)} className="text-[var(--text-muted)] hover:text-[var(--text)] text-[10px]">关闭</button>
-            </div>
-          )}
+        <section id={`model-workspace-${workspace}`} role="tabpanel" aria-labelledby={`model-workspace-tab-${workspace}`} className="p-4 sm:p-6">
+          {queryState.kind === 'loading' ? <div className="py-16 text-center text-sm text-[var(--text-muted)]">{queryState.label}…</div> : queryState.kind === 'error' ? <div className="py-16 text-center"><AlertTriangle className="mx-auto h-6 w-6 text-[var(--danger)]" /><p className="mt-3 text-sm font-medium">{queryState.label}</p><Button className="mt-4" size="sm" variant="secondary" onClick={refetchControlPlane}>重新读取</Button></div> : workspace === 'access' ? (
+            <AccessWorkspace providers={providersQuery.data ?? []} canWrite={canWrite} onNew={() => setProviderDrawer('new')} onSelect={setProviderDrawer} />
+          ) : workspace === 'routing' ? (
+            <RoutingWorkspace policies={policiesQuery.data ?? []} models={models} canWrite={canWrite} onOpen={setPolicyDrawer} />
+          ) : workspace === 'governance' ? (
+            <GovernanceWorkspace canWrite={canWrite} policies={policiesQuery.data ?? []} onDrill={(policyId) => runDrill.mutate({ policyId, scope: 'sandbox', reason: '控制面隔离演练' }, { onSuccess: () => toast.success('sandbox 故障切换演练通过'), onError: reportError })} />
+          ) : <AuditWorkspace events={filteredAudit} filter={auditFilter} onFilter={setAuditFilter} />}
+        </section>
+      </main>
 
-          {/* 路由流程图 */}
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4 mb-3">
-            <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-              <Layers className="h-3.5 w-3.5" />路由流程图（等级 → Provider）
-              <button
-                onClick={() => { setRouteToEdit(routes[0]); }}
-                className="ml-auto text-[10px] text-[var(--brand)] hover:underline"
-              >
-                <Settings className="inline h-3 w-3 mr-0.5" />配置
-              </button>
-            </div>
-            <div className="space-y-2">
-              {routeFlow.map((flow) => (
-                <div key={flow.level} className="flex items-center gap-1.5 flex-wrap text-[11px]">
-                  <Badge tone={flow.level === 'P0' ? 'error' : flow.level === 'P1' ? 'warn' : 'info'} className="text-[10px]">{flow.level}</Badge>
-                  {flow.path.map((step: string, i: number) => (
-                    <span key={i} className="flex items-center gap-1">
-                      <span className={cn(
-                        'px-2 py-0.5 rounded font-mono text-[10px] cursor-pointer hover:opacity-80',
-                        i === flow.path.length - 1
-                          ? 'bg-[var(--success-bg)] text-[var(--success)] border border-[var(--success)]/30'
-                          : i === flow.path.length - 2
-                            ? 'bg-[var(--warning-bg)] text-[var(--warning)] border border-[var(--warning)]/30'
-                            : 'bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-[var(--border)]',
-                      )} onClick={() => setActiveModal('routeFlow')}>{step}</span>
-                      {i < flow.path.length - 1 && <ArrowRight className="h-3 w-3 text-[var(--text-muted)]" />}
-                    </span>
-                  ))}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* 5 等级路由表 */}
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] overflow-hidden">
-            <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--border)] bg-[var(--bg-elevated)]">
-              <div className="text-xs font-semibold flex items-center gap-1.5">
-                <Settings2 className="h-3.5 w-3.5" />路由配置
-              </div>
-              <span className="text-[10px] text-[var(--text-muted)]">点击行编辑</span>
-            </div>
-            <table className="w-full text-xs">
-              <thead className="text-[10px] uppercase tracking-wide text-[var(--text-muted)]">
-                <tr className="border-b border-[var(--border)]">
-                  <th className="text-left px-4 py-2 font-semibold">等级</th>
-                  <th className="text-left px-4 py-2 font-semibold">主路由</th>
-                  <th className="text-left px-4 py-2 font-semibold">降级 1</th>
-                  <th className="text-left px-4 py-2 font-semibold">降级 2</th>
-                  <th className="text-left px-4 py-2 font-semibold">出境</th>
-                  <th className="text-right px-4 py-2 font-semibold">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {routes.length === 0 ? (
-                  <tr><td colSpan={6}><EmptyState icon={Layers} title="没有路由配置" /></td></tr>
-                ) : routes.map((r) => (
-                  <tr
-                    key={r.level}
-                    className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--bg-hover)] cursor-pointer"
-                    onClick={() => setRouteToEdit(r)}
-                  >
-                    <td className="px-4 py-2.5"><Badge tone={r.primaryTone}>{r.level}</Badge></td>
-                    <td className="px-4 py-2.5 font-mono font-semibold">{r.primary}</td>
-                    <td className="px-4 py-2.5 font-mono text-[var(--text-muted)]">{r.f1}</td>
-                    <td className="px-4 py-2.5 font-mono text-[var(--text-muted)]">{r.f2}</td>
-                    <td className="px-4 py-2.5">
-                      {r.cross ? <Badge tone="warn"><Globe2 className="mr-1 inline h-3 w-3" />出境</Badge> : <Badge tone="success"><CheckCircle2 className="mr-1 inline h-3 w-3" />境内</Badge>}
-                    </td>
-                    <td className="px-4 py-2.5 text-right">
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setDeleteRouteConfirm(r.level); }}
-                        className="text-[var(--text-muted)] hover:text-[var(--danger)]"
-                        title="删除"
-                      >
-                        <Trash2 className="inline h-3 w-3" />
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        {/* Prompt 模板 + 模型对比 */}
-        <div className="space-y-4 p-4 pb-8 sm:p-5 sm:pb-10">
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-sm font-semibold flex items-center gap-1.5">
-                <FileText className="h-4 w-4 text-[var(--brand)]" />Prompt 模板市场
-              </h2>
-              <Button size="sm" variant="secondary" onClick={() => setActiveModal('newTemplate')}>
-                <Plus className="h-3 w-3" />新建模板
-              </Button>
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              {tpls.map((t) => (
-                <div key={t.id} className="tile-brandable relative rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3 overflow-hidden">
-                  <div className="flex items-start gap-2 mb-2">
-                    <div className="grid h-8 w-8 place-items-center rounded-md bg-[var(--brand-light)] text-[var(--brand)] shrink-0">
-                      <FileText className="h-4 w-4" />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold truncate">{t.name}</div>
-                      <Badge tone="info" className="text-[9px] mt-0.5">{t.category}</Badge>
-                    </div>
-                  </div>
-                  <div className="rounded-md bg-[var(--bg-elevated)] border border-[var(--border)] p-2 text-[10px] font-mono text-[var(--text-muted)] line-clamp-2 mb-2">
-                    {t.preview}
-                  </div>
-                  <div className="flex items-center justify-between text-[10px]">
-                    <span className="text-[var(--text-muted)]">{t.uses} 次使用</span>
-                    <span className="text-amber-500 flex items-center gap-0.5">⭐ {t.rating}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-sm font-semibold flex items-center gap-1.5">
-                <GitCompare className="h-4 w-4 text-[var(--brand)]" />模型对比
-              </h2>
-              <span className="text-[10px] text-[var(--text-muted)]">性能 / 价格 / 上下文</span>
-            </div>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] overflow-hidden">
-              <table className="w-full text-xs">
-                <thead className="text-[10px] uppercase tracking-wide text-[var(--text-muted)] bg-[var(--bg-elevated)]">
-                  <tr>
-                    <th className="text-left px-3 py-2 font-semibold">模型</th>
-                    <th className="text-left px-3 py-2 font-semibold">价格 (in/out)</th>
-                    <th className="text-left px-3 py-2 font-semibold">延迟 P95</th>
-                    <th className="text-left px-3 py-2 font-semibold">质量</th>
-                    <th className="text-left px-3 py-2 font-semibold">上下文</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {compare.map((c) => (
-                    <tr key={c.id} className="border-t border-[var(--border)] hover:bg-[var(--bg-hover)]">
-                      <td className="px-3 py-2 font-semibold">{c.name}</td>
-                      <td className="px-3 py-2 font-mono">{c.price}</td>
-                      <td className="px-3 py-2 font-mono">{c.latency}ms</td>
-                      <td className="px-3 py-2">
-                        <div className="flex items-center gap-2">
-                          <div className="h-1.5 w-16 bg-[var(--bg-hover)] rounded overflow-hidden">
-                            <div className="h-full bg-gradient-to-r from-[var(--brand)] to-[var(--purple)]" style={{ width: `${c.quality}%` }} />
-                          </div>
-                          <span className="font-mono">{c.quality}</span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-2 font-mono">{c.context}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* 按需展开的运行详情 */}
-      <Drawer
-        open={showDetails}
-        onClose={() => setShowDetails(false)}
-        title={active ? `${active.name} · 运行详情` : '模型运行详情'}
-        description="健康度、用量、合规、配额和 API Key 审计"
-        width={420}
-      >
-        <div className="p-4 border-b border-[var(--border)]">
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-xs font-semibold flex items-center gap-1.5">
-              <Activity className="h-3.5 w-3.5" />Provider 健康度
-            </div>
-            <button onClick={() => setShowHealth(!showHealth)} className="text-[10px] text-[var(--brand)] hover:underline">
-              {showHealth ? '收起' : '展开'}
-            </button>
-          </div>
-          {showHealth && (
-            <div className="space-y-1.5">
-              {provs.filter((p) => p.status === 'active' || p.status === 'standby').map((p) => {
-                const h = health?.[p.id];
-                return (
-                  <div key={p.id} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-[11px]">
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="font-semibold">{p.name}</span>
-                      <Badge tone={h?.status === 'healthy' ? 'success' : 'warn'} className="text-[9px]">{h?.status}</Badge>
-                    </div>
-                    <div className="grid grid-cols-3 gap-1 text-[10px] text-[var(--text-muted)]">
-                      <span>延迟 {h?.latency ?? 0}ms</span>
-                      <span>可用 {h?.uptime ?? 0}%</span>
-                      <span>{h?.lastCheck ?? '—'}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        <div className="p-4 border-b border-[var(--border)]">
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-xs font-semibold flex items-center gap-1.5">
-              <DollarSign className="h-3.5 w-3.5 text-[var(--success)]" />本月用量
-            </div>
-            <Badge tone="success" className="text-[9px]"><TrendingUp className="mr-0.5 inline h-2.5 w-2.5" />+18%</Badge>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <KpiCard label="Token" value="12.4M" tone="brand" />
-            <KpiCard label="成本" value="$1.24k" tone="success" sub="24% / $5k" />
-            <KpiCard label="P95" value="680ms" tone="info" />
-            <KpiCard label="成功率" value="99.4%" tone="success" />
-          </div>
-          <div className="mt-3">
-            <div className="text-[10px] text-[var(--text-muted)] mb-1">7 日 Token 趋势</div>
-            <Sparkline data={USAGE_SPARK} stroke="var(--brand)" width={272} height={36} />
-          </div>
-        </div>
-
-        <div className="p-4 border-b border-[var(--border)]">
-          <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-            <Globe2 className="h-3.5 w-3.5" />出境合规
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex-1">
-              <div className="h-3 rounded overflow-hidden flex">
-                <div className="bg-[var(--success)]" style={{ width: `${exportRoutes?.cn ?? 94}%` }} />
-                <div className="bg-[var(--warning)]" style={{ width: `${exportRoutes?.global ?? 6}%` }} />
-              </div>
-              <div className="flex justify-between text-[10px] mt-1.5">
-                <span><span className="text-[var(--success)]">●</span> 境内 {exportRoutes?.cn ?? 94}%</span>
-                <span><span className="text-[var(--warning)]">●</span> 出境 {exportRoutes?.global ?? 6}%</span>
-              </div>
-            </div>
-          </div>
-          <div className="mt-3 text-[10px] text-[var(--text-muted)] leading-relaxed">
-            数据默认境内 · P0/P1 可出境 5% · 出境前自动审计
-          </div>
-        </div>
-
-        <div className="p-4 border-b border-[var(--border)]">
-          <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-            <Settings2 className="h-3.5 w-3.5" />限流配置 + 配额
-          </div>
-          <div className="space-y-2.5">
-            <Limiter label="QPS" value="100" max="200" usage={50} />
-            <Limiter label="RPM" value="3000" max="6000" usage={50} />
-            <Limiter label="月 Token" value="12.4M" max="50M" usage={25} tone="success" />
-            <Limiter label="成本" value="$1.24k" max="$5.0k" usage={25} tone="success" />
-          </div>
-        </div>
-
-        <div className="p-4">
-          <div className="flex items-center justify-between mb-3">
-            <div className="text-xs font-semibold flex items-center gap-1.5">
-              <History className="h-3.5 w-3.5" />API Key 审计
-            </div>
-            <button onClick={() => setActiveModal('allAudit')} className="text-[10px] text-[var(--brand)] hover:underline">全部 ({filteredAudit.length})</button>
-          </div>
-          <div className="space-y-1.5">
-            {filteredAudit.slice(0, 4).map((a) => (
-              <div key={a.id} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-[11px]">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-[10px] text-[var(--text-muted)]">{a.time}</span>
-                  <Badge tone={a.action === '轮转' ? 'info' : 'neutral'} className="text-[9px]">{a.action}</Badge>
-                </div>
-                <div className="mt-0.5 flex items-center justify-between">
-                  <span className="font-semibold">{a.user}</span>
-                  <span className="text-[10px] text-[var(--text-muted)]">{a.tokens} tokens</span>
-                </div>
-                <div className="text-[10px] text-[var(--text-muted)] font-mono">{a.model}</div>
-              </div>
-            ))}
-          </div>
-        </div>
+      <Drawer open={providerDrawer === 'new'} onClose={() => setProviderDrawer(null)} title="接入 Provider" description="凭据仅在提交时写入 Mock 凭据引用，成功后不会回显。" width={520}>
+        <ProviderForm canWrite={canWrite} onSubmit={(payload) => createProvider.mutate(payload, { onSuccess: () => { toast.success('Provider 已接入，等待连通性验证'); setProviderDrawer(null); }, onError: reportError })} />
       </Drawer>
-
-      {/* ===== Modals ===== */}
-      <NewProviderModal open={activeModal === 'newProvider'} onClose={() => setActiveModal(null)} onSubmit={handleNewProvider} />
-      <NewTemplateModal open={activeModal === 'newTemplate'} onClose={() => setActiveModal(null)} onSubmit={handleNewTemplate} />
-
-      <ConfirmDialog
-        open={!!providerToDelete}
-        onClose={() => setProviderToDelete(null)}
-        onConfirm={handleDeleteProvider}
-        title="删除 Provider？"
-        description="删除后引用此 Provider 的路由将失败，建议先调整路由。"
-        confirmText="删除"
-        tone="danger"
-      />
-
-      <ConfirmDialog
-        open={!!deleteRouteConfirm}
-        onClose={() => setDeleteRouteConfirm(null)}
-        onConfirm={handleDeleteRoute}
-        title={`删除 ${deleteRouteConfirm ?? ''} 等级路由？`}
-        description="删除后该等级请求将无主路由可用。"
-        confirmText="删除"
-        tone="danger"
-      />
-
-      <Drawer
-        open={!!routeToEdit}
-        onClose={() => setRouteToEdit(null)}
-        title={routeToEdit ? `编辑 ${routeToEdit.level} 等级路由` : ''}
-        description={routeToEdit?.label ?? ''}
-        width={460}
-      >
-        {routeToEdit && (
-          <EditRouteForm
-            initial={routeToEdit}
-            onCancel={() => setRouteToEdit(null)}
-            onSubmit={handleSaveRoute}
-          />
-        )}
+      <Drawer open={Boolean(activeProvider)} onClose={() => setProviderDrawer(null)} title={activeProvider?.name} description="Provider 详情、连通性和退役影响" width={520}>
+        {activeProvider && <ProviderDetail provider={activeProvider} impact={impactQuery.data} canWrite={canWrite} onTest={() => testProvider.mutate({ id: activeProvider.id, reason: '人工连通性验证' }, { onSuccess: () => toast.success('Provider 连通性验证通过'), onError: reportError })} onDisable={() => disableProvider.mutate({ id: activeProvider.id, reason: '停止新流量' }, { onSuccess: () => toast.success('Provider 已停止新流量'), onError: reportError })} onDelete={() => setDeleteProvider(activeProvider)} />}
       </Drawer>
-
-      <Drawer
-        open={activeModal === 'routeFlow'}
-        onClose={() => setActiveModal(null)}
-        title="路由流程详情"
-        description="等级 → Provider 链路可视化"
-        width={520}
-      >
-        <div className="space-y-3 text-xs">
-          {routeFlow.map((flow) => (
-            <div key={flow.level} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
-              <div className="flex items-center gap-2 mb-2">
-                <Badge tone={flow.level === 'P0' ? 'error' : flow.level === 'P1' ? 'warn' : 'info'}>{flow.level}</Badge>
-                <span className="text-[10px] text-[var(--text-muted)]">{flow.path.length} 跳链路</span>
-              </div>
-              <div className="space-y-1.5">
-                {flow.path.map((step: string, i: number) => (
-                  <div key={i} className="flex items-center gap-2 text-[11px]">
-                    <span className="text-[var(--text-muted)] font-mono w-4 text-right">{i + 1}.</span>
-                    <span className="font-mono">{step}</span>
-                    {i < flow.path.length - 1 && (
-                      <span className="text-[10px] text-[var(--text-muted)] ml-auto">
-                        失败时降级 →
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
+      <Drawer open={Boolean(selectedPolicy)} onClose={() => setPolicyDrawer(null)} title={selectedPolicy ? `${selectedPolicy.level} 路由策略` : ''} description="草稿校验通过后才能发布；版本快照不可改写。" width={600}>
+        {selectedPolicy && <PolicyDetail policy={selectedPolicy} models={models} versions={versionsQuery.data ?? []} canWrite={canWrite} onSave={(draft) => updatePolicy.mutate(draft, { onSuccess: () => toast.success('路由草稿已保存'), onError: reportError })} onValidate={() => validatePolicy.mutate({ id: selectedPolicy.id }, { onSuccess: (policy) => toast[policy.status === 'ready' ? 'success' : 'warn'](policy.status === 'ready' ? '路由草稿校验通过' : '路由草稿未通过校验'), onError: reportError })} onPublish={() => setPublishPolicy(selectedPolicy)} onRollback={(versionId) => rollback.mutate({ id: selectedPolicy.id, versionId, reason: '人工确认回滚' }, { onSuccess: () => toast.success('已创建回滚版本'), onError: reportError })} />}
       </Drawer>
-
-      <Drawer
-        open={activeModal === 'allAudit'}
-        onClose={() => setActiveModal(null)}
-        title="API Key 审计日志"
-        description={`${filteredAudit.length} 条记录`}
-        width={560}
-      >
-        <div className="space-y-3">
-          <div className="flex items-center gap-1.5">
-            {(['all', '查询', '轮转'] as const).map((k) => (
-              <button
-                key={k}
-                onClick={() => setAuditFilter(k)}
-                className={cn(
-                  'px-2 py-1 rounded text-[11px] font-medium',
-                  auditFilter === k ? 'bg-[var(--brand)] text-white' : 'bg-[var(--bg-elevated)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]',
-                )}
-              >
-                {k === 'all' ? '全部' : k}
-              </button>
-            ))}
-          </div>
-          <div className="space-y-1.5">
-            {filteredAudit.length === 0 ? (
-              <EmptyState icon={Search} title="没有匹配记录" />
-            ) : (
-              filteredAudit.map((a) => (
-                <div key={a.id} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-[11px]">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[10px] text-[var(--text-muted)]">{a.time}</span>
-                    <Badge tone={a.action === '轮转' ? 'info' : 'neutral'} className="text-[9px]">{a.action}</Badge>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between">
-                    <span className="font-semibold">{a.user}</span>
-                    <span className="font-mono text-[10px] text-[var(--text-muted)]">key: {a.key ?? '—'}</span>
-                  </div>
-                  <div className="mt-1 flex items-center justify-between text-[10px] text-[var(--text-muted)]">
-                    <span className="font-mono">{a.model}</span>
-                    <span>{a.tokens} tokens</span>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </Drawer>
+      <ConfirmDialog open={Boolean(publishPolicy)} onClose={() => setPublishPolicy(null)} onConfirm={() => { if (publishPolicy) publish.mutate({ id: publishPolicy.id, reason: '人工确认发布' }, { onSuccess: () => toast.success('路由版本已发布'), onError: reportError }); }} title="发布路由版本？" description={publishPolicy ? `${publishPolicy.level} 将生成不可变版本快照，并记录审计证据。` : ''} confirmText="确认发布" />
+      <ConfirmDialog open={Boolean(deleteProvider)} onClose={() => setDeleteProvider(null)} onConfirm={() => { if (deleteProvider) removeProvider.mutate({ id: deleteProvider.id, reason: '人工确认删除' }, { onSuccess: () => toast.success('Provider 已删除'), onError: reportError }); }} title="删除未被引用的 Provider？" description="已被已发布路由引用的 Provider 将被 API 拒绝删除。" confirmText="删除" tone="danger" />
     </div>
   );
 }
 
-/* ===== 子组件 ===== */
-
-function KpiCard({ label, value, tone, sub }: { label: string; value: string; tone: 'brand' | 'success' | 'info'; sub?: string }) {
-  const color = tone === 'success' ? 'text-[var(--success)]' : tone === 'brand' ? 'text-[var(--brand)]' : 'text-[var(--info)]';
-  return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5">
-      <div className="text-[10px] text-[var(--text-muted)]">{label}</div>
-      <div className={cn('text-base font-mono font-bold', color)}>{value}</div>
-      {sub && <div className="text-[10px] text-[var(--text-muted)]">{sub}</div>}
-    </div>
-  );
+function AccessWorkspace({ providers, canWrite, onNew, onSelect }: { providers: ModelProvider[]; canWrite: boolean; onNew: () => void; onSelect: (id: string) => void }) {
+  return <div><div className="mb-4 flex items-center justify-between"><div><h2 className="text-sm font-semibold">Provider 与凭据引用</h2><p className="mt-1 text-xs text-[var(--text-muted)]">接入、验证、停用和退役均通过受控 API。</p></div><Button size="sm" disabled={!canWrite} onClick={onNew}><Plus className="h-3.5 w-3.5" />接入 Provider</Button></div><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{providers.map((provider) => <button type="button" key={provider.id} onClick={() => onSelect(provider.id)} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4 text-left transition-colors hover:border-[var(--brand)]"><div className="flex items-start justify-between gap-2"><div><div className="font-semibold">{provider.name}</div><div className="mt-1 text-xs text-[var(--text-muted)]">{TIER_LABEL[provider.tier]} · {provider.cloudRegion}</div></div><Badge tone={provider.status === 'active' ? 'success' : provider.status === 'disabled' ? 'error' : 'neutral'}>{provider.status}</Badge></div><div className="mt-4 text-xs text-[var(--text-secondary)]">{provider.models.map((model) => model.name).join(' · ')}</div><div className="mt-3 flex items-center gap-1 text-[11px] text-[var(--text-muted)]"><FileKey2 className="h-3 w-3" />{provider.credentialMasked} · {provider.lastVerifiedAt ? '已验证' : '待验证'}</div></button>)}</div></div>;
 }
 
-function Limiter({ label, value, max, usage, tone }: { label: string; value: string; max: string; usage: number; tone?: 'success' }) {
-  const barColor = usage >= 80 ? 'bg-[var(--danger)]' : usage >= 60 ? 'bg-[var(--warning)]' : tone === 'success' ? 'bg-[var(--success)]' : 'bg-[var(--brand)]';
-  return (
-    <div>
-      <div className="flex items-center justify-between text-[10px] mb-1">
-        <span className="text-[var(--text-muted)]">{label}</span>
-        <span className="font-mono">{value} / {max}</span>
-      </div>
-      <div className="h-1.5 bg-[var(--bg-hover)] rounded overflow-hidden">
-        <div className={cn('h-full transition-all', barColor)} style={{ width: `${usage}%` }} />
-      </div>
-      <div className="text-[9px] text-[var(--text-muted)] mt-0.5">{usage}%</div>
-    </div>
-  );
+function RoutingWorkspace({ policies, models, canWrite, onOpen }: { policies: RoutingPolicyDraft[]; models: ModelProvider['models']; canWrite: boolean; onOpen: (id: string) => void }) {
+  const byId = new Map(models.map((model) => [model.id, model.name]));
+  return <div><div className="mb-4"><h2 className="text-sm font-semibold">版本化路由策略</h2><p className="mt-1 text-xs text-[var(--text-muted)]">模型目标必须是已准入部署，草稿须校验后发布。</p></div><div className="overflow-x-auto rounded-lg border border-[var(--border)]"><table className="min-w-[720px] w-full text-xs"><thead className="bg-[var(--bg-elevated)] text-left text-[11px] text-[var(--text-muted)]"><tr><th className="px-4 py-3">等级</th><th>主模型</th><th>降级链</th><th>数据范围</th><th>状态</th><th className="px-4 text-right">操作</th></tr></thead><tbody>{policies.map((policy) => <tr key={policy.id} className="border-t border-[var(--border)]"><td className="px-4 py-3 font-semibold">{policy.level}</td><td>{byId.get(policy.primaryModelId) ?? '未配置'}</td><td>{policy.fallbackModelIds.map((id) => byId.get(id) ?? '不可用').join(' → ') || '—'}</td><td>{policy.dataScope === 'restricted' ? '受限 · 禁止出境' : policy.egressAllowed ? '内部 · 可出境' : '内部 · 境内'}</td><td><Badge tone={policy.status === 'published' ? 'success' : policy.status === 'ready' ? 'warn' : 'neutral'}>{policyStatusLabel(policy.status)}</Badge></td><td className="px-4 text-right"><Button size="sm" variant="ghost" disabled={!canWrite} onClick={() => onOpen(policy.id)}>管理</Button></td></tr>)}</tbody></table></div></div>;
 }
 
-function NewProviderModal({
-  open, onClose, onSubmit,
-}: { open: boolean; onClose: () => void; onSubmit: (f: { name: string; tier: ProviderTier; region: string; model: string }) => void }) {
-  const [name, setName] = useState('');
-  const [tier, setTier] = useState<ProviderTier>('official');
-  const [region, setRegion] = useState('cn-east-1');
-  const [model, setModel] = useState('');
-  const valid = name.trim() && model.trim();
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="新增 Provider"
-      description="配置新的大模型 Provider 并加入可用池"
-      size="md"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>取消</Button>
-          <Button disabled={!valid} onClick={() => { onSubmit({ name: name.trim(), tier, region, model: model.trim() }); setName(''); setModel(''); }}>
-            添加
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-3">
-        <div className="grid grid-cols-3 gap-2 mb-3">
-          {PROVIDER_TEMPLATES.map((tpl) => (
-            <button
-              key={tpl.name}
-              onClick={() => { setName(tpl.name); setTier(tpl.tier); setRegion(tpl.region); setModel(tpl.model); }}
-              className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-left text-[11px] hover:border-[var(--brand)]"
-            >
-              <div className="font-semibold truncate">{tpl.name}</div>
-              <div className="text-[9px] text-[var(--text-muted)] truncate">{tpl.model}</div>
-            </button>
-          ))}
-        </div>
-        <Field label="Provider 名称" required>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：OpenAI Prod" />
-        </Field>
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="类型">
-            <select value={tier} onChange={(e) => setTier(e.target.value as ProviderTier)} className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 text-xs">
-              <option value="official">官方 API</option>
-              <option value="self_hosted">自部署</option>
-              <option value="connectable">可接入</option>
-            </select>
-          </Field>
-          <Field label="区域">
-            <Input value={region} onChange={(e) => setRegion(e.target.value)} placeholder="cn-east-1" />
-          </Field>
-        </div>
-        <Field label="主模型" required>
-          <Input value={model} onChange={(e) => setModel(e.target.value)} placeholder="例如：Claude Sonnet-4" />
-        </Field>
-        <Field label="API Key">
-          <Input type="password" placeholder="sk-..." />
-        </Field>
-        <p className="text-[10px] text-[var(--text-muted)]">提示：API Key 将加密保存在 KMS 中，仅在调用时短暂解密。</p>
-      </div>
-    </Modal>
-  );
+function GovernanceWorkspace({ canWrite, policies, onDrill }: { canWrite: boolean; policies: RoutingPolicyDraft[]; onDrill: (id: string) => void }) {
+  const drillTarget = policies.find((policy) => policy.fallbackModelIds.length > 0);
+  return <div className="max-w-2xl"><h2 className="text-sm font-semibold">运行治理与隔离演练</h2><p className="mt-1 text-xs text-[var(--text-muted)]">演练只允许 sandbox 或 canary 范围，不会切换生产流量。</p><div className="mt-4 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-4"><div className="flex items-start justify-between gap-4"><div><div className="flex items-center gap-2 font-medium"><FlaskConical className="h-4 w-4 text-[var(--brand)]" />故障切换演练</div><p className="mt-1 text-xs text-[var(--text-muted)]">验证指定策略的主模型降级链、审计链路与隔离范围。</p></div><Button size="sm" variant="secondary" disabled={!canWrite || !drillTarget} onClick={() => drillTarget && onDrill(drillTarget.id)}><RefreshCw className="h-3.5 w-3.5" />执行 sandbox 演练</Button></div></div></div>;
 }
 
-function NewTemplateModal({
-  open, onClose, onSubmit,
-}: { open: boolean; onClose: () => void; onSubmit: (f: { name: string; category: string; preview: string }) => void }) {
-  const [name, setName] = useState('');
-  const [category, setCategory] = useState('分析');
-  const [preview, setPreview] = useState('');
-  const valid = name.trim() && preview.trim();
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title="新建 Prompt 模板"
-      description="可被 Agent 或技能引用"
-      size="md"
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose}>取消</Button>
-          <Button disabled={!valid} onClick={() => { onSubmit({ name: name.trim(), category, preview: preview.trim() }); setName(''); setPreview(''); }}>
-            创建
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-3">
-        <Field label="模板名称" required>
-          <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：日志异常分析" />
-        </Field>
-        <Field label="分类">
-          <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full h-9 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 text-xs">
-            <option>分析</option>
-            <option>检索</option>
-            <option>生成</option>
-            <option>安全</option>
-            <option>运维</option>
-          </select>
-        </Field>
-        <Field label="模板内容" required>
-          <textarea
-            value={preview}
-            onChange={(e) => setPreview(e.target.value)}
-            placeholder="请分析以下日志并输出关键异常点..."
-            className="w-full h-32 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 text-xs font-mono resize-none"
-          />
-        </Field>
-      </div>
-    </Modal>
-  );
+function AuditWorkspace({ events, filter, onFilter }: { events: ModelAuditEvent[]; filter: 'all' | 'success' | 'failed'; onFilter: (value: 'all' | 'success' | 'failed') => void }) {
+  return <div><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">模型控制面审计</h2><p className="mt-1 text-xs text-[var(--text-muted)]">记录接入、校验、发布、回滚、退役及演练结果。</p></div><div className="flex gap-1">{(['all', 'success', 'failed'] as const).map((item) => <Button key={item} size="sm" variant={filter === item ? 'secondary' : 'ghost'} onClick={() => onFilter(item)}>{item === 'all' ? '全部' : item === 'success' ? '成功' : '失败'}</Button>)}</div></div>{events.length === 0 ? <EmptyState icon={History} title="暂无模型控制面审计事件" /> : <div className="space-y-2">{events.map((event) => <article key={event.id} className="rounded-lg border border-[var(--border)] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Badge tone={event.result === 'success' ? 'success' : 'error'}>{event.result === 'success' ? '成功' : '失败'}</Badge><strong className="text-xs">{event.action}</strong></div><time className="font-mono text-[11px] text-[var(--text-muted)]">{new Date(event.time).toLocaleString('zh-CN')}</time></div><div className="mt-2 text-xs text-[var(--text-secondary)]">目标：{event.target}{event.reason ? ` · 原因：${event.reason}` : ''}</div><div className="mt-1 font-mono text-[10px] text-[var(--text-muted)]">关联 {event.correlationId}{event.policyVersion ? ` · 版本 ${event.policyVersion}` : ''}</div></article>)}</div>}</div>;
 }
 
-function EditRouteForm({
-  initial, onCancel, onSubmit,
-}: { initial: any; onCancel: () => void; onSubmit: (r: any) => void }) {
-  const [primary, setPrimary] = useState(initial.primary);
-  const [f1, setF1] = useState(initial.f1);
-  const [f2, setF2] = useState(initial.f2);
-  const [cross, setCross] = useState(initial.cross);
-  return (
-    <div className="space-y-3 text-xs">
-      <Field label="等级">
-        <div className="flex items-center gap-2"><Badge tone={initial.primaryTone}>{initial.level}</Badge><span className="text-[var(--text-muted)]">{initial.label}</span></div>
-      </Field>
-      <Field label="主路由 (Primary)" required>
-        <Input value={primary} onChange={(e) => setPrimary(e.target.value)} />
-      </Field>
-      <Field label="降级 1 (Fallback 1)">
-        <Input value={f1} onChange={(e) => setF1(e.target.value)} placeholder="—" />
-      </Field>
-      <Field label="降级 2 (Fallback 2)">
-        <Input value={f2} onChange={(e) => setF2(e.target.value)} placeholder="—" />
-      </Field>
-      <Field label="允许出境">
-        <label className="inline-flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" checked={cross} onChange={(e) => setCross(e.target.checked)} className="accent-[var(--brand)]" />
-          <span>允许路由到境外 Provider</span>
-        </label>
-      </Field>
-      <div className="flex justify-end gap-2 pt-2 border-t border-[var(--border)]">
-        <Button variant="ghost" onClick={onCancel}>取消</Button>
-        <Button onClick={() => onSubmit({ ...initial, primary, f1, f2, cross })}>保存</Button>
-      </div>
-    </div>
-  );
+function ProviderForm({ canWrite, onSubmit }: { canWrite: boolean; onSubmit: (payload: Record<string, unknown>) => void }) {
+  const [name, setName] = useState(''); const [model, setModel] = useState(''); const [region, setRegion] = useState('cn-east-1'); const [credential, setCredential] = useState('');
+  return <div className="space-y-4"><Field label="Provider 名称"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：企业 Azure OpenAI" /></Field><Field label="模型部署"><Input value={model} onChange={(event) => setModel(event.target.value)} placeholder="例如：gpt-4o-enterprise" /></Field><Field label="云区域"><Input value={region} onChange={(event) => setRegion(event.target.value)} /></Field><Field label="一次性凭据"><Input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="仅用于创建凭据引用，不会回显" /></Field><p className="text-xs text-[var(--text-muted)]">演示模式仅模拟 write-only 凭据引用；生产环境必须由 KMS/Vault 接收和托管密钥。</p><div className="flex justify-end"><Button disabled={!canWrite || !name.trim() || !model.trim() || !credential.trim()} onClick={() => { onSubmit({ name, model, region, credential, tier: 'official', workspaceId: 'w1' }); setCredential(''); }}>创建受管接入</Button></div></div>;
 }
 
-function Field({ label, required, children }: { label: string; required?: boolean; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="mb-1 block text-[11px] font-medium text-[var(--text-secondary)]">
-        {label}{required && <span className="text-[var(--danger)]"> *</span>}
-      </label>
-      {children}
-    </div>
-  );
+function ProviderDetail({ provider, impact, canWrite, onTest, onDisable, onDelete }: { provider: ModelProvider; impact?: ProviderImpact; canWrite: boolean; onTest: () => void; onDisable: () => void; onDelete: () => void }) {
+  const deletion = providerLifecycleAction(impact ?? { deletionAllowed: false });
+  return <div className="space-y-4"><div className="rounded-lg border border-[var(--border)] p-3 text-xs"><div className="font-medium">凭据引用</div><div className="mt-1 font-mono text-[var(--text-muted)]">{provider.credentialRef} · {provider.credentialMasked}</div></div><div className="rounded-lg border border-[var(--border)] p-3 text-xs"><div className="font-medium">退役影响</div><p className="mt-1 text-[var(--text-muted)]">{impact?.blockedReason ?? '未发现已发布路由引用，可执行删除。'}</p>{impact?.routeReferences.map((item) => <div key={item.versionId} className="mt-2 flex items-center gap-1"><Network className="h-3 w-3" />{item.level} · {item.versionId}</div>)}</div><div className="flex flex-wrap gap-2"><Button size="sm" variant="secondary" disabled={!canWrite} onClick={onTest}><ShieldCheck className="h-3.5 w-3.5" />验证连通性</Button><Button size="sm" variant="outline" disabled={!canWrite || provider.status === 'disabled'} onClick={onDisable}>停止新流量</Button><Button size="sm" variant="ghost" disabled={!canWrite || deletion.disabled} onClick={onDelete}><Trash2 className="h-3.5 w-3.5" />{deletion.label}</Button></div></div>;
 }
+
+function PolicyDetail({ policy, models, versions, canWrite, onSave, onValidate, onPublish, onRollback }: { policy: RoutingPolicyDraft; models: ModelProvider['models']; versions: RoutingPolicyVersion[]; canWrite: boolean; onSave: (value: Record<string, unknown>) => void; onValidate: () => void; onPublish: () => void; onRollback: (versionId: string) => void }) {
+  const [primaryModelId, setPrimary] = useState(policy.primaryModelId); const [fallbackModelId, setFallback] = useState(policy.fallbackModelIds[0] ?? ''); const [egressAllowed, setEgress] = useState(policy.egressAllowed); const [budgetLimitUsd, setBudget] = useState(String(policy.budgetLimitUsd));
+  return <div className="space-y-4"><Field label="主模型"><select value={primaryModelId} onChange={(event) => setPrimary(event.target.value)} className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs">{models.map((model) => <option key={model.id} value={model.id} disabled={model.status !== 'available'}>{model.name}</option>)}</select></Field><Field label="降级模型"><select value={fallbackModelId} onChange={(event) => setFallback(event.target.value)} className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs"><option value="">不配置降级</option>{models.filter((model) => model.id !== primaryModelId).map((model) => <option key={model.id} value={model.id} disabled={model.status !== 'available'}>{model.name}</option>)}</select></Field><Field label="月度预算上限 (USD)"><Input inputMode="numeric" value={budgetLimitUsd} onChange={(event) => setBudget(event.target.value)} /></Field><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={egressAllowed} onChange={(event) => setEgress(event.target.checked)} disabled={policy.dataScope === 'restricted'} />允许路由至境外部署</label>{policy.validationIssues.length > 0 && <div className="rounded-lg border border-[var(--danger)]/40 bg-[var(--danger-bg)] p-3 text-xs text-[var(--danger)]">{policy.validationIssues.join('；')}</div>}<div className="flex flex-wrap justify-end gap-2 border-t border-[var(--border)] pt-4"><Button size="sm" variant="ghost" disabled={!canWrite} onClick={() => onSave({ id: policy.id, primaryModelId, fallbackModelIds: fallbackModelId ? [fallbackModelId] : [], egressAllowed, budgetLimitUsd: Number(budgetLimitUsd) })}>保存草稿</Button><Button size="sm" variant="secondary" disabled={!canWrite} onClick={onValidate}><CheckCircle2 className="h-3.5 w-3.5" />校验</Button><Button size="sm" disabled={!canWrite || policy.status !== 'ready'} onClick={onPublish}>发布版本</Button></div><div className="border-t border-[var(--border)] pt-4"><div className="mb-2 text-xs font-semibold">版本历史</div>{versions.length === 0 ? <p className="text-xs text-[var(--text-muted)]">暂无已发布版本</p> : <div className="space-y-2">{versions.map((version) => <div key={version.id} className="flex items-center justify-between rounded-md border border-[var(--border)] p-2 text-xs"><span>v{version.version} · {new Date(version.publishedAt).toLocaleString('zh-CN')}</span><Button size="sm" variant="ghost" disabled={!canWrite} onClick={() => onRollback(version.id)}>以此回滚</Button></div>)}</div>}</div></div>;
+}
+
+function Metric({ label, value, tone }: { label: string; value: string; tone: 'brand' | 'success' | 'warn' }) { const color = tone === 'success' ? 'text-[var(--success)]' : tone === 'warn' ? 'text-[var(--warning)]' : 'text-[var(--brand)]'; return <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3"><div className="text-xs text-[var(--text-muted)]">{label}</div><div className={`mt-1 text-lg font-semibold ${color}`}>{value}</div></div>; }
+function Field({ label, children }: { label: string; children: React.ReactNode }) { return <label className="block text-xs font-medium text-[var(--text-secondary)]"><span className="mb-1.5 block">{label}</span>{children}</label>; }

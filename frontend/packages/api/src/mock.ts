@@ -4,17 +4,51 @@
  */
 import type {
   Agent,
+  CapabilityBinding,
   AuditItem,
   Channel,
+  ChannelAuditEvent,
+  ChannelDeployment,
+  DeliveryAttempt,
+  DeliveryPolicyDraft,
+  DeliveryPolicyVersion,
   ControlledTask,
   Conversation,
+  KnowledgeAuditEvent,
+  KnowledgeConsumerBinding,
+  KnowledgeGovernancePolicy,
   KnowledgeDoc,
+  KnowledgeEvaluation,
+  KnowledgeGraphEntity,
+  KnowledgeGraphRelation,
+  KnowledgePackage,
+  KnowledgeProcessingJob,
+  KnowledgeRetrievalProfile,
+  KnowledgeRetrievalResult,
+  KnowledgeSourceConnection,
   KpiCard,
+  ModelAuditEvent,
+  ModelProfile,
+  ModelProvider,
   ModelRoute,
   Provider,
+  ProviderImpact,
+  RoutingPolicyDraft,
+  RoutingPolicyVersion,
   Skill,
+  SkillAuditEvent,
+  SkillImpactReport,
+  SkillInstallPreflight,
+  SkillPermission,
+  SkillGovernancePolicy,
+  SkillIntegration,
+  SkillRuntimeHealth,
+  SkillGovernanceIncident,
+  SkillGovernanceEvent,
+  SkillRuntimeConfig,
   Task,
   Workflow,
+  WorkflowSkill,
   Workspace,
 } from '@de/web-types';
 import { sleep } from '@de/web-utils';
@@ -505,8 +539,15 @@ function workflowAudit(action: string, target: string, result: 'success' | 'fail
 export type WorkflowGenerationRecord = {
   id: string;
   prompt: string;
-  status: 'completed' | 'discarded';
+  promptDigest: string;
+  status: 'generated' | 'review_required' | 'applied' | 'discarded' | 'expired';
   model: string;
+  workspaceId: string;
+  tenantId: string;
+  ownerId: string;
+  policyVersion: string;
+  expiresAt: string;
+  revisionId?: string;
   createdAt: string;
   workflow: { nodes: Array<{ id: string; kind: string; label: string; position: { x: number; y: number }; description?: string }>; edges: Array<{ id: string; source: string; target: string }> };
   checks: { structure: 'passed' | 'review'; dependencies: 'passed' | 'review'; risk: 'passed' | 'review' };
@@ -517,9 +558,40 @@ export type WorkflowGenerationRecord = {
   requiresReview: boolean;
 };
 
+const WORKFLOW_GENERATION_PRINCIPAL = { tenantId: 'tenant-prod-ops', workspaceId: 'prod-ops', userId: 'current-user' };
+const ALLOWED_GENERATION_MODELS = new Set(['企业默认模型', 'Qwen-Enterprise']);
+const workflowGenerationRevisions = new Map<string, { id: string; generationId: string; nodes: any[]; edges: any[]; createdAt: string }>();
+
+function generationDigest(prompt: string) {
+  return `sha256:${Array.from(prompt).reduce((value, char) => ((value * 31 + char.charCodeAt(0)) >>> 0), 7).toString(16)}`;
+}
+
+function rejectUnsafeGenerationPrompt(prompt: string) {
+  if (/\b(api[_-]?key|password|secret|token)\b\s*[:=]/i.test(prompt)) throw new Error('生成请求包含疑似密钥或凭据，请先脱敏后再提交');
+}
+
+function buildGeneratedWorkflow(prompt: string) {
+  const lower = prompt.toLowerCase();
+  const isScheduled = /每天|每周|定时|巡检|cron|schedule/.test(lower);
+  const createsTask = /工单|任务|人工处理|值班/.test(lower);
+  const hasExternalWrite = /恢复|执行|变更|扩容|写入|kubectl|api/.test(lower);
+  const nodes = [
+    { id: 'g1', kind: isScheduled ? 'schedule' : 'event', label: isScheduled ? '定时巡检触发' : '告警事件触发', position: { x: 80, y: 120 }, description: isScheduled ? '按计划发起数字员工巡检' : '接收告警或业务事件' },
+    { id: 'g2', kind: 'retrieve', label: '检索运行手册', position: { x: 300, y: 120 }, description: '查询知识库与历史处置证据' },
+    { id: 'g3', kind: 'decision', label: 'Agent 研判', position: { x: 520, y: 120 }, description: '结合上下文判断处置路径' },
+    { id: 'g4', kind: 'policy', label: '风险策略校验', position: { x: 740, y: 120 }, description: '校验权限、风险等级与变更策略' },
+    ...(hasExternalWrite ? [{ id: 'g5', kind: 'approval', label: '人工审批', position: { x: 960, y: 120 }, description: '高风险动作需人工复核' }] : []),
+    { id: 'g6', kind: createsTask ? 'task' : hasExternalWrite ? 'execute' : 'notify', label: createsTask ? '创建处置工单' : hasExternalWrite ? '执行受控动作' : '通知负责人', position: { x: hasExternalWrite ? 1180 : 960, y: 120 }, description: createsTask ? '派发人工处置任务并回传结果' : hasExternalWrite ? '调用已授权的 Skill 或 MCP 工具' : '发送处置结论通知' },
+    ...(hasExternalWrite ? [{ id: 'g7', kind: 'compensate', label: '补偿回滚', position: { x: 1400, y: 120 }, description: '执行失败时回滚可逆变更' }] : []),
+    { id: 'g8', kind: 'audit', label: '审计留痕', position: { x: hasExternalWrite ? 1620 : 1180, y: 120 }, description: '写入处置证据、策略与版本信息' },
+    { id: 'g9', kind: 'notify', label: '结果通知', position: { x: hasExternalWrite ? 1840 : 1400, y: 120 }, description: '通知负责人和关联任务' },
+  ];
+  return { nodes, edges: nodes.slice(1).map((node, index) => ({ id: `ge${index + 1}`, source: nodes[index].id, target: node.id })) };
+}
+
 export const mockWorkflowGenerations: WorkflowGenerationRecord[] = [
   {
-    id: 'gen_demo_001', prompt: '当 Redis 触发 OOM 告警时自动处理并通知负责人', status: 'completed', model: '企业默认模型', createdAt: '2026-07-18T09:20:00Z',
+    id: 'gen_demo_001', prompt: '当 Redis 触发 OOM 告警时自动处理并通知负责人', promptDigest: 'sha256:demo', status: 'review_required', model: '企业默认模型', workspaceId: 'prod-ops', tenantId: 'tenant-prod-ops', ownerId: 'current-user', policyVersion: 'workflow-policy-v3', expiresAt: '2026-07-25T09:20:00Z', createdAt: '2026-07-18T09:20:00Z',
     workflow: { nodes: [
       { id: 'g1', kind: 'trigger', label: 'Redis OOM 告警', position: { x: 80, y: 120 }, description: '接收告警事件' },
       { id: 'g2', kind: 'retrieve', label: '检索故障 Runbook', position: { x: 300, y: 120 }, description: '查询处置规范' },
@@ -591,6 +663,118 @@ export const mockKnowledgeDocs: KnowledgeDoc[] = [
   { id: 'k8', title: 'ATT&CK 检测用例', source: 'SIEM', sizeKb: 540, chunks: 380, citeCount: 95, status: 'ready', updatedAt: '2026-07-09T00:00:00Z' },
 ];
 
+export const mockKnowledgeChunks: KnowledgeRetrievalResult[] = [
+  { idx: 1, source: 'Redis Runbook v3.2 §3.1', page: 12, score: 0.92, docId: 'k1', text: '当触发 OOM 时，优先检查 maxmemory-policy 与最近写入速率；建议在维护窗口执行 volatile-lru 切换。' },
+  { idx: 2, source: 'CMDB PRD-CACHE-019', page: null, score: 0.78, docId: 'k2', text: 'prod-redis-01 资产编号 PRD-CACHE-019，归属 ACME 生产集群，cn-east-1 区，双实例主从。' },
+  { idx: 3, source: 'INC-019 处理记录', page: 5, score: 0.71, docId: 'k3', text: '历史类似事件在 2026-05-22 处置耗时 38min，使用 CONFIG SET 临时扩容与后续策略调整。' },
+  { idx: 4, source: 'Prometheus 告警规则', page: null, score: 0.65, docId: 'k6', text: 'rate(redis_oom_total[5m]) > 3 时触发 P0 告警，持续 10 分钟自动升级。' },
+  { idx: 5, source: '网关灰度发布流程', page: 8, score: 0.58, docId: 'k7', text: 'Redis 升级必须在维护窗口执行，建议使用灰度发布与双实例验证。' },
+];
+
+export const mockKnowledgeSources: KnowledgeSourceConnection[] = [
+  { id: 'source-runbook', name: 'Runbook 文档中心', kind: 'Git / Markdown', schedule: '每 6 小时', lastSync: '12 分钟前', documents: 86, status: 'healthy' },
+  { id: 'source-cmdb', name: 'CMDB 资产目录', kind: 'REST API', schedule: '每 30 分钟', lastSync: '4 分钟前', documents: 1280, status: 'healthy' },
+  { id: 'source-siem', name: 'SIEM 检测规则', kind: 'Webhook', schedule: '每 1 小时', lastSync: '同步失败 · 36 分钟前', documents: 380, status: 'attention' },
+];
+
+export const mockKnowledgeGovernance: KnowledgeGovernancePolicy = {
+  sensitiveDataDetection: true,
+  versionRetention: true,
+  retentionDays: 365,
+  highRiskChangeApproval: true,
+};
+
+// 知识工程中心的领域状态：知识包是唯一可被运行时消费者绑定的交付物。
+export const mockKnowledgePackages: KnowledgePackage[] = [
+  {
+    id: 'kp-runbook', name: '生产故障处置知识包', description: 'Redis、K8s 与告警处置 Runbook 的受控知识集合。', domain: 'SRE', classification: 'restricted', owner: 'SRE 平台组', status: 'published', documentCount: 42, consumers: 5,
+    currentVersion: { id: 'kpv-runbook-32', version: 'v3.2', status: 'published', indexVersion: 'idx-20260718-02', publishedAt: '2026-07-18T09:30:00Z', qualityScore: 94, changeSummary: '补齐 Redis OOM 处置与双签步骤' },
+    versions: [
+      { id: 'kpv-runbook-32', version: 'v3.2', status: 'published', indexVersion: 'idx-20260718-02', publishedAt: '2026-07-18T09:30:00Z', qualityScore: 94, changeSummary: '补齐 Redis OOM 处置与双签步骤' },
+      { id: 'kpv-runbook-31', version: 'v3.1', status: 'deprecated', indexVersion: 'idx-20260702-01', publishedAt: '2026-07-02T09:30:00Z', qualityScore: 91, changeSummary: '上一个稳定版本' },
+    ],
+  },
+  {
+    id: 'kp-cmdb', name: '生产资产与依赖知识包', description: '受权限过滤的 CMDB 资产、服务依赖与负责人信息。', domain: 'IT 运营', classification: 'confidential', owner: '基础架构组', status: 'published', documentCount: 1280, consumers: 3,
+    currentVersion: { id: 'kpv-cmdb-18', version: 'v1.8', status: 'published', indexVersion: 'idx-20260719-01', publishedAt: '2026-07-19T06:10:00Z', qualityScore: 92, changeSummary: '同步生产服务依赖关系' },
+    versions: [{ id: 'kpv-cmdb-18', version: 'v1.8', status: 'published', indexVersion: 'idx-20260719-01', publishedAt: '2026-07-19T06:10:00Z', qualityScore: 92, changeSummary: '同步生产服务依赖关系' }],
+  },
+  {
+    id: 'kp-security', name: '安全漏洞处置知识包', description: 'CVE、加固基线与漏洞修复流程。', domain: '安全', classification: 'restricted', owner: '安全运营组', status: 'review', documentCount: 26, consumers: 0,
+    currentVersion: { id: 'kpv-security-14', version: 'v1.4', status: 'review', indexVersion: 'idx-20260719-03', qualityScore: 88, changeSummary: '新增 CVE-2026 风险与修复依据' },
+    versions: [{ id: 'kpv-security-14', version: 'v1.4', status: 'review', indexVersion: 'idx-20260719-03', qualityScore: 88, changeSummary: '新增 CVE-2026 风险与修复依据' }],
+  },
+];
+
+export const mockKnowledgeProcessingJobs: KnowledgeProcessingJob[] = [
+  { id: 'kpj-01', packageId: 'kp-runbook', source: 'Runbook 文档中心', strategy: 'structured', status: 'succeeded', documentCount: 42, chunkCount: 1260, indexVersion: 'idx-20260718-02', startedAt: '2026-07-18T09:12:00Z' },
+  { id: 'kpj-02', packageId: 'kp-cmdb', source: 'CMDB 资产目录', strategy: 'table', status: 'running', documentCount: 1280, chunkCount: 4820, indexVersion: 'idx-20260719-01', startedAt: '2026-07-19T06:00:00Z' },
+  { id: 'kpj-03', packageId: 'kp-security', source: 'SIEM 检测规则', strategy: 'semantic', status: 'failed', documentCount: 26, chunkCount: 630, indexVersion: 'idx-20260719-03', startedAt: '2026-07-19T08:40:00Z', error: '3 个 PDF 未能完成 OCR 解析' },
+];
+
+export const mockKnowledgeProfiles: KnowledgeRetrievalProfile[] = [
+  { id: 'krp-ops', name: '生产处置混合检索', packageId: 'kp-runbook', retrievalModes: ['keyword', 'vector', 'graph'], topK: 6, rerankEnabled: true, noResultPolicy: 'handoff' },
+  { id: 'krp-cmdb', name: '资产精确检索', packageId: 'kp-cmdb', retrievalModes: ['keyword', 'graph'], topK: 5, rerankEnabled: false, noResultPolicy: 'clarify' },
+];
+
+export const mockKnowledgeEvaluations: KnowledgeEvaluation[] = [
+  { id: 'keval-01', packageId: 'kp-runbook', profileId: 'krp-ops', baselineVersion: 'v3.1', evaluatedVersion: 'v3.2', recallAtK: 0.94, mrr: 0.89, ndcg: 0.91, citationAccuracy: 0.97, p95LatencyMs: 338, status: 'passed', evaluatedAt: '2026-07-18T09:20:00Z' },
+  { id: 'keval-02', packageId: 'kp-security', profileId: 'krp-ops', baselineVersion: 'v1.3', evaluatedVersion: 'v1.4', recallAtK: 0.86, mrr: 0.78, ndcg: 0.80, citationAccuracy: 0.91, p95LatencyMs: 462, status: 'needs_review', evaluatedAt: '2026-07-19T08:55:00Z' },
+];
+
+export const mockKnowledgeGraphEntities: KnowledgeGraphEntity[] = [
+  { id: 'kge-redis', name: 'redis-prod-01', type: 'asset', confidence: 0.99, sourceDocId: 'k1', sourceVersion: 'v3.2' },
+  { id: 'kge-api', name: '订单 API', type: 'service', confidence: 0.96, sourceDocId: 'k2', sourceVersion: 'v1.8' },
+  { id: 'kge-runbook', name: 'Redis OOM 处置 Runbook', type: 'runbook', confidence: 0.98, sourceDocId: 'k1', sourceVersion: 'v3.2' },
+  { id: 'kge-owner', name: 'SRE 值班组', type: 'owner', confidence: 0.99, sourceDocId: 'k1', sourceVersion: 'v3.2' },
+  { id: 'kge-cve', name: 'CVE-2026-1042', type: 'vulnerability', confidence: 0.93, sourceDocId: 'k3', sourceVersion: 'v1.4' },
+];
+
+export const mockKnowledgeGraphRelations: KnowledgeGraphRelation[] = [
+  { id: 'kgr-01', fromId: 'kge-api', toId: 'kge-redis', type: 'depends_on', confidence: 0.96, sourceDocId: 'k2', sourceVersion: 'v1.8' },
+  { id: 'kgr-02', fromId: 'kge-redis', toId: 'kge-runbook', type: 'handled_by', confidence: 0.98, sourceDocId: 'k1', sourceVersion: 'v3.2' },
+  { id: 'kgr-03', fromId: 'kge-runbook', toId: 'kge-owner', type: 'owned_by', confidence: 0.99, sourceDocId: 'k1', sourceVersion: 'v3.2' },
+  { id: 'kgr-04', fromId: 'kge-cve', toId: 'kge-redis', type: 'impacts', confidence: 0.89, sourceDocId: 'k3', sourceVersion: 'v1.4' },
+];
+
+export const mockKnowledgeBindings: KnowledgeConsumerBinding[] = [
+  { id: 'kcb-01', packageId: 'kp-runbook', packageName: '生产故障处置知识包', packageVersion: 'v3.2', consumerType: 'agent', consumerId: 'a1', consumerName: '故障自愈', environment: 'production', profileId: 'krp-ops', noResultPolicy: 'handoff' },
+  { id: 'kcb-02', packageId: 'kp-runbook', packageName: '生产故障处置知识包', packageVersion: 'v3.2', consumerType: 'workflow', consumerId: 'wf1', consumerName: 'Redis 故障处置编排', environment: 'production', profileId: 'krp-ops', noResultPolicy: 'block' },
+  { id: 'kcb-03', packageId: 'kp-cmdb', packageName: '生产资产与依赖知识包', packageVersion: 'v1.8', consumerType: 'agent', consumerId: 'a2', consumerName: '变更辅助', environment: 'staging', profileId: 'krp-cmdb', noResultPolicy: 'clarify' },
+];
+
+export const mockKnowledgeAudit: KnowledgeAuditEvent[] = [
+  { id: 'knowledge_audit_1', time: '14:32:10', actor: '李婷', action: '知识同步完成', target: 'Runbook 文档中心', result: 'success' },
+  { id: 'knowledge_audit_2', time: '13:40:02', actor: '数字员工', action: '检索验证', target: 'Redis OOM 处理', result: 'success' },
+];
+
+function appendKnowledgeAudit(action: string, target: string, result: KnowledgeAuditEvent['result'] = 'success') {
+  const event: KnowledgeAuditEvent = { id: mockId('knowledge_audit'), time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), actor: '当前用户', action, target, result };
+  mockKnowledgeAudit.unshift(event);
+  return event;
+}
+
+function knowledgeDocDetail(doc: KnowledgeDoc) {
+  return {
+    id: doc.id,
+    title: doc.title,
+    source: doc.source,
+    author: '李婷',
+    updatedAt: doc.updatedAt.slice(0, 10),
+    size: `${doc.sizeKb} KB`,
+    chunks: doc.chunks,
+    version: 'v3.2',
+    status: doc.status,
+    citeCount: doc.citeCount,
+    tags: doc.source === 'Runbook' ? ['redis', 'oom', '生产环境'] : [doc.source, '企业知识'],
+    classification: doc.source === 'CVE' ? '受限' : '内部',
+    chunkStrategy: doc.source === 'CMDB' ? '表格切片' : '结构切片',
+    quality: { completeness: 96, freshness: 92, citationAccuracy: 97 },
+    versions: [{ version: 'v3.2', time: doc.updatedAt.slice(0, 10), note: '当前发布版本' }, { version: 'v3.1', time: '2026-06-18', note: '补充处置步骤与引用证据' }],
+    content: doc.id === 'k1' ? mockDocDetail.content : `# ${doc.title}\n\n该知识资产由企业知识运营工作台管理，已纳入版本、权限和引用审计。`,
+  };
+}
+
 // ============ P8 技能扩展数据 ============
 
 export interface SkillTestCase {
@@ -643,6 +827,10 @@ export const mockSkills: Skill[] = [
   { id: 's6', name: 'kafka-mcp', kind: 'mcp', description: 'Kafka 消息 MCP', version: '1.0', status: 'installed', rating: 4.5, installCount: 480, riskLevel: 'low', cacheable: false },
   { id: 's7', name: 'cmdb-tool', kind: 'tool', description: 'CMDB 资产查询', version: '1.0', status: 'installed', rating: 4.6, installCount: 760, riskLevel: 'mid', cacheable: true },
   { id: 's8', name: 'jira-tool', kind: 'tool', description: 'Jira 工单', version: '1.0', status: 'installed', rating: 4.5, installCount: 690, riskLevel: 'mid', cacheable: true },
+  { id: 's9', name: 'itsm-change-tool', kind: 'tool', description: '创建、查询与更新 ITSM 变更单；生产变更需要审批门禁', version: '2.3.1', status: 'installed', rating: 4.7, installCount: 920, riskLevel: 'high', cacheable: false },
+  { id: 's10', name: 'notification-tool', kind: 'tool', description: '向飞书、企业微信、邮件等受控渠道投递处置通知', version: '1.6.0', status: 'installed', rating: 4.8, installCount: 1680, riskLevel: 'low', cacheable: true },
+  { id: 's11', name: 'release-control-tool', kind: 'tool', description: '执行灰度发布、回滚与发布窗口校验，所有写操作要求双人审批', version: '1.4.0', status: 'installed', rating: 4.6, installCount: 540, riskLevel: 'high', cacheable: false },
+  { id: 's12', name: 'customer-ticket-tool', kind: 'tool', description: '同步客户工单、服务等级与处理进展，适用于服务运营数字员工', version: '1.1.2', status: 'installed', rating: 4.4, installCount: 430, riskLevel: 'mid', cacheable: true },
 ];
 
 // ============ P9 模型扩展数据 ============
@@ -726,7 +914,7 @@ export const mockMessageStream = [
   { id: 'm5', time: '14:18:32', channel: 'Webhook', target: 'SIEM', content: '告警降噪合并 23 条', status: 'failed', tone: 'warning' as const },
 ];
 
-export const mockChannelConfig = {
+export const mockChannelConfig: Record<string, any> = {
   c1: {
     rateLimit: { qps: 50, daily: 10000 },
     retry: { max: 3, backoff: 'exponential' },
@@ -743,6 +931,237 @@ export const mockChannels: Channel[] = [
   { id: 'c5', name: '邮件', kind: 'email', enabled: true, monthlySent: 240, successRate: 0.978 },
   { id: 'c6', name: 'Webhook', kind: 'webhook', enabled: true, monthlySent: 120, successRate: 0.995 },
 ];
+
+// 模型、渠道与技能的运行时 Mock 域。所有可写操作汇聚在这里，并写入审计，
+// 让运营台的刷新查询、详情抽屉和操作反馈指向同一份数据。
+const mockControlPlaneAudit: Array<{ id: string; time: string; actor: string; domain: 'model' | 'channel' | 'skill'; action: string; target: string; result: 'success' | 'failed' }> = [];
+const mockSkillRuntime: Record<string, SkillRuntimeConfig> = {};
+const mockSkillIntegrations: SkillIntegration[] = [
+  { id: 'integration_mcp_gitlab', name: '企业 GitLab MCP', type: 'mcp', environment: 'production', status: 'enabled', owner: '李婷', endpoint: 'https://gitlab.internal.example.com/mcp', credentialRef: 'vault://integrations/gitlab/oauth', lastVerifiedAt: '4 分钟前', health: 'healthy', discoveredCapabilities: 18, writeApprovalRequired: true, allowedEgress: ['gitlab.internal.example.com'] },
+  { id: 'integration_tool_itsm', name: 'ITSM 变更 API', type: 'tool', environment: 'production', status: 'pending_approval', owner: '周楠', endpoint: 'https://itsm.internal.example.com/openapi', credentialRef: 'vault://integrations/itsm/service-account', lastVerifiedAt: '12 分钟前', health: 'healthy', discoveredCapabilities: 9, writeApprovalRequired: true, allowedEgress: ['itsm.internal.example.com'] },
+  { id: 'integration_mcp_servicenow', name: 'ServiceNow MCP', type: 'mcp', environment: 'test', status: 'validating', owner: '王昊', endpoint: 'https://sandbox.service-now.example.com/mcp', credentialRef: 'vault://integrations/servicenow/oauth', lastVerifiedAt: '刚刚', health: 'unknown', discoveredCapabilities: 0, writeApprovalRequired: true, allowedEgress: ['sandbox.service-now.example.com'] },
+  { id: 'integration_skill_diagnosis', name: '内部诊断 Skill 包', type: 'skill', environment: 'test', status: 'failed', owner: '张睿', endpoint: 'registry://internal/diagnosis-skill:1.2.0', credentialRef: 'vault://registries/internal-reader', lastVerifiedAt: '26 分钟前', health: 'attention', discoveredCapabilities: 0, writeApprovalRequired: false, allowedEgress: ['registry.internal.example.com'], lastError: '制品签名校验失败：签发证书已过期' },
+];
+const mockSkillRuntimeHealth: SkillRuntimeHealth[] = [
+  { id: 'health_s1', skillId: 's1', name: 'redis-cli', kind: 'skill', environment: 'production', status: 'healthy', calls24h: 2300, successRate: 99.6, p95Ms: 80, errorRate: 0.4, riskLevel: 'mid', owner: '李婷', references: 3, updatedAt: '刚刚' },
+  { id: 'health_s2', skillId: 's2', name: 'kubectl', kind: 'skill', environment: 'production', status: 'attention', calls24h: 1820, successRate: 98.8, p95Ms: 220, errorRate: 1.2, riskLevel: 'high', owner: '王昊', references: 4, updatedAt: '2 分钟前' },
+  { id: 'health_s5', skillId: 's5', name: 'prometheus', kind: 'mcp', environment: 'production', status: 'healthy', calls24h: 5600, successRate: 99.95, p95Ms: 30, errorRate: 0.05, riskLevel: 'low', owner: '张睿', references: 6, updatedAt: '刚刚' },
+  { id: 'health_s7', skillId: 's7', name: 'cmdb-tool', kind: 'tool', environment: 'production', status: 'incident', calls24h: 3400, successRate: 95.8, p95Ms: 640, errorRate: 4.2, riskLevel: 'mid', owner: '陈默', references: 2, updatedAt: '6 分钟前' },
+  { id: 'health_s9', skillId: 's9', name: 'itsm-change-tool', kind: 'tool', environment: 'production', status: 'attention', calls24h: 680, successRate: 98.2, p95Ms: 380, errorRate: 1.8, riskLevel: 'high', owner: '周楠', references: 3, updatedAt: '12 分钟前' },
+  { id: 'health_s10', skillId: 's10', name: 'notification-tool', kind: 'tool', environment: 'production', status: 'healthy', calls24h: 4060, successRate: 99.9, p95Ms: 55, errorRate: 0.1, riskLevel: 'low', owner: '林晓', references: 8, updatedAt: '刚刚' },
+  { id: 'health_s11', skillId: 's11', name: 'release-control-tool', kind: 'tool', environment: 'production', status: 'paused', calls24h: 120, successRate: 100, p95Ms: 180, errorRate: 0, riskLevel: 'high', owner: '王昊', references: 2, updatedAt: '1 小时前' },
+];
+const mockSkillGovernanceIncidents: SkillGovernanceIncident[] = [
+  { id: 'incident_cmdb_latency', skillId: 's7', skillName: 'cmdb-tool', severity: 'P1', type: 'latency', title: '错误率超过 4% 且 P95 超阈值', detail: 'CMDB 查询接口响应变慢，影响 2 个工作流和 1 个智能体。', status: 'open', createdAt: '12:36', requestId: 'req_cmdb_20260719_01' },
+  { id: 'incident_release_policy', skillId: 's11', skillName: 'release-control-tool', severity: 'P0', type: 'policy_blocked', title: '生产发布动作被双人审批策略阻断', detail: '审批人未齐备，已自动暂停新的发布执行请求。', status: 'open', createdAt: '11:58', requestId: 'req_release_20260719_12' },
+  { id: 'incident_kube_credential', skillId: 's2', skillName: 'kubectl', severity: 'P2', type: 'credential', title: '服务凭据将在 7 天内到期', detail: '请在密钥中心完成轮换并执行重新验证。', status: 'acknowledged', createdAt: '09:20', requestId: 'req_kube_20260719_03' },
+];
+const mockSkillGovernanceEvents: SkillGovernanceEvent[] = [
+  { id: 'gov_event_1', time: '12:41', skillName: 'release-control-tool', type: 'policy', action: '双人审批策略阻断', actor: '策略引擎', result: 'blocked', requestId: 'req_release_20260719_12' },
+  { id: 'gov_event_2', time: '12:36', skillName: 'cmdb-tool', type: 'call', action: '错误率阈值告警', actor: '运行监控', result: 'failed', requestId: 'req_cmdb_20260719_01' },
+  { id: 'gov_event_3', time: '12:20', skillName: 'prometheus', type: 'call', action: '健康验证完成', actor: '当前用户', result: 'success', requestId: 'req_prom_20260719_04' },
+  { id: 'gov_event_4', time: '11:58', skillName: 'release-control-tool', type: 'lifecycle', action: '自动暂停高风险发布能力', actor: '策略引擎', result: 'success' },
+];
+const mockSkillGovernance: Record<string, SkillGovernancePolicy> = {};
+const skillAssetDefaults: Record<string, Pick<Skill, 'lifecycleStatus' | 'source' | 'owner' | 'team' | 'lastVerifiedAt' | 'hasUpdate' | 'upgradeVersion' | 'tags'>> = {
+  s1: { lifecycleStatus: 'enabled', source: 'market', owner: '李婷', team: 'SRE 平台组', lastVerifiedAt: '12 分钟前', hasUpdate: true, upgradeVersion: '1.5.0', tags: ['生产', '数据变更'] },
+  s2: { lifecycleStatus: 'enabled', source: 'import', owner: '王昊', team: '云原生组', lastVerifiedAt: '昨天 18:20', tags: ['生产', '高风险'] },
+  s3: { lifecycleStatus: 'enabled', source: 'market', owner: '张睿', team: '可观测性组', lastVerifiedAt: '8 分钟前', tags: ['只读', '日志'] },
+  s5: { lifecycleStatus: 'enabled', source: 'mcp', owner: '李婷', team: 'SRE 平台组', lastVerifiedAt: '6 分钟前', tags: ['监控', '只读'] },
+  s7: { lifecycleStatus: 'pending_approval', source: 'tool', owner: '陈默', team: '资产运营组', lastVerifiedAt: '2 小时前', tags: ['CMDB', '待审批'] },
+  s9: { lifecycleStatus: 'enabled', source: 'tool', owner: '周楠', team: '变更运营组', lastVerifiedAt: '5 分钟前', tags: ['ITSM', '生产变更', '审批'] },
+  s10: { lifecycleStatus: 'enabled', source: 'tool', owner: '林晓', team: '服务体验组', lastVerifiedAt: '3 分钟前', tags: ['通知', '只写消息'] },
+  s11: { lifecycleStatus: 'pending_approval', source: 'tool', owner: '王昊', team: '交付工程组', lastVerifiedAt: '22 分钟前', tags: ['发布', '回滚', '双人审批'] },
+  s12: { lifecycleStatus: 'enabled', source: 'tool', owner: '郑颖', team: '客户运营组', lastVerifiedAt: '1 小时前', tags: ['客户工单', 'SLA'] },
+};
+
+function skillAsset(skill: Skill): Skill {
+  const defaults = skillAssetDefaults[skill.id] ?? {};
+  return { lifecycleStatus: 'enabled', source: skill.kind === 'mcp' ? 'mcp' : skill.kind === 'tool' ? 'tool' : 'import', owner: '未分配', team: '平台工程组', lastVerifiedAt: '尚未验证', hasUpdate: false, tags: [], ...defaults, ...skill };
+}
+
+function skillGovernance(id: string): SkillGovernancePolicy {
+  return mockSkillGovernance[id] ?? (mockSkillGovernance[id] = { skillId: id, secretRef: 'vault://digital-employee/skills/default', allowedEgress: ['api.internal.example.com'], writeApprovalRequired: true, rateLimitPerMinute: 60, circuitBreakerEnabled: true, dataMaskingEnabled: true });
+}
+const mockSkillPermissions: Record<string, SkillPermission[]> = Object.fromEntries(mockSkills.map((skill) => [skill.id, mockSkillPerms.map((item) => ({ ...item, skillId: skill.id }))]));
+const mockSkillImpacts: Record<string, SkillImpactReport> = {
+  s1: { skillId: 's1', agents: ['故障自愈'], workflows: ['Redis OOM 自动处置'], activeRuns: 1, uninstallAllowed: false, reason: '存在 1 个运行中的工作流和 1 个已发布智能体引用' },
+  s2: { skillId: 's2', agents: ['故障自愈', '变更辅助'], workflows: ['K8s 节点自愈', '灰度发布'], activeRuns: 0, uninstallAllowed: false, reason: '存在 2 个已发布智能体引用' },
+};
+const mockSkillCatalog: Array<Skill & { publisher: string; signed: boolean; dependencies: string[]; license: string; lastScannedAt: string; vulnerabilityCount: number; supportedEnvironments: string[] }> = [
+  { id: 'st1', name: 'mysql-cli', kind: 'skill', description: 'MySQL 命令执行', version: '2.0.0', status: 'available', rating: 4.7, installCount: 3200, riskLevel: 'mid', cacheable: true, publisher: '企业能力市场', signed: true, dependencies: [], license: 'Apache-2.0', lastScannedAt: '12 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
+  { id: 'st2', name: 'pg-cli', kind: 'skill', description: 'PostgreSQL 客户端', version: '1.8.0', status: 'available', rating: 4.6, installCount: 2800, riskLevel: 'mid', cacheable: true, publisher: '企业能力市场', signed: true, dependencies: [], license: 'Apache-2.0', lastScannedAt: '18 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
+  { id: 'st3', name: 'gitlab-mcp', kind: 'mcp', description: 'GitLab MR/Issue MCP', version: '0.9.0', status: 'available', rating: 4.4, installCount: 1200, riskLevel: 'mid', cacheable: false, publisher: '企业能力市场', signed: true, dependencies: ['gitlab-connector'], license: 'MIT', lastScannedAt: '36 分钟前', vulnerabilityCount: 1, supportedEnvironments: ['测试'] },
+  { id: 'st4', name: 'jenkins-mcp', kind: 'mcp', description: 'Jenkins 构建触发', version: '1.0.0', status: 'available', rating: 4.3, installCount: 880, riskLevel: 'high', cacheable: false, publisher: '企业能力市场', signed: true, dependencies: ['jenkins-mcp'], license: '商业授权', lastScannedAt: '刚刚', vulnerabilityCount: 0, supportedEnvironments: ['隔离环境'] },
+  { id: 'st5', name: 'runbook-executor', kind: 'skill', description: '按受控运行手册执行诊断与处置步骤', version: '1.3.0', status: 'available', rating: 4.8, installCount: 2180, riskLevel: 'mid', cacheable: false, publisher: 'SRE 平台组', signed: true, dependencies: ['knowledge-retrieval'], license: '内部许可', lastScannedAt: '9 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
+  { id: 'st6', name: 'security-evidence-skill', kind: 'skill', description: '归集告警、日志与资产证据并输出安全研判材料', version: '1.1.0', status: 'available', rating: 4.6, installCount: 960, riskLevel: 'low', cacheable: true, publisher: '安全运营组', signed: true, dependencies: [], license: '内部许可', lastScannedAt: '16 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
+  { id: 'st7', name: 'pagerduty-mcp', kind: 'mcp', description: '查询事件、升级策略与值班排班的 PagerDuty 连接器', version: '1.2.0', status: 'available', rating: 4.5, installCount: 760, riskLevel: 'mid', cacheable: false, publisher: '企业能力商店', signed: true, dependencies: ['pagerduty-oauth'], license: 'MIT', lastScannedAt: '28 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
+  { id: 'st8', name: 'service-now-mcp', kind: 'mcp', description: 'ServiceNow 事件、请求与变更记录连接器', version: '1.0.2', status: 'available', rating: 4.4, installCount: 620, riskLevel: 'high', cacheable: false, publisher: '企业能力商店', signed: true, dependencies: ['servicenow-oauth'], license: '商业授权', lastScannedAt: '41 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['隔离环境'] },
+  { id: 'st9', name: 'approval-center-tool', kind: 'tool', description: '发起、查询和回收企业审批；支持双人复核策略', version: '2.0.0', status: 'available', rating: 4.7, installCount: 1450, riskLevel: 'high', cacheable: false, publisher: '流程平台组', signed: true, dependencies: ['approval-api-v2'], license: '内部许可', lastScannedAt: '6 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
+  { id: 'st10', name: 'message-delivery-tool', kind: 'tool', description: '向飞书、企微和邮件渠道投递可审计的业务通知', version: '1.8.1', status: 'available', rating: 4.8, installCount: 2660, riskLevel: 'low', cacheable: true, publisher: '消息平台组', signed: true, dependencies: [], license: '内部许可', lastScannedAt: '3 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
+];
+const mockAgentSkillBindings: Record<string, Array<{ skillId: string; skillName: string; status: 'active' | 'pending_approval'; installedAt: string }>> = {
+  a1: [{ skillId: 's1', skillName: 'redis-cli', status: 'active', installedAt: '2026-07-19 09:40' }],
+  a3: [{ skillId: 's2', skillName: 'kubectl', status: 'active', installedAt: '2026-07-19 10:10' }],
+};
+const mockCapabilityBindings: CapabilityBinding[] = [
+  { id: 'cap_a1_s1', targetType: 'agent', targetId: 'a1', capabilityKind: 'skill', capabilityId: 's1', pinnedVersion: '1.0', status: 'active', createdBy: '系统', createdAt: '2026-07-19T09:40:00Z', auditId: 'audit_cap_a1_s1' },
+  { id: 'cap_wf1_s1', targetType: 'workflow', targetId: 'wf1', capabilityKind: 'skill', capabilityId: 's1', pinnedVersion: '1.0', status: 'active', createdBy: '系统', createdAt: '2026-07-19T09:45:00Z', auditId: 'audit_cap_wf1_s1' },
+];
+const mockWorkflowSkills: WorkflowSkill[] = [];
+
+function skillAuditEvents(): SkillAuditEvent[] {
+  return mockControlPlaneAudit.filter((event) => event.domain === 'skill').map((event) => ({ ...event, correlationId: `skill:${event.target}` }));
+}
+const mockChannelTemplates = [
+  { id: 'card1', name: '告警卡片', tone: 'error', desc: 'P0/P1 紧急事件 · 含一键跳转', preview: '🔴 [P0] Redis OOM\n集群: prod-redis-01\n[查看详情 →]' },
+  { id: 'card2', name: '审批卡片', tone: 'warn', desc: '双签审批 · 同意/拒绝按钮', preview: '✍️ 变更审批\n[批准] [拒绝]' },
+];
+const mockChannelBlacklist = [
+  { id: 'b1', type: '用户', value: 'test-spammer@external.com', reason: '高频无效告警', addedBy: '系统', expires: '2026-08-01' },
+];
+const mockChannelLanguages = [
+  { key: 'zh-CN', label: '简体中文', sample: '您的服务出现异常，请立即处理。' },
+  { key: 'en-US', label: 'English', sample: 'Your service has encountered an anomaly, please handle immediately.' },
+];
+const mockChannelRoutes = [
+  { event: 'P0 紧急告警', main: '飞书', f1: '企微', f2: '电话+SMS', fb: '邮件', tone: 'error' },
+  { event: 'P1 重要升级', main: '飞书+企微', f1: '电话', f2: '邮件', fb: '—', tone: 'warn' },
+  { event: 'P2 标准通知', main: '企微', f1: '飞书', f2: '邮件', fb: '—', tone: 'info' },
+];
+
+// 渠道控制面：部署、版本化投递策略、失败队列和审计均由同一领域状态持有。
+const channelDeployments: ChannelDeployment[] = [
+  { id: 'delivery-feishu', workspaceId: 'w1', name: '飞书生产投递', kind: 'feishu', environment: 'production', status: 'active', credentialRef: 'vault://channel-deployments/delivery-feishu/credential', credentialMasked: 'app-…prod', owner: '消息平台组', lastVerifiedAt: '2026-07-19T12:00:00.000Z' },
+  { id: 'delivery-email', workspaceId: 'w1', name: '邮件生产投递', kind: 'email', environment: 'production', status: 'active', credentialRef: 'vault://channel-deployments/delivery-email/credential', credentialMasked: 'smtp-…prod', owner: '消息平台组', lastVerifiedAt: '2026-07-19T12:00:00.000Z' },
+];
+const deliveryPolicies: DeliveryPolicyDraft[] = [
+  { id: 'delivery-policy-p0', workspaceId: 'w1', eventType: 'P0 紧急告警', primaryDeploymentId: 'delivery-feishu', fallbackDeploymentIds: ['delivery-email'], audience: 'SRE 值班组', dataClassification: 'internal', status: 'draft', validationIssues: [] },
+];
+const deliveryVersions: DeliveryPolicyVersion[] = [];
+const deliveryAttempts: DeliveryAttempt[] = [];
+const channelAuditEvents: ChannelAuditEvent[] = [];
+
+function channelContext(opts: { headers?: Record<string, string> }) {
+  const permissions = opts.headers?.['x-mock-permissions']?.split(',').map((item) => item.trim()) ?? [];
+  const token = opts.headers?.Authorization?.replace(/^Bearer\s+/i, '');
+  const resolved = permissions.length ? permissions : token === 'mock-model-admin-token' ? ['channel.read', 'channel.write'] : token === 'mock-jwt-token' ? ['channel.read'] : [];
+  return { workspaceId: opts.headers?.['x-workspace-id'] ?? 'w1', permissions: resolved, actor: token === 'mock-model-admin-token' ? '模型管理员' : '当前用户' };
+}
+function requireChannel(opts: { headers?: Record<string, string> }, permission: 'channel.read' | 'channel.write', workspaceId?: string) {
+  const context = channelContext(opts);
+  if (!context.permissions.includes(permission)) throw new Error(`E_CHANNEL_${permission === 'channel.write' ? 'WRITE' : 'READ'}_FORBIDDEN: 缺少 ${permission} 权限`);
+  if (workspaceId && context.workspaceId !== workspaceId) throw new Error('E_CHANNEL_WORKSPACE_SCOPE: 无权操作其他工作区渠道资源');
+  return context;
+}
+function appendChannelAudit(opts: { headers?: Record<string, string> }, action: string, target: string, result: 'success' | 'failed', details: { reason?: string; policyVersion?: string; correlationId?: string } = {}) {
+  const context = channelContext(opts);
+  const event: ChannelAuditEvent = { id: mockId('channel_audit'), workspaceId: context.workspaceId, time: new Date().toISOString(), actor: context.actor, action, target, result, reason: details.reason, policyVersion: details.policyVersion, correlationId: details.correlationId ?? mockId('channel_corr') };
+  channelAuditEvents.unshift(event);
+  return event;
+}
+function validateDeliveryPolicy(policy: DeliveryPolicyDraft) {
+  const ids = [policy.primaryDeploymentId, ...policy.fallbackDeploymentIds];
+  const deployments = ids.map((id) => channelDeployments.find((item) => item.id === id));
+  const issues: string[] = [];
+  if (!deployments[0] || deployments[0].status !== 'active') issues.push('E_DELIVERY_PRIMARY_UNAVAILABLE: 主渠道不可用');
+  if (new Set(ids).size !== ids.length) issues.push('E_DELIVERY_FALLBACK_INVALID: 降级链不能重复');
+  if (deployments.some((item) => !item || item.workspaceId !== policy.workspaceId || item.status !== 'active')) issues.push('E_DELIVERY_FALLBACK_INVALID: 降级渠道不可用或不属于当前工作区');
+  if (policy.dataClassification === 'restricted' && deployments.some((item) => item?.kind === 'webhook' || item?.kind === 'sms')) issues.push('E_DELIVERY_CLASSIFICATION_BLOCKED: 受限数据不能投递至外部渠道');
+  return issues;
+}
+function maskTarget(value: string) { return value.length < 5 ? '***' : `${value.slice(0, 2)}***${value.slice(-2)}`; }
+
+function appendControlPlaneAudit(domain: 'model' | 'channel' | 'skill', action: string, target: string, result: 'success' | 'failed' = 'success') {
+  const event = { id: mockId('control_audit'), time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), actor: '当前用户', domain, action, target, result };
+  mockControlPlaneAudit.unshift(event);
+  return event;
+}
+
+// ============ 模型控制面 Mock 域 ============
+// 注意：凭据仅在接入请求中一次性出现；领域状态绝不保存明文凭据。
+const modelProfiles: ModelProfile[] = [
+  { id: 'model-sonnet', providerId: 'p1', name: 'Claude Sonnet-4', cloudRegion: 'us-west-2', dataResidency: 'global', capabilities: ['chat', 'reasoning'], status: 'available', contextWindow: 200_000 },
+  { id: 'model-gpt4o', providerId: 'p2', name: 'GPT-4o', cloudRegion: 'eastasia', dataResidency: 'global', capabilities: ['chat', 'vision'], status: 'available', contextWindow: 128_000 },
+  { id: 'model-qwen', providerId: 'p5', name: 'Qwen2.5-72B', cloudRegion: 'cn-east-1', dataResidency: 'cn', capabilities: ['chat', 'reasoning'], status: 'available', contextWindow: 32_000 },
+  { id: 'model-w2-isolated', providerId: 'p9', name: '隔离工作区模型', cloudRegion: 'cn-east-1', dataResidency: 'cn', capabilities: ['chat'], status: 'available', contextWindow: 32_000 },
+];
+
+const modelProviders: ModelProvider[] = [
+  { id: 'p1', workspaceId: 'w1', name: 'Anthropic', tier: 'official', cloudRegion: 'us-west-2', dataResidency: 'global', status: 'active', credentialRef: 'vault://model-providers/p1/credential', credentialMasked: 'sk-…prod', lastVerifiedAt: '2026-07-19T14:32:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p1') },
+  { id: 'p2', workspaceId: 'w1', name: 'Azure OpenAI', tier: 'official', cloudRegion: 'eastasia', dataResidency: 'global', status: 'standby', credentialRef: 'vault://model-providers/p2/credential', credentialMasked: 'key-…prod', lastVerifiedAt: '2026-07-19T14:28:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p2') },
+  { id: 'p5', workspaceId: 'w1', name: 'Qwen2.5-72B', tier: 'self_hosted', cloudRegion: 'cn-east-1', dataResidency: 'cn', status: 'active', credentialRef: 'vault://model-providers/p5/credential', credentialMasked: 'vault-managed', lastVerifiedAt: '2026-07-19T14:31:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p5') },
+  { id: 'p9', workspaceId: 'w2', name: '隔离工作区 Provider', tier: 'self_hosted', cloudRegion: 'cn-east-1', dataResidency: 'cn', status: 'active', credentialRef: 'vault://model-providers/p9/credential', credentialMasked: 'vault-managed', lastVerifiedAt: '2026-07-19T14:31:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p9') },
+];
+
+const routingPolicies: RoutingPolicyDraft[] = [
+  { id: 'route-p0', workspaceId: 'w1', level: 'P0', primaryModelId: 'model-sonnet', fallbackModelIds: ['model-gpt4o'], dataScope: 'internal', egressAllowed: true, budgetLimitUsd: 1_500, status: 'published', validationIssues: [] },
+  { id: 'route-p1', workspaceId: 'w1', level: 'P1', primaryModelId: 'model-qwen', fallbackModelIds: ['model-sonnet'], dataScope: 'internal', egressAllowed: true, budgetLimitUsd: 800, status: 'draft', validationIssues: [] },
+  { id: 'route-p2', workspaceId: 'w1', level: 'P2', primaryModelId: 'model-qwen', fallbackModelIds: [], dataScope: 'restricted', egressAllowed: false, budgetLimitUsd: 400, status: 'published', validationIssues: [] },
+];
+
+const routingVersions: RoutingPolicyVersion[] = [
+  { id: 'route-p0-v1', policyId: 'route-p0', version: 1, snapshot: { ...routingPolicies[0], fallbackModelIds: [...routingPolicies[0].fallbackModelIds] }, publishedAt: '2026-07-18T09:00:00.000Z', publishedBy: '王昊' },
+  { id: 'route-p2-v1', policyId: 'route-p2', version: 1, snapshot: { ...routingPolicies[2], fallbackModelIds: [] }, publishedAt: '2026-07-18T09:00:00.000Z', publishedBy: '王昊' },
+];
+
+const modelAuditEvents: ModelAuditEvent[] = [];
+
+type ModelRequestOptions = { headers?: Record<string, string>; body?: unknown };
+
+function modelContext(opts: ModelRequestOptions) {
+  const explicitPermissions = opts.headers?.['x-mock-permissions']?.split(',').map((item) => item.trim());
+  const token = opts.headers?.Authorization?.replace(/^Bearer\s+/i, '');
+  const permissions = explicitPermissions ?? (token === 'mock-model-admin-token' ? ['model.read', 'model.write'] : token === 'mock-jwt-token' ? ['model.read'] : []);
+  const actor = opts.headers?.['x-mock-actor'] ?? (token === 'mock-model-admin-token' ? '模型管理员' : token === 'mock-jwt-token' ? '王昊' : '当前用户');
+  return { workspaceId: opts.headers?.['x-workspace-id'] ?? 'w1', permissions, actor };
+}
+
+function requireModelRead(opts: ModelRequestOptions) {
+  const context = modelContext(opts);
+  if (!context.permissions.includes('model.read')) throw new Error('E_MODEL_READ_FORBIDDEN: 缺少 model.read 权限');
+  return context;
+}
+
+function requireModelWrite(opts: ModelRequestOptions, workspaceId: string) {
+  const context = modelContext(opts);
+  if (!context.permissions.includes('model.write')) throw new Error('E_MODEL_WRITE_FORBIDDEN: 缺少 model.write 权限');
+  if (context.workspaceId !== workspaceId) throw new Error('E_WORKSPACE_SCOPE: 无权操作其他工作区模型资源');
+  return context;
+}
+
+function appendModelAudit(opts: ModelRequestOptions, action: string, target: string, result: 'success' | 'failed', details: { reason?: string; policyVersion?: string; correlationId?: string } = {}) {
+  const context = modelContext(opts);
+  const event: ModelAuditEvent = { id: mockId('model_audit'), time: new Date().toISOString(), workspaceId: context.workspaceId, actor: context.actor, action, target, result, reason: details.reason, policyVersion: details.policyVersion, correlationId: details.correlationId ?? mockId('corr') };
+  modelAuditEvents.unshift(event);
+  return event;
+}
+
+function modelById(id: string) {
+  return modelProfiles.find((model) => model.id === id);
+}
+
+function validateRoutingPolicy(policy: RoutingPolicyDraft) {
+  const issues: string[] = [];
+  const primary = modelById(policy.primaryModelId);
+  const modelIds = [policy.primaryModelId, ...policy.fallbackModelIds];
+  const selectedProviders = modelIds.map((id) => modelById(id)).filter(Boolean).map((model) => modelProviders.find((provider) => provider.id === model!.providerId));
+  if (!primary || primary.status !== 'available') issues.push('E_MODEL_UNAVAILABLE: 主模型不可用');
+  if (selectedProviders.some((provider) => provider?.workspaceId !== policy.workspaceId)) issues.push('E_MODEL_SCOPE: 模型部署不属于当前工作区');
+  if (new Set(modelIds).size !== modelIds.length) issues.push('E_FALLBACK_INVALID: 降级链不能重复或指向主模型');
+  if (policy.fallbackModelIds.some((id) => !modelById(id) || modelById(id)?.status !== 'available')) issues.push('E_FALLBACK_INVALID: 降级模型不可用');
+  if (policy.dataScope === 'restricted' && policy.egressAllowed) issues.push('E_EGRESS_BLOCKED: 受限数据不允许出境');
+  if (policy.dataScope === 'restricted' && modelIds.some((id) => modelById(id)?.dataResidency !== 'cn')) issues.push('E_EGRESS_BLOCKED: 受限数据必须路由至境内模型部署');
+  if (policy.budgetLimitUsd <= 0) issues.push('E_BUDGET_EXCEEDED: 预算必须大于 0');
+  return issues;
+}
+
+function providerImpact(providerId: string): ProviderImpact {
+  const routeReferences = routingVersions
+    .filter((version) => [version.snapshot.primaryModelId, ...version.snapshot.fallbackModelIds].some((modelId) => modelById(modelId)?.providerId === providerId))
+    .map((version) => ({ policyId: version.policyId, level: version.snapshot.level, versionId: version.id }));
+  return { providerId, routeReferences, deletionAllowed: routeReferences.length === 0, blockedReason: routeReferences.length ? 'Provider 被已发布路由引用，需先替换或停用路由。' : undefined };
+}
 
 // ============ P11 设置扩展数据 ============
 
@@ -1057,7 +1476,7 @@ function appendTaskDomainEvent(task: ControlledTask) {
 
 // ============ Mock 路由 ============
 
-export async function mockHandler(path: string, opts: { method?: string; body?: unknown; query?: Record<string, any> }): Promise<unknown> {
+export async function mockHandler(path: string, opts: { method?: string; body?: unknown; query?: Record<string, any>; headers?: Record<string, string> }): Promise<unknown> {
   await sleep(80); // 模拟网络延迟
   const method = opts.method?.toUpperCase() ?? 'GET';
 
@@ -1118,6 +1537,28 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   }
 
   // 智能体
+  const capabilityTarget = path.match(/^\/api\/(agents|workflows)\/([^/]+)\/capabilities(?:\/([^/]+))?$/);
+  if (capabilityTarget) {
+    const [, resource, targetId, bindingId] = capabilityTarget;
+    const targetType = resource === 'agents' ? 'agent' as const : 'workflow' as const;
+    if (method === 'GET') return mockCapabilityBindings.filter((binding) => binding.targetType === targetType && binding.targetId === targetId);
+    if (method === 'POST') {
+      const body = (opts.body ?? {}) as Partial<CapabilityBinding>;
+      const capability = body.capabilityKind === 'workflow_skill' ? mockWorkflowSkills.find((item) => item.id === body.capabilityId) : mockSkills.find((item) => item.id === body.capabilityId);
+      if (!capability) throw new Error('能力尚未安装或未发布');
+      if (body.capabilityKind === 'workflow_skill' && (capability as WorkflowSkill).status !== 'published') throw new Error('工作流技能尚未发布');
+      const binding: CapabilityBinding = { id: mockId('binding'), targetType, targetId, capabilityKind: body.capabilityKind ?? 'skill', capabilityId: body.capabilityId!, pinnedVersion: body.pinnedVersion ?? ('version' in capability ? capability.version : (capability as WorkflowSkill).sourceVersionId), status: body.status ?? 'active', createdBy: '当前用户', createdAt: new Date().toISOString(), auditId: mockId('audit') };
+      mockCapabilityBindings.push(binding); appendControlPlaneAudit('skill', '绑定能力', `${targetType}:${targetId} → ${binding.capabilityId}`); return binding;
+    }
+    if (method === 'DELETE' && bindingId) { const index = mockCapabilityBindings.findIndex((binding) => binding.id === bindingId && binding.targetId === targetId); if (index < 0) throw new Error('能力绑定不存在'); const [removed] = mockCapabilityBindings.splice(index, 1); appendControlPlaneAudit('skill', '解绑能力', `${targetType}:${targetId} → ${removed.capabilityId}`); return removed; }
+  }
+  if (path === '/api/workflow-skills' && method === 'GET') return mockWorkflowSkills;
+  const publishAsSkill = path.match(/^\/api\/workflows\/([^/]+)\/publish-as-skill$/);
+  if (publishAsSkill && method === 'POST') {
+    const body = (opts.body ?? {}) as { version?: string; name?: string; description?: string };
+    const workflowSkill: WorkflowSkill = { id: mockId('workflow_skill'), sourceWorkflowId: publishAsSkill[1], sourceVersionId: body.version ?? 'v1', name: body.name?.trim() || '未命名工作流技能', description: body.description?.trim() || '由受控工作流发布的可复用能力', riskLevel: 'mid', approvalRequired: true, rollbackSupported: true, status: 'published' };
+    mockWorkflowSkills.unshift(workflowSkill); appendControlPlaneAudit('skill', '发布工作流技能', workflowSkill.name); return workflowSkill;
+  }
   if (path === '/api/agents' && method === 'GET') return mockAgents;
   if (path === '/api/agents/imports' && method === 'GET') return mockAgentImports;
   if (path === '/api/agents/import' && method === 'POST') {
@@ -1164,6 +1605,33 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     if (call.status === 'timeout' || call.status === 'error') mockAgentRuntime.alerts.unshift({ id: mockId('agent_alert'), agent: (call as any).agent ?? '智能体', agentId: (call as any).agentId, severity: call.status === 'timeout' ? 'warn' : 'error', type: 'latency', title: `运行${call.status === 'timeout' ? '超时' : '失败'}，需要关注`, ts: call.ts, acknowledged: false });
     return call;
   }
+  const agentSkillBinding = path.match(/^\/api\/agents\/([^/]+)\/skills(?:\/([^/]+))?$/);
+  if (agentSkillBinding) {
+    const [, agentId, bindingSkillId] = agentSkillBinding;
+    const agent = mockAgents.find((item) => item.id === agentId);
+    if (!agent) throw new Error('智能体不存在');
+    const bindings = mockAgentSkillBindings[agentId] ?? (mockAgentSkillBindings[agentId] = []);
+    if (method === 'GET') return bindings;
+    if (method === 'POST') {
+      const body = (opts.body ?? {}) as { skillId?: string; approvalTicket?: string };
+      const skill = mockSkills.find((item) => item.id === body.skillId);
+      if (!skill) throw new Error('技能尚未安装到工作区，无法分配给智能体');
+      if (agent.status !== 'installed') throw new Error('智能体尚未启用，无法安装技能');
+      if (skill.riskLevel === 'high' && !body.approvalTicket) throw new Error('E_APPROVAL_REQUIRED: 高风险技能分配需要审批单号');
+      if (bindings.some((binding) => binding.skillId === skill.id)) return bindings;
+      bindings.push({ skillId: skill.id, skillName: skill.name, status: 'active', installedAt: new Date().toLocaleString('zh-CN') });
+      const impact = mockSkillImpacts[skill.id] ?? { skillId: skill.id, agents: [], workflows: [], activeRuns: 0, uninstallAllowed: true };
+      if (!impact.agents.includes(agent.name)) impact.agents.push(agent.name);
+      impact.uninstallAllowed = false; impact.reason = `已分配给 ${impact.agents.length} 个智能体`;
+      mockSkillImpacts[skill.id] = impact;
+      appendControlPlaneAudit('skill', '分配技能到智能体', `${skill.name} → ${agent.name}`); return bindings;
+    }
+    if (method === 'DELETE' && bindingSkillId) {
+      const index = bindings.findIndex((binding) => binding.skillId === bindingSkillId);
+      if (index < 0) throw new Error('智能体未安装该技能');
+      const [binding] = bindings.splice(index, 1); appendControlPlaneAudit('skill', '从智能体移除技能', `${binding.skillName} → ${agent.name}`); return binding;
+    }
+  }
   const agentAction = path.match(/^\/api\/agents\/([^/]+)\/(install|uninstall|enable|disable|publish|config|audit|metrics|calls)$/);
   if (agentAction) {
     const [, agentId, action] = agentAction;
@@ -1202,76 +1670,140 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 工作流
   if (path === '/api/workflows') return [mockWorkflow];
-  if (path === '/api/workflow-templates') return mockWorkflowTemplates;
-  if (path === '/api/workflow-runs') return mockWorkflowRuns;
+  if (path === '/api/workflow-templates') return mockWorkflowTemplates.map((template, index) => ({
+    ...template,
+    version: ['v2.4', 'v3.1', 'v2.2', 'v1.8', 'v1.6', 'v2.0'][index],
+    owner: ['SRE 平台组', '安全运营组', '合规运营组', '交付工程组', '安全运营组', '容量运营组'][index],
+    verifiedAt: ['2026-07-16', '2026-07-12', '2026-07-17', '2026-07-14', '2026-07-15', '2026-07-10'][index],
+    risk: ['L3', 'L3', 'L1', 'L3', 'L2', 'L2'][index],
+    dependencies: index === 0 ? ['redis-cli', 'kubernetes-mcp'] : index === 1 ? ['cve-kb', 'patch-skill'] : ['受控连接器'],
+    health: index === 0 ? '需授权' : '健康',
+    successRate: ['98.6%', '96.8%', '99.2%', '97.9%', '98.1%', '95.4%'][index],
+    sequence: index === 0 ? ['event', 'retrieve', 'decision', 'policy', 'approval', 'execute', 'compensate', 'audit', 'notify'] : index === 1 ? ['event', 'retrieve', 'decision', 'policy', 'approval', 'task', 'execute', 'compensate', 'audit', 'notify'] : ['schedule', 'retrieve', 'decision', 'policy', 'task', 'audit', 'notify'],
+  }));
+  if (path === '/api/workflow-runs') return mockWorkflowControl.runs;
   if (path === '/api/workflow-kpi') return mockWorkflowKpi;
-  if (path === '/api/workflows/generations' && method === 'GET') return mockWorkflowGenerations;
+  if (path === '/api/workflows/generations' && method === 'GET') {
+    return mockWorkflowGenerations.filter((item) => item.tenantId === WORKFLOW_GENERATION_PRINCIPAL.tenantId && item.workspaceId === WORKFLOW_GENERATION_PRINCIPAL.workspaceId && item.ownerId === WORKFLOW_GENERATION_PRINCIPAL.userId && item.status !== 'expired');
+  }
   if (path === '/api/workflows/generate' && method === 'POST') {
     const body = (opts.body ?? {}) as Record<string, any>;
     const prompt = String(body.prompt ?? '').trim();
     const constraints = body.constraints ?? {};
-    const base = mockWorkflowGenerations[0];
+    if (body.workspaceId !== WORKFLOW_GENERATION_PRINCIPAL.workspaceId) throw new Error('当前账号无权在该工作区生成工作流');
+    if (!prompt || prompt.length < 8 || prompt.length > 1000) throw new Error('业务目标需为 8 至 1000 个字符');
+    rejectUnsafeGenerationPrompt(prompt);
+    if (!ALLOWED_GENERATION_MODELS.has(String(body.model))) throw new Error('当前工作区不允许使用该生成模型');
+    const workflow = buildGeneratedWorkflow(prompt);
+    const hasExternalWrite = workflow.nodes.some((node) => ['execute', 'http', 'mcp'].includes(node.kind));
+    const dependencies = hasExternalWrite ? [{ type: 'tool' as const, name: '受控执行 Skill', status: 'available' as const }, { type: 'mcp' as const, name: 'kubernetes-mcp', status: 'missing' as const, reason: '当前工作区未授权写权限' }] : [{ type: 'agent' as const, name: '数字员工编排器', status: 'available' as const }];
     const generated: WorkflowGenerationRecord = {
-      ...JSON.parse(JSON.stringify(base)),
       id: mockId('gen'),
-      prompt: prompt || base.prompt,
-      model: body.model || '企业默认模型',
+      prompt,
+      promptDigest: generationDigest(prompt),
+      model: String(body.model),
+      workspaceId: WORKFLOW_GENERATION_PRINCIPAL.workspaceId,
+      tenantId: WORKFLOW_GENERATION_PRINCIPAL.tenantId,
+      ownerId: WORKFLOW_GENERATION_PRINCIPAL.userId,
+      policyVersion: 'workflow-policy-v3',
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
       createdAt: new Date().toISOString(),
-      status: 'completed',
-      qualityScore: constraints.requireRollback ? 89 : 84,
+      status: 'review_required',
+      workflow,
+      qualityScore: hasExternalWrite ? 82 : 90,
       requiresReview: true,
-      checks: { structure: 'passed', dependencies: 'review', risk: constraints.requireApproval === false ? 'passed' : 'review' },
+      checks: { structure: 'passed', dependencies: dependencies.some((dependency) => dependency.status === 'missing') ? 'review' : 'passed', risk: hasExternalWrite ? 'review' : 'passed' },
+      dependencies,
       warnings: [
         '生成结果仅为可编辑草稿，不会自动执行或发布',
-        ...(constraints.requireRollback ? [] : ['建议补充回滚分支']),
-        '执行恢复节点需要 kubernetes-mcp 写权限',
+        '审计留痕由工作区策略强制开启',
+        ...(hasExternalWrite ? ['高风险动作已自动补充审批与补偿回滚节点', '执行节点需要匹配工作区权限后才能试运行'] : []),
       ],
-      risks: constraints.requireApproval === false ? [] : base.risks,
+      risks: hasExternalWrite ? [{ level: constraints.riskLevel === 'L3' ? 'L3' : 'L2', node: '执行受控动作', text: '外部写入操作必须通过策略、审批、回滚和权限检查', requiresApproval: true }] : [],
     };
     mockWorkflowGenerations.unshift(generated);
+    workflowAudit('WORKFLOW_GENERATE', `${generated.id}:${generated.promptDigest}`);
     return generated;
   }
   const generationAction = path.match(/^\/api\/workflows\/generations\/([^/]+)(?:\/(apply|discard))?$/);
   if (generationAction) {
     const record = mockWorkflowGenerations.find((item) => item.id === generationAction[1]);
-    if (!record) return null;
+    if (!record || record.tenantId !== WORKFLOW_GENERATION_PRINCIPAL.tenantId || record.workspaceId !== WORKFLOW_GENERATION_PRINCIPAL.workspaceId || record.ownerId !== WORKFLOW_GENERATION_PRINCIPAL.userId) throw new Error('无权访问该生成记录');
     if (!generationAction[2] && method === 'GET') return record;
-    if (generationAction[2] === 'discard' && method === 'POST') { record.status = 'discarded'; return record; }
-    if (generationAction[2] === 'apply' && method === 'POST') return { ...record, status: 'completed', appliedAt: new Date().toISOString() };
+    if (generationAction[2] === 'discard' && method === 'POST') { record.status = 'discarded'; workflowAudit('WORKFLOW_GENERATION_DISCARD', record.id); return record; }
+    if (generationAction[2] === 'apply' && method === 'POST') {
+      if (record.status !== 'review_required' && record.status !== 'generated') throw new Error('该生成记录不可再次应用');
+      if (new Date(record.expiresAt).getTime() < Date.now()) { record.status = 'expired'; throw new Error('生成记录已过期，请重新生成'); }
+      const revisionId = `rev_${mockId('wf')}`;
+      const revision = { id: revisionId, generationId: record.id, nodes: JSON.parse(JSON.stringify(record.workflow.nodes)), edges: JSON.parse(JSON.stringify(record.workflow.edges)), createdAt: new Date().toISOString() };
+      workflowGenerationRevisions.set(revisionId, revision);
+      mockWorkflowControl.versions.unshift({ id: revisionId, label: `${revisionId} · AI 草稿`, time: '刚刚', desc: `AI 生成草稿 · ${record.promptDigest}` });
+      record.status = 'applied';
+      record.revisionId = revisionId;
+      workflowAudit('WORKFLOW_GENERATION_APPLY', `${record.id}:${revisionId}`);
+      return { ...record, revisionId, revision };
+    }
   }
   const workflowDetail = path.match(/^\/api\/workflows\/([^/]+)(?:\/(validate|run|audit|versions|publish|rollback|draft))?$/);
   if (workflowDetail && workflowDetail[1] !== 'generate' && workflowDetail[1] !== 'generations') {
     const action = workflowDetail[2];
     if (!action && method === 'GET') return mockWorkflowControl.draft;
     if (action === 'draft' && method === 'PUT') {
-      mockWorkflowControl.draft = { ...mockWorkflowControl.draft, ...((opts.body ?? {}) as Record<string, any>) };
-      workflowAudit('WORKFLOW_SAVE', workflowDetail[1]);
+      const body = (opts.body ?? {}) as Record<string, any>;
+      mockWorkflowControl.draft = { ...mockWorkflowControl.draft, ...body };
+      const revision = body.version ? workflowGenerationRevisions.get(String(body.version)) : undefined;
+      if (revision) {
+        revision.nodes = JSON.parse(JSON.stringify(body.nodes ?? revision.nodes));
+        revision.edges = JSON.parse(JSON.stringify(body.edges ?? revision.edges));
+      }
+      workflowAudit('WORKFLOW_SAVE', `${workflowDetail[1]}:${body.version ?? 'current-draft'}`);
       return mockWorkflowControl.draft;
     }
     if (action === 'validate' && method === 'POST') {
-      const draft = mockWorkflowControl.draft;
+      const body = (opts.body ?? {}) as Record<string, any>;
+      const revision = body.revisionId ? workflowGenerationRevisions.get(String(body.revisionId)) : undefined;
+      if (body.revisionId && !revision) throw new Error('工作流修订版本不存在或无权访问');
+      const draft = revision ?? mockWorkflowControl.draft;
+      const nodeKinds = (draft.nodes ?? []).map((node: any) => node.kind ?? node.data?.kind);
+      const hasExternalWrite = nodeKinds.some((kind: string) => ['execute', 'http', 'mcp'].includes(kind));
       const checks = {
-        structure: draft.nodes?.length > 0 && draft.nodes.some((n: any) => n.kind === 'trigger') ? 'passed' : 'failed',
+        structure: draft.nodes?.length > 0 && draft.nodes.some((n: any) => ['trigger', 'schedule', 'event'].includes(n.kind)) ? 'passed' : 'failed',
         connections: draft.nodes?.every((n: any) => draft.nodes.length <= 1 || draft.edges?.some((e: any) => e.source === n.id || e.target === n.id)) ? 'passed' : 'failed',
-        dependencies: 'review',
-        permissions: 'review',
-        risk: draft.nodes?.some((n: any) => n.kind === 'execute') ? 'review' : 'passed',
-        approval: draft.nodes?.some((n: any) => n.kind === 'approval') ? 'passed' : 'review',
-        audit: draft.nodes?.some((n: any) => n.kind === 'audit') ? 'passed' : 'review',
-        rollback: draft.nodes?.some((n: any) => String(n.data?.label ?? n.label ?? '').includes('回滚')) ? 'passed' : 'review',
+        dependencies: hasExternalWrite ? 'review' : 'passed',
+        permissions: hasExternalWrite ? 'review' : 'passed',
+        risk: hasExternalWrite ? 'review' : 'passed',
+        approval: !hasExternalWrite || nodeKinds.includes('approval') ? 'passed' : 'review',
+        audit: nodeKinds.includes('audit') ? 'passed' : 'review',
+        rollback: !hasExternalWrite || nodeKinds.includes('compensate') ? 'passed' : 'review',
       };
-      const passed = Object.values(checks).every((value) => value !== 'failed');
+      const passed = Object.values(checks).every((value) => value === 'passed');
       workflowAudit('WORKFLOW_VALIDATE', workflowDetail[1], passed ? 'success' : 'failed');
-      return { passed, checks, warnings: checks.dependencies === 'review' ? ['存在依赖或权限需要人工确认'] : [] };
+      return { passed, revisionId: revision?.id ?? body.revisionId ?? null, checks, warnings: passed ? [] : ['存在依赖、权限或治理项需要人工确认'] };
     }
     if (action === 'run' && method === 'POST') {
-      const run = { id: mockId('run'), time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), trigger: mockWorkflowControl.draft.name ?? '工作流', status: 'running', duration: 0, steps: mockWorkflowControl.draft.nodes?.length ?? 0, who: '当前用户' };
+      const body = (opts.body ?? {}) as Record<string, any>;
+      const revision = body.version ? workflowGenerationRevisions.get(String(body.version)) : undefined;
+      const runnableDraft = revision ?? mockWorkflowControl.draft;
+      const nodeKinds = (runnableDraft.nodes ?? []).map((node: any) => node.kind ?? node.data?.kind);
+      const hasExternalWrite = nodeKinds.some((kind: string) => ['execute', 'http', 'mcp'].includes(kind));
+      const hasGovernance = nodeKinds.includes('policy') && nodeKinds.includes('approval') && nodeKinds.includes('audit') && nodeKinds.includes('compensate');
+      if (!nodeKinds.some((kind: string) => ['trigger', 'schedule', 'event'].includes(kind))) throw new Error('工作流缺少触发节点，无法试运行');
+      if (hasExternalWrite && !hasGovernance) throw new Error('高风险动作缺少策略、审批、审计或补偿回滚，禁止试运行');
+      if (hasExternalWrite) throw new Error('外部执行节点的依赖与权限尚未完成服务端授权，禁止试运行');
+      const run = { id: mockId('run'), time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), trigger: mockWorkflowControl.draft.name ?? '工作流', status: 'running', duration: 0, steps: runnableDraft.nodes?.length ?? 0, who: '当前用户', revisionId: revision?.id };
       mockWorkflowControl.runs.unshift(run);
-      workflowAudit('WORKFLOW_RUN', workflowDetail[1]);
+      workflowAudit('WORKFLOW_RUN', `${workflowDetail[1]}:${revision?.id ?? 'current-draft'}`);
       return run;
     }
     if (action === 'versions' && method === 'GET') return mockWorkflowControl.versions;
-    if (action === 'publish' && method === 'POST') { workflowAudit('WORKFLOW_PUBLISH', workflowDetail[1]); return { ...mockWorkflowControl.draft, status: 'published' }; }
+    if (action === 'publish' && method === 'POST') {
+      const nodeKinds = (mockWorkflowControl.draft.nodes ?? []).map((node: any) => node.kind ?? node.data?.kind);
+      const hasExternalWrite = nodeKinds.some((kind: string) => ['execute', 'http', 'mcp'].includes(kind));
+      const hasGovernance = nodeKinds.includes('policy') && nodeKinds.includes('approval') && nodeKinds.includes('audit') && nodeKinds.includes('compensate');
+      if (hasExternalWrite && !hasGovernance) throw new Error('高风险工作流缺少治理节点，禁止发布');
+      if (hasExternalWrite) throw new Error('外部执行节点尚未完成依赖与权限授权，禁止发布');
+      workflowAudit('WORKFLOW_PUBLISH', workflowDetail[1]); return { ...mockWorkflowControl.draft, status: 'published' };
+    }
     if (action === 'rollback' && method === 'POST') { workflowAudit('WORKFLOW_ROLLBACK', workflowDetail[1]); return mockWorkflowControl.draft; }
     if (action === 'audit' && method === 'GET') return mockWorkflowControl.audits;
   }
@@ -1285,19 +1817,278 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   }
   if (path.match(/^\/api\/workflows\/[^/]+\/runs$/) && method === 'GET') return mockWorkflowControl.runs;
 
-  // 知识
-  if (path === '/api/knowledge/docs') return mockKnowledgeDocs;
-  if (path === '/api/knowledge/kb-list') return mockKbList;
-  if (path === '/api/knowledge/doc/k1') return mockDocDetail;
-  if (path === '/api/knowledge/search-history') return mockSearchHistory;
-  if (path === '/api/knowledge/citation-trace') return mockCitationTrace;
-  if (path === '/api/knowledge/eval') return mockEvalMetrics;
-  if (path === '/api/knowledge/chunks/top') {
-    return mockConversation.messages.find((m) => m.citations)?.citations ?? [];
+  // 知识运营工作台：所有写操作回写到同一份 mock 领域状态，便于前端验证完整交互链路。
+  if (path === '/api/knowledge/docs' && method === 'GET') return mockKnowledgeDocs;
+  if (path === '/api/knowledge/docs' && method === 'POST') {
+    const body = (opts.body ?? {}) as { title?: string; source?: string; tags?: string };
+    if (!body.title?.trim()) throw new Error('文档标题不能为空');
+    const doc: KnowledgeDoc = { id: mockId('knowledge_doc'), title: body.title.trim(), source: body.source ?? 'Runbook', sizeKb: 0, chunks: 0, citeCount: 0, status: 'parsing', updatedAt: new Date().toISOString() };
+    mockKnowledgeDocs.unshift(doc);
+    appendKnowledgeAudit('上传知识文档', doc.title);
+    setTimeout(() => { doc.status = 'ready'; doc.sizeKb = 64; doc.chunks = 42; doc.updatedAt = new Date().toISOString(); appendKnowledgeAudit('文档解析与索引完成', doc.title); }, 1000);
+    return doc;
+  }
+  if (path === '/api/knowledge/docs/review' && method === 'POST') {
+    const body = (opts.body ?? {}) as { ids?: string[] };
+    const ids = body.ids ?? [];
+    if (!ids.length) throw new Error('请至少选择一项知识资产');
+    appendKnowledgeAudit('发起知识复核', `${ids.length} 项资产`);
+    return { ids, status: 'review_requested' };
+  }
+  const knowledgeDetailPath = path.match(/^\/api\/knowledge\/doc\/([^/]+)$/);
+  if (knowledgeDetailPath && method === 'GET') {
+    const doc = mockKnowledgeDocs.find((item) => item.id === knowledgeDetailPath[1]);
+    if (!doc) throw new Error('知识文档不存在');
+    return knowledgeDocDetail(doc);
+  }
+  if (path === '/api/knowledge/kb-list' && method === 'GET') return mockKbList;
+  if (path === '/api/knowledge/kb-list' && method === 'POST') {
+    const body = (opts.body ?? {}) as { key?: string; label?: string; source?: string; embedding?: string };
+    if (!body.label?.trim()) throw new Error('知识库名称不能为空');
+    const item = { key: body.key ?? mockId('kb'), label: body.label.trim(), source: body.source ?? 'Runbook', count: 0, embedding: body.embedding ?? 'BGE-M3' };
+    mockKbList.push(item);
+    appendKnowledgeAudit('创建知识库', item.label);
+    return item;
+  }
+  if (path === '/api/knowledge/reindex' && method === 'POST') {
+    const body = (opts.body ?? {}) as { kb?: string };
+    const affected = mockKnowledgeDocs.filter((doc) => doc.status !== 'failed');
+    affected.forEach((doc) => { doc.status = 'indexing'; });
+    appendKnowledgeAudit('启动索引重建', body.kb ?? '当前知识库');
+    setTimeout(() => { affected.forEach((doc) => { doc.status = 'ready'; doc.updatedAt = new Date().toISOString(); }); appendKnowledgeAudit('索引重建完成', body.kb ?? '当前知识库'); }, 1200);
+    return { status: 'indexing', affected: affected.length };
+  }
+  if (path === '/api/knowledge/search-history' && method === 'GET') return mockSearchHistory;
+  if (path === '/api/knowledge/citation-trace' && method === 'GET') return mockCitationTrace;
+  if (path === '/api/knowledge/eval' && method === 'GET') return mockEvalMetrics;
+  if (path === '/api/knowledge/chunks/top' && method === 'GET') return mockKnowledgeChunks;
+  if (path === '/api/knowledge/retrieve' && method === 'POST') {
+    const body = (opts.body ?? {}) as { query?: string; kb?: string };
+    if (!body.query?.trim()) throw new Error('请输入检索问题');
+    const query = body.query.trim();
+    const normalized = query.toLowerCase();
+    const results = mockKnowledgeChunks.filter((chunk) => `${chunk.source} ${chunk.text}`.toLowerCase().includes(normalized) || normalized.split(/\s+/).some((token) => token.length > 1 && `${chunk.source} ${chunk.text}`.toLowerCase().includes(token))).slice(0, 5);
+    const resolved = (results.length ? results : mockKnowledgeChunks.slice(0, 4)).map((chunk, index) => ({ ...chunk, idx: index + 1, score: Math.min(.99, chunk.score + .01) }));
+    mockSearchHistory.unshift({ id: mockId('search'), time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), query, kb: body.kb ?? 'Runbook', results: resolved.length, topScore: resolved[0]?.score ?? 0 });
+    appendKnowledgeAudit('执行检索验证', query);
+    return { results: resolved, metrics: mockEvalMetrics };
+  }
+  if (path === '/api/knowledge/chunks/rescore' && method === 'POST') {
+    mockKnowledgeChunks.sort((a, b) => b.score - a.score).forEach((chunk, index) => { chunk.idx = index + 1; chunk.score = Math.min(.99, Math.max(.35, chunk.score + ((index % 2 ? -1 : 1) * .01))); });
+    appendKnowledgeAudit('重新评估检索证据', 'Top-K Chunks');
+    return mockKnowledgeChunks;
+  }
+  if (path === '/api/knowledge/sources' && method === 'GET') return mockKnowledgeSources;
+  if (path === '/api/knowledge/sources' && method === 'POST') {
+    const body = (opts.body ?? {}) as Partial<KnowledgeSourceConnection>;
+    if (!body.name?.trim()) throw new Error('数据源名称不能为空');
+    const source: KnowledgeSourceConnection = { id: mockId('knowledge_source'), name: body.name.trim(), kind: body.kind ?? 'REST API', schedule: body.schedule ?? '每 1 小时', lastSync: '尚未同步', documents: 0, status: 'attention' };
+    mockKnowledgeSources.unshift(source);
+    appendKnowledgeAudit('接入知识数据源', source.name);
+    return source;
+  }
+  const knowledgeSourceSync = path.match(/^\/api\/knowledge\/sources\/([^/]+)\/sync$/);
+  if (knowledgeSourceSync && method === 'POST') {
+    const source = mockKnowledgeSources.find((item) => item.id === knowledgeSourceSync[1]);
+    if (!source) throw new Error('数据源不存在');
+    source.status = 'healthy'; source.lastSync = '刚刚';
+    appendKnowledgeAudit('执行数据源同步', source.name);
+    return source;
+  }
+  if (path === '/api/knowledge/governance' && method === 'GET') return mockKnowledgeGovernance;
+  if (path === '/api/knowledge/governance' && method === 'PATCH') {
+    const body = (opts.body ?? {}) as Partial<KnowledgeGovernancePolicy>;
+    Object.assign(mockKnowledgeGovernance, body);
+    appendKnowledgeAudit('更新知识治理策略', '知识运营工作台');
+    return mockKnowledgeGovernance;
+  }
+  if (path === '/api/knowledge/audit' && method === 'GET') return mockKnowledgeAudit;
+
+  // 知识包、加工、评测、图谱与消费者绑定：所有运行时绑定必须锁定已发布版本。
+  if (path === '/api/knowledge/packages' && method === 'GET') return mockKnowledgePackages;
+  if (path === '/api/knowledge/packages' && method === 'POST') {
+    const body = (opts.body ?? {}) as Partial<KnowledgePackage>;
+    if (!body.name?.trim()) throw new Error('知识包名称不能为空');
+    const version = { id: mockId('knowledge_package_version'), version: 'v0.1', status: 'draft' as const, indexVersion: `idx-${Date.now()}`, qualityScore: 0, changeSummary: '首次创建，等待加工与评测' };
+    const item: KnowledgePackage = { id: mockId('knowledge_package'), name: body.name.trim(), description: body.description?.trim() ?? '待补充知识包说明', domain: body.domain?.trim() ?? '通用', classification: body.classification ?? 'internal', owner: '当前用户', status: 'draft', documentCount: 0, consumers: 0, currentVersion: version, versions: [version] };
+    mockKnowledgePackages.unshift(item);
+    appendKnowledgeAudit('创建知识包', item.name);
+    return item;
+  }
+  const knowledgePackagePublish = path.match(/^\/api\/knowledge\/packages\/([^/]+)\/publish$/);
+  if (knowledgePackagePublish && method === 'POST') {
+    const item = mockKnowledgePackages.find((record) => record.id === knowledgePackagePublish[1]);
+    if (!item) throw new Error('知识包不存在');
+    const latestEvaluation = mockKnowledgeEvaluations.find((evaluation) => evaluation.packageId === item.id && evaluation.evaluatedVersion === item.currentVersion.version);
+    if (item.documentCount === 0) throw new Error('E_KNOWLEDGE_PACKAGE_EMPTY');
+    if (latestEvaluation?.status === 'failed') throw new Error('E_KNOWLEDGE_EVALUATION_FAILED');
+    const published = { ...item.currentVersion, status: 'published' as const, publishedAt: new Date().toISOString(), qualityScore: latestEvaluation ? Math.round(latestEvaluation.ndcg * 100) : item.currentVersion.qualityScore || 90, changeSummary: item.currentVersion.changeSummary || '已通过发布检查' };
+    item.currentVersion = published; item.status = 'published'; item.versions = item.versions.map((version) => version.id === published.id ? published : version);
+    appendKnowledgeAudit('发布知识包版本', `${item.name} · ${published.version}`);
+    return item;
+  }
+  const knowledgePackageProcess = path.match(/^\/api\/knowledge\/packages\/([^/]+)\/process$/);
+  if (knowledgePackageProcess && method === 'POST') {
+    const item = mockKnowledgePackages.find((record) => record.id === knowledgePackageProcess[1]);
+    if (!item) throw new Error('知识包不存在');
+    const body = (opts.body ?? {}) as { strategy?: KnowledgeProcessingJob['strategy'] };
+    const job: KnowledgeProcessingJob = { id: mockId('knowledge_job'), packageId: item.id, source: item.name, strategy: body.strategy ?? 'structured', status: 'running', documentCount: Math.max(item.documentCount, 8), chunkCount: 0, indexVersion: `idx-${Date.now()}`, startedAt: new Date().toISOString() };
+    mockKnowledgeProcessingJobs.unshift(job);
+    appendKnowledgeAudit('启动知识加工', `${item.name} · ${job.strategy}`);
+    return job;
+  }
+  const knowledgeJobRetry = path.match(/^\/api\/knowledge\/processing-jobs\/([^/]+)\/retry$/);
+  if (knowledgeJobRetry && method === 'POST') {
+    const job = mockKnowledgeProcessingJobs.find((record) => record.id === knowledgeJobRetry[1]);
+    if (!job) throw new Error('知识加工任务不存在');
+    job.status = 'running'; job.error = undefined; job.startedAt = new Date().toISOString();
+    appendKnowledgeAudit('重试知识加工', job.source);
+    return job;
+  }
+  if (path === '/api/knowledge/processing-jobs' && method === 'GET') return mockKnowledgeProcessingJobs;
+  if (path === '/api/knowledge/retrieval-profiles' && method === 'GET') return mockKnowledgeProfiles;
+  if (path === '/api/knowledge/evaluations' && method === 'GET') return mockKnowledgeEvaluations;
+  if (path === '/api/knowledge/evaluations/run' && method === 'POST') {
+    const body = (opts.body ?? {}) as { packageId?: string; profileId?: string };
+    const item = mockKnowledgePackages.find((record) => record.id === body.packageId);
+    const profile = mockKnowledgeProfiles.find((record) => record.id === body.profileId) ?? mockKnowledgeProfiles.find((record) => record.packageId === body.packageId);
+    if (!item || !profile) throw new Error('请选择知识包和检索配置');
+    const evaluation: KnowledgeEvaluation = { id: mockId('knowledge_evaluation'), packageId: item.id, profileId: profile.id, baselineVersion: item.currentVersion.version, evaluatedVersion: item.currentVersion.version, recallAtK: .93, mrr: .88, ndcg: .90, citationAccuracy: .96, p95LatencyMs: 352, status: 'passed', evaluatedAt: new Date().toISOString() };
+    mockKnowledgeEvaluations.unshift(evaluation);
+    appendKnowledgeAudit('执行检索评测', `${item.name} · ${profile.name}`);
+    return evaluation;
+  }
+  if (path === '/api/knowledge/graph/entities' && method === 'GET') return mockKnowledgeGraphEntities;
+  if (path === '/api/knowledge/graph/relations' && method === 'GET') return mockKnowledgeGraphRelations;
+  if (path === '/api/knowledge/bindings' && method === 'GET') return mockKnowledgeBindings;
+  if (path === '/api/knowledge/bindings' && method === 'POST') {
+    const body = (opts.body ?? {}) as Partial<KnowledgeConsumerBinding>;
+    const item = mockKnowledgePackages.find((record) => record.id === body.packageId);
+    if (!item || item.status !== 'published' || item.currentVersion.status !== 'published') throw new Error('E_KNOWLEDGE_VERSION_NOT_PUBLISHED');
+    if (!body.consumerId?.trim() || !body.consumerName?.trim() || !body.consumerType) throw new Error('引用方信息不完整');
+    const profile = mockKnowledgeProfiles.find((record) => record.id === body.profileId && record.packageId === item.id) ?? mockKnowledgeProfiles.find((record) => record.packageId === item.id);
+    if (!profile) throw new Error('知识包缺少可用检索配置');
+    const binding: KnowledgeConsumerBinding = { id: mockId('knowledge_binding'), packageId: item.id, packageName: item.name, packageVersion: body.packageVersion ?? item.currentVersion.version, consumerType: body.consumerType, consumerId: body.consumerId, consumerName: body.consumerName, environment: body.environment ?? 'sandbox', profileId: profile.id, noResultPolicy: body.noResultPolicy ?? profile.noResultPolicy };
+    mockKnowledgeBindings.unshift(binding); item.consumers += 1;
+    appendKnowledgeAudit('绑定知识包引用', `${binding.consumerName} → ${item.name} ${binding.packageVersion}`);
+    return binding;
   }
 
-  // 技能
-  if (path === '/api/skills') return mockSkills;
+  // 技能：安装、运行、配置和权限统一写回同一个 Mock 领域，并产生日志。
+  if (path === '/api/skills/governance/overview' && method === 'GET') {
+    const calls = mockSkillRuntimeHealth.reduce((total, item) => total + item.calls24h, 0);
+    const weightedSuccess = mockSkillRuntimeHealth.reduce((total, item) => total + item.calls24h * item.successRate, 0) / calls;
+    return { calls24h: calls, successRate: Number(weightedSuccess.toFixed(2)), p95Ms: 220, abnormalSkills: mockSkillRuntimeHealth.filter((item) => item.status === 'attention' || item.status === 'incident').length, pendingActions: mockSkillGovernanceIncidents.filter((item) => item.status === 'open').length };
+  }
+  if (path === '/api/skills/governance/health' && method === 'GET') return mockSkillRuntimeHealth;
+  if (path === '/api/skills/governance/incidents' && method === 'GET') return mockSkillGovernanceIncidents;
+  if (path === '/api/skills/governance/events' && method === 'GET') return mockSkillGovernanceEvents;
+  if (path === '/api/skills/governance/trends' && method === 'GET') return [{ time: '00:00', calls: 820, errorRate: .4, p95: 120 }, { time: '04:00', calls: 620, errorRate: .3, p95: 100 }, { time: '08:00', calls: 1480, errorRate: .8, p95: 180 }, { time: '12:00', calls: 2260, errorRate: 2.1, p95: 360 }, { time: '16:00', calls: 1880, errorRate: 1.2, p95: 240 }, { time: '20:00', calls: 1320, errorRate: .5, p95: 140 }];
+  const governanceSkillAction = path.match(/^\/api\/skills\/([^/]+)\/(revalidate|isolate)$/);
+  if (governanceSkillAction && method === 'POST') {
+    const health = mockSkillRuntimeHealth.find((item) => item.skillId === governanceSkillAction[1]);
+    if (!health) throw new Error('运行健康记录不存在');
+    if (governanceSkillAction[2] === 'revalidate') { health.status = 'healthy'; health.errorRate = Math.min(health.errorRate, .2); health.successRate = Math.max(health.successRate, 99.8); health.updatedAt = '刚刚'; mockSkillGovernanceEvents.unshift({ id: mockId('gov_event'), time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), skillName: health.name, type: 'call', action: '重新验证通过', actor: '当前用户', result: 'success' }); return health; }
+    health.status = 'quarantined'; health.updatedAt = '刚刚'; mockSkillGovernanceEvents.unshift({ id: mockId('gov_event'), time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), skillName: health.name, type: 'lifecycle', action: '隔离能力', actor: '当前用户', result: 'success' }); return health;
+  }
+  if (path === '/api/skills/governance/batch' && method === 'POST') { const body = (opts.body ?? {}) as { skillIds?: string[]; action?: 'revalidate' | 'pause' }; const affected = mockSkillRuntimeHealth.filter((item) => body.skillIds?.includes(item.skillId)); affected.forEach((item) => { item.status = body.action === 'pause' ? 'paused' : 'healthy'; item.updatedAt = '刚刚'; }); appendControlPlaneAudit('skill', body.action === 'pause' ? '批量暂停技能' : '批量重新验证技能', `${affected.length} 项`); return affected; }
+  if (path === '/api/skill-integrations' && method === 'GET') return mockSkillIntegrations;
+  const integrationAction = path.match(/^\/api\/skill-integrations\/([^/]+)\/(test|discover|lifecycle)$/);
+  if (integrationAction) {
+    const integration = mockSkillIntegrations.find((item) => item.id === integrationAction[1]);
+    if (!integration) throw new Error('接入任务不存在');
+    const body = (opts.body ?? {}) as Partial<SkillIntegration>;
+    if (integrationAction[2] === 'test' && method === 'POST') { integration.lastVerifiedAt = '刚刚'; integration.health = integration.status === 'failed' ? 'attention' : 'healthy'; appendControlPlaneAudit('skill', '执行接入连通性验证', integration.name, integration.health === 'healthy' ? 'success' : 'failed'); return integration; }
+    if (integrationAction[2] === 'discover' && method === 'POST') { if (integration.status === 'failed') throw new Error(integration.lastError ?? '接入验证未通过'); integration.discoveredCapabilities = integration.discoveredCapabilities || (integration.type === 'mcp' ? 12 : integration.type === 'tool' ? 6 : 1); integration.status = integration.writeApprovalRequired && integration.environment === 'production' ? 'pending_approval' : 'enabled'; appendControlPlaneAudit('skill', '发现接入能力', integration.name); return integration; }
+    if (integrationAction[2] === 'lifecycle' && method === 'PATCH') { Object.assign(integration, body); appendControlPlaneAudit('skill', '更新接入任务状态', `${integration.name}:${integration.status}`); return integration; }
+  }
+  if (path === '/api/skills' && method === 'GET') return mockSkills.map(skillAsset);
+  if (path === '/api/skills/catalog' && method === 'GET') return mockSkillCatalog;
+  if (path === '/api/skills/audit' && method === 'GET') return skillAuditEvents();
+  if (path === '/api/mcp-connections' && method === 'POST') {
+    const body = (opts.body ?? {}) as { name?: string; endpoint?: string; authMode?: string };
+    if (!body.name?.trim() || !/^https:\/\//.test(body.endpoint ?? '')) throw new Error('MCP 名称和 HTTPS 服务地址不能为空');
+    const skill: Skill = { id: mockId('mcp'), name: body.name.trim(), kind: 'mcp', description: `MCP · ${body.endpoint}`, version: '1.0.0', status: 'installed', rating: 0, installCount: 0, riskLevel: 'mid', cacheable: false };
+    mockSkills.unshift(skill); mockSkillPermissions[skill.id] = mockSkillPerms.map((item) => ({ ...item, skillId: skill.id })); mockSkillIntegrations.unshift({ id: mockId('integration'), name: skill.name, type: 'mcp', environment: 'test', status: 'validating', owner: '当前用户', endpoint: body.endpoint!, credentialRef: `vault://integrations/${skill.id}/oauth`, lastVerifiedAt: '刚刚', health: 'unknown', discoveredCapabilities: 0, writeApprovalRequired: true, allowedEgress: [new URL(body.endpoint!).host] }); appendControlPlaneAudit('skill', '配置 MCP 并预检', `${skill.name}:${body.authMode ?? 'OAuth'}`); return skill;
+  }
+  if (path === '/api/tools' && method === 'POST') {
+    const body = (opts.body ?? {}) as { name?: string; endpoint?: string; schema?: string };
+    if (!body.name?.trim() || !/^https:\/\//.test(body.endpoint ?? '') || !body.schema?.trim()) throw new Error('Tool 名称、HTTPS 地址和 Schema 不能为空');
+    let schema: any;
+    try { schema = JSON.parse(body.schema); } catch { throw new Error('Tool Schema 必须是有效的 JSON 文件或 JSON 文本'); }
+    const isOpenApi = typeof schema?.openapi === 'string' && typeof schema?.info === 'object' && typeof schema?.paths === 'object';
+    const isJsonSchema = typeof schema?.$schema === 'string' && (typeof schema?.type === 'string' || typeof schema?.properties === 'object');
+    if (!isOpenApi && !isJsonSchema) throw new Error('仅支持标准 OpenAPI 3.x 或 JSON Schema Draft 文档');
+    const skill: Skill = { id: mockId('tool'), name: body.name.trim(), kind: 'tool', description: `Tool · ${body.endpoint}`, version: '1.0.0', status: 'installed', rating: 0, installCount: 0, riskLevel: 'mid', cacheable: false };
+    mockSkills.unshift(skill); mockSkillPermissions[skill.id] = mockSkillPerms.map((item) => ({ ...item, skillId: skill.id })); mockSkillIntegrations.unshift({ id: mockId('integration'), name: skill.name, type: 'tool', environment: 'test', status: 'validating', owner: '当前用户', endpoint: body.endpoint!, credentialRef: `vault://integrations/${skill.id}/service-account`, lastVerifiedAt: '刚刚', health: 'unknown', discoveredCapabilities: 0, writeApprovalRequired: true, allowedEgress: [new URL(body.endpoint!).host] }); appendControlPlaneAudit('skill', '配置 Tool 并预检', skill.name); return skill;
+  }
+  if (path === '/api/skills' && method === 'POST') {
+    const body = (opts.body ?? {}) as Partial<Skill>;
+    if (!body.name?.trim() || !body.description?.trim()) throw new Error('技能名称和说明不能为空');
+    const riskLevel = body.riskLevel ?? 'mid';
+    const skill: Skill = { id: mockId('skill'), name: body.name.trim(), kind: body.kind ?? 'skill', description: body.description.trim(), version: body.version ?? '0.1.0', status: riskLevel === 'high' ? 'beta' : 'installed', rating: 0, installCount: 0, riskLevel, cacheable: Boolean(body.cacheable) };
+    mockSkills.unshift(skill);
+    mockSkillPermissions[skill.id] = mockSkillPerms.map((item) => ({ ...item, skillId: skill.id }));
+    appendControlPlaneAudit('skill', '创建技能', skill.name); return skill;
+  }
+  if (path === '/api/skills/import' && method === 'POST') {
+    const body = (opts.body ?? {}) as { items?: Array<Partial<Skill>> };
+    const items = (body.items ?? []).filter((item) => item.name?.trim()).map((item) => {
+      const riskLevel = item.riskLevel ?? 'mid';
+      const skill: Skill = { id: mockId('skill'), name: item.name!.trim(), kind: item.kind ?? 'skill', description: item.description ?? `导入技能 · ${item.name}`, version: item.version ?? '0.1.0', status: riskLevel === 'high' ? 'beta' : 'installed', rating: 0, installCount: 0, riskLevel, cacheable: Boolean(item.cacheable) };
+      mockSkills.unshift(skill);
+      mockSkillPermissions[skill.id] = mockSkillPerms.map((permission) => ({ ...permission, skillId: skill.id }));
+      mockSkillIntegrations.unshift({ id: mockId('integration'), name: skill.name, type: 'skill', environment: 'test', status: 'validating', owner: '当前用户', endpoint: `registry://import/${skill.name}:${skill.version}`, credentialRef: 'vault://registries/import-reader', lastVerifiedAt: '刚刚', health: 'unknown', discoveredCapabilities: 0, writeApprovalRequired: riskLevel === 'high', allowedEgress: ['registry.internal.example.com'] });
+      return skill;
+    });
+    if (!items.length) throw new Error('未识别到可导入的技能');
+    appendControlPlaneAudit('skill', '批量导入技能', `${items.length} 项`); return items;
+  }
+  const skillAction = path.match(/^\/api\/skills\/([^/]+)\/(install|uninstall|upgrade|test|runtime|permissions|impact|preflight|lifecycle|governance|upgrade-plan)$/);
+  if (skillAction) {
+    const [, id, action] = skillAction;
+    const body = (opts.body ?? {}) as any;
+    let skill = mockSkills.find((item) => item.id === id);
+    const catalogSkill = mockSkillCatalog.find((item) => item.id === id);
+    if (action === 'preflight' && method === 'POST') {
+      const candidate = skill ?? catalogSkill;
+      if (!candidate) throw new Error('技能或市场制品不存在');
+      const missingDependency = (catalogSkill?.dependencies ?? []).filter((dependency) => dependency === 'jenkins-mcp').map((name) => ({ name, status: 'missing' as const }));
+      const requiresApproval = candidate.riskLevel === 'high';
+      const result: SkillInstallPreflight = { skillId: id, trustedPublisher: catalogSkill?.publisher === '企业能力市场' || !catalogSkill, signatureValid: catalogSkill?.signed ?? true, dependencies: missingDependency, requiresApproval, decision: missingDependency.length ? 'blocked' : requiresApproval ? 'review_required' : 'approved', reason: missingDependency.length ? '缺少受控 Jenkins 连接器，禁止安装' : requiresApproval ? '高风险能力需要安全负责人审批' : undefined };
+      appendControlPlaneAudit('skill', '安装预检', candidate.name, result.decision === 'blocked' ? 'failed' : 'success');
+      return result;
+    }
+    if (action === 'install' && method === 'POST') {
+      if (skill) return skill;
+      const candidate = catalogSkill ?? body;
+      if (candidate.riskLevel === 'high' && !body.approvalTicket) throw new Error('E_APPROVAL_REQUIRED: 高风险技能安装需要安全负责人审批');
+      if ((catalogSkill?.dependencies ?? []).includes('jenkins-mcp')) throw new Error('E_DEPENDENCY_BLOCKED: 缺少受控 Jenkins 连接器');
+      const installedSkill: Skill = { id: mockId('skill'), name: candidate.name ?? '未命名技能', kind: candidate.kind ?? 'skill', description: candidate.description ?? '', version: candidate.version ?? '0.1.0', status: 'installed', rating: candidate.rating ?? 0, installCount: candidate.installCount ?? 0, riskLevel: candidate.riskLevel ?? 'mid', cacheable: Boolean(candidate.cacheable) };
+      mockSkills.unshift(installedSkill);
+      mockSkillPermissions[installedSkill.id] = mockSkillPerms.map((permission) => ({ ...permission, skillId: installedSkill.id }));
+      appendControlPlaneAudit('skill', '安装技能', installedSkill.name); return installedSkill;
+    }
+    if (!skill) throw new Error('技能不存在');
+    skill = skillAsset(skill);
+    const impact = mockSkillImpacts[id] ?? { skillId: id, agents: [], workflows: [], activeRuns: 0, uninstallAllowed: true };
+    if (action === 'impact' && method === 'GET') return impact;
+    if (action === 'uninstall' && method === 'POST') {
+      if (!impact.uninstallAllowed && !body.force) throw new Error(`E_SKILL_IN_USE: ${impact.reason}`);
+      if (!impact.uninstallAllowed && !body.approvalTicket) throw new Error('E_APPROVAL_REQUIRED: 强制卸载必须提供审批单号');
+      mockSkills.splice(mockSkills.indexOf(skill), 1); delete mockSkillPermissions[id]; delete mockSkillRuntime[id]; appendControlPlaneAudit('skill', body.force ? '强制卸载技能' : '卸载技能', skill.name); return { id, status: 'uninstalled', impact };
+    }
+    if (action === 'lifecycle' && method === 'PATCH') { const next = body.lifecycleStatus; if (!['enabled', 'disabled', 'pending_approval', 'quarantined', 'deprecated'].includes(next)) throw new Error('不支持的技能生命周期状态'); skill.lifecycleStatus = next; Object.assign(mockSkills.find((item) => item.id === id)!, skill); appendControlPlaneAudit('skill', `更新技能状态为 ${next}`, skill.name); return skill; }
+    if (action === 'governance' && method === 'GET') return skillGovernance(id);
+    if (action === 'governance' && method === 'PATCH') { const policy = Object.assign(skillGovernance(id), body); appendControlPlaneAudit('skill', '更新运行治理策略', skill.name); return policy; }
+    if (action === 'upgrade-plan' && method === 'POST') return { skillId: id, currentVersion: skill.version, targetVersion: body.targetVersion ?? skill.upgradeVersion ?? `${skill.version}-next`, checks: [{ label: '签名与供应链校验', status: 'passed' }, { label: '权限差异分析', status: skill.riskLevel === 'high' ? 'review' : 'passed' }, { label: '引用版本影响', status: impact.agents.length + impact.workflows.length ? 'review' : 'passed' }], impacted: impact, rollbackVersion: skill.version, approvalRequired: skill.riskLevel === 'high' || impact.agents.length + impact.workflows.length > 0 };
+    if (action === 'upgrade' && method === 'POST') { const targetVersion = body.targetVersion ?? skill.upgradeVersion; if (!targetVersion) { const parts = skill.version.split('.').map(Number); skill.version = `${parts[0]}.${(parts[1] ?? 0) + 1}.${parts[2] ?? 0}`; } else skill.version = targetVersion; skill.hasUpdate = false; skill.upgradeVersion = undefined; Object.assign(mockSkills.find((item) => item.id === id)!, skill); appendControlPlaneAudit('skill', '升级技能', skill.name); return skill; }
+    if (action === 'test' && method === 'POST') { const command = String(body.command ?? '').trim(); if (!command) throw new Error('请输入测试命令'); const blocked = /\b(rm\s+-rf|drop\s+database|force\s*push|--hard)\b/i.test(command); appendControlPlaneAudit('skill', blocked ? '策略拦截测试命令' : '执行沙箱测试', skill.name, blocked ? 'failed' : 'success'); return { command, status: blocked ? 'blocked' : 'success', output: blocked ? '⛔ 拒绝执行：高危命令已被策略拦截。' : `+OK\n${skill.name} v${skill.version} 已在受控沙箱中完成测试`, durationMs: blocked ? 5 : 80 }; }
+    if (action === 'runtime' && method === 'GET') return mockSkillRuntime[id] ?? { cacheable: skill.cacheable, timeout: '30', retries: '1' };
+    if (action === 'runtime' && method === 'PATCH') { mockSkillRuntime[id] = { ...(mockSkillRuntime[id] ?? { cacheable: skill.cacheable, timeout: '30', retries: '1' }), ...body }; appendControlPlaneAudit('skill', '更新运行配置', skill.name); return mockSkillRuntime[id]; }
+    if (action === 'permissions' && method === 'GET') return mockSkillPermissions[id] ?? [];
+    if (action === 'permissions' && method === 'PATCH') { const role = mockSkillPermissions[id]?.find((item) => item.role === body.role); if (!role) throw new Error('角色不存在'); Object.assign(role, { canCall: Boolean(body.canCall), canConfig: Boolean(body.canConfig) }); appendControlPlaneAudit('skill', '更新调用权限', `${skill.name}:${role.role}`); return role; }
+  }
   if (path.startsWith('/api/skills/') && path.endsWith('/trace')) {
     const id = path.split('/')[3];
     return mockSkillExecTrace[id as keyof typeof mockSkillExecTrace] ?? null;
@@ -1308,21 +2099,205 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   }
   if (path === '/api/skills/perms') return mockSkillPerms;
 
-  // 模型
-  if (path === '/api/providers') return mockProviders;
+  // 模型控制面：以领域状态为唯一事实源。旧 P9 路径保留给历史页面，新增路径用于受控治理。
+  if (path === '/api/model-providers' && method === 'GET') { const context = requireModelRead(opts); return modelProviders.filter((provider) => provider.workspaceId === context.workspaceId).map((provider) => ({ ...provider, models: provider.models.map((model) => ({ ...model })) })); }
+  if (path === '/api/model-providers' && method === 'POST') {
+    const body = (opts.body ?? {}) as any;
+    const context = requireModelWrite(opts, body.workspaceId ?? 'w1');
+    if (!body.name?.trim() || !body.model?.trim() || !body.credential?.trim()) {
+      appendModelAudit(opts, '接入 Provider', body.name ?? '未命名 Provider', 'failed', { reason: '名称、模型和凭据引用必填' });
+      throw new Error('E_PROVIDER_INVALID: Provider 名称、模型和凭据不能为空');
+    }
+    const providerId = mockId('model_provider');
+    const model: ModelProfile = { id: mockId('model'), providerId, name: body.model.trim(), cloudRegion: body.region ?? 'global', dataResidency: String(body.region ?? '').startsWith('cn-') ? 'cn' : 'global', capabilities: ['chat'], status: 'available', contextWindow: 32_000 };
+    const provider: ModelProvider = { id: providerId, workspaceId: context.workspaceId, name: body.name.trim(), tier: body.tier ?? 'connectable', cloudRegion: model.cloudRegion, dataResidency: model.dataResidency, status: 'standby', credentialRef: `vault://model-providers/${providerId}/credential`, credentialMasked: '••••••••', models: [model] };
+    modelProfiles.push(model);
+    modelProviders.unshift(provider);
+    appendModelAudit(opts, '接入 Provider', provider.name, 'success', { reason: body.reason });
+    return provider;
+  }
+  const modelProviderAction = path.match(/^\/api\/model-providers\/([^/]+)(?:\/(impact|test|disable))?$/);
+  if (modelProviderAction) {
+    const [, providerId, action] = modelProviderAction;
+    const provider = modelProviders.find((item) => item.id === providerId);
+    if (!provider) throw new Error('E_PROVIDER_NOT_FOUND: Provider 不存在');
+    if (method === 'GET' && action === 'impact') { const context = requireModelRead(opts); if (provider.workspaceId !== context.workspaceId) throw new Error('E_WORKSPACE_SCOPE: 无权读取其他工作区模型资源'); return providerImpact(provider.id); }
+    const body = (opts.body ?? {}) as any;
+    requireModelWrite(opts, provider.workspaceId);
+    if (method === 'POST' && action === 'test') {
+      provider.lastVerifiedAt = new Date().toISOString();
+      appendModelAudit(opts, '验证 Provider 连通性', provider.name, 'success', { reason: body.reason });
+      return { providerId: provider.id, status: 'healthy', verifiedAt: provider.lastVerifiedAt };
+    }
+    if (method === 'POST' && action === 'disable') {
+      provider.status = 'disabled';
+      provider.models.forEach((model) => { model.status = 'unavailable'; });
+      appendModelAudit(opts, '停用 Provider', provider.name, 'success', { reason: body.reason });
+      return provider;
+    }
+    if (method === 'DELETE' && !action) {
+      const impact = providerImpact(provider.id);
+      if (!impact.deletionAllowed) {
+        appendModelAudit(opts, '删除 Provider', provider.name, 'failed', { reason: impact.blockedReason });
+        throw new Error(`E_PROVIDER_IN_USE: ${impact.blockedReason}`);
+      }
+      modelProviders.splice(modelProviders.indexOf(provider), 1);
+      provider.models.forEach((model) => modelProfiles.splice(modelProfiles.indexOf(model), 1));
+      appendModelAudit(opts, '删除 Provider', provider.name, 'success', { reason: body.reason });
+      return { id: provider.id, status: 'deleted' };
+    }
+  }
+  if (path === '/api/model-routing/policies' && method === 'GET') { const context = requireModelRead(opts); return routingPolicies.filter((policy) => policy.workspaceId === context.workspaceId).map((policy) => ({ ...policy, fallbackModelIds: [...policy.fallbackModelIds], validationIssues: [...policy.validationIssues] })); }
+  if (path === '/api/model-routing/policies' && method === 'POST') {
+    const body = (opts.body ?? {}) as Partial<RoutingPolicyDraft>;
+    const context = requireModelWrite(opts, body.workspaceId ?? 'w1');
+    const policy: RoutingPolicyDraft = { id: mockId('route'), workspaceId: context.workspaceId, level: body.level ?? 'P3', primaryModelId: body.primaryModelId ?? '', fallbackModelIds: body.fallbackModelIds ?? [], dataScope: body.dataScope ?? 'internal', egressAllowed: Boolean(body.egressAllowed), budgetLimitUsd: body.budgetLimitUsd ?? 0, status: 'draft', validationIssues: [] };
+    routingPolicies.unshift(policy);
+    appendModelAudit(opts, '创建路由草稿', policy.level, 'success');
+    return policy;
+  }
+  const policyAction = path.match(/^\/api\/model-routing\/policies\/([^/]+)(?:\/(draft|validate|publish|versions|rollback))?$/);
+  if (policyAction) {
+    const [, policyId, action] = policyAction;
+    const policy = routingPolicies.find((item) => item.id === policyId);
+    if (!policy) throw new Error('E_POLICY_NOT_FOUND: 路由策略不存在');
+    if (method === 'GET' && action === 'versions') { const context = requireModelRead(opts); if (policy.workspaceId !== context.workspaceId) throw new Error('E_WORKSPACE_SCOPE: 无权读取其他工作区路由版本'); return routingVersions.filter((version) => version.policyId === policy.id).map((version) => ({ ...version, snapshot: { ...version.snapshot, fallbackModelIds: [...version.snapshot.fallbackModelIds] } })); }
+    const body = (opts.body ?? {}) as any;
+    requireModelWrite(opts, policy.workspaceId);
+    if (method === 'PATCH' && action === 'draft') {
+      Object.assign(policy, { ...body, id: policy.id, workspaceId: policy.workspaceId, status: 'draft', validationIssues: [] });
+      appendModelAudit(opts, '更新路由草稿', policy.level, 'success', { reason: body.reason });
+      return policy;
+    }
+    if (method === 'POST' && action === 'validate') {
+      policy.validationIssues = validateRoutingPolicy(policy);
+      policy.status = policy.validationIssues.length ? 'draft' : 'ready';
+      const result = policy.validationIssues.length ? 'failed' : 'success';
+      appendModelAudit(opts, '校验路由草稿', policy.level, result, { reason: policy.validationIssues.join('；') || body.reason });
+      return policy;
+    }
+    if (method === 'POST' && action === 'publish') {
+      if (policy.status !== 'ready') {
+        appendModelAudit(opts, '发布路由版本', policy.level, 'failed', { reason: '草稿尚未通过校验' });
+        throw new Error('E_POLICY_NOT_READY: 草稿尚未通过校验，无法发布');
+      }
+      const version: RoutingPolicyVersion = { id: mockId('route_version'), policyId: policy.id, version: Math.max(0, ...routingVersions.filter((item) => item.policyId === policy.id).map((item) => item.version)) + 1, snapshot: { ...policy, fallbackModelIds: [...policy.fallbackModelIds], validationIssues: [] }, publishedAt: new Date().toISOString(), publishedBy: modelContext(opts).actor };
+      routingVersions.unshift(version);
+      policy.status = 'published';
+      appendModelAudit(opts, '发布路由版本', policy.level, 'success', { reason: body.reason, policyVersion: version.id });
+      return version;
+    }
+    if (method === 'POST' && action === 'rollback') {
+      const target = routingVersions.find((version) => version.id === body.versionId && version.policyId === policy.id);
+      if (!target) throw new Error('E_VERSION_NOT_FOUND: 路由版本不存在');
+      const rollbackSnapshot: RoutingPolicyDraft = { ...target.snapshot, status: 'ready', fallbackModelIds: [...target.snapshot.fallbackModelIds], validationIssues: [] };
+      const rollbackIssues = validateRoutingPolicy(rollbackSnapshot);
+      if (rollbackIssues.length) {
+        appendModelAudit(opts, '回滚路由版本', policy.level, 'failed', { reason: rollbackIssues.join('；'), policyVersion: target.id });
+        throw new Error(`E_ROLLBACK_INVALID: ${rollbackIssues.join('；')}`);
+      }
+      const version: RoutingPolicyVersion = { id: mockId('route_version'), policyId: policy.id, version: Math.max(...routingVersions.filter((item) => item.policyId === policy.id).map((item) => item.version)) + 1, snapshot: { ...target.snapshot, status: 'published', fallbackModelIds: [...target.snapshot.fallbackModelIds], validationIssues: [] }, publishedAt: new Date().toISOString(), publishedBy: modelContext(opts).actor, rollbackOf: target.id };
+      routingVersions.unshift(version);
+      Object.assign(policy, version.snapshot);
+      appendModelAudit(opts, '回滚路由版本', policy.level, 'success', { reason: body.reason, policyVersion: version.id });
+      return version;
+    }
+  }
+  if (path === '/api/model-routing/failover-tests' && method === 'POST') {
+    const body = (opts.body ?? {}) as any;
+    const policy = routingPolicies.find((item) => item.id === body.policyId);
+    if (!policy) throw new Error('E_POLICY_NOT_FOUND: 路由策略不存在');
+    requireModelWrite(opts, policy.workspaceId);
+    if (!['sandbox', 'canary'].includes(body.scope)) throw new Error('E_DRILL_SCOPE_INVALID: 演练仅允许在 sandbox 或 canary 隔离范围执行');
+    if (policy.status !== 'published') {
+      appendModelAudit(opts, '执行隔离故障切换演练', policy.level, 'failed', { reason: '仅已发布路由可执行演练' });
+      throw new Error('E_POLICY_NOT_PUBLISHED: 仅已发布路由可执行演练');
+    }
+    const drillIssues = validateRoutingPolicy(policy);
+    if (drillIssues.length) {
+      appendModelAudit(opts, '执行隔离故障切换演练', policy.level, 'failed', { reason: drillIssues.join('；') });
+      throw new Error(`E_DRILL_INVALID: ${drillIssues.join('；')}`);
+    }
+    const fallback = policy.fallbackModelIds[0];
+    if (!fallback) throw new Error('E_FALLBACK_INVALID: 当前策略没有可用降级链');
+    const correlationId = mockId('drill');
+    appendModelAudit(opts, '执行隔离故障切换演练', policy.level, 'success', { reason: body.reason, correlationId });
+    return { id: mockId('failover'), policyId: policy.id, scope: body.scope, status: 'passed', fromModelId: policy.primaryModelId, toModelId: fallback, correlationId };
+  }
+  if (path === '/api/model-governance/overview' && method === 'GET') { const context = requireModelRead(opts); return { activeProviders: modelProviders.filter((provider) => provider.workspaceId === context.workspaceId && provider.status === 'active').length, publishedRoutes: routingPolicies.filter((policy) => policy.workspaceId === context.workspaceId && policy.status === 'published').length, budgetRisk: 'normal', updatedAt: new Date().toISOString() }; }
+  if (path === '/api/model-audit' && method === 'GET') { const context = requireModelRead(opts); return modelAuditEvents.filter((event) => event.workspaceId === context.workspaceId).map((event) => ({ ...event })); }
+
+  // 模型 Provider 与路由策略（历史 P9 API，待页面迁移后删除）
+  if (path === '/api/providers' && method === 'GET') return mockProviders;
+  if (path === '/api/providers' && method === 'POST') {
+    const body = (opts.body ?? {}) as Partial<Provider> & { model?: string };
+    if (!body.name?.trim() || !(body.model ?? body.models?.[0])?.trim()) throw new Error('Provider 名称和模型不能为空');
+    const provider: Provider = { id: mockId('provider'), name: body.name.trim(), tier: body.tier ?? 'connectable', models: body.models ?? [body.model!.trim()], region: body.region ?? 'global', status: 'standby', monthlyTokens: 0, monthlyCostUsd: 0 };
+    mockProviders.unshift(provider); appendControlPlaneAudit('model', '接入 Provider', provider.name); return provider;
+  }
+  const providerAction = path.match(/^\/api\/providers\/([^/]+)$/);
+  if (providerAction && method === 'DELETE') { const index = mockProviders.findIndex((item) => item.id === providerAction[1]); if (index < 0) throw new Error('Provider 不存在'); const [removed] = mockProviders.splice(index, 1); appendControlPlaneAudit('model', '移除 Provider', removed.name); return removed; }
   if (path === '/api/provider-health') return mockProviderHealth;
-  if (path === '/api/prompt-templates') return mockPromptTemplates;
+  if (path === '/api/prompt-templates' && method === 'GET') return mockPromptTemplates;
+  if (path === '/api/prompt-templates' && method === 'POST') { const body = (opts.body ?? {}) as any; if (!body.name?.trim() || !body.preview?.trim()) throw new Error('模板名称和内容不能为空'); const template = { id: mockId('prompt'), name: body.name.trim(), category: body.category ?? 'ops', preview: body.preview.trim(), uses: 0, rating: 0 }; mockPromptTemplates.unshift(template); appendControlPlaneAudit('model', '创建提示词模板', template.name); return template; }
   if (path === '/api/route-flow') return mockRouteFlow;
   if (path === '/api/export-routes') return mockExportRoutes;
   if (path === '/api/model-compare') return mockModelCompare;
-  if (path === '/api/model-audit') return mockAuditLog;
-  if (path === '/api/routes') return mockRoutes;
+  if (path === '/api/model-audit') return [...mockControlPlaneAudit.filter((item) => item.domain === 'model'), ...mockAuditLog];
+  if (path === '/api/routes' && method === 'GET') return mockRoutes;
+  if (path === '/api/routes' && method === 'PATCH') { const body = (opts.body ?? {}) as Partial<ModelRoute>; const route = mockRoutes.find((item) => item.level === body.level); if (!route) throw new Error('路由策略不存在'); Object.assign(route, body); appendControlPlaneAudit('model', '更新模型路由', route.level); return route; }
+  if (path === '/api/model-failover-test' && method === 'POST') { const route = mockRoutes.find((item) => item.fallback1 && item.fallback1 !== '—') ?? mockRoutes[0]; appendControlPlaneAudit('model', '执行故障切换演练', route.level); return { level: route.level, from: route.primary, to: route.fallback1, reason: '模拟主 Provider 503 故障' }; }
 
-  // 渠道
-  if (path === '/api/channels') return mockChannels;
+  // 渠道控制面 P0/P1/P2
+  if (path === '/api/channel-control/deployments' && method === 'GET') { const context = requireChannel(opts, 'channel.read'); return channelDeployments.filter((item) => item.workspaceId === context.workspaceId).map((item) => ({ ...item })); }
+  if (path === '/api/channel-control/deployments' && method === 'POST') {
+    const body = (opts.body ?? {}) as any; const context = requireChannel(opts, 'channel.write', body.workspaceId ?? 'w1');
+    if (!body.name?.trim() || !body.kind || !body.credential?.trim()) throw new Error('E_CHANNEL_DEPLOYMENT_INVALID: 名称、类型和凭据不能为空');
+    const id = mockId('channel_deployment'); const deployment: ChannelDeployment = { id, workspaceId: context.workspaceId, name: body.name.trim(), kind: body.kind, environment: body.environment ?? 'sandbox', status: 'draft', credentialRef: `vault://channel-deployments/${id}/credential`, credentialMasked: '••••••••', owner: body.owner?.trim() || context.actor };
+    channelDeployments.unshift(deployment); appendChannelAudit(opts, '接入渠道部署', deployment.name, 'success', { reason: body.reason }); return deployment;
+  }
+  const deploymentAction = path.match(/^\/api\/channel-control\/deployments\/([^/]+)(?:\/(verify|disable|impact))?$/);
+  if (deploymentAction) {
+    const [, id, action] = deploymentAction; const deployment = channelDeployments.find((item) => item.id === id); if (!deployment) throw new Error('E_CHANNEL_DEPLOYMENT_NOT_FOUND: 渠道部署不存在');
+    if (method === 'GET' && action === 'impact') { requireChannel(opts, 'channel.read', deployment.workspaceId); const references = deliveryVersions.filter((version) => [version.snapshot.primaryDeploymentId, ...version.snapshot.fallbackDeploymentIds].includes(id)); return { deploymentId: id, deletionAllowed: references.length === 0, references: references.map((item) => item.id) }; }
+    requireChannel(opts, 'channel.write', deployment.workspaceId); const body = (opts.body ?? {}) as any;
+    if (method === 'POST' && action === 'verify') { deployment.lastVerifiedAt = new Date().toISOString(); deployment.status = 'active'; appendChannelAudit(opts, '验证渠道连通性', deployment.name, 'success', { reason: body.reason }); return deployment; }
+    if (method === 'POST' && action === 'disable') { deployment.status = 'disabled'; appendChannelAudit(opts, '停用渠道部署', deployment.name, 'success', { reason: body.reason }); return deployment; }
+    if (method === 'DELETE' && !action) { const referenced = deliveryVersions.some((version) => [version.snapshot.primaryDeploymentId, ...version.snapshot.fallbackDeploymentIds].includes(id)); if (referenced) { appendChannelAudit(opts, '删除渠道部署', deployment.name, 'failed', { reason: '渠道被已发布投递策略引用' }); throw new Error('E_CHANNEL_IN_USE: 渠道被已发布投递策略引用'); } channelDeployments.splice(channelDeployments.indexOf(deployment), 1); appendChannelAudit(opts, '删除渠道部署', deployment.name, 'success', { reason: body.reason }); return { id, status: 'deleted' }; }
+  }
+  if (path === '/api/channel-control/policies' && method === 'GET') { const context = requireChannel(opts, 'channel.read'); return deliveryPolicies.filter((item) => item.workspaceId === context.workspaceId).map((item) => ({ ...item, fallbackDeploymentIds: [...item.fallbackDeploymentIds], validationIssues: [...item.validationIssues] })); }
+  const deliveryPolicyAction = path.match(/^\/api\/channel-control\/policies\/([^/]+)\/(draft|validate|publish|versions|rollback|simulate)$/);
+  if (deliveryPolicyAction) {
+    const [, id, action] = deliveryPolicyAction; const policy = deliveryPolicies.find((item) => item.id === id); if (!policy) throw new Error('E_DELIVERY_POLICY_NOT_FOUND: 投递策略不存在');
+    if (method === 'GET' && action === 'versions') { requireChannel(opts, 'channel.read', policy.workspaceId); return deliveryVersions.filter((version) => version.policyId === id); }
+    requireChannel(opts, 'channel.write', policy.workspaceId); const body = (opts.body ?? {}) as any;
+    if (method === 'PATCH' && action === 'draft') { Object.assign(policy, { ...body, id: policy.id, workspaceId: policy.workspaceId, status: 'draft', validationIssues: [] }); appendChannelAudit(opts, '更新投递策略草稿', policy.eventType, 'success', { reason: body.reason }); return policy; }
+    if (method === 'POST' && action === 'validate') { policy.validationIssues = validateDeliveryPolicy(policy); policy.status = policy.validationIssues.length ? 'draft' : 'ready'; appendChannelAudit(opts, '校验投递策略', policy.eventType, policy.validationIssues.length ? 'failed' : 'success', { reason: policy.validationIssues.join('；') || body.reason }); return policy; }
+    if (method === 'POST' && action === 'publish') { if (policy.status !== 'ready') throw new Error('E_DELIVERY_POLICY_NOT_READY: 策略尚未通过校验'); const version: DeliveryPolicyVersion = { id: mockId('delivery_version'), policyId: policy.id, version: Math.max(0, ...deliveryVersions.filter((item) => item.policyId === id).map((item) => item.version)) + 1, snapshot: { ...policy, status: 'published', fallbackDeploymentIds: [...policy.fallbackDeploymentIds], validationIssues: [] }, publishedAt: new Date().toISOString(), publishedBy: channelContext(opts).actor }; deliveryVersions.unshift(version); policy.status = 'published'; appendChannelAudit(opts, '发布投递策略', policy.eventType, 'success', { reason: body.reason, policyVersion: version.id }); return version; }
+    if (method === 'POST' && action === 'rollback') { const target = deliveryVersions.find((version) => version.id === body.versionId && version.policyId === id); if (!target) throw new Error('E_DELIVERY_VERSION_NOT_FOUND: 策略版本不存在'); const issues = validateDeliveryPolicy(target.snapshot); if (issues.length) throw new Error(`E_DELIVERY_ROLLBACK_INVALID: ${issues.join('；')}`); const version: DeliveryPolicyVersion = { id: mockId('delivery_version'), policyId: id, version: Math.max(...deliveryVersions.filter((item) => item.policyId === id).map((item) => item.version)) + 1, snapshot: { ...target.snapshot, status: 'published', fallbackDeploymentIds: [...target.snapshot.fallbackDeploymentIds] }, publishedAt: new Date().toISOString(), publishedBy: channelContext(opts).actor, rollbackOf: target.id }; deliveryVersions.unshift(version); Object.assign(policy, version.snapshot); appendChannelAudit(opts, '回滚投递策略', policy.eventType, 'success', { policyVersion: version.id, reason: body.reason }); return version; }
+    if (method === 'POST' && action === 'simulate') { const issues = validateDeliveryPolicy(policy); return { policyId: id, scope: body.scope === 'canary' ? 'canary' : 'sandbox', status: issues.length ? 'blocked' : 'passed', issues, capacityRisk: policy.fallbackDeploymentIds.length ? 'normal' : 'attention' }; }
+  }
+  if (path === '/api/channel-control/deliveries' && method === 'POST') { const body = (opts.body ?? {}) as any; const policy = deliveryPolicies.find((item) => item.id === body.policyId); if (!policy) throw new Error('E_DELIVERY_POLICY_NOT_FOUND: 投递策略不存在'); requireChannel(opts, 'channel.write', policy.workspaceId); if (policy.status !== 'published') throw new Error('E_DELIVERY_POLICY_NOT_PUBLISHED: 仅已发布策略可以投递'); const failed = String(body.target ?? '').includes('fail'); const attempt: DeliveryAttempt = { id: mockId('delivery_attempt'), workspaceId: policy.workspaceId, policyId: policy.id, deploymentId: policy.primaryDeploymentId, targetMasked: maskTarget(String(body.target ?? '')), payloadSummary: String(body.content ?? '').slice(0, 24).replace(/[\w@.-]/g, '*'), status: failed ? 'dead_letter' : 'delivered', attempts: failed ? 3 : 1, correlationId: mockId('delivery_corr'), createdAt: new Date().toISOString() }; deliveryAttempts.unshift(attempt); appendChannelAudit(opts, failed ? '投递进入死信队列' : '投递消息', policy.eventType, failed ? 'failed' : 'success', { correlationId: attempt.correlationId }); return attempt; }
+  if (path === '/api/channel-control/dead-letters' && method === 'GET') { const context = requireChannel(opts, 'channel.read'); return deliveryAttempts.filter((item) => item.workspaceId === context.workspaceId && item.status === 'dead_letter'); }
+  if (path === '/api/channel-control/audit' && method === 'GET') { const context = requireChannel(opts, 'channel.read'); return channelAuditEvents.filter((item) => item.workspaceId === context.workspaceId); }
+  if (path === '/api/channel-control/overview' && method === 'GET') { const context = requireChannel(opts, 'channel.read'); return { activeDeployments: channelDeployments.filter((item) => item.workspaceId === context.workspaceId && item.status === 'active').length, publishedPolicies: deliveryPolicies.filter((item) => item.workspaceId === context.workspaceId && item.status === 'published').length, deadLetters: deliveryAttempts.filter((item) => item.workspaceId === context.workspaceId && item.status === 'dead_letter').length, capacityRisk: 'normal' }; }
+
+  // 渠道：投递、策略、模板和黑名单均由 Mock 域持有。
+  if (path === '/api/channels' && method === 'GET') return mockChannels;
+  if (path === '/api/channels' && method === 'POST') { const body = (opts.body ?? {}) as Partial<Channel>; if (!body.name?.trim() || !body.kind) throw new Error('渠道名称和类型不能为空'); const channel: Channel = { id: mockId('channel'), name: body.name.trim(), kind: body.kind, enabled: true, monthlySent: 0, successRate: 1 }; mockChannels.unshift(channel); appendControlPlaneAudit('channel', '接入渠道', channel.name); return channel; }
+  const channelAction = path.match(/^\/api\/channels\/([^/]+)(?:\/(toggle|test|config))?$/);
+  if (channelAction) { const channel = mockChannels.find((item) => item.id === channelAction[1]); if (!channel) throw new Error('渠道不存在'); const action = channelAction[2]; const body = (opts.body ?? {}) as any; if (action === 'toggle' && method === 'PATCH') { channel.enabled = !channel.enabled; appendControlPlaneAudit('channel', channel.enabled ? '恢复渠道投递' : '暂停渠道投递', channel.name); return channel; } if (action === 'test' && method === 'POST') { if (!channel.enabled) throw new Error('渠道已暂停，无法发送测试消息'); if (!body.target?.trim() || !body.content?.trim()) throw new Error('接收对象和消息内容不能为空'); const message = { id: mockId('message'), time: new Date().toLocaleTimeString('zh-CN'), channel: channel.name, target: body.target.trim(), content: body.content.trim(), status: 'delivered' as const, tone: 'success' as const }; mockDomain.messages.unshift(message); appendControlPlaneAudit('channel', '发送测试消息', channel.name); return message; } if (action === 'config' && method === 'PATCH') { mockChannelConfig[channel.id] = { ...(mockChannelConfig[channel.id] ?? {}), ...body }; appendControlPlaneAudit('channel', '更新渠道配置', channel.name); return mockChannelConfig[channel.id]; } }
   if (path === '/api/channel-health') return mockChannelHealth;
   if (path === '/api/message-stream') return mockDomain.messages;
   if (path === '/api/channel-config') return mockChannelConfig;
+  if (path === '/api/channel-templates' && method === 'GET') return mockChannelTemplates;
+  if (path === '/api/channel-templates' && method === 'POST') { const body = (opts.body ?? {}) as any; if (!body.name?.trim()) throw new Error('模板名称不能为空'); const item = { id: mockId('template'), ...body, name: body.name.trim() }; mockChannelTemplates.unshift(item); appendControlPlaneAudit('channel', '创建消息模板', item.name); return item; }
+  if (path === '/api/channel-blacklist' && method === 'GET') return mockChannelBlacklist;
+  if (path === '/api/channel-blacklist' && method === 'POST') { const body = (opts.body ?? {}) as any; if (!body.value?.trim()) throw new Error('黑名单对象不能为空'); const item = { id: mockId('blacklist'), type: body.type ?? '用户', value: body.value.trim(), reason: body.reason ?? '手动添加', addedBy: '当前用户', expires: '永久' }; mockChannelBlacklist.unshift(item); appendControlPlaneAudit('channel', '加入黑名单', item.value); return item; }
+  if (path === '/api/channel-languages' && method === 'GET') return mockChannelLanguages;
+  if (path === '/api/channel-languages' && method === 'POST') { const body = (opts.body ?? {}) as any; if (!body.key?.trim() || !body.label?.trim()) throw new Error('语言代码和名称不能为空'); const item = { key: body.key.trim(), label: body.label.trim(), sample: body.sample ?? '' }; mockChannelLanguages.push(item); appendControlPlaneAudit('channel', '新增多语言模板', item.key); return item; }
+  if (path === '/api/channel-routes' && method === 'GET') return mockChannelRoutes;
+  if (path === '/api/control-plane-audit' && method === 'GET') return mockControlPlaneAudit;
 
   // 设置
   if (path === '/api/audits') return mockComplianceChecks;
@@ -1382,13 +2357,14 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/auth/login') {
     const body = opts.body as { email?: string; password?: string } | undefined;
     if (body?.email && body.password) {
+      const isAdmin = body.email.toLowerCase().startsWith('admin@');
       return {
-        token: 'mock-jwt-token',
+        token: isAdmin ? 'mock-model-admin-token' : 'mock-jwt-token',
         user: {
           id: 'u1',
-          name: '王昊',
+          name: isAdmin ? '模型管理员' : '王昊',
           email: body.email,
-          role: 'sre',
+          role: isAdmin ? 'admin' : 'sre',
           workspaceId: 'w1',
           permissions: [
             'workspace.read',
@@ -1399,10 +2375,12 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
             'knowledge.read',
             'skill.execute',
             'model.read',
+            ...(isAdmin ? ['model.write' as const] : []),
             'task.read',
             'task.write',
             'task.approve',
             'channel.read',
+            ...(isAdmin ? ['channel.write' as const] : []),
             'audit.read',
           ],
           mfaEnabled: true,

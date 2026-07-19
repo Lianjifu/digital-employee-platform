@@ -59,12 +59,14 @@ export default function Tasks() {
   const selectedCurrent = selected ? apiTasks.find((task) => task.id === selected.id) ?? selected : null;
   const mutationPending = transition.isPending || drawerPending;
 
-  return <main className="task-console p-5 lg:p-6">
-    <header className="task-console-header"><div><p className="task-eyebrow">受控执行</p><h1>任务控制台</h1><p>优先处理需要人工判断、审批与风险处置的数字员工任务。</p></div></header>
+  return <main className="task-console px-3 py-3 md:px-4 md:py-4 lg:p-5">
+    <div className="task-console-header-panel"><header className="task-console-header"><div><h1>任务控制台</h1><p>优先处理需要人工判断、审批与风险处置的数字员工任务。</p></div></header></div>
+    <div className="task-console-content-panel">
     <TaskActionSummary counts={counts} onPreset={applyPreset} />
     <TaskToolbar filters={filters} onChange={setFilters} view={view} onViewChange={setView} tasks={apiTasks} onCreate={() => setNewTaskOpen(true)} />
     {message && <div className="task-feedback" role="status">{message}<button type="button" onClick={() => setMessage(null)}>关闭</button></div>}
     {isLoading ? <div className="task-loading"><LoaderCircle className="animate-spin" />正在加载受控任务…</div> : error ? <div className="task-loading error" role="alert"><AlertCircle />无法加载任务：{error instanceof Error ? error.message : '请求失败'}<button type="button" onClick={() => refetch()}>重试</button></div> : <TaskLifecycleBoard tasks={tasks} view={view} disabled={mutationPending} onOpen={openTask} onTransition={moveTask} />}
+    </div>
     <Drawer open={!!selectedCurrent} onClose={() => setSelected(null)} title={selectedCurrent?.title} description={selectedCurrent ? `${selectedCurrent.code} · ${getStageMeta(selectedCurrent.lifecycleStage).label}` : undefined} width={520}>
       {selectedCurrent && <TaskLifecycleDrawer task={selectedCurrent} onPendingChange={setDrawerPending} />}
     </Drawer>

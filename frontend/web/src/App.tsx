@@ -54,8 +54,8 @@ export default function App() {
             <Route path="/workflows" element={<ProtectedRoute permission="workflow.read"><ErrorBoundary><Workflows /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/knowledge" element={<ErrorBoundary><Knowledge /></ErrorBoundary>} />
             <Route path="/skills" element={<ErrorBoundary><Skills /></ErrorBoundary>} />
-            <Route path="/models" element={<ErrorBoundary><Models /></ErrorBoundary>} />
-            <Route path="/channels" element={<ErrorBoundary><Channels /></ErrorBoundary>} />
+            <Route path="/models" element={<ProtectedRoute permission="model.read"><ErrorBoundary><Models /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/channels" element={<ProtectedRoute permission="channel.read"><ErrorBoundary><Channels /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/settings/*" element={<ErrorBoundary><Settings /></ErrorBoundary>} />
           </Route>
           <Route path="*" element={<NotFound />} />

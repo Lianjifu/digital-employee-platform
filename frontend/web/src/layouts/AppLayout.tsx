@@ -332,7 +332,7 @@ export function AppLayout() {
       </aside>
 
       {/* ============ Main ============ */}
-      <main className="row-start-2 col-span-2 lg:col-start-2 lg:col-span-1 overflow-y-auto bg-[var(--bg-elevated)] min-w-0">
+      <main className={cn('row-start-2 col-span-2 min-w-0 bg-[var(--bg-elevated)] lg:col-start-2 lg:col-span-1', location.pathname.startsWith('/workflows') || location.pathname.startsWith('/agents') || location.pathname.startsWith('/copilot') ? 'overflow-hidden' : 'overflow-y-auto')}>
         <Outlet />
       </main>
     </div>

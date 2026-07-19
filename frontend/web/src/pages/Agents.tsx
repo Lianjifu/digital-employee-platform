@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, Tooltip, BarChart, Bar, CartesianGrid, Line, LineChart, PieChart, Pie, Cell, Legend } from 'recharts';
 import { cn } from '@de/web-utils';
-import type { Agent } from '@de/web-types';
+import type { Agent, CapabilityBinding, KnowledgePackage, Skill } from '@de/web-types';
 import { Modal as ModalX, Drawer, EmptyState } from '@/components/shared';
 
 /* ============ 类型 ============ */
@@ -317,9 +317,10 @@ export default function Agents() {
   const activeFilterCount = (cat !== '全部' ? 1 : 0) + (status !== '全部' ? 1 : 0) + (rating !== '全部' ? 1 : 0) + (tagFilter ? 1 : 0) + (searchQ ? 1 : 0);
 
   return (
-    <div className="agents-page h-full min-w-0 overflow-y-auto overscroll-contain bg-[var(--bg-elevated)]">
+    <div className="agents-page h-full min-w-0 overflow-y-auto overscroll-contain bg-[var(--bg-elevated)] p-3 md:p-4 lg:p-5">
       {/* ============ 左侧筛选栏（可折叠） ============ */}
-      <section className="mx-auto min-w-0 w-full max-w-[1680px] bg-[var(--bg)]">
+      <section className="min-h-full min-w-0 w-full">
+        <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_2px_10px_rgba(15,23,42,0.06)]">
         {/* 顶栏 */}
         <div className="flex items-center justify-between gap-2 border-b border-[var(--border)] bg-[var(--bg)] px-5 py-3">
           <div className="flex items-center gap-2 min-w-0">
@@ -345,6 +346,9 @@ export default function Agents() {
           </div>
         </div>
 
+        </div>
+
+        <div className="mt-3 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_2px_10px_rgba(15,23,42,0.06)]">
         {/* 生命周期摘要：先展示运营状态，再进入资产筛选 */}
         {mainTab === 'agents' && (
       <div className="border-b border-[var(--border)] bg-[var(--surface-1)] px-5 py-4">
@@ -423,6 +427,7 @@ export default function Agents() {
               <AgentGridView agents={filtered} onSelect={(id) => { setActiveId(id); setShowDetails(true); }} activeId={activeId} agentSubTab={agentSubTab} />
             </>
           ) : mainTab === 'store' ? <AgentMarketView agents={agents.filter((agent) => agent.status !== 'installed')} imports={imports} onReview={(id, action) => importReviewApi.mutate({ id, action })} onSelect={(id) => { setActiveId(id); setShowDetails(true); }} activeId={activeId} /> : mainTab === 'evaluate' ? <EvaluateView agents={agents} active={active} compare={compare} evaluations={evaluations} /> : <MonitorView agents={agents} alerts={alerts} liveCalls={liveCalls} />}
+        </div>
         </div>
       </section>
 
@@ -535,6 +540,16 @@ function AgentGridView({ agents, onSelect, activeId, agentSubTab }: {
   activeId: string | null;
   agentSubTab: string;
 }) {
+  const [page, setPage] = useState(1);
+  const pageSize = 8;
+  const pageCount = Math.max(1, Math.ceil(agents.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pagedAgents = agents.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+  useEffect(() => {
+    setPage(1);
+  }, [agents, agentSubTab]);
+
   if (agents.length === 0) {
     return (
       <div className="grid min-h-[360px] place-items-center text-center text-[var(--text-muted)]">
@@ -547,14 +562,14 @@ function AgentGridView({ agents, onSelect, activeId, agentSubTab }: {
     );
   }
   // 按分类分组
-  const byCategory = agents.reduce<Record<string, AgentFull[]>>((acc, a) => {
+  const byCategory = pagedAgents.reduce<Record<string, AgentFull[]>>((acc, a) => {
     acc[a.category] = acc[a.category] ?? [];
     acc[a.category].push(a);
     return acc;
   }, {});
 
   return (
-    <div className="space-y-6 bg-[var(--bg-elevated)]/30 p-5 pb-10">
+    <div className="space-y-6 bg-[var(--bg-elevated)]/30 p-5 pb-6">
       {Object.entries(byCategory).map(([cat, items]) => (
         <div key={cat}>
           <div className="flex items-center gap-2 mb-3">
@@ -569,6 +584,14 @@ function AgentGridView({ agents, onSelect, activeId, agentSubTab }: {
           </div>
         </div>
       ))}
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4 text-xs text-[var(--text-muted)]">
+        <span>显示第 {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, agents.length)} 个，共 {agents.length} 个智能体</span>
+        <nav className="flex items-center gap-1" aria-label="智能体分页">
+          <button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="grid h-8 w-8 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="上一页"><ChevronLeft className="h-3.5 w-3.5" /></button>
+          {Array.from({ length: pageCount }, (_, index) => index + 1).map((item) => <button key={item} type="button" onClick={() => setPage(item)} aria-current={item === currentPage ? 'page' : undefined} className={cn('grid h-8 min-w-8 place-items-center rounded-md px-2 font-medium transition-colors', item === currentPage ? 'bg-[var(--brand)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}>{item}</button>)}
+          <button type="button" disabled={currentPage === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} className="grid h-8 w-8 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="下一页"><ChevronRight className="h-3.5 w-3.5" /></button>
+        </nav>
+      </div>
     </div>
   );
 }
@@ -627,13 +650,13 @@ function AgentCard({ agent, active, onClick, market = false }: { agent: AgentFul
     <button
       onClick={onClick}
       className={cn(
-        'group relative flex min-h-[252px] flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_8px_24px_rgba(15,23,42,0.08)]',
-        active ? 'border-[var(--text-muted)]' : '',
+        'workflow-agent-card group relative flex min-h-[268px] flex-col gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-5 text-left transition-all duration-200 hover:-translate-y-1 hover:border-[var(--border-strong)] hover:shadow-[0_14px_30px_rgba(15,23,42,0.10)]',
+        active ? 'border-[var(--brand)] bg-[var(--brand-light)]/35 shadow-[0_8px_24px_rgba(79,70,229,0.12)]' : '',
       )}
     >
       {/* 头部：图标 + 状态徽标 */}
       <div className="flex items-start gap-2">
-        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--brand)]">
+        <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] text-[var(--brand)]">
           <Bot className="h-[18px] w-[18px]" />
         </div>
         <div className="flex-1 min-w-0">
@@ -661,7 +684,7 @@ function AgentCard({ agent, active, onClick, market = false }: { agent: AgentFul
       </div>
 
       {/* 指标：调用 / 缓存 / P95 */}
-      <div className="grid grid-cols-3 gap-2 border-y border-[var(--border)] py-2.5 text-xs">
+      <div className="grid grid-cols-3 gap-2 border-y border-[var(--border)] py-3 text-xs">
         <div className="text-center">
           <div className="text-[var(--text-muted)]">调用量</div>
           <div className="mt-0.5 text-sm font-mono font-semibold text-[var(--text)]">{(agent.installCount / 1000).toFixed(1)}k</div>
@@ -677,7 +700,7 @@ function AgentCard({ agent, active, onClick, market = false }: { agent: AgentFul
       </div>
 
       {/* 状态 + 风险 */}
-      <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-[var(--text-muted)]">
+      <div className="mt-auto grid grid-cols-2 gap-x-3 gap-y-1 border-t border-[var(--border)] pt-3 text-xs text-[var(--text-muted)]">
         <span className="truncate">负责人：<span className="text-[var(--text-secondary)]">{(agent as any).owner ?? '未分配'}</span></span>
         <span className="truncate text-right">工作区：<span className="text-[var(--text-secondary)]">{(agent as any).workspace ?? '未指定'}</span></span>
         <span className="truncate">最近运行：<span className="text-[var(--text-secondary)]">{(agent as any).lastRunAt ?? '—'}</span></span>
@@ -929,8 +952,8 @@ function MonitorView({ agents, alerts, liveCalls }: { agents: AgentFull[]; alert
                 <div className="flex shrink-0 items-center gap-1"><button onClick={() => setSelectedAlert(a)} className="rounded-md px-2 py-1.5 text-xs text-[var(--text-muted)] hover:bg-[var(--bg-hover)]">详情</button><button onClick={() => ackAlert(a.id)} disabled={a.acknowledged} className={cn('rounded-md px-2.5 py-1.5 text-xs transition-colors', a.acknowledged ? 'cursor-not-allowed text-[var(--text-muted)]' : 'text-[var(--brand)] hover:bg-[var(--brand-light)]')}>{a.acknowledged ? '已确认' : '确认告警'}</button></div>
               </div>
             );
-          })}
-        </div>
+      })}
+    </div>
         <div className="mt-3 flex items-center justify-between border-t border-[var(--border)] pt-3 text-xs text-[var(--text-muted)]">
           <span>{alertList.length ? `显示 ${(alertPage - 1) * pageSize + 1}-${Math.min(alertPage * pageSize, alertList.length)} / 共 ${alertList.length} 条` : '暂无告警'}</span>
           <div className="flex items-center gap-1"><button onClick={() => setAlertPage((page) => Math.max(1, page - 1))} disabled={alertPage === 1} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] disabled:cursor-not-allowed disabled:opacity-40"><ChevronLeft className="h-3.5 w-3.5" /></button><span className="min-w-[52px] text-center font-mono">{alertPage} / {alertTotalPages}</span><button onClick={() => setAlertPage((page) => Math.min(alertTotalPages, page + 1))} disabled={alertPage === alertTotalPages} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] disabled:cursor-not-allowed disabled:opacity-40"><ChevronRight className="h-3.5 w-3.5" /></button></div>
@@ -1171,8 +1194,36 @@ function PromptTab({ agent, onTestOpen, onPreviewOpen, onSave }: { agent: AgentF
 }
 
 function ToolsTab({ agent, onToolCfg }: { agent: AgentFull; onToolCfg: (key: string) => void }) {
+  const [selectedCapabilityId, setSelectedCapabilityId] = useState('');
+  const { data: workspaceCapabilities = [] } = useApiQuery<Skill[]>(['skills', 'agent-capability-picker'], '/api/skills');
+  const { data: bindings = [] } = useApiQuery<CapabilityBinding[]>(['agents', agent.id, 'capabilities'], `/api/agents/${agent.id}/capabilities`);
+  const bindCapability = useApiMutation<CapabilityBinding, { capabilityKind: 'skill' | 'mcp' | 'tool'; capabilityId: string; pinnedVersion: string }>(() => `/api/agents/${agent.id}/capabilities`);
+  const unbindCapability = useApiMutation<CapabilityBinding, { id: string }>(({ id }) => `/api/agents/${agent.id}/capabilities/${id}`, undefined, 'DELETE');
+  const boundCapabilityIds = new Set(bindings.map((binding) => binding.capabilityId));
+  const availableCapabilities = workspaceCapabilities.filter((capability) => !boundCapabilityIds.has(capability.id));
+
   return (
     <>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="text-sm font-semibold text-[var(--text)] flex items-center gap-1.5"><Boxes className="h-3.5 w-3.5 text-[var(--brand)]" />已引用能力</div>
+            <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">工作区安装不等于可用。仅在此处绑定并固定版本的 Skill、MCP、Tool 才会进入该智能体的调用范围。</p>
+          </div>
+          <Badge tone="brand" className="shrink-0 text-[10px]">{bindings.length} 项</Badge>
+        </div>
+        <div className="mt-3 space-y-2">
+          {bindings.length === 0 ? <div className="rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5 text-xs text-[var(--text-muted)]">尚未引用工作区能力</div> : bindings.map((binding) => {
+            const capability = workspaceCapabilities.find((item) => item.id === binding.capabilityId);
+            return <div key={binding.id} className="flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2.5 text-xs"><Badge tone={capability?.kind === 'mcp' ? 'success' : capability?.kind === 'tool' ? 'warn' : 'info'} className="text-[10px]">{(capability?.kind ?? binding.capabilityKind).toUpperCase()}</Badge><span className="min-w-0 flex-1 truncate font-medium">{capability?.name ?? binding.capabilityId}</span><span className="font-mono text-[10px] text-[var(--text-muted)]">v{binding.pinnedVersion}</span><button type="button" className="text-[var(--text-muted)] hover:text-[var(--danger)]" onClick={() => unbindCapability.mutate({ id: binding.id })}>移除</button></div>;
+          })}
+        </div>
+        <div className="mt-3 flex gap-2">
+          <select value={selectedCapabilityId} onChange={(event) => setSelectedCapabilityId(event.target.value)} className="h-8 min-w-0 flex-1 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs"><option value="">选择工作区能力</option>{availableCapabilities.map((capability) => <option key={capability.id} value={capability.id}>{capability.name} · {capability.kind.toUpperCase()} · v{capability.version}</option>)}</select>
+          <Button size="sm" disabled={!selectedCapabilityId} loading={bindCapability.isPending} onClick={() => { const capability = workspaceCapabilities.find((item) => item.id === selectedCapabilityId); if (capability) bindCapability.mutate({ capabilityKind: capability.kind, capabilityId: capability.id, pinnedVersion: capability.version }, { onSuccess: () => setSelectedCapabilityId('') }); }}><Plus className="h-3.5 w-3.5" />引用</Button>
+        </div>
+      </div>
+
       <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
         <div className="text-sm font-semibold text-[var(--text)] mb-3 flex items-center gap-1.5"><Wrench className="h-3.5 w-3.5 text-[var(--brand)]" />工具与 MCP</div>
         <div className="space-y-2">
@@ -1356,6 +1407,8 @@ function CreateAgentModal({ open, onClose, onSubmit }: { open: boolean; onClose:
     knowledge: [] as string[],
     sla: 99,
   });
+  const { data: knowledgePackages = [] } = useApiQuery<KnowledgePackage[]>(['agent-create', 'knowledge-packages'], '/api/knowledge/packages');
+  const publishedKnowledgePackages = knowledgePackages.filter((item) => item.status === 'published' && item.currentVersion.status === 'published');
   const handleCreate = async () => {
     if (submitting) return;
     setSubmitting(true);
@@ -1440,16 +1493,18 @@ function CreateAgentModal({ open, onClose, onSubmit }: { open: boolean; onClose:
             </FormField>
             <FormField label="知识库">
               <div className="space-y-1">
-                {['Redis 故障 Runbook v3.2', 'K8s 运维手册 v2.1', 'CMDB 全量资产清单', 'CVE 漏洞库'].map((kb) => {
-                  const on = form.knowledge.includes(kb);
+                {publishedKnowledgePackages.map((knowledgePackage) => {
+                  const reference = `${knowledgePackage.name} · ${knowledgePackage.currentVersion.version}`;
+                  const on = form.knowledge.includes(reference);
                   return (
-                    <button key={kb} onClick={() => setForm((f) => ({ ...f, knowledge: on ? f.knowledge.filter((x) => x !== kb) : [...f.knowledge, kb] }))} className={cn('flex w-full items-center gap-1.5 rounded border px-2 py-1 text-[10px]', on ? 'border-[var(--brand)] bg-[var(--brand-light)]/30' : 'border-[var(--border)] bg-[var(--bg)]')}>
+                    <button key={knowledgePackage.id} onClick={() => setForm((f) => ({ ...f, knowledge: on ? f.knowledge.filter((x) => x !== reference) : [...f.knowledge, reference] }))} className={cn('flex w-full items-center gap-1.5 rounded border px-2 py-1 text-[10px]', on ? 'border-[var(--brand)] bg-[var(--brand-light)]/30' : 'border-[var(--border)] bg-[var(--bg)]')}>
                       <Database className="h-3 w-3 text-[var(--info)]" />
-                      <span className="flex-1 text-left">{kb}</span>
+                      <span className="flex-1 text-left">{reference}<small className="ml-1 text-[var(--text-muted)]">{knowledgePackage.domain}</small></span>
                       {on && <CheckCircle2 className="h-3 w-3 text-[var(--brand)]" />}
                     </button>
                   );
                 })}
+                {publishedKnowledgePackages.length === 0 && <div className="rounded border border-dashed border-[var(--border)] p-2 text-[10px] text-[var(--text-muted)]">暂无可引用知识包，请先在知识库中心完成发布。</div>}
               </div>
             </FormField>
           </>
