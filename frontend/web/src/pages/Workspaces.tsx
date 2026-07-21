@@ -13,7 +13,7 @@
  * 10. 合规基线检查
  */
 import { useState } from 'react';
-import { useApiQuery } from '@/services/query';
+import { useApiMutation, useApiQuery } from '@/services/query';
 import { Badge, Button, Progress, Avatar } from '@de/web-ui';
 import {
   Building2, ShieldCheck, Plus, Users, Bot, Wrench, Activity, FileText,
@@ -39,6 +39,8 @@ export default function Workspaces() {
   const activeWs = current?.id ?? 'w1';
   const [showWizard, setShowWizard] = useState(false);
   const [tab, setTab] = useState<'overview' | 'members' | 'agents' | 'tools' | 'compliance' | 'quota' | 'runtime' | 'audit' | 'settings'>('overview');
+  const [governanceNotice, setGovernanceNotice] = useState<string | null>(null);
+  const [transferOwnerId, setTransferOwnerId] = useState('');
 
   const { data: list } = useApiQuery<Workspace[]>(['workspaces'], '/api/workspaces');
   const { data: members = [] } = useApiQuery<any[]>(['ws', activeWs, 'members'], `/api/workspaces/${activeWs}/members`);
@@ -48,6 +50,9 @@ export default function Workspaces() {
   const { data: quota } = useApiQuery<any>(['ws', activeWs, 'quota'], `/api/workspaces/${activeWs}/quota`);
   const { data: audit = [] } = useApiQuery<any[]>(['ws', activeWs, 'audit'], `/api/workspaces/${activeWs}/audit`);
   const { data: switchHistory = [] } = useApiQuery<any[]>(['ws-switch-history'], '/api/workspace-switch-history');
+  const runtimeAction = useApiMutation<any, { type: 'handoff' | 'paused'; detail: string }> (() => `/api/workspaces/${activeWs}/runtime`, { onSuccess: (event) => setGovernanceNotice(`运行治理已登记：${event.detail}`), onError: (error) => setGovernanceNotice(error instanceof Error ? error.message : '运行治理动作失败') });
+  const freezeWorkspace = useApiMutation<any, { reason: string }>(() => `/api/workspaces/${activeWs}/freeze`, { onSuccess: () => setGovernanceNotice('工作区已冻结，相关动作已写入审计。'), onError: (error) => setGovernanceNotice(error instanceof Error ? error.message : '冻结失败') });
+  const transferWorkspace = useApiMutation<any, { ownerId: string; reason: string }>(() => `/api/workspaces/${activeWs}/transfer`, { onSuccess: () => { setGovernanceNotice('工作区负责人已移交，变更已写入审计。'); setTransferOwnerId(''); }, onError: (error) => setGovernanceNotice(error instanceof Error ? error.message : '负责人移交失败') });
 
   const active = list?.find((w) => w.id === activeWs);
 
@@ -161,6 +166,7 @@ export default function Workspaces() {
                     ))}
                   </nav>
               <div className="workspace-panel-body">
+                {governanceNotice && <div className="mb-3 flex items-center justify-between rounded-md border border-[var(--brand)]/30 bg-[var(--brand-light)] px-3 py-2 text-xs text-[var(--brand)]"><span>{governanceNotice}</span><button type="button" onClick={() => setGovernanceNotice(null)}>关闭</button></div>}
                 {/* Tab: 概览 */}
                 {tab === 'overview' && (
                   <div className="space-y-4">
@@ -338,9 +344,9 @@ export default function Workspaces() {
                 )}
 
                 {tab === 'quota' && <div className="grid grid-cols-2 gap-3">{quota && Object.entries(quota).map(([name, value]: any) => <KpiInline key={name} label={name === 'budgetUsd' ? '模型预算' : name === 'tokens' ? 'Token' : name === 'concurrency' ? '并发' : name === 'agents' ? '数字员工' : '席位'} value={`${value.used}/${value.limit}`} sub={`使用率 ${Math.round(value.used / value.limit * 100)}%`} tone={value.used / value.limit > .8 ? 'brand' : 'success'} />)}</div>}
-                {tab === 'runtime' && <div className="space-y-3"><div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] p-4 text-xs"><strong>运行治理</strong><p className="mt-1 text-[var(--text-muted)]">支持人工接管、熔断、暂停和事件复盘；所有动作需要原因并写入工作区审计。</p></div><Button size="sm" variant="secondary">发起人工接管</Button><Button size="sm" variant="secondary">暂停高风险运行</Button></div>}
+                {tab === 'runtime' && <div className="space-y-3"><div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] p-4 text-xs"><strong>运行治理</strong><p className="mt-1 text-[var(--text-muted)]">支持人工接管、熔断、暂停和事件复盘；所有动作需要原因并写入工作区审计。</p></div><div className="flex gap-2"><Button size="sm" variant="secondary" loading={runtimeAction.isPending} onClick={() => runtimeAction.mutate({ type: 'handoff', detail: '人工接管当前高风险任务' })}>发起人工接管</Button><Button size="sm" variant="secondary" loading={runtimeAction.isPending} onClick={() => runtimeAction.mutate({ type: 'paused', detail: '暂停高风险运行并等待复核' })}>暂停高风险运行</Button></div></div>}
                 {tab === 'audit' && <div className="divide-y overflow-hidden rounded-md border border-[var(--border)]">{audit.length ? audit.map((event) => <div key={event.id} className="flex gap-3 px-3 py-2 text-xs"><span className="font-mono text-[var(--text-muted)]">{event.time.slice(11, 19)}</span><span>{event.actor}</span><strong>{event.action}</strong><span className="text-[var(--text-muted)]">{event.target}</span></div>) : <div className="p-8 text-center text-xs text-[var(--text-muted)]">暂无工作区审计事件</div>}</div>}
-                {tab === 'settings' && <div className="space-y-3 rounded-lg border border-[var(--border)] p-4 text-xs"><div><strong>工作区负责人</strong><p className="mt-1 text-[var(--text-muted)]">负责人变更、冻结与归档均需记录原因和影响范围。</p></div><div className="flex gap-2"><Button size="sm" variant="secondary">移交负责人</Button><Button size="sm" variant="secondary">冻结工作区</Button></div></div>}
+                {tab === 'settings' && <div className="space-y-3 rounded-lg border border-[var(--border)] p-4 text-xs"><div><strong>工作区负责人</strong><p className="mt-1 text-[var(--text-muted)]">负责人变更、冻结与归档均需记录原因和影响范围。</p></div><div className="flex flex-wrap gap-2"><select aria-label="选择新负责人" value={transferOwnerId} onChange={(event) => setTransferOwnerId(event.target.value)} className="h-8 min-w-[160px] rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs"><option value="">选择工作区成员</option>{members.filter((member) => member.id !== active.ownerId).map((member) => <option key={member.id} value={member.id}>{member.name} · {member.role}</option>)}</select><Button size="sm" variant="secondary" disabled={!transferOwnerId} loading={transferWorkspace.isPending} onClick={() => transferWorkspace.mutate({ ownerId: transferOwnerId, reason: '运营管理员发起负责人移交' })}>移交负责人</Button><Button size="sm" variant="secondary" loading={freezeWorkspace.isPending} onClick={() => freezeWorkspace.mutate({ reason: '运营管理员发起冻结' })}>冻结工作区</Button></div></div>}
               </div></div>
             </>
           )}

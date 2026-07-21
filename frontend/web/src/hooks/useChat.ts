@@ -21,6 +21,7 @@
  */
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { getApiClient } from '@de/web-api';
+import { useWorkspaceStore } from '@/stores/workspaceStore';
 import type {
   ChatMessageEx,
   ChatSession,
@@ -716,7 +717,7 @@ export function useChat(agentMeta?: { name: string }) {
       pinned: true,
       ownerId: 'u1',
       ownerName: '王昊',
-      workspaceId: 'w1',
+      workspaceId: useWorkspaceStore.getState().currentWorkspaceId ?? 'w1',
       encrypted: true,
       messages: [
         {
@@ -903,7 +904,7 @@ export function useChat(agentMeta?: { name: string }) {
       lastActiveAt: Date.now(),
       ownerId: 'u1',
       ownerName: '王昊',
-      workspaceId: 'w1',
+      workspaceId: useWorkspaceStore.getState().currentWorkspaceId ?? 'w1',
       encrypted: true,
     };
     dispatch({ type: 'new_session', session: sess });
@@ -1050,7 +1051,7 @@ export function useChat(agentMeta?: { name: string }) {
       await api.post(`/api/actions/${mid}/approve`, { signerIndex, conversationId: state.activeId });
       if (message.approvalRequest!.signed + 1 >= message.approvalRequest!.required) {
         const task = await api.post<{ id: string; code: string }>(`/api/conversations/${state.activeId}/tasks`, {
-          title: `${session?.title ?? '数字员工会话'} · 受控执行`, priority: 'P1', assignee: '王昊',
+          title: `${session?.title ?? '数字员工会话'} · 受控执行`, priority: 'P1', assignee: '王昊', correlationId: message.correlationId,
         });
         await api.post(`/api/actions/${mid}/execute`, { taskId: task.id });
       }

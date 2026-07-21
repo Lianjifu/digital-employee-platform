@@ -178,6 +178,7 @@ export default function Home() {
   const { data: tasks, isLoading: lTasks } = useApiQuery<Task[]>(['home', 'tasks'], '/api/tasks');
   const { data: extra, isLoading: lExtra, isFetching: fetchingExtra, refetch: refetchExtra } = useApiQuery<any>(['home', 'extra'], '/api/home/extra');
   const { data: team, isLoading: lTeam } = useApiQuery<any[]>(['home', 'team'], '/api/home/team');
+  const { data: operations } = useApiQuery<any>(['operations', 'overview'], '/api/operations/overview');
   const { current } = useWorkspaceStore();
   const { user } = useAuthStore();
 
@@ -276,6 +277,22 @@ export default function Home() {
           <Workflow className="h-3.5 w-3.5" />工作流
         </Button>
       </div>
+
+      <section className="mx-6 mt-3 rounded-md border border-[var(--border)] bg-[var(--bg)] px-4 py-3 md:mx-8" aria-label="工作区运营待办">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-xs font-semibold"><Inbox className="h-4 w-4 text-[var(--brand)]" />工作区运营待办</div>
+          <div className="flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
+            <span>任务成功率 <strong className="text-[var(--text)]">{operations?.health?.taskSuccessRate ?? '--'}%</strong></span>
+            <span>运行中数字员工 <strong className="text-[var(--text)]">{operations?.health?.activeAgents ?? '--'}</strong></span>
+            <span>待处理 <strong className="text-[var(--danger)]">{operations?.pending?.length ?? 0}</strong></span>
+          </div>
+        </div>
+        {(operations?.pending?.length ?? 0) > 0 && (
+          <div className="mt-2 flex flex-wrap gap-2">
+            {operations.pending.slice(0, 3).map((item: any) => <Link key={item.id} to={item.to} className="rounded border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:border-[var(--brand)] hover:text-[var(--brand)]">{item.title}</Link>)}
+          </div>
+        )}
+      </section>
 
       {/* ============ 6 KPI 卡（可点击跳转）============ */}
       <div className="home-metrics px-6 md:px-8 mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">

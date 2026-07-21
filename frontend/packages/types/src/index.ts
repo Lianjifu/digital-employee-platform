@@ -9,8 +9,12 @@ export type ISODate = string;
 export type Timestamp = number;
 
 // ============ 角色与权限（来自 P11）============
-/** 4 角色 RBAC：Admin / SRE / Sec / View */
-export type Role = 'admin' | 'sre' | 'sec' | 'view';
+/**
+ * 平台预置角色。工作区成员展示的历史岗位名称不等同于平台访问角色，
+ * 平台实际授权统一收敛为使用者、管理员和审计员三类。
+ */
+export type Role = 'user' | 'admin' | 'auditor';
+export type EnvironmentScope = 'sandbox' | 'staging' | 'production';
 
 export type Permission =
   | 'workspace.read'
@@ -34,6 +38,10 @@ export type Permission =
   | 'channel.read'
   | 'channel.write'
   | 'audit.read'
+  | 'audit.export'
+  | 'access.read'
+  | 'access.write'
+  | 'release.approve'
   | 'billing.read'
   | 'billing.write';
 
@@ -43,7 +51,10 @@ export interface User {
   email: string;
   avatar?: string;
   role: Role;
+  tenantId: ID;
   workspaceId: ID;
+  workspaceIds: ID[];
+  environmentScopes: EnvironmentScope[];
   permissions: Permission[];
   mfaEnabled: boolean;
 }
@@ -65,7 +76,56 @@ export interface Workspace {
 }
 
 export type WorkspaceEnvironmentKind = 'sandbox' | 'staging' | 'production';
-export interface WorkspaceMember { id: ID; workspaceId: ID; name: string; email: string; role: Role; mfa: boolean; expiresAt?: ISODate; lastActive: string; }
+/** 工作区内的业务岗位展示字段，不参与平台访问控制。 */
+export interface WorkspaceMember { id: ID; workspaceId: ID; name: string; email: string; role: string; mfa: boolean; expiresAt?: ISODate; lastActive: string; }
+
+export interface AccessGrant {
+  id: ID;
+  subjectId: ID;
+  subjectName: string;
+  role: Role;
+  tenantId: ID;
+  workspaceIds: ID[];
+  environmentScopes: EnvironmentScope[];
+  status: 'active' | 'expiring' | 'expired';
+  expiresAt?: ISODate;
+  grantedBy: string;
+  createdAt: ISODate;
+}
+
+export interface AccessReview {
+  id: ID;
+  title: string;
+  scope: string;
+  dueAt: ISODate;
+  status: 'open' | 'completed' | 'overdue';
+  owner: string;
+  reviewed: number;
+  total: number;
+}
+
+export interface SeparationOfDutyRule {
+  id: ID;
+  title: string;
+  description: string;
+  scope: 'tenant' | 'production' | 'sensitive-data';
+  enabled: boolean;
+  violations: number;
+}
+
+export interface ReleaseApproval {
+  id: ID;
+  workspaceId: ID;
+  environment: EnvironmentScope;
+  resourceType: 'agent' | 'workflow' | 'model' | 'channel';
+  resourceName: string;
+  submittedBy: string;
+  submittedById: ID;
+  submittedAt: ISODate;
+  status: 'pending' | 'approved' | 'rejected';
+  risk: 'low' | 'medium' | 'high';
+  correlationId: string;
+}
 export interface WorkspaceBinding { id: ID; workspaceId: ID; environment: WorkspaceEnvironmentKind; kind: 'agent' | 'workflow' | 'knowledge' | 'skill' | 'model' | 'channel'; name: string; status: 'active' | 'paused'; }
 export interface WorkspaceEnvironment { id: ID; workspaceId: ID; kind: WorkspaceEnvironmentKind; approvalRequired: boolean; canaryPercent: number; status: 'ready' | 'blocked'; }
 export interface WorkspacePolicy { workspaceId: ID; dataClassification: 'internal' | 'restricted'; egressAllowed: boolean; toolAllowlist: string[]; retentionDays: number; exceptionStatus: 'none' | 'pending' | 'approved'; }
@@ -79,6 +139,14 @@ export type TaskStatus = 'pending' | 'in_progress' | 'review' | 'completed' | 'a
 
 export interface Task {
   id: ID;
+  /** Mock 阶段的工作区归属；真实服务端应从身份上下文派生，不能信任客户端提交值。 */
+  workspaceId?: ID;
+  ownerId?: ID;
+  environment?: WorkspaceEnvironmentKind;
+  lifecycleStatus?: string;
+  classification?: 'internal' | 'confidential' | 'restricted';
+  createdBy?: ID;
+  correlationId?: string;
   code: string; // TSK-20260710-019
   title: string;
   description?: string;
@@ -153,6 +221,13 @@ export type AgentStatus = 'installed' | 'available' | 'beta' | 'deprecated';
 
 export interface Agent {
   id: ID;
+  workspaceId?: ID;
+  ownerId?: ID;
+  environment?: WorkspaceEnvironmentKind;
+  lifecycleStatus?: string;
+  classification?: 'internal' | 'confidential' | 'restricted';
+  createdBy?: ID;
+  updatedAt?: ISODate;
   name: string;
   category: AgentCategory;
   description: string;
@@ -205,6 +280,13 @@ export interface WorkflowEdge {
 
 export interface Workflow {
   id: ID;
+  workspaceId?: ID;
+  ownerId?: ID;
+  environment?: WorkspaceEnvironmentKind;
+  lifecycleStatus?: string;
+  classification?: 'internal' | 'confidential' | 'restricted';
+  createdBy?: ID;
+  updatedAt?: ISODate;
   name: string;
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
@@ -228,6 +310,10 @@ export interface KnowledgeChunk {
 
 export interface KnowledgeDoc {
   id: ID;
+  workspaceId?: ID;
+  ownerId?: ID;
+  classification?: 'internal' | 'confidential' | 'restricted';
+  correlationId?: string;
   title: string;
   source: string; // Runbook / CMDB / CVE / ...
   sizeKb: number;
@@ -289,6 +375,9 @@ export interface KnowledgePackageVersion {
 
 export interface KnowledgePackage {
   id: ID;
+  workspaceId?: ID;
+  ownerId?: ID;
+  environment?: WorkspaceEnvironmentKind;
   name: string;
   description: string;
   domain: string;
@@ -360,6 +449,8 @@ export interface KnowledgeGraphRelation {
 
 export interface KnowledgeConsumerBinding {
   id: ID;
+  workspaceId?: ID;
+  correlationId?: string;
   packageId: ID;
   packageName: string;
   packageVersion: string;
@@ -371,6 +462,74 @@ export interface KnowledgeConsumerBinding {
   noResultPolicy: KnowledgeRetrievalProfile['noResultPolicy'];
 }
 
+// ============ 记忆中心 ============
+export type MemoryLayer = 'short_term' | 'working' | 'long_term';
+export type MemoryScope = 'user' | 'team' | 'workspace' | 'agent';
+export type MemorySourceType = 'conversation' | 'task' | 'workflow' | 'manual';
+export type MemoryStatus = 'active' | 'pending_review' | 'expired' | 'revoked' | 'promoted';
+
+/** 受控运行记忆，不等同于已发布的企业知识资产。 */
+export interface MemoryRecord {
+  id: ID;
+  workspaceId: ID;
+  ownerId: ID;
+  layer: MemoryLayer;
+  scope: MemoryScope;
+  title: string;
+  content: string;
+  classification: 'internal' | 'confidential' | 'restricted';
+  sourceType: MemorySourceType;
+  sourceId: ID;
+  correlationId: string;
+  confidence: number;
+  status: MemoryStatus;
+  expiresAt?: ISODate;
+  createdAt: ISODate;
+  updatedAt: ISODate;
+}
+
+export interface MemoryKnowledgeCandidate {
+  id: ID;
+  workspaceId: ID;
+  memoryId: ID;
+  title: string;
+  summary: string;
+  classification: MemoryRecord['classification'];
+  sourceCorrelationId: string;
+  status: 'pending_review' | 'approved' | 'rejected';
+  submittedAt: ISODate;
+  reviewedAt?: ISODate;
+  reviewer?: string;
+  knowledgePackageId?: ID;
+}
+
+export interface MemoryPolicy {
+  workspaceId: ID;
+  shortTermTtlHours: number;
+  workingMemoryTtlDays: number;
+  /** 每日渐进提炼的调度时间；由真实后端调度器执行。 */
+  dailyRefinementTime: string;
+  shortToWorkingEnabled: boolean;
+  workingToLongEnabled: boolean;
+  longToKnowledgeEnabled: boolean;
+  minimumConfidence: number;
+  longTermWriteApproval: boolean;
+  sensitiveDataMasking: boolean;
+  longTermCapacity: number;
+  usedCapacity: number;
+}
+
+export interface MemoryAuditEvent {
+  id: ID;
+  workspaceId: ID;
+  time: ISODate;
+  actor: string;
+  action: string;
+  target: string;
+  result: 'success' | 'failed';
+  correlationId: string;
+}
+
 // ============ 技能 P8 ============
 export type SkillKind = 'skill' | 'mcp' | 'tool';
 export type SkillLifecycleStatus = 'enabled' | 'disabled' | 'pending_approval' | 'quarantined' | 'deprecated';
@@ -378,6 +537,10 @@ export type SkillSource = 'market' | 'import' | 'mcp' | 'tool';
 
 export interface Skill {
   id: ID;
+  workspaceId?: ID;
+  ownerId?: ID;
+  environment?: WorkspaceEnvironmentKind;
+  classification?: 'internal' | 'confidential' | 'restricted';
   name: string;
   kind: SkillKind;
   description: string;
@@ -735,6 +898,9 @@ export interface ToolCall {
 
 export interface Conversation {
   id: ID;
+  workspaceId?: ID;
+  ownerId?: ID;
+  correlationId?: string;
   agentId: ID;
   title: string;
   messages: ChatMessage[];

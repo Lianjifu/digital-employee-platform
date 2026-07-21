@@ -34,6 +34,7 @@ import { cn } from '@de/web-utils';
 import { Drawer, ConfirmDialog } from '@/components/shared';
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { useAuthStore } from '@/stores/authStore';
+import { useWorkspaceStore } from '@/stores/workspaceStore';
 
 type SidePanelKey = 'library' | 'debug' | 'properties';
 type TabKey = 'canvas' | 'templates' | 'history';
@@ -329,6 +330,8 @@ function templateSnapshot(template: typeof TEMPLATES[number]): Snapshot {
 export default function Workflows() {
   const canWrite = useAuthStore((state) => state.hasPermission('workflow.write'));
   const canExecute = useAuthStore((state) => state.hasPermission('workflow.execute'));
+  const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
+  const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
   const [tab, setTab] = useState<TabKey>('canvas');
   const [sidePanel, setSidePanel] = useState<SidePanelKey>('library');
   const [librarySearchQ, setLibrarySearchQ] = useState('');
@@ -412,6 +415,14 @@ export default function Workflows() {
     onSuccess: () => { setVersionMenuOpen(false); showToast('已提交发布，等待发布治理流程', 'success'); },
     onError: () => showToast('发布提交失败，请先完成运行前校验', 'error'),
   });
+  const releaseRequestApi = useApiMutation<unknown, { resourceType: 'workflow'; resourceName: string; risk: 'low' | 'medium' | 'high' }>('/api/release-approvals', {
+    onSuccess: () => { setVersionMenuOpen(false); showToast('已提交生产发布申请，等待管理员审批', 'success'); },
+    onError: () => showToast('发布申请提交失败，请稍后重试', 'error'),
+  });
+  const requestProductionRelease = () => {
+    if (isAdmin) publishWorkflowApi.mutate({ version: activeVersion });
+    else releaseRequestApi.mutate({ resourceType: 'workflow', resourceName: `工作流 ${activeVersion}`, risk: 'medium' });
+  };
 
   // 拖拽
   const wrapperRef = useRef<HTMLDivElement | null>(null);
@@ -690,8 +701,8 @@ export default function Workflows() {
   const submitGeneration = useCallback(() => {
     if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
     if (generationPrompt.trim().length < 8) { showToast('请至少描述 8 个字符的业务目标', 'error'); return; }
-    generateWorkflowApi.mutate({ prompt: generationPrompt.trim(), constraints: generationConstraints, workspaceId: 'prod-ops', model: generationModel });
-  }, [canWrite, generateWorkflowApi, generationConstraints, generationModel, generationPrompt, showToast]);
+    generateWorkflowApi.mutate({ prompt: generationPrompt.trim(), constraints: generationConstraints, workspaceId: currentWorkspaceId, model: generationModel });
+  }, [canWrite, currentWorkspaceId, generateWorkflowApi, generationConstraints, generationModel, generationPrompt, showToast]);
   const applyGeneration = useCallback(async () => {
     if (!canWrite || !generationResult) return;
     const activeSnapshot = versions.find((version) => version.id === activeVersion);
@@ -950,8 +961,8 @@ export default function Workflows() {
                     <Button size="sm" variant="outline" className="flex-1" onClick={() => setVersionDiffOpen(true)}>
                       <GitCompare className="h-3 w-3" />差异
                     </Button>
-                    <Button size="sm" variant="primary" className="flex-1" onClick={() => publishWorkflowApi.mutate({ version: activeVersion })} loading={publishWorkflowApi.isPending} disabled={!canWrite || isDirty}>
-                      发布
+                    <Button size="sm" variant="primary" className="flex-1" onClick={requestProductionRelease} loading={publishWorkflowApi.isPending || releaseRequestApi.isPending} disabled={!canWrite || isDirty}>
+                      {isAdmin ? '发布' : '提交发布申请'}
                     </Button>
                   </div>
                 </div>
@@ -1049,8 +1060,9 @@ export default function Workflows() {
             setVersions={setVersions}
             setActiveVersion={setActiveVersion}
             setVersionDiffOpen={setVersionDiffOpen}
-            publishVersion={() => publishWorkflowApi.mutate({ version: activeVersion })}
-            publishing={publishWorkflowApi.isPending}
+            publishVersion={requestProductionRelease}
+            publishLabel={isAdmin ? '发布' : '提交发布申请'}
+            publishing={publishWorkflowApi.isPending || releaseRequestApi.isPending}
             isDirty={isDirty}
           />
         )}
@@ -1345,6 +1357,7 @@ function CanvasView(props: {
   setActiveVersion: (version: string) => void;
   setVersionDiffOpen: (open: boolean) => void;
   publishVersion: () => void;
+  publishLabel: string;
   publishing: boolean;
   isDirty: boolean;
 }) {
@@ -1357,7 +1370,7 @@ function CanvasView(props: {
     saveCanvas, saving, runWorkflow, resetCanvas, clearCanvas,
     addNode, deleteNode, duplicateNode, disableNode, updateNodeLabel, updateNodeDescription, updateNodeNote, showToast,
     onConnect, deleteEdge, undo, redo, canUndo, canRedo, exportWorkflow, reactFlowRef, canWrite, canExecute, openAIGenerator, nodeLibraryOpen, setNodeLibraryOpen, validating,
-    versionMenuOpen, setVersionMenuOpen, versions, activeVersion, loadSnapshot, setVersions, setActiveVersion, setVersionDiffOpen, publishVersion, publishing, isDirty,
+    versionMenuOpen, setVersionMenuOpen, versions, activeVersion, loadSnapshot, setVersions, setActiveVersion, setVersionDiffOpen, publishVersion, publishLabel, publishing, isDirty,
   } = props;
 
   const [mobilePanelOpen, setMobilePanelOpen] = useState<SidePanelKey | null>(null);
@@ -1416,7 +1429,7 @@ function CanvasView(props: {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
       {actionToolbar}
-      <Drawer open={versionMenuOpen} onClose={() => setVersionMenuOpen(false)} width={520} title="工作流版本管理" description={`当前版本 ${activeVersion} · 版本切换仅影响画布草稿`} footer={<div className="flex w-full gap-2"><Button size="sm" variant="outline" className="flex-1" onClick={() => setVersionDiffOpen(true)}>查看差异</Button><Button size="sm" variant="primary" className="flex-1" onClick={publishVersion} loading={publishing} disabled={!canWrite || isDirty}>发布</Button></div>}>
+      <Drawer open={versionMenuOpen} onClose={() => setVersionMenuOpen(false)} width={520} title="工作流版本管理" description={`当前版本 ${activeVersion} · 版本切换仅影响画布草稿`} footer={<div className="flex w-full gap-2"><Button size="sm" variant="outline" className="flex-1" onClick={() => setVersionDiffOpen(true)}>查看差异</Button><Button size="sm" variant="primary" className="flex-1" onClick={publishVersion} loading={publishing} disabled={!canWrite || isDirty}>{publishLabel}</Button></div>}>
         <div className="space-y-2">{versions.map((version) => <button key={version.id} type="button" onClick={() => { loadSnapshot(version, version.id); setVersionMenuOpen(false); showToast(`已加载 ${version.label}（本地快照）`, 'info'); }} className={cn('flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left transition-colors hover:bg-[var(--bg-hover)]', version.id === activeVersion ? 'border-[var(--brand)] bg-[var(--brand-light)]' : 'border-[var(--border)] bg-[var(--surface-1)]')}><span className="font-mono text-sm font-semibold text-[var(--brand)]">{version.label}</span><span className="min-w-0 flex-1"><span className="block text-[11px] text-[var(--text-muted)]">{version.time}</span><span className="block truncate text-xs text-[var(--text-secondary)]">{version.desc}</span></span>{version.id === activeVersion && <Badge tone="success">当前</Badge>}</button>)}</div>
         <div className="mt-4 grid grid-cols-2 gap-2"><Button size="sm" variant="outline" onClick={() => { const current = versions.find((version) => version.id === activeVersion); if (current) loadSnapshot(current, current.id); setVersionMenuOpen(false); showToast('已回滚到当前版本', 'info'); }} disabled={!canWrite}><RotateCcw className="h-3 w-3" />回滚当前</Button><Button size="sm" variant="secondary" onClick={() => { const nextId = `v${versions.length + 1}`; setVersions((prev) => [...prev, { id: nextId, label: `${nextId} · 草稿`, time: '刚刚', desc: '从当前画布另存的本地快照', nodes: cloneSnapshot({ nodes: props.nodes as Node[], edges: props.rfEdges }).nodes, edges: cloneSnapshot({ nodes: props.nodes as Node[], edges: props.rfEdges }).edges }]); setActiveVersion(nextId); setVersionMenuOpen(false); showToast(`已另存为 ${nextId}`, 'success'); }} disabled={!canWrite}><Save className="h-3 w-3" />另存版本</Button></div>
       </Drawer>

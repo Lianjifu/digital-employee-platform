@@ -9,6 +9,7 @@ import { TaskLifecycleBoard } from '@/features/tasks/TaskLifecycleBoard';
 import { TaskToolbar, defaultTaskFilters, type TaskFilters } from '@/features/tasks/TaskToolbar';
 import { getStageMeta, isRiskTask, sourceLabel } from '@/features/tasks/task-ui';
 import { TaskLifecycleDrawer } from '@/features/tasks/TaskLifecycleDrawer';
+import { useAuthStore } from '@/stores/authStore';
 
 const STORAGE_KEY = 'de-controlled-task-console-v1';
 type View = 'board' | 'list';
@@ -21,6 +22,7 @@ function readPreferences(): { filters: TaskFilters; view: View } {
 }
 
 export default function Tasks() {
+  const actor = useAuthStore((state) => state.user?.name ?? '当前用户');
   const [preferences] = useState(readPreferences);
   const [filters, setFilters] = useState<TaskFilters>(preferences.filters);
   const [view, setView] = useState<View>(preferences.view);
@@ -55,7 +57,7 @@ export default function Tasks() {
   const counts = useMemo(() => ({ pending: apiTasks.filter((task) => task.lifecycleStage === 'pending').length, human_action: apiTasks.filter((task) => task.lifecycleStage === 'human_action').length, risk: apiTasks.filter((task) => task.lifecycleStage === 'risk' || isRiskTask(task.sla)).length }), [apiTasks]);
   const applyPreset = (preset: TaskPreset) => setFilters({ ...defaultTaskFilters, stage: preset === 'pending' ? 'pending' : preset === 'human_action' ? 'human_action' : 'all', risk: preset === 'risk' ? 'attention' : 'all' });
   const openTask = (task: ControlledTask) => { setSelected(task); setMessage(null); };
-  const moveTask = (task: ControlledTask, stage: TaskLifecycleStage) => transition.mutate({ id: task.id, stage, actor: '王昊' });
+  const moveTask = (task: ControlledTask, stage: TaskLifecycleStage) => transition.mutate({ id: task.id, stage, actor });
   const selectedCurrent = selected ? apiTasks.find((task) => task.id === selected.id) ?? selected : null;
   const mutationPending = transition.isPending || drawerPending;
 
@@ -70,6 +72,6 @@ export default function Tasks() {
     <Drawer open={!!selectedCurrent} onClose={() => setSelected(null)} title={selectedCurrent?.title} description={selectedCurrent ? `${selectedCurrent.code} · ${getStageMeta(selectedCurrent.lifecycleStage).label}` : undefined} width={520}>
       {selectedCurrent && <TaskLifecycleDrawer task={selectedCurrent} onPendingChange={setDrawerPending} />}
     </Drawer>
-    <Drawer open={newTaskOpen} onClose={() => setNewTaskOpen(false)} title="新建受控任务" description="创建后由统一任务领域记录状态与审计。" width={440} footer={<Button disabled={!newTitle.trim() || create.isPending} loading={create.isPending} onClick={() => create.mutate({ title: newTitle.trim(), priority: 'P1', actor: '王昊' })}><Plus size={16} />创建任务</Button>}><label className="task-new-label">任务标题<Input autoFocus value={newTitle} onChange={(event) => setNewTitle(event.target.value)} placeholder="描述需要处置的生产运营任务" /></label></Drawer>
+    <Drawer open={newTaskOpen} onClose={() => setNewTaskOpen(false)} title="新建受控任务" description="创建后由统一任务领域记录状态与审计。" width={440} footer={<Button disabled={!newTitle.trim() || create.isPending} loading={create.isPending} onClick={() => create.mutate({ title: newTitle.trim(), priority: 'P1', actor })}><Plus size={16} />创建任务</Button>}><label className="task-new-label">任务标题<Input autoFocus value={newTitle} onChange={(event) => setNewTitle(event.target.value)} placeholder="描述需要处置的生产运营任务" /></label></Drawer>
   </main>;
 }

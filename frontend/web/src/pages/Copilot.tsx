@@ -40,6 +40,8 @@ import { cn } from '@de/web-utils';
 import { DualSignModal } from '@/components/DualSignModal';
 import { DebugPanel } from '@/components/DebugPanel';
 import { useChat } from '@/hooks/useChat';
+import { useWorkspaceStore } from '@/stores/workspaceStore';
+import { useAuthStore } from '@/stores/authStore';
 import { useT } from '@/i18n';
 import { Markdown } from '@/components/Markdown';
 import { deriveWorkbenchSummary, type WorkbenchContextTab } from '@/features/copilot/workbench';
@@ -176,6 +178,7 @@ const ERROR_HINT: Record<ErrorCategory, string> = {
 };
 
 export default function Copilot() {
+  const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
   const { t } = useT();
   const [searchQ, setSearchQ] = useState('');
   const [showSlash, setShowSlash] = useState(false);
@@ -223,6 +226,7 @@ export default function Copilot() {
     ['slash-cmds'], '/api/slash-commands'
   );
   const chat = useChat(agentMeta);
+  const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -383,10 +387,10 @@ export default function Copilot() {
 
   // 过滤会话
   const filteredSessions = useMemo(() => {
-    const list = Object.values(chat.state.sessions);
+    const list = Object.values(chat.state.sessions).filter((session) => (session.workspaceId ?? 'w1') === currentWorkspaceId);
     const q = searchQ.trim().toLowerCase();
     return list.filter((s) => !q || s.title.toLowerCase().includes(q) || s.preview.toLowerCase().includes(q));
-  }, [chat.state.sessions, searchQ]);
+  }, [chat.state.sessions, currentWorkspaceId, searchQ]);
 
   const grouped = useMemo(() => ({
     pinned: filteredSessions.filter((s) => s.pinned),
@@ -475,6 +479,12 @@ export default function Copilot() {
   };
 
   const currentSession = chat.activeSession;
+  useEffect(() => {
+    const visible = Object.values(chat.state.sessions).filter((session) => (session.workspaceId ?? 'w1') === currentWorkspaceId);
+    if (visible.some((session) => session.id === chat.state.activeId)) return;
+    if (visible[0]) chat.switchSession(visible[0].id);
+    else chat.newSession();
+  }, [chat.state.activeId, chat.state.sessions, currentWorkspaceId]);
   const sessionSignals = useMemo(() => {
     const messages = currentSession?.messages ?? [];
     const executions = messages.reduce((total, message) => total + (message.toolCalls?.length ?? 0), 0);
@@ -962,25 +972,22 @@ export default function Copilot() {
             <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
-                onClick={() => {
-                  setToolsOpen(false);
-                  setModelOpen((v) => !v);
-                }}
-                aria-haspopup="menu"
-                aria-expanded={modelOpen}
+                onClick={() => { if (isAdmin) { setToolsOpen(false); setModelOpen((v) => !v); } }}
+                aria-haspopup={isAdmin ? 'menu' : undefined}
+                aria-expanded={isAdmin ? modelOpen : undefined}
                 className="copilot-composer__model-pill flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)] hover:border-[var(--brand)] hover:text-[var(--text)] transition-colors"
-                title="调整本次会话的模型与工具链"
+                title={isAdmin ? '调整本次会话的模型与工具链' : '由工作区策略分配的受控运行路由'}
               >
                 <Settings className="h-3 w-3 text-[var(--brand)]" />
-                <span className="font-medium">运行配置</span>
-                <span className="font-mono text-[var(--text-muted)]">{currentModel.label} · {enabledToolCount} 工具</span>
-                <ChevronDown className="h-3 w-3 opacity-60" />
+                <span className="font-medium">{isAdmin ? '运行配置' : '受控运行路由'}</span>
+                <span className="font-mono text-[var(--text-muted)]">{isAdmin ? `${currentModel.label} · ${enabledToolCount} 工具` : '由工作区策略分配'}</span>
+                {isAdmin && <ChevronDown className="h-3 w-3 opacity-60" />}
               </button>
             </div>
           </div>
 
           {/* 运行配置 popover */}
-          {modelOpen && (
+          {isAdmin && modelOpen && (
             <div role="menu" className="absolute right-3 bottom-full mb-2 w-72 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-1 z-30">
               <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">运行配置 · 模型</div>
               {MODELS.map((m) => (

@@ -1197,6 +1197,7 @@ function ToolsTab({ agent, onToolCfg }: { agent: AgentFull; onToolCfg: (key: str
   const [selectedCapabilityId, setSelectedCapabilityId] = useState('');
   const { data: workspaceCapabilities = [] } = useApiQuery<Skill[]>(['skills', 'agent-capability-picker'], '/api/skills');
   const { data: bindings = [] } = useApiQuery<CapabilityBinding[]>(['agents', agent.id, 'capabilities'], `/api/agents/${agent.id}/capabilities`);
+  const { data: preflight } = useApiQuery<{ ready: boolean; checks: Array<{ key: string; label: string; passed: boolean }> }>(['agents', agent.id, 'publish-preflight'], `/api/agents/${agent.id}/publish-preflight`);
   const bindCapability = useApiMutation<CapabilityBinding, { capabilityKind: 'skill' | 'mcp' | 'tool'; capabilityId: string; pinnedVersion: string }>(() => `/api/agents/${agent.id}/capabilities`);
   const unbindCapability = useApiMutation<CapabilityBinding, { id: string }>(({ id }) => `/api/agents/${agent.id}/capabilities/${id}`, undefined, 'DELETE');
   const boundCapabilityIds = new Set(bindings.map((binding) => binding.capabilityId));
@@ -1204,6 +1205,10 @@ function ToolsTab({ agent, onToolCfg }: { agent: AgentFull; onToolCfg: (key: str
 
   return (
     <>
+      <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+        <div className="flex items-center justify-between gap-3"><div><div className="text-sm font-semibold text-[var(--text)]">发布就绪度</div><p className="mt-1 text-xs text-[var(--text-muted)]">发布前校验配置、评测、依赖和受限数据审批。</p></div><Badge tone={preflight?.ready ? 'success' : 'warn'}>{preflight?.ready ? '可发布' : '需处理'}</Badge></div>
+        <div className="mt-3 grid grid-cols-2 gap-2">{(preflight?.checks ?? []).map((check) => <div key={check.key} className="flex items-center gap-2 rounded-md bg-[var(--bg-elevated)] px-2.5 py-2 text-xs"><span className={check.passed ? 'text-[var(--success)]' : 'text-[var(--warning)]'}>{check.passed ? '通过' : '待处理'}</span><span className="min-w-0 truncate">{check.label}</span></div>)}</div>
+      </div>
       <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
         <div className="flex items-start justify-between gap-3">
           <div>

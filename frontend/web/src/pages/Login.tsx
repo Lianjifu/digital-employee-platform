@@ -4,7 +4,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useApiMutation } from '@/services/query';
 import { Button, Input, Badge, toast } from '@de/web-ui';
 import { useUiStore } from '@/stores/uiStore';
-import { Bot, ShieldCheck, KeyRound, Sun, Moon } from 'lucide-react';
+import { Bot, ShieldCheck, KeyRound, Sun, Moon, UserRound, Shield, ScrollText } from 'lucide-react';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -36,6 +36,11 @@ export default function Login() {
     mut.mutate({ email, password });
   };
 
+  const chooseRole = (nextEmail: string) => {
+    setEmail(nextEmail);
+    setPassword('demo123456');
+  };
+
   return (
     <div className="grid h-screen w-screen place-items-center bg-[var(--bg-elevated)] px-4">
       {/* 主题切换按钮 */}
@@ -60,33 +65,33 @@ export default function Login() {
               </div>
               <div>
                 <div className="text-lg font-bold">数字员工平台</div>
-                <div className="text-xs opacity-80 font-mono">Digital Employee v3.3</div>
+                <div className="text-xs opacity-80 font-mono">Enterprise Digital Workforce</div>
               </div>
             </div>
 
             <h1 className="mb-3 text-[28px] font-bold leading-tight tracking-tight">
-              让 AI 成为
+              让数字员工
               <br />
-              你的<span className="bg-gradient-to-r from-white via-yellow-100 to-white bg-clip-text text-transparent"> 数字员工</span>
+              进入<span className="bg-gradient-to-r from-white via-yellow-100 to-white bg-clip-text text-transparent">业务流程</span>
             </h1>
             <p className="text-sm opacity-90 leading-relaxed">
-              8 家模型 · 24 技能 · 等保 3 + ISO 27001 双合规
+              在统一工作区内完成协同、编排与治理，
               <br />
-              RAG + 工作流 + Agent 三位一体
+              让每一次智能执行都有明确边界与完整追溯。
             </p>
           </div>
 
           <div className="relative space-y-2 text-xs opacity-95">
             <div className="flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4" /> 数据不出境 · 双签复核 · SignedLog 审计
+              <ShieldCheck className="h-4 w-4" /> 工作区隔离 · 发布复核 · 全程审计
             </div>
             <div className="flex items-center gap-2">
-              <KeyRound className="h-4 w-4" /> Authentik + OIDC + MFA
+              <KeyRound className="h-4 w-4" /> 企业账号登录 · 多因素验证 · 最小权限
             </div>
             <div className="mt-4 flex gap-1.5">
-              <Badge tone="brand" className="bg-white/20 text-white">等保 3</Badge>
-              <Badge tone="brand" className="bg-white/20 text-white">ISO 27001</Badge>
-              <Badge tone="brand" className="bg-white/20 text-white">cn-east-1</Badge>
+              <Badge tone="brand" className="bg-white/20 text-white">角色权限</Badge>
+              <Badge tone="brand" className="bg-white/20 text-white">发布治理</Badge>
+              <Badge tone="brand" className="bg-white/20 text-white">审计追溯</Badge>
             </div>
           </div>
         </div>
@@ -99,30 +104,39 @@ export default function Login() {
           </div>
 
           <h2 className="mb-1 text-xl font-bold text-[var(--text)]">欢迎登录</h2>
-          <p className="mb-6 text-xs text-[var(--text-muted)]">使用企业账号 + MFA 二次验证</p>
+          <p className="mb-6 text-xs text-[var(--text-muted)]">使用已授权的企业账号登录平台。</p>
 
-          <label className="mb-1.5 text-xs font-medium text-[var(--text-secondary)]">邮箱</label>
-          <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@acme.com" className="mb-4" />
+          <label className="mb-1.5 text-xs font-medium text-[var(--text-secondary)]">企业邮箱</label>
+          <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@company.com" className="mb-4" />
 
           <label className="mb-1.5 text-xs font-medium text-[var(--text-secondary)]">密码</label>
           <Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" className="mb-4" />
 
-          <label className="mb-1.5 text-xs font-medium text-[var(--text-secondary)]">MFA 验证码 <span className="text-[var(--text-muted)] font-normal">（演示可空）</span></label>
-          <Input value={mfa} onChange={(e) => setMfa(e.target.value)} placeholder="6 位数字" className="mb-4" />
+          <label className="mb-1.5 text-xs font-medium text-[var(--text-secondary)]">多因素验证码 <span className="text-[var(--text-muted)] font-normal">（演示环境可不填）</span></label>
+          <Input value={mfa} onChange={(e) => setMfa(e.target.value)} placeholder="请输入 6 位验证码" className="mb-4" />
 
           <div className="mb-5 flex items-center justify-between text-xs">
             <label className="flex items-center gap-1.5 text-[var(--text-muted)] cursor-pointer">
-              <input type="checkbox" defaultChecked className="accent-[var(--brand)]" /> 7 天内自动登录
+              <input type="checkbox" defaultChecked className="accent-[var(--brand)]" /> 在本设备保持登录状态
             </label>
             <a className="text-[var(--brand)] hover:underline" href="#">忘记密码？</a>
           </div>
 
           <Button type="submit" loading={mut.isPending} className="w-full">
-            登录
+            登录平台
           </Button>
 
+          <div className="mt-5 border-t border-[var(--border)] pt-4">
+            <p className="mb-2 text-[11px] font-medium text-[var(--text-muted)]">体验角色权限</p>
+            <div className="grid grid-cols-3 gap-2">
+              <button type="button" onClick={() => chooseRole('user@acme.com')} className="rounded-md border border-[var(--border)] px-2 py-2 text-left text-[10px] hover:border-[var(--brand)] hover:bg-[var(--brand-light)]"><UserRound className="mb-1 h-3.5 w-3.5 text-[var(--brand)]" />普通用户</button>
+              <button type="button" onClick={() => chooseRole('admin@acme.com')} className="rounded-md border border-[var(--border)] px-2 py-2 text-left text-[10px] hover:border-[var(--brand)] hover:bg-[var(--brand-light)]"><Shield className="mb-1 h-3.5 w-3.5 text-[var(--brand)]" />管理员</button>
+              <button type="button" onClick={() => chooseRole('audit@acme.com')} className="rounded-md border border-[var(--border)] px-2 py-2 text-left text-[10px] hover:border-[var(--brand)] hover:bg-[var(--brand-light)]"><ScrollText className="mb-1 h-3.5 w-3.5 text-[var(--brand)]" />审计用户</button>
+            </div>
+          </div>
+
           <div className="mt-5 text-center text-[11px] text-[var(--text-muted)]">
-            登录即代表同意 <a className="text-[var(--brand)] hover:underline" href="#">《用户协议》</a> 与 <a className="text-[var(--brand)] hover:underline" href="#">《隐私政策》</a>
+            登录即表示您已阅读并同意 <a className="text-[var(--brand)] hover:underline" href="#">《用户协议》</a> 与 <a className="text-[var(--brand)] hover:underline" href="#">《隐私政策》</a>
           </div>
         </form>
       </div>

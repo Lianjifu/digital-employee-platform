@@ -1,5 +1,5 @@
 /**
- * 鉴权状态 — 4 角色 RBAC + 当前用户 + Token
+ * 鉴权状态 — 三角色访问模型 + 当前用户 + Token
  */
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';

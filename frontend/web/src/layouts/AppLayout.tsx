@@ -8,9 +8,10 @@ import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
   Home, MessageSquare, ListChecks, Building2, Bot, Workflow,
-  BookOpen, Wrench, Brain, Send,
+  BookOpen, Wrench, Brain, BrainCircuit, Send,
   Menu, Settings2, Languages, Sun, Moon,
   LogOut, ChevronDown, X, CheckCircle2,
+  Shield, ScrollText,
 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { useUiStore } from '@/stores/uiStore';
@@ -19,37 +20,44 @@ import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { Avatar, Badge } from '@de/web-ui';
 import { cn } from '@de/web-utils';
 import { useApiQuery } from '@/services/query';
-import type { Workspace } from '@de/web-types';
+import type { Permission, Workspace } from '@de/web-types';
 
 // 业务导航按工作场景分组；Settings / Workspace 移到左下角用户菜单。
-type NavItem = { to: string; label: string; i18n: string; icon: any };
+type NavItem = { to: string; label: string; i18n: string; icon: any; permission?: Permission; roles?: Array<'user' | 'admin' | 'auditor'> };
 const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
-  { label: null, items: [{ to: '/home', label: '首页', i18n: 'nav.home', icon: Home }] },
+  { label: null, items: [{ to: '/home', label: '首页', i18n: 'nav.home', icon: Home, roles: ['user', 'admin'] }] },
   {
     label: '协同运营',
     items: [
-      { to: '/copilot', label: '会话', i18n: 'nav.copilot', icon: MessageSquare },
-      { to: '/tasks', label: '任务', i18n: 'nav.tasks', icon: ListChecks },
+      { to: '/copilot', label: '会话', i18n: 'nav.copilot', icon: MessageSquare, roles: ['user', 'admin'] },
+      { to: '/tasks', label: '任务', i18n: 'nav.tasks', icon: ListChecks, roles: ['user', 'admin'] },
     ],
   },
   {
     label: '智能编排',
     items: [
-      { to: '/agents', label: '智能体', i18n: 'nav.agents', icon: Bot },
-      { to: '/workflows', label: '工作流', i18n: 'nav.workflows', icon: Workflow },
+      { to: '/agents', label: '智能体', i18n: 'nav.agents', icon: Bot, roles: ['user', 'admin'] },
+      { to: '/workflows', label: '工作流', i18n: 'nav.workflows', icon: Workflow, roles: ['user', 'admin'] },
     ],
   },
   {
     label: '能力中心',
     items: [
-      { to: '/knowledge', label: '知识', i18n: 'nav.knowledge', icon: BookOpen },
-      { to: '/skills', label: '技能', i18n: 'nav.skills', icon: Wrench },
-      { to: '/models', label: '模型', i18n: 'nav.models', icon: Brain },
-      { to: '/channels', label: '渠道', i18n: 'nav.channels', icon: Send },
+      { to: '/knowledge', label: '知识', i18n: 'nav.knowledge', icon: BookOpen, roles: ['user', 'admin'] },
+      { to: '/memory', label: '记忆', i18n: 'nav.memory', icon: BrainCircuit, roles: ['user', 'admin'] },
+      { to: '/skills', label: '技能', i18n: 'nav.skills', icon: Wrench, roles: ['user', 'admin'] },
+      { to: '/models', label: '模型', i18n: 'nav.models', icon: Brain, roles: ['admin'] },
+      { to: '/channels', label: '渠道', i18n: 'nav.channels', icon: Send, roles: ['admin'] },
+    ],
+  },
+  {
+    label: '治理与审计',
+    items: [
+      { to: '/governance', label: '访问治理', i18n: 'nav.settings', icon: Shield, roles: ['admin'] },
+      { to: '/audit-center', label: '审计中心', i18n: 'nav.settings', icon: ScrollText, roles: ['admin', 'auditor'] },
     ],
   },
 ];
-const NAV = NAV_GROUPS.flatMap((group) => group.items);
 
 export function AppLayout() {
   const navigate = useNavigate();
@@ -91,7 +99,13 @@ export function AppLayout() {
     navigate('/login', { replace: true });
   };
 
-  const activeNav = NAV.find((n) => location.pathname.startsWith(n.to));
+  const visibleNavGroups = NAV_GROUPS
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((item) => !user || ((!item.permission || user.permissions.includes(item.permission)) && (!item.roles || item.roles.includes(user.role)))),
+    }))
+    .filter((group) => group.items.length > 0);
+  const activeNav = visibleNavGroups.flatMap((group) => group.items).find((n) => location.pathname.startsWith(n.to));
 
   return (
     <div
@@ -197,7 +211,7 @@ export function AppLayout() {
       >
         {/* 主导航（占主要空间）*/}
         <nav className="flex-1 px-3 pt-4 pb-3 overflow-y-auto">
-          {NAV_GROUPS.map((group, groupIndex) => (
+          {visibleNavGroups.map((group, groupIndex) => (
             <div key={group.label ?? 'home'} className={cn(groupIndex > 0 && (sidebarCollapsed ? 'mt-3 pt-3 border-t border-[var(--border)]' : 'mt-4'))}>
               {!sidebarCollapsed && group.label && (
                 <div className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
@@ -279,13 +293,8 @@ export function AppLayout() {
               >
                 {/* 组 1：配置 */}
                 <div className="user-menu__group-title">设置</div>
-                <UserMenuItem
-                  icon={Settings2}
-                  label="Settings"
-                  shortcut="⌘,"
-                  onClick={() => { setUserMenuOpen(false); navigate('/settings'); }}
-                />
-                <button
+                {(user.role === 'admin') && <UserMenuItem icon={Settings2} label="平台设置" shortcut="⌘," onClick={() => { setUserMenuOpen(false); navigate('/settings'); }} />}
+                {user.role === 'admin' && <button
                   className="user-menu__item"
                   onClick={() => { setUserMenuOpen(false); navigate('/workspaces'); }}
                 >
@@ -293,7 +302,7 @@ export function AppLayout() {
                   <span className="user-menu__label">工作区管理</span>
                   <span className="user-menu__value">{current?.name ?? 'ACME'}</span>
                   <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-                </button>
+                </button>}
                 <button className="user-menu__item">
                   <span className="user-menu__icon-box"><Languages className="h-3.5 w-3.5" /></span>
                   <span className="user-menu__label">Language</span>

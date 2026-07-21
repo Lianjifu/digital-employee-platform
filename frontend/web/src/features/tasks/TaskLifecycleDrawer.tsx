@@ -4,16 +4,19 @@ import type { ControlledTask, TaskAuditEvent, TaskLifecycleStage } from '@de/web
 import { Badge, Button, Input } from '@de/web-ui';
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { getPrimaryAction, getStageMeta, riskLabel, sourceLabel } from './task-ui';
+import { useAuthStore } from '@/stores/authStore';
 
 type Tab = 'overview' | 'execution' | 'governance' | 'audit';
 type Props = { task: ControlledTask; onPendingChange: (pending: boolean) => void };
-const ACTOR = '王昊';
 
 function time(value: string) {
   return new Date(value).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 export function TaskLifecycleDrawer({ task: summary, onPendingChange }: Props) {
+  const user = useAuthStore((state) => state.user);
+  const isAdmin = user?.role === 'admin';
+  const actor = user?.name ?? '当前用户';
   const [tab, setTab] = useState<Tab>('overview');
   const [reason, setReason] = useState('');
   const [confirming, setConfirming] = useState<'approve' | 'reject' | 'takeover' | null>(null);
@@ -33,22 +36,22 @@ export function TaskLifecycleDrawer({ task: summary, onPendingChange }: Props) {
 
   const primary = getPrimaryAction(task.lifecycleStage, task.sla.risk);
   const requestRetry = (reason: string) => {
-    const request = () => retry.mutate({ id: task.id, actor: ACTOR, reason });
+    const request = () => retry.mutate({ id: task.id, actor, reason });
     setRetryAction(() => request);
     request();
   };
   const requestTransition = (stage: TaskLifecycleStage) => {
-    const request = () => transition.mutate({ id: task.id, stage, actor: ACTOR });
+    const request = () => transition.mutate({ id: task.id, stage, actor });
     setRetryAction(() => request);
     request();
   };
   const requestApproval = (approved: boolean, actionReason: string) => {
-    const request = () => approve.mutate({ id: task.id, actor: ACTOR, approved, reason: actionReason });
+    const request = () => approve.mutate({ id: task.id, actor, approved, reason: actionReason });
     setRetryAction(() => request);
     request();
   };
   const requestTakeover = (actionReason: string) => {
-    const request = () => takeover.mutate({ id: task.id, actor: ACTOR, reason: actionReason });
+    const request = () => takeover.mutate({ id: task.id, actor, reason: actionReason });
     setRetryAction(() => request);
     request();
   };
@@ -77,7 +80,7 @@ export function TaskLifecycleDrawer({ task: summary, onPendingChange }: Props) {
     {actionError && <div className="task-drawer-error" role="alert"><AlertCircle size={15} />{actionError}<button type="button" onClick={() => retryAction?.()} disabled={pending || !retryAction}>重试</button></div>}
     {tab === 'overview' && <Overview task={task} />}
     {tab === 'execution' && <Execution task={task} />}
-    {tab === 'governance' && <Governance task={task} pending={pending} onApprove={() => setConfirming('approve')} onReject={() => setConfirming('reject')} onTakeover={() => setConfirming('takeover')} onRetry={() => requestRetry('治理页请求重试')} />}
+    {tab === 'governance' && <Governance task={task} pending={pending} canManage={isAdmin} onApprove={() => setConfirming('approve')} onReject={() => setConfirming('reject')} onTakeover={() => setConfirming('takeover')} onRetry={() => requestRetry('治理页请求重试')} />}
     {tab === 'audit' && <Audit events={auditEvents} />}
     {confirming && <section className="task-confirm" aria-label="确认操作"><strong>{confirming === 'approve' ? '确认批准任务' : confirming === 'reject' ? '确认拒绝任务' : '确认人工接管'}</strong><p>{confirming === 'reject' ? '拒绝原因会写入不可变审计记录。' : '请填写操作原因，系统会记录操作者和时间。'}</p><Input autoFocus value={reason} onChange={(event) => setReason(event.target.value)} placeholder="请输入原因" /><div><Button size="sm" variant="secondary" disabled={pending} onClick={() => { setConfirming(null); setReason(''); }}>取消</Button><Button size="sm" disabled={pending || !reason.trim()} loading={pending} onClick={confirmAction}>确认</Button></div></section>}
     <div className="task-drawer-primary"><Button disabled={pending || primary.key === 'human_action'} loading={pending} onClick={runPrimary}>{primary.key === 'retry' && <RotateCcw size={15} />}{primary.key === 'start' && <Play size={15} />}{primary.label}</Button></div>
@@ -97,9 +100,9 @@ function Execution({ task }: { task: ControlledTask }) {
   return <section className="task-drawer-section"><h3><ClipboardList size={16} />执行状态</h3><dl><div><dt>运行 ID</dt><dd>{task.execution.runId ?? '尚未启动'}</dd></div><div><dt>当前步骤</dt><dd>{task.execution.currentStep ?? '等待下一步'}</dd></div><div><dt>重试次数</dt><dd>{task.execution.retryCount}</dd></div><div><dt>状态</dt><dd>{task.execution.paused ? '已暂停' : '执行可继续'}</dd></div></dl>{task.execution.error && <div className="task-execution-error"><AlertCircle size={16} /><span><strong>执行错误</strong>{task.execution.error}</span></div>}</section>;
 }
 
-function Governance({ task, pending, onApprove, onReject, onTakeover, onRetry }: { task: ControlledTask; pending: boolean; onApprove: () => void; onReject: () => void; onTakeover: () => void; onRetry: () => void }) {
+function Governance({ task, pending, canManage, onApprove, onReject, onTakeover, onRetry }: { task: ControlledTask; pending: boolean; canManage: boolean; onApprove: () => void; onReject: () => void; onTakeover: () => void; onRetry: () => void }) {
   const approval = task.governance.approvalStatus === 'pending' ? '待审批' : task.governance.approvalStatus === 'approved' ? '已批准' : task.governance.approvalStatus === 'rejected' ? '已拒绝' : '无需审批';
-  return <section className="task-drawer-section"><h3><Gavel size={16} />治理控制</h3><dl><div><dt>审批</dt><dd>{approval}{task.governance.approvalRequired ? '（必需）' : ''}</dd></div><div><dt>策略</dt><dd>{task.governance.policyBlocked ? '策略拦截' : '策略允许'}</dd></div><div><dt>人工接管</dt><dd>{task.governance.takeoverBy ? `${task.governance.takeoverBy}：${task.governance.takeoverReason ?? '未说明'}` : '未接管'}</dd></div></dl>{task.governance.approvalStatus === 'pending' && <div className="task-governance-actions"><Button size="sm" disabled={pending} onClick={onApprove}><ShieldCheck size={15} />批准</Button><Button size="sm" variant="secondary" disabled={pending} onClick={onReject}>拒绝</Button></div>}{task.sla.risk === 'failed' && <div className="task-governance-actions"><Button size="sm" variant="secondary" disabled={pending} onClick={onTakeover}><UserRound size={15} />人工接管</Button><Button size="sm" disabled={pending} onClick={onRetry}><RotateCcw size={15} />重试执行</Button></div>}</section>;
+  return <section className="task-drawer-section"><h3><Gavel size={16} />治理控制</h3><dl><div><dt>审批</dt><dd>{approval}{task.governance.approvalRequired ? '（必需）' : ''}</dd></div><div><dt>策略</dt><dd>{task.governance.policyBlocked ? '策略拦截' : '策略允许'}</dd></div><div><dt>人工接管</dt><dd>{task.governance.takeoverBy ? `${task.governance.takeoverBy}：${task.governance.takeoverReason ?? '未说明'}` : '未接管'}</dd></div></dl>{canManage ? <>{task.governance.approvalStatus === 'pending' && <div className="task-governance-actions"><Button size="sm" disabled={pending} onClick={onApprove}><ShieldCheck size={15} />批准</Button><Button size="sm" variant="secondary" disabled={pending} onClick={onReject}>拒绝</Button></div>}{task.sla.risk === 'failed' && <div className="task-governance-actions"><Button size="sm" variant="secondary" disabled={pending} onClick={onTakeover}><UserRound size={15} />人工接管</Button><Button size="sm" disabled={pending} onClick={onRetry}><RotateCcw size={15} />重试执行</Button></div>}</> : <p className="mt-3 text-xs text-[var(--text-muted)]">审批、人工接管与高风险重试由管理员处理。</p>}</section>;
 }
 
 function Audit({ events }: { events: TaskAuditEvent[] }) {

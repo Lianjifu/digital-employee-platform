@@ -7,7 +7,7 @@ describe('workflow generation domain', () => {
       method: 'POST',
       body: {
         prompt: '每天 09:00 巡检 Kubernetes 集群，发现异常后创建工单并通知值班负责人',
-        workspaceId: 'prod-ops',
+        workspaceId: 'w1',
         model: '企业默认模型',
         constraints: { riskLevel: 'L1', requireApproval: true, requireAudit: true, requireRollback: true },
       },
@@ -28,14 +28,14 @@ describe('workflow generation domain', () => {
   it('rejects models outside the tenant allowlist', async () => {
     await expect(mockHandler('/api/workflows/generate', {
       method: 'POST',
-      body: { prompt: '创建一个低风险通知流程', workspaceId: 'prod-ops', model: 'Claude Sonnet', constraints: {} },
+      body: { prompt: '创建一个低风险通知流程', workspaceId: 'w1', model: 'Claude Sonnet', constraints: {} },
     })).rejects.toThrow('当前工作区不允许使用该生成模型');
   });
 
   it('blocks a generated external-write workflow until server-side authorization is resolved', async () => {
     const generation = await mockHandler('/api/workflows/generate', {
       method: 'POST',
-      body: { prompt: '收到 Redis 告警后执行恢复变更并通知负责人', workspaceId: 'prod-ops', model: '企业默认模型', constraints: { riskLevel: 'L3' } },
+      body: { prompt: '收到 Redis 告警后执行恢复变更并通知负责人', workspaceId: 'w1', model: '企业默认模型', constraints: { riskLevel: 'L3' } },
     }) as any;
     const applied = await mockHandler(`/api/workflows/generations/${generation.id}/apply`, { method: 'POST' }) as any;
 

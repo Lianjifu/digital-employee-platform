@@ -5,6 +5,7 @@ import type { ModelAuditEvent, ModelProvider, ProviderImpact, ProviderTier, Rout
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { ConfirmDialog, Drawer, EmptyState } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
+import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { modelQueryState, policyStatusLabel, providerLifecycleAction } from '@/features/models/model-ui';
 
 type Workspace = 'access' | 'routing' | 'governance' | 'audit';
@@ -20,8 +21,9 @@ const TIER_LABEL: Record<ProviderTier, string> = { official: '官方 API', self_
 
 export default function Models() {
   const { user } = useAuthStore();
+  const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
   const canWrite = Boolean(user?.permissions.includes('model.write'));
-  const scopeKey = `${user?.workspaceId ?? 'anonymous'}:${user?.id ?? 'anonymous'}`;
+  const scopeKey = `${currentWorkspaceId}:${user?.id ?? 'anonymous'}`;
   const [workspace, setWorkspace] = useState<Workspace>('access');
   const [providerDrawer, setProviderDrawer] = useState<'new' | string | null>(null);
   const [policyDrawer, setPolicyDrawer] = useState<string | null>(null);
@@ -88,7 +90,7 @@ export default function Models() {
       </main>
 
       <Drawer open={providerDrawer === 'new'} onClose={() => setProviderDrawer(null)} title="接入 Provider" description="凭据仅在提交时写入 Mock 凭据引用，成功后不会回显。" width={520}>
-        <ProviderForm canWrite={canWrite} onSubmit={(payload) => createProvider.mutate(payload, { onSuccess: () => { toast.success('Provider 已接入，等待连通性验证'); setProviderDrawer(null); }, onError: reportError })} />
+        <ProviderForm canWrite={canWrite} workspaceId={currentWorkspaceId} onSubmit={(payload) => createProvider.mutate(payload, { onSuccess: () => { toast.success('Provider 已接入，等待连通性验证'); setProviderDrawer(null); }, onError: reportError })} />
       </Drawer>
       <Drawer open={Boolean(activeProvider)} onClose={() => setProviderDrawer(null)} title={activeProvider?.name} description="Provider 详情、连通性和退役影响" width={520}>
         {activeProvider && <ProviderDetail provider={activeProvider} impact={impactQuery.data} canWrite={canWrite} onTest={() => testProvider.mutate({ id: activeProvider.id, reason: '人工连通性验证' }, { onSuccess: () => toast.success('Provider 连通性验证通过'), onError: reportError })} onDisable={() => disableProvider.mutate({ id: activeProvider.id, reason: '停止新流量' }, { onSuccess: () => toast.success('Provider 已停止新流量'), onError: reportError })} onDelete={() => setDeleteProvider(activeProvider)} />}
@@ -120,9 +122,9 @@ function AuditWorkspace({ events, filter, onFilter }: { events: ModelAuditEvent[
   return <div><div className="mb-4 flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-sm font-semibold">模型控制面审计</h2><p className="mt-1 text-xs text-[var(--text-muted)]">记录接入、校验、发布、回滚、退役及演练结果。</p></div><div className="flex gap-1">{(['all', 'success', 'failed'] as const).map((item) => <Button key={item} size="sm" variant={filter === item ? 'secondary' : 'ghost'} onClick={() => onFilter(item)}>{item === 'all' ? '全部' : item === 'success' ? '成功' : '失败'}</Button>)}</div></div>{events.length === 0 ? <EmptyState icon={History} title="暂无模型控制面审计事件" /> : <div className="space-y-2">{events.map((event) => <article key={event.id} className="rounded-lg border border-[var(--border)] p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><Badge tone={event.result === 'success' ? 'success' : 'error'}>{event.result === 'success' ? '成功' : '失败'}</Badge><strong className="text-xs">{event.action}</strong></div><time className="font-mono text-[11px] text-[var(--text-muted)]">{new Date(event.time).toLocaleString('zh-CN')}</time></div><div className="mt-2 text-xs text-[var(--text-secondary)]">目标：{event.target}{event.reason ? ` · 原因：${event.reason}` : ''}</div><div className="mt-1 font-mono text-[10px] text-[var(--text-muted)]">关联 {event.correlationId}{event.policyVersion ? ` · 版本 ${event.policyVersion}` : ''}</div></article>)}</div>}</div>;
 }
 
-function ProviderForm({ canWrite, onSubmit }: { canWrite: boolean; onSubmit: (payload: Record<string, unknown>) => void }) {
+function ProviderForm({ canWrite, workspaceId, onSubmit }: { canWrite: boolean; workspaceId: string; onSubmit: (payload: Record<string, unknown>) => void }) {
   const [name, setName] = useState(''); const [model, setModel] = useState(''); const [region, setRegion] = useState('cn-east-1'); const [credential, setCredential] = useState('');
-  return <div className="space-y-4"><Field label="Provider 名称"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：企业 Azure OpenAI" /></Field><Field label="模型部署"><Input value={model} onChange={(event) => setModel(event.target.value)} placeholder="例如：gpt-4o-enterprise" /></Field><Field label="云区域"><Input value={region} onChange={(event) => setRegion(event.target.value)} /></Field><Field label="一次性凭据"><Input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="仅用于创建凭据引用，不会回显" /></Field><p className="text-xs text-[var(--text-muted)]">演示模式仅模拟 write-only 凭据引用；生产环境必须由 KMS/Vault 接收和托管密钥。</p><div className="flex justify-end"><Button disabled={!canWrite || !name.trim() || !model.trim() || !credential.trim()} onClick={() => { onSubmit({ name, model, region, credential, tier: 'official', workspaceId: 'w1' }); setCredential(''); }}>创建受管接入</Button></div></div>;
+  return <div className="space-y-4"><Field label="Provider 名称"><Input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：企业 Azure OpenAI" /></Field><Field label="模型部署"><Input value={model} onChange={(event) => setModel(event.target.value)} placeholder="例如：gpt-4o-enterprise" /></Field><Field label="云区域"><Input value={region} onChange={(event) => setRegion(event.target.value)} /></Field><Field label="一次性凭据"><Input type="password" value={credential} onChange={(event) => setCredential(event.target.value)} placeholder="仅用于创建凭据引用，不会回显" /></Field><p className="text-xs text-[var(--text-muted)]">演示模式仅模拟 write-only 凭据引用；生产环境必须由 KMS/Vault 接收和托管密钥。</p><div className="flex justify-end"><Button disabled={!canWrite || !name.trim() || !model.trim() || !credential.trim()} onClick={() => { onSubmit({ name, model, region, credential, tier: 'official', workspaceId }); setCredential(''); }}>创建受管接入</Button></div></div>;
 }
 
 function ProviderDetail({ provider, impact, canWrite, onTest, onDisable, onDelete }: { provider: ModelProvider; impact?: ProviderImpact; canWrite: boolean; onTest: () => void; onDisable: () => void; onDelete: () => void }) {
