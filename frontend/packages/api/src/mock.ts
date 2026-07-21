@@ -52,7 +52,7 @@ import type {
   WorkflowSkill,
   Workspace,
   WorkspaceAuditEvent, WorkspaceBinding, WorkspaceEnvironment, WorkspaceMember, WorkspacePolicy, WorkspaceQuota, WorkspaceRuntimeEvent,
-  AccessGrant, AccessReview, SeparationOfDutyRule, ReleaseApproval, Role, Permission, User,
+  AccessGrant, AccessReview, SeparationOfDutyRule, ReleaseApproval, Role, Permission, User, TemporaryAuthorization, ZeroTrustAction, ZeroTrustDecision, ZeroTrustEvaluation, ZeroTrustEvent, ZeroTrustPolicy, ZeroTrustResource,
 } from '@de/web-types';
 import { sleep } from '@de/web-utils';
 
@@ -145,6 +145,22 @@ const mockSodRules: SeparationOfDutyRule[] = [
 const mockReleaseApprovals: ReleaseApproval[] = [
   { id: 'approval-agent-21', workspaceId: 'w1', environment: 'production', resourceType: 'agent', resourceName: '客服质检助手 v2.1', submittedBy: '业务构建者', submittedById: 'u2', submittedAt: '2026-07-21T02:30:00Z', status: 'pending', risk: 'medium', correlationId: 'corr-release-agent-21' },
   { id: 'approval-channel-12', workspaceId: 'w1', environment: 'production', resourceType: 'channel', resourceName: '企业微信通知策略 v1.2', submittedBy: '业务构建者', submittedById: 'u2', submittedAt: '2026-07-21T03:05:00Z', status: 'pending', risk: 'high', correlationId: 'corr-release-channel-12' },
+];
+
+const zeroTrustPolicies: ZeroTrustPolicy[] = [
+  { id: 'zt-user-production', name: '普通用户生产变更门禁', resource: 'workflow', action: 'publish', scope: 'production', condition: '角色为普通用户', decision: 'approval_required', enabled: true, baseline: true, version: 3, updatedAt: '2026-07-22T00:00:00Z', updatedBy: '平台管理员' },
+  { id: 'zt-restricted-egress', name: '受限数据禁止外部出口', resource: 'model', action: 'run', scope: 'external_egress', condition: '数据分类为受限', decision: 'deny', enabled: true, baseline: true, version: 5, updatedAt: '2026-07-22T00:00:00Z', updatedBy: '安全管理员' },
+  { id: 'zt-memory-governance', name: '记忆治理管理员专属', resource: 'memory', action: 'write', scope: 'workspace', condition: '修改保留、提炼或审核策略', decision: 'deny', enabled: true, baseline: true, version: 2, updatedAt: '2026-07-22T00:00:00Z', updatedBy: '平台管理员' },
+  { id: 'zt-tool-approval', name: '高风险工具调用复核', resource: 'skill', action: 'run', scope: 'production', condition: '高风险或写操作工具', decision: 'approval_required', enabled: true, baseline: true, version: 4, updatedAt: '2026-07-22T00:00:00Z', updatedBy: '安全管理员' },
+  { id: 'zt-auditor-readonly', name: '审计角色只读', resource: 'export', action: 'write', scope: 'tenant', condition: '角色为审计用户', decision: 'deny', enabled: true, baseline: true, version: 1, updatedAt: '2026-07-22T00:00:00Z', updatedBy: '平台管理员' },
+];
+const zeroTrustEvents: ZeroTrustEvent[] = [
+  { id: 'zt-event-1', time: '2026-07-22T08:12:00Z', tenantId: 'tenant-acme', workspaceId: 'w1', actor: '业务构建者', resource: 'memory', action: 'write', classification: 'internal', decision: 'deny', policyId: 'zt-memory-governance', reason: '普通用户不能修改记忆治理策略', correlationId: 'corr-zt-memory-1' },
+  { id: 'zt-event-2', time: '2026-07-22T08:06:00Z', tenantId: 'tenant-acme', workspaceId: 'w1', actor: '业务构建者', resource: 'workflow', action: 'publish', classification: 'internal', decision: 'approval_required', policyId: 'zt-user-production', reason: '生产发布已转为管理员审批', correlationId: 'corr-zt-release-1' },
+  { id: 'zt-event-3', time: '2026-07-22T07:54:00Z', tenantId: 'tenant-acme', workspaceId: 'w1', actor: '数字员工', resource: 'model', action: 'run', classification: 'restricted', decision: 'deny', policyId: 'zt-restricted-egress', reason: '受限数据禁止发送到外部模型', correlationId: 'corr-zt-egress-1' },
+];
+const temporaryAuthorizations: TemporaryAuthorization[] = [
+  { id: 'zta-1', subjectId: 'u2', subjectName: '业务构建者', workspaceId: 'w2', environment: 'staging', resource: 'workflow', action: 'run', reason: '预发回归验证', status: 'active', expiresAt: '2026-07-24T18:00:00Z', approvedBy: '平台管理员' },
 ];
 
 function mockIdentity(headers?: Record<string, string>): User | null {
@@ -1148,9 +1164,9 @@ const channelAuditEvents: ChannelAuditEvent[] = [];
 
 function channelContext(opts: { headers?: Record<string, string> }) {
   const permissions = opts.headers?.['x-mock-permissions']?.split(',').map((item) => item.trim()) ?? [];
-  const token = opts.headers?.Authorization?.replace(/^Bearer\s+/i, '');
-  const resolved = permissions.length ? permissions : token === 'mock-model-admin-token' ? ['channel.read', 'channel.write'] : token === 'mock-jwt-token' ? ['channel.read'] : [];
-  return { workspaceId: opts.headers?.['x-workspace-id'] ?? 'w1', permissions: resolved, actor: token === 'mock-model-admin-token' ? '模型管理员' : '当前用户' };
+  const identity = mockIdentity(opts.headers);
+  const resolved = permissions.length ? permissions : identity?.permissions ?? [];
+  return { workspaceId: opts.headers?.['x-workspace-id'] ?? identity?.workspaceId ?? 'w1', permissions: resolved, actor: identity?.name ?? '当前用户' };
 }
 function requireChannel(opts: { headers?: Record<string, string> }, permission: 'channel.read' | 'channel.write', workspaceId?: string) {
   const context = channelContext(opts);
@@ -1215,10 +1231,10 @@ type ModelRequestOptions = { headers?: Record<string, string>; body?: unknown };
 
 function modelContext(opts: ModelRequestOptions) {
   const explicitPermissions = opts.headers?.['x-mock-permissions']?.split(',').map((item) => item.trim());
-  const token = opts.headers?.Authorization?.replace(/^Bearer\s+/i, '');
-  const permissions = explicitPermissions ?? (token === 'mock-model-admin-token' ? ['model.read', 'model.write'] : token === 'mock-jwt-token' ? ['model.read'] : []);
-  const actor = opts.headers?.['x-mock-actor'] ?? (token === 'mock-model-admin-token' ? '模型管理员' : token === 'mock-jwt-token' ? '王昊' : '当前用户');
-  return { workspaceId: opts.headers?.['x-workspace-id'] ?? 'w1', permissions, actor };
+  const identity = mockIdentity(opts.headers);
+  const permissions = explicitPermissions ?? identity?.permissions ?? [];
+  const actor = opts.headers?.['x-mock-actor'] ?? identity?.name ?? '当前用户';
+  return { workspaceId: opts.headers?.['x-workspace-id'] ?? identity?.workspaceId ?? 'w1', permissions, actor };
 }
 
 function requireModelRead(opts: ModelRequestOptions) {
@@ -1611,11 +1627,6 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     if (identity.role === 'user' && method !== 'GET' && /\/publish(?:$|[/?])/.test(path)) {
       throw new Error('E_RELEASE_REQUEST_REQUIRED: 普通用户不能直接发布生产，请提交发布申请');
     }
-    if (identity.role === 'user' && method !== 'GET' && (
-      path === '/api/memory/policy' || path === '/api/memory/refinement/run' || /\/api\/memory\/candidates\/[^/]+\/(approve|reject)$/.test(path) ||
-      path === '/api/knowledge/governance' || path.startsWith('/api/knowledge/sources') || path === '/api/knowledge/reindex' ||
-      path.startsWith('/api/skills/governance') || path.startsWith('/api/skill-integrations') || path === '/api/mcp-connections' || path === '/api/tools'
-    )) throw new Error('E_GOVERNANCE_ADMIN_REQUIRED: 该治理操作仅限管理员执行');
   }
 
   // 首页 KPI
@@ -1649,6 +1660,22 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   };
   const canChangeScopedResource = <T extends { ownerId?: string; createdBy?: string }>(item: T) => !identity || isAdministrator || item.ownerId === identity.id || item.createdBy === identity.id;
   const requireAdministrator = (operation: string) => { if (identity && !isAdministrator) throw new Error(`E_ADMIN_REQUIRED: ${operation} 仅限管理员执行`); };
+  const evaluateZeroTrust = (input: { resource: ZeroTrustResource; action: ZeroTrustAction; classification?: ZeroTrustEvent['classification']; external?: boolean; correlationId?: string }): ZeroTrustEvaluation => {
+    const classification = input.classification ?? 'internal';
+    let decision: ZeroTrustDecision = 'allow';
+    let policyId = 'zt-default-allow';
+    let reason = '身份、工作区与资源范围校验通过';
+    const obligations: ZeroTrustEvaluation['obligations'] = ['audit'];
+    const enabled = (id: string) => zeroTrustPolicies.find((policy) => policy.id === id && policy.enabled);
+    if (identity?.role === 'auditor' && input.action !== 'read' && input.action !== 'export' && enabled('zt-auditor-readonly')) { decision = 'deny'; policyId = 'zt-auditor-readonly'; reason = '审计用户仅可读取授权范围内证据'; }
+    else if (identity?.role === 'user' && input.action === 'publish' && enabled('zt-user-production')) { decision = 'approval_required'; policyId = 'zt-user-production'; reason = '普通用户生产变更需管理员审批'; obligations.push('require_approval'); }
+    else if (classification === 'restricted' && input.external && enabled('zt-restricted-egress')) { decision = 'deny'; policyId = 'zt-restricted-egress'; reason = '受限数据不得发送到外部出口'; obligations.push('mask_sensitive_fields'); }
+    else if (input.resource === 'skill' && input.action === 'run' && input.external && enabled('zt-tool-approval')) { decision = 'approval_required'; policyId = 'zt-tool-approval'; reason = '高风险工具调用需复核'; obligations.push('require_approval', 'human_handoff'); }
+    else if (identity?.role === 'user' && input.resource === 'memory' && input.action === 'write' && enabled('zt-memory-governance')) { decision = 'deny'; policyId = 'zt-memory-governance'; reason = '普通用户不能修改记忆治理策略'; }
+    const result: ZeroTrustEvaluation = { decision, policyId, reason, obligations, correlationId: input.correlationId ?? mockId('zt_corr'), riskScore: classification === 'restricted' ? 85 : input.external ? 60 : input.action === 'publish' ? 55 : 18 };
+    zeroTrustEvents.unshift({ id: mockId('zt_event'), time: new Date().toISOString(), tenantId: identity?.tenantId ?? 'tenant-acme', workspaceId: currentWorkspaceId, actor: identity?.name ?? '系统', resource: input.resource, action: input.action, classification, decision, policyId, reason, correlationId: result.correlationId });
+    return result;
+  };
   const knowledgePackageInCurrentWorkspace = (packageId: string) => inCurrentWorkspace(mockKnowledgePackages.find((item) => item.id === packageId) ?? { workspaceId: undefined });
   const workflowControl = workflowControlFor(currentWorkspaceId);
   const memoryAudit = (action: string, target: string, result: 'success' | 'failed' = 'success', correlationId = mockId('memory_corr')) => {
@@ -1656,6 +1683,40 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     memoryAudits.unshift(event);
     return event;
   };
+  if (path === '/api/zero-trust/overview' && method === 'GET') {
+    const events = zeroTrustEvents.filter((event) => !identity || identity.workspaceIds.includes(event.workspaceId));
+    return { policies: zeroTrustPolicies.filter((policy) => policy.enabled).length, blocked: events.filter((event) => event.decision === 'deny').length, approvals: events.filter((event) => event.decision === 'approval_required').length, masked: events.filter((event) => event.decision === 'mask').length, risk: events.some((event) => event.decision === 'deny') ? 'attention' : 'normal', updatedAt: new Date().toISOString() };
+  }
+  if (path === '/api/zero-trust/policies' && method === 'GET') return zeroTrustPolicies;
+  if (path === '/api/zero-trust/policies' && method === 'POST') {
+    requireAdministrator('创建零信任策略'); const body = (opts.body ?? {}) as Partial<ZeroTrustPolicy>;
+    if (!body.name?.trim() || !body.resource || !body.action || !body.decision) throw new Error('E_ZERO_TRUST_POLICY_INVALID');
+    const policy: ZeroTrustPolicy = { id: mockId('zt_policy'), name: body.name.trim(), resource: body.resource, action: body.action, scope: body.scope ?? 'workspace', condition: body.condition?.trim() ?? '满足工作区访问范围', decision: body.decision, enabled: true, version: 1, updatedAt: new Date().toISOString(), updatedBy: identity?.name ?? '平台管理员' };
+    zeroTrustPolicies.unshift(policy); workspaceAudit(currentWorkspaceId, '创建零信任策略', policy.name); return policy;
+  }
+  const zeroTrustPolicyRoute = path.match(/^\/api\/zero-trust\/policies\/([^/]+)$/);
+  if (zeroTrustPolicyRoute && method === 'PATCH') {
+    requireAdministrator('更新零信任策略'); const policy = zeroTrustPolicies.find((item) => item.id === zeroTrustPolicyRoute[1]); if (!policy) throw new Error('E_ZERO_TRUST_POLICY_NOT_FOUND');
+    if (policy.baseline && (opts.body as Partial<ZeroTrustPolicy>)?.enabled === false) throw new Error('E_ZERO_TRUST_BASELINE_LOCKED: 租户安全基线不可停用');
+    Object.assign(policy, opts.body ?? {}, { version: policy.version + 1, updatedAt: new Date().toISOString(), updatedBy: identity?.name ?? '平台管理员' }); workspaceAudit(currentWorkspaceId, '更新零信任策略', policy.name); return policy;
+  }
+  if (path === '/api/zero-trust/evaluate' && method === 'POST') {
+    const body = (opts.body ?? {}) as { resource: ZeroTrustResource; action: ZeroTrustAction; classification?: ZeroTrustEvent['classification']; external?: boolean; correlationId?: string };
+    if (!body.resource || !body.action) throw new Error('E_ZERO_TRUST_EVALUATION_INVALID');
+    return evaluateZeroTrust(body);
+  }
+  if (path === '/api/zero-trust/events' && method === 'GET') return zeroTrustEvents.filter((event) => !identity || identity.workspaceIds.includes(event.workspaceId));
+  if (path === '/api/zero-trust/authorizations' && method === 'GET') return temporaryAuthorizations.filter((item) => !identity || identity.workspaceIds.includes(item.workspaceId));
+  if (path === '/api/zero-trust/authorizations' && method === 'POST') {
+    requireAdministrator('授予临时访问'); const body = (opts.body ?? {}) as Partial<TemporaryAuthorization>;
+    if (!body.subjectName?.trim() || !body.workspaceId || !body.environment || !body.resource || !body.action || !body.reason?.trim() || !body.expiresAt) throw new Error('E_TEMPORARY_AUTH_INVALID');
+    if (body.environment === 'production') throw new Error('E_TEMPORARY_AUTH_PRODUCTION_REQUIRES_DUAL_APPROVAL');
+    const expiry = new Date(body.expiresAt).getTime(); if (!Number.isFinite(expiry) || expiry <= Date.now() || expiry > Date.now() + 24 * 3600_000) throw new Error('E_TEMPORARY_AUTH_TTL_INVALID: 临时授权最长 24 小时');
+    requireWorkspace(body.workspaceId); const authorization: TemporaryAuthorization = { id: mockId('zta'), subjectId: body.subjectId ?? mockId('subject'), subjectName: body.subjectName.trim(), workspaceId: body.workspaceId, environment: body.environment, resource: body.resource, action: body.action, reason: body.reason.trim(), status: 'active', expiresAt: body.expiresAt, approvedBy: identity?.name ?? '平台管理员' };
+    temporaryAuthorizations.unshift(authorization); workspaceAudit(body.workspaceId, '授予临时零信任授权', `${authorization.subjectName} · ${authorization.resource}:${authorization.action}`); return authorization;
+  }
+  const temporaryAuthRoute = path.match(/^\/api\/zero-trust\/authorizations\/([^/]+)\/revoke$/);
+  if (temporaryAuthRoute && method === 'POST') { requireAdministrator('回收临时访问'); const authorization = temporaryAuthorizations.find((item) => item.id === temporaryAuthRoute[1]); if (!authorization) throw new Error('E_TEMPORARY_AUTH_NOT_FOUND'); authorization.status = 'revoked'; workspaceAudit(authorization.workspaceId, '回收临时零信任授权', authorization.subjectName); return authorization; }
   if (path === '/api/access/governance' && method === 'GET') {
     if (!identity?.permissions.includes('access.read')) throw new Error('E_ACCESS_READ_FORBIDDEN');
     const now = Date.now();
@@ -1702,7 +1763,9 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     if (!body.resourceName?.trim() || !body.resourceType) throw new Error('E_RELEASE_REQUEST_INVALID');
     const workspaceId = body.workspaceId ?? currentWorkspaceId;
     requireWorkspace(workspaceId);
-    const approval: ReleaseApproval = { id: mockId('approval'), workspaceId, environment: 'production', resourceType: body.resourceType, resourceName: body.resourceName.trim(), submittedBy: identity.name, submittedById: identity.id, submittedAt: new Date().toISOString(), status: 'pending', risk: body.risk ?? 'medium', correlationId: body.correlationId ?? mockId('release_corr') };
+    const policy = evaluateZeroTrust({ resource: body.resourceType, action: 'publish', classification: 'internal', correlationId: body.correlationId });
+    if (policy.decision === 'deny') throw new Error(`E_ZERO_TRUST_DENY: ${policy.reason}`);
+    const approval: ReleaseApproval = { id: mockId('approval'), workspaceId, environment: 'production', resourceType: body.resourceType, resourceName: body.resourceName.trim(), submittedBy: identity.name, submittedById: identity.id, submittedAt: new Date().toISOString(), status: 'pending', risk: body.risk ?? 'medium', correlationId: policy.correlationId };
     mockReleaseApprovals.unshift(approval);
     workspaceAudit(workspaceId, '提交生产发布申请', approval.resourceName);
     return approval;
@@ -1720,7 +1783,8 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/audit-center' && method === 'GET') {
     if (!identity?.permissions.includes('audit.read')) throw new Error('E_AUDIT_READ_FORBIDDEN');
     const scoped = workspaceAudits.filter((event) => !identity || identity.workspaceIds.includes(event.workspaceId));
-    return [...scoped, ...memoryAudits.filter((event) => !identity || identity.workspaceIds.includes(event.workspaceId)).map((event) => ({ ...event, result: event.result, target: event.target }))].sort((a, b) => b.time.localeCompare(a.time));
+    const zeroTrust = zeroTrustEvents.filter((event) => !identity || identity.workspaceIds.includes(event.workspaceId)).map((event) => ({ id: event.id, time: event.time, workspaceId: event.workspaceId, actor: event.actor, action: `零信任：${event.decision}`, target: `${event.resource}:${event.action} · ${event.reason}`, result: event.decision === 'deny' ? 'failed' as const : 'success' as const, correlationId: event.correlationId }));
+    return [...scoped, ...memoryAudits.filter((event) => !identity || identity.workspaceIds.includes(event.workspaceId)).map((event) => ({ ...event, result: event.result, target: event.target })), ...zeroTrust].sort((a, b) => b.time.localeCompare(a.time));
   }
   if (path === '/api/audit-center/export' && method === 'POST') {
     if (!identity?.permissions.includes('audit.export')) throw new Error('E_AUDIT_EXPORT_FORBIDDEN');
@@ -1801,6 +1865,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/memory/candidates' && method === 'GET') return memoryCandidates.filter(inCurrentWorkspace).filter((candidate) => canReadScopedResource(memoryRecords.find((record) => record.id === candidate.memoryId) ?? {}));
   const memoryCandidateRoute = path.match(/^\/api\/memory\/candidates\/([^/]+)\/(approve|reject)$/);
   if (memoryCandidateRoute && method === 'POST') {
+    evaluateZeroTrust({ resource: 'memory', action: 'write' });
     requireAdministrator('审核知识候选');
     const candidate = memoryCandidates.find((item) => item.id === memoryCandidateRoute[1]);
     if (!candidate || !inCurrentWorkspace(candidate)) throw new Error('E_WORKSPACE_SCOPE: 无权操作其他工作区知识候选');
@@ -1814,6 +1879,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     memoryAudit(approved ? '审核通过知识候选' : '拒绝知识候选', candidate.title, 'success', candidate.sourceCorrelationId); return candidate;
   }
   if (path === '/api/memory/refinement/run' && method === 'POST') {
+    evaluateZeroTrust({ resource: 'memory', action: 'write' });
     requireAdministrator('执行记忆渐进提炼');
     const policy = memoryPolicies.find((item) => item.workspaceId === currentWorkspaceId) ?? { workspaceId: currentWorkspaceId, shortTermTtlHours: 24, workingMemoryTtlDays: 30, dailyRefinementTime: '02:00', shortToWorkingEnabled: true, workingToLongEnabled: true, longToKnowledgeEnabled: true, minimumConfidence: .85, longTermWriteApproval: true, sensitiveDataMasking: true, longTermCapacity: 5000, usedCapacity: 0 };
     const now = new Date().toISOString(); let workingCreated = 0; let longCreated = 0; let candidatesCreated = 0;
@@ -1832,7 +1898,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     memoryAudit('执行每日渐进提炼', `短期→工作 ${workingCreated} · 工作→长期 ${longCreated} · 长期→知识候选 ${candidatesCreated}`); return { scheduledFor: policy.dailyRefinementTime, workingCreated, longCreated, candidatesCreated };
   }
   if (path === '/api/memory/policy' && method === 'GET') return memoryPolicies.find((item) => item.workspaceId === currentWorkspaceId) ?? { workspaceId: currentWorkspaceId, shortTermTtlHours: 24, workingMemoryTtlDays: 30, dailyRefinementTime: '02:00', shortToWorkingEnabled: true, workingToLongEnabled: true, longToKnowledgeEnabled: true, minimumConfidence: .85, longTermWriteApproval: true, sensitiveDataMasking: true, longTermCapacity: 5000, usedCapacity: 0 };
-  if (path === '/api/memory/policy' && method === 'PATCH') { requireAdministrator('更新记忆策略'); const body = (opts.body ?? {}) as Partial<MemoryPolicy>; let policy = memoryPolicies.find((item) => item.workspaceId === currentWorkspaceId); if (!policy) { policy = { workspaceId: currentWorkspaceId, shortTermTtlHours: 24, workingMemoryTtlDays: 30, dailyRefinementTime: '02:00', shortToWorkingEnabled: true, workingToLongEnabled: true, longToKnowledgeEnabled: true, minimumConfidence: .85, longTermWriteApproval: true, sensitiveDataMasking: true, longTermCapacity: 5000, usedCapacity: 0 }; memoryPolicies.push(policy); } Object.assign(policy, body, { workspaceId: currentWorkspaceId }); memoryAudit('更新记忆策略', '记忆策略'); return policy; }
+  if (path === '/api/memory/policy' && method === 'PATCH') { evaluateZeroTrust({ resource: 'memory', action: 'write' }); requireAdministrator('更新记忆策略'); const body = (opts.body ?? {}) as Partial<MemoryPolicy>; let policy = memoryPolicies.find((item) => item.workspaceId === currentWorkspaceId); if (!policy) { policy = { workspaceId: currentWorkspaceId, shortTermTtlHours: 24, workingMemoryTtlDays: 30, dailyRefinementTime: '02:00', shortToWorkingEnabled: true, workingToLongEnabled: true, longToKnowledgeEnabled: true, minimumConfidence: .85, longTermWriteApproval: true, sensitiveDataMasking: true, longTermCapacity: 5000, usedCapacity: 0 }; memoryPolicies.push(policy); } Object.assign(policy, body, { workspaceId: currentWorkspaceId }); memoryAudit('更新记忆策略', '记忆策略'); return policy; }
   if (path === '/api/memory/audit' && method === 'GET') return memoryAudits.filter(inCurrentWorkspace);
 
   // 任务：所有写操作都经由受控任务领域，保证版本、审计和通知一致。
@@ -2356,12 +2422,16 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/skills/catalog' && method === 'GET') return mockSkillCatalog.filter(inCurrentWorkspace);
   if (path === '/api/skills/audit' && method === 'GET') return skillAuditEvents();
   if (path === '/api/mcp-connections' && method === 'POST') {
+    evaluateZeroTrust({ resource: 'skill', action: 'connect', external: true });
+    requireAdministrator('接入外部 MCP');
     const body = (opts.body ?? {}) as { name?: string; endpoint?: string; authMode?: string };
     if (!body.name?.trim() || !/^https:\/\//.test(body.endpoint ?? '')) throw new Error('MCP 名称和 HTTPS 服务地址不能为空');
     const skill: Skill = { id: mockId('mcp'), name: body.name.trim(), kind: 'mcp', description: `MCP · ${body.endpoint}`, version: '1.0.0', status: 'installed', rating: 0, installCount: 0, riskLevel: 'mid', cacheable: false };
     mockSkills.unshift(skill); mockSkillPermissions[skill.id] = mockSkillPerms.map((item) => ({ ...item, skillId: skill.id })); mockSkillIntegrations.unshift({ id: mockId('integration'), name: skill.name, type: 'mcp', environment: 'test', status: 'validating', owner: '当前用户', endpoint: body.endpoint!, credentialRef: `vault://integrations/${skill.id}/oauth`, lastVerifiedAt: '刚刚', health: 'unknown', discoveredCapabilities: 0, writeApprovalRequired: true, allowedEgress: [new URL(body.endpoint!).host] }); appendControlPlaneAudit('skill', '配置 MCP 并预检', `${skill.name}:${body.authMode ?? 'OAuth'}`); return skill;
   }
   if (path === '/api/tools' && method === 'POST') {
+    evaluateZeroTrust({ resource: 'skill', action: 'connect', external: true });
+    requireAdministrator('注册外部 Tool');
     const body = (opts.body ?? {}) as { name?: string; endpoint?: string; schema?: string };
     if (!body.name?.trim() || !/^https:\/\//.test(body.endpoint ?? '') || !body.schema?.trim()) throw new Error('Tool 名称、HTTPS 地址和 Schema 不能为空');
     let schema: any;

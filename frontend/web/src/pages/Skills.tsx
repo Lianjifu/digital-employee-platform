@@ -22,6 +22,7 @@ import { cn } from '@de/web-utils';
 import type { Skill, SkillAuditEvent, SkillImpactReport, SkillInstallPreflight, SkillPermission, SkillGovernancePolicy, SkillLifecycleStatus, SkillIntegration, SkillRuntimeHealth, SkillGovernanceIncident, SkillGovernanceEvent } from '@de/web-types';
 import { Modal, Drawer, ConfirmDialog, EmptyState, Sparkline } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
+import { useT } from '@/i18n';
 
 const KIND_META: Record<string, { label: string; tone: 'info' | 'success' | 'warn'; icon: any; exec: string }> = {
   skill: { label: 'Skill', tone: 'info', icon: Wrench, exec: 'gVisor 沙箱' },
@@ -85,6 +86,7 @@ const DEP_GRAPH = [
 type ModalKind = 'importSkill' | 'configureMcp' | 'configureTool' | 'uninstall' | 'upgrade' | null;
 
 export default function Skills() {
+  const { t } = useT();
   const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
   const [tab, setTab] = useState<'workspace' | 'store' | 'integration' | 'governance'>('workspace');
   const [typeFilters, setTypeFilters] = useState<Record<'workspace' | 'store' | 'integration' | 'governance', 'all' | Skill['kind']>>({ workspace: 'all', store: 'all', integration: 'all', governance: 'all' });
@@ -331,10 +333,10 @@ export default function Skills() {
             <div>
               <h1 className="text-lg font-semibold flex items-center gap-2">
                 <Wrench className="h-5 w-5 text-[var(--brand)]" />
-                技能中心
+                {t('module.skills.title')}
               </h1>
               <p className="text-xs text-[var(--text-muted)] mt-0.5">
-                统一接入、治理并安全复用 Skill、MCP 与 Tool，供智能体和工作流调用。
+                {t('module.skills.subtitle')}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -354,9 +356,9 @@ export default function Skills() {
             value={tab}
             onChange={(k) => setTab(k as any)}
             items={[
-              { key: 'workspace', label: <>技能列表 <Badge tone="brand" className="ml-1">{installed.length}</Badge></> },
-              { key: 'store', label: <>技能商店 <Badge tone="neutral" className="ml-1">{STORE_LIST.length}</Badge></> },
-              ...(isAdmin ? [{ key: 'integration', label: <>技能接入 <Badge tone="purple" className="ml-1">{installed.filter((skill) => skill.kind !== 'skill').length}</Badge></> }, { key: 'governance', label: <>运行治理 <Badge tone="info" className="ml-1">{installed.length}</Badge></> }] : []),
+              { key: 'workspace', label: <>{t('module.skills.tabs.installed')} <Badge tone="brand" className="ml-1">{installed.length}</Badge></> },
+              { key: 'store', label: <>{t('module.skills.tabs.catalog')} <Badge tone="neutral" className="ml-1">{STORE_LIST.length}</Badge></> },
+              ...(isAdmin ? [{ key: 'integration', label: <>{t('module.skills.tabs.integration')} <Badge tone="purple" className="ml-1">{installed.filter((skill) => skill.kind !== 'skill').length}</Badge></> }, { key: 'governance', label: <>{t('module.skills.tabs.governance')} <Badge tone="info" className="ml-1">{installed.length}</Badge></> }] : []),
             ]}
           />
         </div>

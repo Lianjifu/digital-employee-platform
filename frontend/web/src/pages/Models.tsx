@@ -7,19 +7,21 @@ import { ConfirmDialog, Drawer, EmptyState } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { modelQueryState, policyStatusLabel, providerLifecycleAction } from '@/features/models/model-ui';
+import { useT } from '@/i18n';
 
 type Workspace = 'access' | 'routing' | 'governance' | 'audit';
 
-const WORKSPACES: Array<{ key: Workspace; label: string; icon: typeof Cloud }> = [
-  { key: 'access', label: '模型接入', icon: Cloud },
-  { key: 'routing', label: '模型路由', icon: Route },
-  { key: 'governance', label: '模型治理', icon: Activity },
-  { key: 'audit', label: '模型审计', icon: History },
+const WORKSPACES: Array<{ key: Workspace; labelKey: string; icon: typeof Cloud }> = [
+  { key: 'access', labelKey: 'module.models.tabs.access', icon: Cloud },
+  { key: 'routing', labelKey: 'module.models.tabs.routing', icon: Route },
+  { key: 'governance', labelKey: 'module.models.tabs.governance', icon: Activity },
+  { key: 'audit', labelKey: 'module.models.tabs.audit', icon: History },
 ];
 
 const TIER_LABEL: Record<ProviderTier, string> = { official: '官方 API', self_hosted: '自部署', connectable: '可接入' };
 
 export default function Models() {
+  const { t } = useT();
   const { user } = useAuthStore();
   const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
   const canWrite = Boolean(user?.permissions.includes('model.write'));
@@ -62,13 +64,13 @@ export default function Models() {
         <header className="border-b border-[var(--border)] px-4 py-4 sm:px-6">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div>
-              <h1 className="flex items-center gap-2 text-lg font-semibold"><Cloud className="h-5 w-5 text-[var(--brand)]" />模型中心</h1>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">统一管理企业模型接入、路由策略、运行治理与审计追溯。</p>
+              <h1 className="flex items-center gap-2 text-lg font-semibold"><Cloud className="h-5 w-5 text-[var(--brand)]" />{t('module.models.title')}</h1>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">{t('module.models.subtitle')}</p>
             </div>
             <Badge tone="warn"><AlertTriangle className="mr-1 h-3 w-3" />当前为 Mock 治理演示，真实授权与 KMS 由服务端执行</Badge>
           </div>
           <div className="mt-4 flex flex-wrap gap-1 rounded-lg bg-[var(--bg-elevated)] p-1" role="tablist" aria-label="模型控制面工作区">
-            {WORKSPACES.map(({ key, label, icon: Icon }) => <button key={key} id={`model-workspace-tab-${key}`} type="button" role="tab" aria-controls={`model-workspace-${key}`} aria-selected={workspace === key} onClick={() => setWorkspace(key)} className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-colors ${workspace === key ? 'bg-white text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]'}`}><Icon className="h-3.5 w-3.5" />{label}</button>)}
+            {WORKSPACES.map(({ key, labelKey, icon: Icon }) => <button key={key} id={`model-workspace-tab-${key}`} type="button" role="tab" aria-controls={`model-workspace-${key}`} aria-selected={workspace === key} onClick={() => setWorkspace(key)} className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium transition-colors ${workspace === key ? 'bg-white text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]'}`}><Icon className="h-3.5 w-3.5" />{t(labelKey)}</button>)}
           </div>
         </header>
 

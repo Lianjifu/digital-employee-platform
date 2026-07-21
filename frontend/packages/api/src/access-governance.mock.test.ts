@@ -35,9 +35,9 @@ describe('access governance mock', () => {
 
   it('keeps workspace governance actions out of the normal user role', async () => {
     const user = { Authorization: 'Bearer mock-user-token', 'x-workspace-id': 'w1' };
-    await expect(mockHandler('/api/memory/policy', { method: 'PATCH', headers: user, body: { retentionDays: 1 } })).rejects.toThrow('E_GOVERNANCE_ADMIN_REQUIRED');
-    await expect(mockHandler('/api/memory/refinement/run', { method: 'POST', headers: user, body: {} })).rejects.toThrow('E_GOVERNANCE_ADMIN_REQUIRED');
+    await expect(mockHandler('/api/memory/policy', { method: 'PATCH', headers: user, body: { retentionDays: 1 } })).rejects.toThrow('E_ADMIN_REQUIRED');
+    await expect(mockHandler('/api/memory/refinement/run', { method: 'POST', headers: user, body: {} })).rejects.toThrow('E_ADMIN_REQUIRED');
     await expect(mockHandler('/api/tasks/t1/approve', { method: 'POST', headers: user, body: { approved: true } })).rejects.toThrow('E_TASK_SCOPE');
-    await expect(mockHandler('/api/mcp-connections', { method: 'POST', headers: user, body: { name: 'outside', endpoint: 'https://example.com', authMode: 'OAuth' } })).rejects.toThrow('E_GOVERNANCE_ADMIN_REQUIRED');
+    await expect(mockHandler('/api/mcp-connections', { method: 'POST', headers: user, body: { name: 'outside', endpoint: 'https://example.com', authMode: 'OAuth' } })).rejects.toThrow('E_ADMIN_REQUIRED');
   });
 });

@@ -4,6 +4,7 @@ import { Badge, Button, Input, toast } from '@de/web-ui';
 import { cn } from '@de/web-utils';
 import type { AccessGrant, AccessReview, ReleaseApproval, SeparationOfDutyRule, Role } from '@de/web-types';
 import { useApiMutation, useApiQuery } from '@/services/query';
+import { useT } from '@/i18n';
 
 type GovernanceData = { grants: AccessGrant[]; reviews: AccessReview[]; rules: SeparationOfDutyRule[]; conflicts: Array<{ id: string; subjectName: string; reason: string; severity: 'medium' | 'high' }>; generatedAt: string };
 type Tab = 'access' | 'approvals' | 'controls';
@@ -12,6 +13,7 @@ const roleLabel: Record<Role, string> = { user: '普通用户', admin: '管理�
 const environmentLabel = { sandbox: '开发', staging: '测试', production: '生产' };
 
 export default function Governance() {
+  const { t } = useT();
   const [tab, setTab] = useState<Tab>('access');
   const [grantOpen, setGrantOpen] = useState(false);
   const governance = useApiQuery<GovernanceData>(['access-governance'], '/api/access/governance');
@@ -28,13 +30,13 @@ export default function Governance() {
       <header className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-4 py-4 sm:px-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="flex items-center gap-2 text-base font-semibold"><Shield className="h-4 w-4 text-[var(--brand)]" />访问治理</h1>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">以租户、工作区和环境范围控制平台访问；高风险变更受职责分离约束。</p>
+            <h1 className="flex items-center gap-2 text-base font-semibold"><Shield className="h-4 w-4 text-[var(--brand)]" />{t('module.governance.title')}</h1>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">{t('module.governance.subtitle')}</p>
           </div>
           <Button size="sm" onClick={() => setGrantOpen(true)}><UserPlus className="h-3.5 w-3.5" />授予访问</Button>
         </div>
         <nav className="mt-4 flex gap-1 overflow-x-auto rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-1">
-          {([['access', '用户与范围'], ['approvals', `发布审批${pendingApprovals.length ? ` · ${pendingApprovals.length}` : ''}`], ['controls', '职责分离与复核']] as Array<[Tab, string]>).map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={cn('shrink-0 rounded px-3 py-2 text-xs', tab === key ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}>{label}</button>)}
+          {([['access', t('module.governance.tabs.access')], ['approvals', `${t('module.governance.tabs.approvals')}${pendingApprovals.length ? ` · ${pendingApprovals.length}` : ''}`], ['controls', t('module.governance.tabs.controls')]] as Array<[Tab, string]>).map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={cn('shrink-0 rounded px-3 py-2 text-xs', tab === key ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}>{label}</button>)}
         </nav>
       </header>
 

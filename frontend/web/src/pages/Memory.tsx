@@ -5,14 +5,16 @@ import type { MemoryAuditEvent, MemoryKnowledgeCandidate, MemoryLayer, MemoryPol
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { EmptyState } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
+import { useT } from '@/i18n';
 
 type Tab = 'overview' | 'short_term' | 'working' | 'long_term' | 'candidates' | 'governance';
-const TABS: Array<{ key: Tab; label: string }> = [
-  { key: 'overview', label: '概览' }, { key: 'short_term', label: '短期记忆' }, { key: 'working', label: '工作记忆' }, { key: 'long_term', label: '长期记忆' }, { key: 'candidates', label: '知识候选' }, { key: 'governance', label: '审计与策略' },
+const TABS: Array<{ key: Tab; labelKey: string }> = [
+  { key: 'overview', labelKey: 'module.memory.tabs.overview' }, { key: 'short_term', labelKey: 'module.memory.tabs.shortTerm' }, { key: 'working', labelKey: 'module.memory.tabs.working' }, { key: 'long_term', labelKey: 'module.memory.tabs.longTerm' }, { key: 'candidates', labelKey: 'module.memory.tabs.candidates' }, { key: 'governance', labelKey: 'module.memory.tabs.governance' },
 ];
 const LAYER: Record<MemoryLayer, { label: string; tone: 'brand' | 'warn' | 'success' }> = { short_term: { label: '短期', tone: 'brand' }, working: { label: '工作', tone: 'warn' }, long_term: { label: '长期', tone: 'success' } };
 
 export default function Memory() {
+  const { t } = useT();
   const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
   const [tab, setTab] = useState<Tab>('overview');
   const [query, setQuery] = useState('');
@@ -37,8 +39,8 @@ export default function Memory() {
 
   return <main className="h-full overflow-y-auto bg-[var(--bg-elevated)] p-3 md:p-5">
     <div className="mx-auto max-w-[1440px] rounded-lg border border-[var(--border)] bg-[var(--bg)] shadow-[var(--shadow-xs)]">
-      <header className="border-b border-[var(--border)] px-4 py-4 sm:px-6"><div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="flex items-center gap-2 text-lg font-semibold"><BrainCircuit className="h-5 w-5 text-[var(--brand)]" />记忆中心</h1><p className="mt-1 text-xs text-[var(--text-muted)]">受控管理数字员工的会话上下文、任务经验和可审核的长期记忆。</p></div><Badge tone="warn">运行记忆不等于权威知识</Badge></div>
-        <nav className="mt-4 flex flex-wrap gap-1 rounded-md bg-[var(--bg-elevated)] p-1" aria-label="记忆中心分区">{TABS.filter((item) => isAdmin || item.key !== 'governance').map((item) => <button key={item.key} type="button" onClick={() => setTab(item.key)} className={tab === item.key ? 'rounded-md bg-[var(--bg)] px-3 py-2 text-xs font-semibold text-[var(--brand)] shadow-sm' : 'rounded-md px-3 py-2 text-xs text-[var(--text-muted)] hover:bg-[var(--bg-hover)]'}>{item.label}</button>)}</nav>
+      <header className="border-b border-[var(--border)] px-4 py-4 sm:px-6"><div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="flex items-center gap-2 text-lg font-semibold"><BrainCircuit className="h-5 w-5 text-[var(--brand)]" />{t('module.memory.title')}</h1><p className="mt-1 text-xs text-[var(--text-muted)]">{t('module.memory.subtitle')}</p></div><Badge tone="warn">运行记忆不等于权威知识</Badge></div>
+        <nav className="mt-4 flex flex-wrap gap-1 rounded-md bg-[var(--bg-elevated)] p-1" aria-label={t('module.memory.title')}>{TABS.filter((item) => isAdmin || item.key !== 'governance').map((item) => <button key={item.key} type="button" onClick={() => setTab(item.key)} className={tab === item.key ? 'rounded-md bg-[var(--bg)] px-3 py-2 text-xs font-semibold text-[var(--brand)] shadow-sm' : 'rounded-md px-3 py-2 text-xs text-[var(--text-muted)] hover:bg-[var(--bg-hover)]'}>{t(item.labelKey)}</button>)}</nav>
       </header>
       <section className="border-b border-[var(--border)] bg-[var(--bg-elevated)]/40 p-4 sm:px-6"><div className="grid gap-3 sm:grid-cols-4"><Metric label="短期记忆" value={overview.data?.totals?.shortTerm ?? 0} /><Metric label="工作记忆" value={overview.data?.totals?.working ?? 0} tone="warn" /><Metric label="长期记忆" value={overview.data?.totals?.longTerm ?? 0} tone="success" /><Metric label="知识候选待审" value={overview.data?.totals?.pendingCandidates ?? 0} tone="warn" /></div></section>
       <section className="p-4 sm:p-6">

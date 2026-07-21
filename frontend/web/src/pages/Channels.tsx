@@ -7,13 +7,15 @@ import { ConfirmDialog, Drawer, EmptyState } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { deliveryPolicyStatusLabel, deploymentDeletionAction } from '@/features/channels/channel-ui';
+import { useT } from '@/i18n';
 
 type Tab = 'deployments' | 'routing' | 'templates' | 'health' | 'failures' | 'audit';
-const TABS: Array<{ key: Tab; label: string; icon: typeof Cloud }> = [
-  { key: 'deployments', label: '渠道接入', icon: Cloud }, { key: 'routing', label: '投递路由', icon: Route }, { key: 'templates', label: '模板与目标', icon: FileText }, { key: 'health', label: '运行健康', icon: Activity }, { key: 'failures', label: '失败处置', icon: AlertTriangle }, { key: 'audit', label: '渠道审计', icon: History },
+const TABS: Array<{ key: Tab; labelKey: string; icon: typeof Cloud }> = [
+  { key: 'deployments', labelKey: 'module.channels.tabs.deployments', icon: Cloud }, { key: 'templates', labelKey: 'module.channels.tabs.templates', icon: FileText }, { key: 'routing', labelKey: 'module.channels.tabs.routing', icon: Route }, { key: 'health', labelKey: 'module.channels.tabs.health', icon: Activity }, { key: 'failures', labelKey: 'module.channels.tabs.failures', icon: AlertTriangle }, { key: 'audit', labelKey: 'module.channels.tabs.audit', icon: History },
 ];
 
 export default function Channels() {
+  const { t } = useT();
   const { user } = useAuthStore(); const canWrite = Boolean(user?.permissions.includes('channel.write'));
   const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
   const scopeKey = `${currentWorkspaceId}:${user?.id ?? 'anonymous'}`;
@@ -39,13 +41,13 @@ export default function Channels() {
 <div className="flex flex-wrap justify-between gap-3">
 <div>
 <h1 className="flex items-center gap-2 text-lg font-semibold">
-<Send className="h-5 w-5 text-[var(--brand)]" />渠道中心</h1>
-<p className="mt-1 text-xs text-[var(--text-muted)]">统一管理企业消息投递接入、路由、健康、失败处置与审计证据。</p>
+<Send className="h-5 w-5 text-[var(--brand)]" />{t('module.channels.title')}</h1>
+<p className="mt-1 text-xs text-[var(--text-muted)]">{t('module.channels.subtitle')}</p>
 </div>
 <Badge tone="warn">Mock 控制面演示 · 服务端负责真实凭据与授权</Badge>
 </div>
-<div className="mt-4 flex flex-wrap gap-1 rounded-lg bg-[var(--bg-elevated)] p-1" role="tablist">{TABS.map(({ key, label, icon: Icon }) => <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => setTab(key)} className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium ${tab === key ? 'bg-white text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]'} `}>
-<Icon className="h-3.5 w-3.5" />{label}</button>)}</div>
+<div className="mt-4 flex flex-wrap gap-1 rounded-lg bg-[var(--bg-elevated)] p-1" role="tablist">{TABS.map(({ key, labelKey, icon: Icon }) => <button key={key} type="button" role="tab" aria-selected={tab === key} onClick={() => setTab(key)} className={`flex items-center gap-1.5 rounded-md px-3 py-2 text-xs font-medium ${tab === key ? 'bg-white text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]'} `}>
+<Icon className="h-3.5 w-3.5" />{t(labelKey)}</button>)}</div>
 </header>
 <main className="channels-content-panel mx-auto w-full max-w-[1440px] overflow-hidden">
 <section className="grid gap-3 border-b border-[var(--border)] bg-[var(--bg-elevated)]/40 p-4 sm:grid-cols-3">

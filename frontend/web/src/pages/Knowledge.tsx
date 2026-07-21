@@ -17,6 +17,7 @@ import {
 import type { KnowledgeAuditEvent, KnowledgeConsumerBinding, KnowledgeDoc, KnowledgeEvaluation, KnowledgeGovernancePolicy, KnowledgeGraphEntity, KnowledgeGraphRelation, KnowledgePackage, KnowledgeProcessingJob, KnowledgeRetrievalProfile, KnowledgeRetrievalResult, KnowledgeSourceConnection } from '@de/web-types';
 import { cn } from '@de/web-utils';
 import { Modal, Drawer, ConfirmDialog, EmptyState } from '@/components/shared';
+import { useT } from '@/i18n';
 
 const PIPELINE: { key: string; label: string; icon: any; tool: string; count: string }[] = [
   { key: 'ingest', label: 'Ingest', icon: Upload, tool: 'Tika + PaddleOCR', count: '1.2 GB/日' },
@@ -52,6 +53,7 @@ type ModalKind = 'upload' | 'reindex' | 'citationAgents' | 'connectSource' | 'ne
 type KnowledgeWorkspace = 'assets' | 'processing' | 'retrieval' | 'graph' | 'governance';
 
 export default function Knowledge() {
+  const { t } = useT();
   const [workspace, setWorkspace] = useState<KnowledgeWorkspace>('assets');
   const [docPreviewId, setDocPreviewId] = useState<string | null>('k1');
   const [chunkDrawer, setChunkDrawer] = useState<any | null>(null);
@@ -155,17 +157,17 @@ export default function Knowledge() {
           <div className="knowledge-header-main">
             <div className="knowledge-header-copy">
               <div className="knowledge-workbench-eyebrow">企业知识运营</div>
-              <h1 className="mt-1 flex items-center gap-2 text-lg font-semibold"><BookOpen className="h-5 w-5 text-[var(--brand)]" />知识中心</h1>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">统一管理企业知识内容、接入加工、检索评测、图谱关联与引用治理。</p>
+              <h1 className="mt-1 flex items-center gap-2 text-lg font-semibold"><BookOpen className="h-5 w-5 text-[var(--brand)]" />{t('module.knowledge.title')}</h1>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">{t('module.knowledge.subtitle')}</p>
             </div>
           </div>
 
           <nav className="knowledge-workbench-tabs mt-4" aria-label="知识运营分区">
             {[
-              { key: 'assets' as const, label: '知识资产', icon: FileText }, { key: 'processing' as const, label: '接入与加工', icon: Layers },
-              { key: 'retrieval' as const, label: '检索与评测', icon: Search }, { key: 'graph' as const, label: '图谱与关联', icon: Network },
-              { key: 'governance' as const, label: '引用治理', icon: ShieldCheck },
-            ].map((item) => <button key={item.key} type="button" onClick={() => setWorkspace(item.key)} className={cn('knowledge-workbench-tab', workspace === item.key && 'is-active')}><item.icon className="h-3.5 w-3.5" />{item.label}</button>)}
+              { key: 'assets' as const, labelKey: 'module.knowledge.tabs.assets', icon: FileText }, { key: 'processing' as const, labelKey: 'module.knowledge.tabs.processing', icon: Layers },
+              { key: 'retrieval' as const, labelKey: 'module.knowledge.tabs.retrieval', icon: Search }, { key: 'graph' as const, labelKey: 'module.knowledge.tabs.graph', icon: Network },
+              { key: 'governance' as const, labelKey: 'module.knowledge.tabs.governance', icon: ShieldCheck },
+            ].map((item) => <button key={item.key} type="button" onClick={() => setWorkspace(item.key)} className={cn('knowledge-workbench-tab', workspace === item.key && 'is-active')}><item.icon className="h-3.5 w-3.5" />{t(item.labelKey)}</button>)}
           </nav>
         </header>
 

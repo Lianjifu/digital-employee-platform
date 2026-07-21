@@ -126,6 +126,64 @@ export interface ReleaseApproval {
   risk: 'low' | 'medium' | 'high';
   correlationId: string;
 }
+
+// ============ 安全与零信任 ============
+export type ZeroTrustDecision = 'allow' | 'mask' | 'approval_required' | 'deny';
+export type ZeroTrustResource = 'session' | 'task' | 'agent' | 'workflow' | 'knowledge' | 'memory' | 'skill' | 'model' | 'channel' | 'export';
+export type ZeroTrustAction = 'read' | 'write' | 'run' | 'publish' | 'approve' | 'export' | 'connect';
+
+export interface ZeroTrustPolicy {
+  id: ID;
+  name: string;
+  resource: ZeroTrustResource;
+  action: ZeroTrustAction;
+  scope: 'tenant' | 'workspace' | 'production' | 'external_egress';
+  condition: string;
+  decision: ZeroTrustDecision;
+  enabled: boolean;
+  version: number;
+  updatedAt: ISODate;
+  updatedBy: string;
+  baseline?: boolean;
+}
+
+export interface ZeroTrustEvent {
+  id: ID;
+  time: ISODate;
+  tenantId: ID;
+  workspaceId: ID;
+  actor: string;
+  resource: ZeroTrustResource;
+  action: ZeroTrustAction;
+  classification: 'public' | 'internal' | 'confidential' | 'restricted';
+  decision: ZeroTrustDecision;
+  policyId: ID;
+  reason: string;
+  correlationId: string;
+}
+
+export interface ZeroTrustEvaluation {
+  decision: ZeroTrustDecision;
+  policyId: ID;
+  reason: string;
+  obligations: Array<'audit' | 'mask_sensitive_fields' | 'require_approval' | 'human_handoff'>;
+  correlationId: string;
+  riskScore: number;
+}
+
+export interface TemporaryAuthorization {
+  id: ID;
+  subjectName: string;
+  subjectId: ID;
+  workspaceId: ID;
+  environment: EnvironmentScope;
+  resource: ZeroTrustResource;
+  action: ZeroTrustAction;
+  reason: string;
+  status: 'active' | 'expired' | 'revoked';
+  expiresAt: ISODate;
+  approvedBy: string;
+}
 export interface WorkspaceBinding { id: ID; workspaceId: ID; environment: WorkspaceEnvironmentKind; kind: 'agent' | 'workflow' | 'knowledge' | 'skill' | 'model' | 'channel'; name: string; status: 'active' | 'paused'; }
 export interface WorkspaceEnvironment { id: ID; workspaceId: ID; kind: WorkspaceEnvironmentKind; approvalRequired: boolean; canaryPercent: number; status: 'ready' | 'blocked'; }
 export interface WorkspacePolicy { workspaceId: ID; dataClassification: 'internal' | 'restricted'; egressAllowed: boolean; toolAllowlist: string[]; retentionDays: number; exceptionStatus: 'none' | 'pending' | 'approved'; }

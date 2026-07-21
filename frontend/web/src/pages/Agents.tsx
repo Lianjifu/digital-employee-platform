@@ -25,6 +25,7 @@ import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis, Tooltip, BarChart, 
 import { cn } from '@de/web-utils';
 import type { Agent, CapabilityBinding, KnowledgePackage, Skill } from '@de/web-types';
 import { Modal as ModalX, Drawer, EmptyState } from '@/components/shared';
+import { useT } from '@/i18n';
 
 /* ============ 类型 ============ */
 
@@ -186,10 +187,10 @@ const TREND_FULL = Array.from({ length: 60 }, (_, i) => ({
 /* ============ 常量 ============ */
 
 const MAIN_TABS = [
-  { key: 'agents', label: '我的智能体', icon: Bot },
-  { key: 'store', label: '智能体市场', icon: Download },
-  { key: 'evaluate', label: '评测中心', icon: FlaskConical },
-  { key: 'monitor', label: '治理与监控', icon: Monitor },
+  { key: 'agents', labelKey: 'module.agents.tabs.catalog', icon: Bot },
+  { key: 'store', labelKey: 'module.agents.tabs.market', icon: Download },
+  { key: 'evaluate', labelKey: 'module.agents.tabs.evaluation', icon: FlaskConical },
+  { key: 'monitor', labelKey: 'module.agents.tabs.monitoring', icon: Monitor },
 ] as const;
 type MainTab = typeof MAIN_TABS[number]['key'];
 
@@ -216,6 +217,7 @@ const RATING_FILTERS = ['全部', '4.5+', '4.0+', '3.5+'] as const;
 /* ============ 页面 ============ */
 
 export default function Agents() {
+  const { t } = useT();
   const [mainTab, setMainTab] = useState<MainTab>('agents');
   const [agentSubTab, setAgentSubTab] = useState<typeof AGENT_SUB_TABS[number]['key']>('installed');
   const [searchQ, setSearchQ] = useState('');
@@ -342,7 +344,7 @@ export default function Agents() {
         {/* ============ 一级模块导航：先确定工作上下文 ============ */}
         <div className="border-b border-[var(--border)] bg-[var(--bg)] px-5 pt-3">
           <div className="flex items-center gap-1 flex-wrap">
-            {MAIN_TABS.map((t) => <button key={t.key} onClick={() => setMainTab(t.key)} className={cn('flex items-center gap-1.5 rounded-t-md px-3 py-2 text-[13px] transition-colors', mainTab === t.key ? 'bg-[var(--surface-1)] border border-[var(--border)] border-b-[var(--surface-1)] text-[var(--text)] font-semibold -mb-px' : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)]')}><t.icon className="h-3.5 w-3.5" />{t.label}</button>)}
+            {MAIN_TABS.map((item) => <button key={item.key} onClick={() => setMainTab(item.key)} className={cn('flex items-center gap-1.5 rounded-t-md px-3 py-2 text-[13px] transition-colors', mainTab === item.key ? 'bg-[var(--surface-1)] border border-[var(--border)] border-b-[var(--surface-1)] text-[var(--text)] font-semibold -mb-px' : 'text-[var(--text-muted)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)]')}><item.icon className="h-3.5 w-3.5" />{t(item.labelKey)}</button>)}
           </div>
         </div>
 

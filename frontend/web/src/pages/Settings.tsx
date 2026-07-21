@@ -24,20 +24,19 @@ import {
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import type { AuditItem } from '@de/web-types';
+import { useT } from '@/i18n';
 
 const MENU = [
-  { key: 'tenant', label: '组织信息', icon: Building2 },
-  { key: 'members', label: '成员 & 权限', icon: Users },
-  { key: 'security', label: '安全与访问', icon: ShieldCheck },
-  { key: 'audit', label: '审计日志', icon: FileText },
-  { key: 'notify', label: '通知策略', icon: Bell },
-  { key: 'backup', label: '备份 & 恢复', icon: Database },
-  { key: 'apikeys', label: 'API 凭证', icon: Key },
-  { key: 'webhooks', label: 'Webhook', icon: Webhook },
+  { key: 'tenant', labelKey: 'module.settings.tabs.organization', icon: Building2 },
+  { key: 'security', labelKey: 'module.settings.tabs.identity', icon: ShieldCheck },
+  { key: 'backup', labelKey: 'module.settings.tabs.retention', icon: Database },
+  { key: 'apikeys', labelKey: 'module.settings.tabs.integration', icon: Key },
+  { key: 'billing', labelKey: 'module.settings.tabs.usage', icon: CreditCard },
 ];
 
 export default function Settings() {
-  const [active, setActive] = useState('security');
+  const { t } = useT();
+  const [active, setActive] = useState('tenant');
   const { data: audits = [] } = useApiQuery<AuditItem[]>(['audits'], '/api/audits');
   const { data: apiKeys = [] } = useApiQuery<any[]>(['api-keys'], '/api/api-keys');
   const { data: webhooks = [] } = useApiQuery<any[]>(['webhooks-config'], '/api/webhooks-config');
@@ -73,7 +72,7 @@ export default function Settings() {
                 )}
               >
                 <m.icon className="h-3.5 w-3.5" />
-                <span>{m.label}</span>
+                <span>{t(m.labelKey)}</span>
                 {active === m.key && <ChevronRight className="h-3 w-3 ml-auto" />}
               </button>
             ))}
@@ -106,8 +105,8 @@ export default function Settings() {
         <header className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-4 py-4 sm:px-5">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <h1 className="flex items-center gap-2 text-base font-semibold"><SettingsIcon className="h-4 w-4 text-[var(--brand)]" />平台设置</h1>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">统一管理组织访问、安全控制、运行审计与平台集成。</p>
+              <h1 className="flex items-center gap-2 text-base font-semibold"><SettingsIcon className="h-4 w-4 text-[var(--brand)]" />{t('module.settings.title')}</h1>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">{t('module.settings.subtitle')}</p>
             </div>
             <Badge tone="success" className="text-[10px]"><CheckCircle2 className="mr-1 h-3 w-3" />安全基线已启用</Badge>
           </div>
@@ -118,7 +117,7 @@ export default function Settings() {
                 onClick={() => setActive(item.key)}
                 className={cn('flex shrink-0 items-center gap-1.5 rounded-md px-3 py-2 text-xs transition-colors', active === item.key ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]')}
               >
-                <item.icon className="h-3.5 w-3.5" />{item.label}
+                <item.icon className="h-3.5 w-3.5" />{t(item.labelKey)}
               </button>
             ))}
           </nav>
@@ -190,40 +189,16 @@ export default function Settings() {
           </div>
         )}
 
-        {/* Todo 3: 安全 & 认证 */}
+        {/* 身份源与认证：访问范围、零信策略和审计均在安全治理中管理。 */}
         {active === 'security' && (
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
             <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
               <div className="text-sm font-semibold flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4" />94 项安全审计
+                <ShieldCheck className="h-4 w-4" />企业身份认证
               </div>
-              <div className="flex items-center gap-2 text-xs">
-                <Badge tone="success"><CheckCircle2 className="mr-1 inline h-3 w-3" />{pass} 通过</Badge>
-                <Badge tone="warn"><AlertTriangle className="mr-1 inline h-3 w-3" />{warn} 改善</Badge>
-              </div>
+              <Badge tone="success"><CheckCircle2 className="mr-1 inline h-3 w-3" />企业 SSO 已连接</Badge>
             </div>
-            <div className="p-4">
-              <div className="mb-3 flex items-center gap-3">
-                <Progress value={(pass / total) * 100} tone="success" />
-                <span className="text-xs font-mono text-[var(--text-muted)] whitespace-nowrap">{pass} / {total} · {auditScore}%</span>
-              </div>
-              <div className="space-y-1">
-                {audits.map((a) => (
-                  <div key={a.id} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-xs">
-                    <div className="flex items-center gap-2 min-w-0">
-                      {a.status === 'pass' ? (
-                        <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)] shrink-0" />
-                      ) : (
-                        <AlertTriangle className="h-3.5 w-3.5 text-[var(--warning)] shrink-0" />
-                      )}
-                      <span className="truncate">{a.name}</span>
-                      <Badge tone="neutral" className="text-[9px]">{a.category}</Badge>
-                    </div>
-                    <Badge tone={a.status === 'pass' ? 'success' : 'warn'}>{a.status === 'pass' ? '通过' : '改善中'}</Badge>
-                  </div>
-                ))}
-              </div>
-            </div>
+            <div className="grid gap-3 p-4 md:grid-cols-2"><div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3"><div className="text-xs font-semibold">单点登录</div><p className="mt-1 text-[11px] text-[var(--text-muted)]">OIDC · 企业身份源同步 · 强制多因素验证</p><Button size="sm" variant="secondary" className="mt-3">查看身份源</Button></div><div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3"><div className="text-xs font-semibold">账户生命周期</div><p className="mt-1 text-[11px] text-[var(--text-muted)]">成员同步、禁用和访问范围由访问控制统一管理。</p><Button size="sm" variant="secondary" className="mt-3">前往访问控制</Button></div></div>
           </div>
         )}
 
@@ -349,12 +324,12 @@ export default function Settings() {
           </div>
         )}
 
-        {/* Todo 8: 备份 & 恢复 */}
+        {/* 数据保留与恢复 */}
         {active === 'backup' && (
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
             <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
               <div className="text-sm font-semibold flex items-center gap-2">
-                <Database className="h-4 w-4" />备份历史
+                <Database className="h-4 w-4" />数据保留与恢复
               </div>
               <Button size="sm"><RotateCcw className="h-3 w-3" />立即备份</Button>
             </div>
@@ -378,12 +353,12 @@ export default function Settings() {
           </div>
         )}
 
-        {/* Todo 9: API Key */}
+        {/* 开发者集成 */}
         {active === 'apikeys' && (
           <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
             <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
               <div className="text-sm font-semibold flex items-center gap-2">
-                <Key className="h-4 w-4" />API Key 管理
+                <Key className="h-4 w-4" />开发者凭证
               </div>
               <Button size="sm"><Plus className="h-3 w-3" />新建 Key</Button>
             </div>

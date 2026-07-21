@@ -11,7 +11,7 @@ import {
   BookOpen, Wrench, Brain, BrainCircuit, Send,
   Menu, Settings2, Languages, Sun, Moon,
   LogOut, ChevronDown, X, CheckCircle2,
-  Shield, ScrollText,
+  Shield, ShieldAlert, ScrollText,
 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { useUiStore } from '@/stores/uiStore';
@@ -23,38 +23,39 @@ import { useApiQuery } from '@/services/query';
 import type { Permission, Workspace } from '@de/web-types';
 
 // 业务导航按工作场景分组；Settings / Workspace 移到左下角用户菜单。
-type NavItem = { to: string; label: string; i18n: string; icon: any; permission?: Permission; roles?: Array<'user' | 'admin' | 'auditor'> };
-const NAV_GROUPS: { label: string | null; items: NavItem[] }[] = [
-  { label: null, items: [{ to: '/home', label: '首页', i18n: 'nav.home', icon: Home, roles: ['user', 'admin'] }] },
+type NavItem = { to: string; i18n: string; icon: any; permission?: Permission; roles?: Array<'user' | 'admin' | 'auditor'> };
+const NAV_GROUPS: { labelKey: string | null; items: NavItem[] }[] = [
+  { labelKey: null, items: [{ to: '/home', i18n: 'nav.home', icon: Home, roles: ['user', 'admin'] }] },
   {
-    label: '协同运营',
+    labelKey: 'nav.group.operations',
     items: [
-      { to: '/copilot', label: '会话', i18n: 'nav.copilot', icon: MessageSquare, roles: ['user', 'admin'] },
-      { to: '/tasks', label: '任务', i18n: 'nav.tasks', icon: ListChecks, roles: ['user', 'admin'] },
+      { to: '/copilot', i18n: 'nav.copilot', icon: MessageSquare, roles: ['user', 'admin'] },
+      { to: '/tasks', i18n: 'nav.tasks', icon: ListChecks, roles: ['user', 'admin'] },
     ],
   },
   {
-    label: '智能编排',
+    labelKey: 'nav.group.orchestration',
     items: [
-      { to: '/agents', label: '智能体', i18n: 'nav.agents', icon: Bot, roles: ['user', 'admin'] },
-      { to: '/workflows', label: '工作流', i18n: 'nav.workflows', icon: Workflow, roles: ['user', 'admin'] },
+      { to: '/agents', i18n: 'nav.agents', icon: Bot, roles: ['user', 'admin'] },
+      { to: '/workflows', i18n: 'nav.workflows', icon: Workflow, roles: ['user', 'admin'] },
     ],
   },
   {
-    label: '能力中心',
+    labelKey: 'nav.group.capabilities',
     items: [
-      { to: '/knowledge', label: '知识', i18n: 'nav.knowledge', icon: BookOpen, roles: ['user', 'admin'] },
-      { to: '/memory', label: '记忆', i18n: 'nav.memory', icon: BrainCircuit, roles: ['user', 'admin'] },
-      { to: '/skills', label: '技能', i18n: 'nav.skills', icon: Wrench, roles: ['user', 'admin'] },
-      { to: '/models', label: '模型', i18n: 'nav.models', icon: Brain, roles: ['admin'] },
-      { to: '/channels', label: '渠道', i18n: 'nav.channels', icon: Send, roles: ['admin'] },
+      { to: '/models', i18n: 'nav.models', icon: Brain, roles: ['admin'] },
+      { to: '/knowledge', i18n: 'nav.knowledge', icon: BookOpen, roles: ['user', 'admin'] },
+      { to: '/skills', i18n: 'nav.skills', icon: Wrench, roles: ['user', 'admin'] },
+      { to: '/memory', i18n: 'nav.memory', icon: BrainCircuit, roles: ['user', 'admin'] },
+      { to: '/channels', i18n: 'nav.channels', icon: Send, roles: ['admin'] },
     ],
   },
   {
-    label: '治理与审计',
+    labelKey: 'nav.group.governance',
     items: [
-      { to: '/governance', label: '访问治理', i18n: 'nav.settings', icon: Shield, roles: ['admin'] },
-      { to: '/audit-center', label: '审计中心', i18n: 'nav.settings', icon: ScrollText, roles: ['admin', 'auditor'] },
+      { to: '/governance', i18n: 'nav.accessControl', icon: Shield, roles: ['admin'] },
+      { to: '/zero-trust', i18n: 'nav.zeroTrust', icon: ShieldAlert, roles: ['admin', 'auditor'] },
+      { to: '/audit-center', i18n: 'nav.auditCenter', icon: ScrollText, roles: ['admin', 'auditor'] },
     ],
   },
 ];
@@ -63,7 +64,7 @@ export function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const { sidebarCollapsed, toggleSidebar, theme, toggleTheme, mobileDrawerOpen, openMobileDrawer, closeMobileDrawer } = useUiStore();
-  const { t } = useT();
+  const { locale, t, setLocale } = useT();
   const { user, logout } = useAuthStore();
   const { current, setCurrent, setList } = useWorkspaceStore();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
@@ -142,7 +143,7 @@ export function AppLayout() {
           <div className="grid h-9 w-9 place-items-center rounded-md bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-sm font-bold text-white shadow-[0_2px_8px_rgba(79,70,229,0.3)]">
             DE
           </div>
-          {!sidebarCollapsed && <span className="hidden sm:inline">数字员工平台</span>}
+          {!sidebarCollapsed && <span className="hidden sm:inline">{t('app.title')}</span>}
         </NavLink>
 
         <div ref={workspaceMenuRef} className="relative hidden sm:block">
@@ -154,15 +155,15 @@ export function AppLayout() {
             aria-expanded={workspaceMenuOpen}
           >
             <Building2 className="h-3.5 w-3.5 shrink-0 text-[var(--brand)]" />
-            <span className="min-w-0 flex-1 truncate font-semibold">{current?.name ?? '选择工作区'}</span>
+            <span className="min-w-0 flex-1 truncate font-semibold">{current?.name ?? t('workspace.select')}</span>
             {current && <span className="hidden rounded bg-[var(--bg-elevated)] px-1 py-0.5 font-mono text-[9px] text-[var(--text-muted)] lg:inline">{current.region}</span>}
             <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 text-[var(--text-muted)] transition-transform', workspaceMenuOpen && 'rotate-180')} />
           </button>
           {workspaceMenuOpen && (
             <div role="menu" className="absolute left-0 top-full z-50 mt-2 w-[320px] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl">
               <div className="border-b border-[var(--border)] px-3 py-2">
-                <div className="text-xs font-semibold">切换工作区</div>
-                <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">切换后会更新当前资源、成员权限与运行范围。</div>
+                <div className="text-xs font-semibold">{t('workspace.switch')}</div>
+                <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{t('workspace.switch.desc')}</div>
               </div>
               <div className="max-h-[280px] overflow-y-auto p-1.5">
                 {(workspaces ?? []).map((workspace) => (
@@ -181,7 +182,7 @@ export function AppLayout() {
                 ))}
               </div>
               <div className="border-t border-[var(--border)] p-1.5">
-                <button type="button" onClick={() => { setWorkspaceMenuOpen(false); navigate('/workspaces'); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-xs font-semibold text-[var(--brand)] hover:bg-[var(--brand-light)]"><Settings2 className="h-3.5 w-3.5" />工作区管理</button>
+                <button type="button" onClick={() => { setWorkspaceMenuOpen(false); navigate('/workspaces'); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-xs font-semibold text-[var(--brand)] hover:bg-[var(--brand-light)]"><Settings2 className="h-3.5 w-3.5" />{t('workspace.manage')}</button>
               </div>
             </div>
           )}
@@ -191,7 +192,7 @@ export function AppLayout() {
         {!sidebarCollapsed && (
           <div className="hidden items-center gap-2 text-[13px] text-[var(--text-muted)] sm:flex">
             <span>·</span>
-            <span className="text-[var(--text-secondary)]">{activeNav?.label ?? '首页'}</span>
+            <span className="text-[var(--text-secondary)]">{t(activeNav?.i18n ?? 'nav.home')}</span>
           </div>
         )}
 
@@ -212,10 +213,10 @@ export function AppLayout() {
         {/* 主导航（占主要空间）*/}
         <nav className="flex-1 px-3 pt-4 pb-3 overflow-y-auto">
           {visibleNavGroups.map((group, groupIndex) => (
-            <div key={group.label ?? 'home'} className={cn(groupIndex > 0 && (sidebarCollapsed ? 'mt-3 pt-3 border-t border-[var(--border)]' : 'mt-4'))}>
-              {!sidebarCollapsed && group.label && (
+            <div key={group.labelKey ?? 'home'} className={cn(groupIndex > 0 && (sidebarCollapsed ? 'mt-3 pt-3 border-t border-[var(--border)]' : 'mt-4'))}>
+              {!sidebarCollapsed && group.labelKey && (
                 <div className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                  {group.label}
+                  {t(group.labelKey)}
                 </div>
               )}
               <div className="space-y-0.5">
@@ -292,21 +293,25 @@ export function AppLayout() {
                 style={sidebarCollapsed ? { bottom: 0 } : undefined}
               >
                 {/* 组 1：配置 */}
-                <div className="user-menu__group-title">设置</div>
-                {(user.role === 'admin') && <UserMenuItem icon={Settings2} label="平台设置" shortcut="⌘," onClick={() => { setUserMenuOpen(false); navigate('/settings'); }} />}
+                <div className="user-menu__group-title">{t('account.preferences')}</div>
+                {(user.role === 'admin') && <UserMenuItem icon={Settings2} label={t('account.platformSettings')} shortcut="⌘," onClick={() => { setUserMenuOpen(false); navigate('/settings'); }} />}
                 {user.role === 'admin' && <button
                   className="user-menu__item"
                   onClick={() => { setUserMenuOpen(false); navigate('/workspaces'); }}
                 >
                   <span className="user-menu__icon-box"><Building2 className="h-3.5 w-3.5" /></span>
-                  <span className="user-menu__label">工作区管理</span>
+                  <span className="user-menu__label">{t('workspace.manage')}</span>
                   <span className="user-menu__value">{current?.name ?? 'ACME'}</span>
                   <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                 </button>}
-                <button className="user-menu__item">
+                <button
+                  className="user-menu__item"
+                  onClick={() => { setLocale(locale === 'zh-CN' ? 'en-US' : 'zh-CN'); setUserMenuOpen(false); }}
+                  title={locale === 'zh-CN' ? 'Switch to English' : '切换为简体中文'}
+                >
                   <span className="user-menu__icon-box"><Languages className="h-3.5 w-3.5" /></span>
-                  <span className="user-menu__label">Language</span>
-                  <span className="user-menu__value">简体中文</span>
+                  <span className="user-menu__label">{t('account.language')}</span>
+                  <span className="user-menu__value">{locale === 'zh-CN' ? t('common.lang.zh') : t('common.lang.en')}</span>
                   <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                 </button>
 
@@ -321,18 +326,17 @@ export function AppLayout() {
                   <span className="user-menu__icon-box">
                     {theme === 'light' ? <Moon className="h-3.5 w-3.5" /> : <Sun className="h-3.5 w-3.5" />}
                   </span>
-                  <span className="user-menu__label">主题</span>
-                  <span className="user-menu__value">{theme === 'light' ? '浅色' : '深色'}</span>
+                  <span className="user-menu__label">{t('account.theme')}</span>
+                  <span className="user-menu__value">{theme === 'light' ? t('common.theme.light') : t('common.theme.dark')}</span>
                   <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                 </button>
 
                 {/* 分隔 */}
                 <div className="user-menu__divider" />
 
-                {/* Sign out (红) */}
                 <button onClick={onLogout} className="user-menu__item user-menu__item--danger">
                   <span className="user-menu__icon-box"><LogOut className="h-3.5 w-3.5" /></span>
-                  <span className="user-menu__label">Sign out</span>
+                  <span className="user-menu__label">{t('account.signOut')}</span>
                 </button>
               </div>
             )}

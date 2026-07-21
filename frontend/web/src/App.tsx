@@ -22,6 +22,7 @@ const Channels = lazy(() => import('./pages/Channels'));
 const Settings = lazy(() => import('./pages/Settings'));
 const Governance = lazy(() => import('./pages/Governance'));
 const AuditCenter = lazy(() => import('./pages/AuditCenter'));
+const ZeroTrust = lazy(() => import('./pages/ZeroTrust'));
 
 function PageFallback() {
   return (
@@ -61,6 +62,7 @@ export default function App() {
             <Route path="/models" element={<ProtectedRoute permission="model.read" roles={['admin']}><ErrorBoundary><Models /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/channels" element={<ProtectedRoute permission="channel.read" roles={['admin']}><ErrorBoundary><Channels /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/governance" element={<ProtectedRoute roles={['admin']}><ErrorBoundary><Governance /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/zero-trust" element={<ProtectedRoute roles={['admin', 'auditor']}><ErrorBoundary><ZeroTrust /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/audit-center" element={<ProtectedRoute roles={['admin', 'auditor']}><ErrorBoundary><AuditCenter /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/settings/*" element={<ProtectedRoute roles={['admin']}><ErrorBoundary><Settings /></ErrorBoundary></ProtectedRoute>} />
           </Route>

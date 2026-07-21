@@ -35,6 +35,7 @@ import { Drawer, ConfirmDialog } from '@/components/shared';
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
+import { useT } from '@/i18n';
 
 type SidePanelKey = 'library' | 'debug' | 'properties';
 type TabKey = 'canvas' | 'templates' | 'history';
@@ -328,6 +329,7 @@ function templateSnapshot(template: typeof TEMPLATES[number]): Snapshot {
 
 /* ============ 顶层组件 ============ */
 export default function Workflows() {
+  const { t } = useT();
   const canWrite = useAuthStore((state) => state.hasPermission('workflow.write'));
   const canExecute = useAuthStore((state) => state.hasPermission('workflow.execute'));
   const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
@@ -973,9 +975,9 @@ export default function Workflows() {
         <nav className="mt-3 -mx-3 -mb-2 flex min-w-0 items-end overflow-x-auto px-3 md:-mx-6 md:px-6" aria-label="工作流视图">
           <div className="flex min-w-max items-center gap-1">
             {([
-              { k: 'canvas' as TabKey, label: '画布', icon: GitBranch },
-              { k: 'templates' as TabKey, label: '模板库', icon: Layers },
-              { k: 'history' as TabKey, label: '执行历史', icon: History },
+              { k: 'templates' as TabKey, labelKey: 'module.workflows.tabs.templates', icon: Layers },
+              { k: 'canvas' as TabKey, labelKey: 'module.workflows.tabs.canvas', icon: GitBranch },
+              { k: 'history' as TabKey, labelKey: 'module.workflows.tabs.history', icon: History },
             ]).map((v) => (
               <button
                 key={v.k}
@@ -990,7 +992,7 @@ export default function Workflows() {
                 )}
               >
                 <v.icon className="h-3.5 w-3.5" />
-                {v.label}
+                {t(v.labelKey)}
               </button>
             ))}
           </div>
