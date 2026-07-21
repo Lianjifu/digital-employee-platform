@@ -4,7 +4,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { useApiMutation } from '@/services/query';
 import { Button, Input, Badge, toast } from '@de/web-ui';
 import { useUiStore } from '@/stores/uiStore';
-import { Bot, ShieldCheck, KeyRound, Sun, Moon, UserRound, Shield, ScrollText } from 'lucide-react';
+import { Bot, ShieldCheck, Sun, Moon, UserRound, Shield, ScrollText, Gauge } from 'lucide-react';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -70,28 +70,35 @@ export default function Login() {
             </div>
 
             <h1 className="mb-3 text-[28px] font-bold leading-tight tracking-tight">
-              让数字员工
+              安全零信任
               <br />
-              进入<span className="bg-gradient-to-r from-white via-yellow-100 to-white bg-clip-text text-transparent">业务流程</span>
+              驱动<span className="bg-gradient-to-r from-white via-yellow-100 to-white bg-clip-text text-transparent">先进生产力</span>
             </h1>
             <p className="text-sm opacity-90 leading-relaxed">
-              在统一工作区内完成协同、编排与治理，
+              以持续验证守住身份、权限、数据与执行边界，
               <br />
-              让每一次智能执行都有明确边界与完整追溯。
+              让数字员工在受控协同中创造可衡量的业务价值。
+              <br />
+              以能力复用与精细化用量治理，重构智能执行成本。
             </p>
           </div>
 
-          <div className="relative space-y-2 text-xs opacity-95">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4" /> 工作区隔离 · 发布复核 · 全程审计
+          <div className="relative text-xs opacity-95">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="h-4 w-4" /> 安全零信任 · 持续验证 · 全程审计
+              </div>
+              <div className="flex items-center gap-2">
+                <Bot className="h-4 w-4" /> 先进生产力 · 人机协同 · 受控执行
+              </div>
+              <div className="flex items-center gap-2">
+                <Gauge className="h-4 w-4" /> 成本新范式 · 用量治理 · 价值可度量
+              </div>
             </div>
-            <div className="flex items-center gap-2">
-              <KeyRound className="h-4 w-4" /> 企业账号登录 · 多因素验证 · 最小权限
-            </div>
-            <div className="mt-4 flex gap-1.5">
-              <Badge tone="brand" className="bg-white/20 text-white">角色权限</Badge>
-              <Badge tone="brand" className="bg-white/20 text-white">发布治理</Badge>
-              <Badge tone="brand" className="bg-white/20 text-white">审计追溯</Badge>
+            <div className="mt-[100px] flex gap-1.5">
+              <Badge tone="brand" className="bg-white/20 text-white">持续验证</Badge>
+              <Badge tone="brand" className="bg-white/20 text-white">人机协同</Badge>
+              <Badge tone="brand" className="bg-white/20 text-white">成本治理</Badge>
             </div>
           </div>
         </div>
