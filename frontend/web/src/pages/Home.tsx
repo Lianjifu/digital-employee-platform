@@ -17,7 +17,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useApiQuery } from '@/services/query';
+import { useApiMutation, useApiQuery } from '@/services/query';
 import { Badge, Button, Avatar, Input } from '@de/web-ui';
 import { PageSkeleton } from '@/components/PageSkeleton';
 import {
@@ -35,7 +35,6 @@ import {
 } from 'recharts';
 import { cn, relativeTime } from '@de/web-utils';
 import type { Task } from '@de/web-types';
-import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { EmptyState, Sparkline, Modal as ModalX } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -179,17 +178,17 @@ export default function Home() {
   const { data: extra, isLoading: lExtra, isFetching: fetchingExtra, refetch: refetchExtra } = useApiQuery<any>(['home', 'extra'], '/api/home/extra');
   const { data: team, isLoading: lTeam } = useApiQuery<any[]>(['home', 'team'], '/api/home/team');
   const { data: operations } = useApiQuery<any>(['operations', 'overview'], '/api/operations/overview');
-  const { current } = useWorkspaceStore();
   const { user } = useAuthStore();
+  const isAdministrator = user?.role === 'admin';
 
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
-  const [ackedAlertIds, setAckedAlertIds] = useState<Set<string>>(new Set());
   const ackAllNotifications = () => {
     setReadIds(new Set((extra?.notifications ?? []).map((n: any) => n.id)));
   };
-  const ackAllAlerts = () => {
-    setAckedAlertIds(new Set((extra?.slaAlerts ?? []).map((a: any) => a.id)));
-  };
+  const acknowledgeAlert = useApiMutation<{ id: string }, { id: string; note: string }>(
+    ({ id }) => `/api/home/alerts/${id}/acknowledge`,
+    { onSuccess: () => refetchExtra() },
+  );
 
   if (lTasks && lExtra && lTeam) {
     return <PageSkeleton />;
@@ -197,8 +196,9 @@ export default function Home() {
 
   const inProgress = (tasks ?? []).filter((t) => t.status === 'in_progress').slice(0, 4);
   const agentSummary = extra?.agentCallSummary;
+  const metrics = extra?.operationalMetrics;
   const agentCount = (agentSummary?.healthy ?? 0) + (agentSummary?.warning ?? 0) + (agentSummary?.offline ?? 0);
-  const healthScore = agentCount > 0 ? Math.round(((agentSummary?.healthy ?? 0) / agentCount) * 100) : null;
+  const healthScore = metrics?.healthScore ?? (agentCount > 0 ? Math.round(((agentSummary?.healthy ?? 0) / agentCount) * 100) : null);
 
   const tc = extra?.taskCompletion ?? { done: 0, doing: 0, review: 0, todo: 0 };
   const tcTotal = tc.done + tc.doing + tc.review + tc.todo;
@@ -210,14 +210,9 @@ export default function Home() {
     { name: '待办', value: tc.todo, fill: 'var(--chart-neutral)' },
   ];
 
-  const healthData = (extra?.healthTrend24h ?? []).map((v: number, i: number) => ({
-    time: `${String(i).padStart(2, '0')}:00`,
-    health: v,
-    apiP95: 580 + Math.round(Math.cos(i / 4) * 80),
-    taskRate: 85 + Math.round(Math.sin(i / 5) * 8),
-  }));
+  const healthData = metrics?.trend24h ?? [];
   const roleData = extra?.roleDistribution ?? [];
-  const visibleAlerts = (extra?.slaAlerts ?? []).filter((a: any) => !ackedAlertIds.has(a.id));
+  const visibleAlerts = (extra?.slaAlerts ?? []).filter((a: any) => !a.acknowledged);
   const unreadCount = (extra?.notifications ?? []).filter(
     (n: any) => n.unread && !readIds.has(n.id),
   ).length;
@@ -235,7 +230,7 @@ export default function Home() {
         <div className="home-hero__layout">
         <div className="home-hero__content">
           <h1 className="home-hero__title">
-            <span className="text-gradient">数字员工运营中枢</span>
+            <span className="text-gradient">{isAdministrator ? '数字员工运营中枢' : '数字员工工作台'}</span>
             <span className="home-hero__greeting">{greeting}，{user?.name ?? '管理员'}</span>
           </h1>
         </div>
@@ -270,20 +265,22 @@ export default function Home() {
         <Button size="sm" variant="secondary" onClick={() => navigate('/copilot')}>
           <MessageSquare className="h-3.5 w-3.5" />会话
         </Button>
-        <Button size="sm" variant="secondary" onClick={() => navigate('/agents')}>
-          <Bot className="h-3.5 w-3.5" />Agent
-        </Button>
-        <Button size="sm" variant="ghost" onClick={() => navigate('/workflows')}>
-          <Workflow className="h-3.5 w-3.5" />工作流
-        </Button>
+        {isAdministrator && <>
+          <Button size="sm" variant="secondary" onClick={() => navigate('/agents')}>
+            <Bot className="h-3.5 w-3.5" />智能体
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => navigate('/workflows')}>
+            <Workflow className="h-3.5 w-3.5" />工作流
+          </Button>
+        </>}
       </div>
 
       <section className="mx-6 mt-3 rounded-md border border-[var(--border)] bg-[var(--bg)] px-4 py-3 md:mx-8" aria-label="工作区运营待办">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs font-semibold"><Inbox className="h-4 w-4 text-[var(--brand)]" />工作区运营待办</div>
+          <div className="flex items-center gap-2 text-xs font-semibold"><Inbox className="h-4 w-4 text-[var(--brand)]" />{isAdministrator ? '工作区运营待办' : '我的待办'}</div>
           <div className="flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
-            <span>任务成功率 <strong className="text-[var(--text)]">{operations?.health?.taskSuccessRate ?? '--'}%</strong></span>
-            <span>运行中数字员工 <strong className="text-[var(--text)]">{operations?.health?.activeAgents ?? '--'}</strong></span>
+            <span>任务成功率 <strong className="text-[var(--text)]">{metrics?.taskSuccessRate ?? operations?.health?.taskSuccessRate ?? '--'}%</strong></span>
+            <span>运行中数字员工 <strong className="text-[var(--text)]">{metrics?.activeAgents ?? operations?.health?.activeAgents ?? '--'}</strong></span>
             <span>待处理 <strong className="text-[var(--danger)]">{operations?.pending?.length ?? 0}</strong></span>
           </div>
         </div>
@@ -297,22 +294,22 @@ export default function Home() {
       {/* ============ 6 KPI 卡（可点击跳转）============ */}
       <div className="home-metrics px-6 md:px-8 mt-4 grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
         <button type="button" onClick={() => navigate('/tasks')} className="block cursor-pointer group text-left w-full">
-          <KpiCard tone="brand" label="今日任务" value={tasks?.length ?? 0} unit="次" delta={{ v: 12, dir: 'up' }} sparkline={[5, 8, 6, 9, 11, 10, 12]} prev={`${inProgress.length} 进行中 · ${tc.done} 已完成`} />
+          <KpiCard tone="brand" label="工作区任务" value={tcTotal} unit="项" sparkline={[tc.todo, tc.doing, tc.review, tc.done]} prev={`${inProgress.length} 进行中 · ${tc.done} 已完成`} />
         </button>
         <button type="button" onClick={() => navigate('/agents')} className="block cursor-pointer group text-left w-full">
-          <KpiCard tone="success" label="系统健康度" value={healthScore == null ? '--' : healthScore} unit={healthScore == null ? undefined : '%'} delta={healthScore == null ? undefined : { v: 0.3, dir: 'up' }} sparkline={extra?.healthTrend24h?.slice(-7) ?? []} prev={`${agentSummary?.healthy ?? 0}/${agentCount} Agent 健康`} />
+          <KpiCard tone="success" label="系统健康度" value={healthScore == null ? '--' : healthScore} unit={healthScore == null ? undefined : '%'} sparkline={healthData.slice(-7).map((item: any) => item.health)} prev={`${agentSummary?.healthy ?? 0}/${agentCount} Agent 健康`} />
         </button>
         <button type="button" onClick={() => navigate('/agents')} className="block cursor-pointer group text-left w-full">
-          <KpiCard tone="success" label="AI 调用量" value={(agentSummary?.total ?? 0).toLocaleString()} unit="次/日" delta={{ v: 18, dir: 'up' }} sparkline={[120, 180, 220, 190, 240, 280, 310]} prev={`${agentSummary?.healthy ?? 0} 健康 Agent · ${agentSummary?.warning ?? 0} 告警`} />
+          <KpiCard tone="success" label="AI 调用量" value={(agentSummary?.total ?? 0).toLocaleString()} unit="次/日" sparkline={Object.values(extra?.agent7dTrend ?? {}).slice(0, 1).flat() as number[]} prev={`${agentSummary?.healthy ?? 0} 健康 Agent · ${agentSummary?.warning ?? 0} 告警`} />
         </button>
         <button type="button" onClick={() => navigate('/models')} className="block cursor-pointer group text-left w-full">
-          <KpiCard tone="purple" label="Token 用量" value="12.4M" unit="tokens" delta={{ v: 6, dir: 'up' }} sparkline={[10, 12, 11, 13, 14, 12.4, 12.4]} prev="8.4M 输入 / 2.8M 输出" />
+          <KpiCard tone="purple" label="Token 用量" value={metrics?.tokenUsage?.total ?? '--'} unit="tokens" sparkline={extra?.costMonth?.daily ?? []} prev={`${metrics?.tokenUsage?.input ?? '--'} 输入 / ${metrics?.tokenUsage?.output ?? '--'} 输出`} />
         </button>
         <button type="button" onClick={() => navigate('/copilot')} className="block cursor-pointer group text-left w-full">
-          <KpiCard tone="warning" label="P95 响应" value={healthData[healthData.length - 1]?.apiP95 ?? '--'} unit="ms" delta={{ v: -8, dir: 'down' }} sparkline={healthData.slice(-7).map((d: { apiP95: number }) => d.apiP95)} prev="API 网关 · 近 24h 稳定趋势" />
+          <KpiCard tone="warning" label="P95 响应" value={metrics?.apiP95 ?? '--'} unit="ms" sparkline={healthData.slice(-7).map((d: { apiP95: number }) => d.apiP95)} prev="API 网关 · 近 24h 运行趋势" />
         </button>
         <button type="button" onClick={() => navigate('/tasks')} className="block cursor-pointer group text-left w-full">
-          <KpiCard tone="error" label="SLA 告警" value={visibleAlerts.length} unit="件" delta={visibleAlerts.length > 0 ? { v: 1, dir: 'up' } : undefined} sparkline={[1, 0, 2, 1, 0, 2, visibleAlerts.length]} prev={`${visibleAlerts.filter((a: any) => a.level === 'P0').length} P0 · ${visibleAlerts.filter((a: any) => a.level === 'P1').length} P1`} threshold={{ warn: 3, error: 10 }} />
+          <KpiCard tone="error" label="待处置 SLA" value={visibleAlerts.length} unit="件" sparkline={[visibleAlerts.filter((a: any) => a.level === 'P0').length, visibleAlerts.filter((a: any) => a.level === 'P1').length, visibleAlerts.length]} prev={`${visibleAlerts.filter((a: any) => a.level === 'P0').length} P0 · ${visibleAlerts.filter((a: any) => a.level === 'P1').length} P1`} threshold={{ warn: 3, error: 10 }} />
         </button>
       </div>
 
@@ -510,11 +507,16 @@ export default function Home() {
         </div>
 
         {/* SLA 告警（自动轮播 + 一键 ACK）============ */}
-        <SlaAlertPanel alerts={visibleAlerts} onAckAll={ackAllAlerts} />
+        <SlaAlertPanel
+          alerts={visibleAlerts}
+          isAdministrator={user?.role === 'admin'}
+          acknowledging={acknowledgeAlert.isPending}
+          onAcknowledge={(id) => acknowledgeAlert.mutate({ id, note: '已确认，待进入任务处置。' })}
+        />
       </div>
 
       {/* ============ 第二行：Agent 状态 + 团队成员 + 建议 ============ */}
-      <div className="home-lists px-6 md:px-8 pb-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {isAdministrator && <div className="home-lists px-6 md:px-8 pb-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Agent 调用趋势（7 天） */}
         <div className="list-card agent-trend-card">
           <div className="list-card__header">
@@ -674,7 +676,7 @@ export default function Home() {
             })}
           </div>
         </div>
-      </div>
+      </div>}
 
       {/* ============ 快速创建 Modal ============ */}
       <ModalX
@@ -737,7 +739,7 @@ export default function Home() {
 
 // ============ 子组件 ============
 
-function SlaAlertPanel({ alerts, onAckAll }: { alerts: any[]; onAckAll: () => void }) {
+function SlaAlertPanel({ alerts, isAdministrator, acknowledging, onAcknowledge }: { alerts: any[]; isAdministrator: boolean; acknowledging: boolean; onAcknowledge: (id: string) => void }) {
   const { viewportRef, activeIndex, pause, resume } = useSlaRotation(alerts);
 
   return (
@@ -748,9 +750,7 @@ function SlaAlertPanel({ alerts, onAckAll }: { alerts: any[]; onAckAll: () => vo
           SLA 告警
           <Badge tone="error">{alerts.length}</Badge>
         </div>
-        <button type="button" onClick={onAckAll} className="chart-card__action" disabled={alerts.length === 0}>
-          <Check className="h-3 w-3" />全部 ACK
-        </button>
+        <Link to="/tasks?risk=attention" className="chart-card__action">查看风险任务 <ArrowRight className="h-3 w-3" /></Link>
       </div>
       <div
         ref={viewportRef}
@@ -763,22 +763,29 @@ function SlaAlertPanel({ alerts, onAckAll }: { alerts: any[]; onAckAll: () => vo
         {alerts.length === 0 ? (
           <div className="chart-card__empty sla-alert-card__empty"><CheckCircle2 className="h-5 w-5" />当前没有待处理 SLA 告警</div>
         ) : alerts.map((alert, index) => (
-          <Link
+          <div
             key={alert.id}
-            to="/tasks"
             data-alert-index={index}
             aria-current={index === activeIndex ? 'true' : undefined}
             className={cn(
-              'alert-list__item sla-alert-card__item block hover:opacity-80 transition-opacity',
+              'alert-list__item sla-alert-card__item block',
               `alert-list__item--${alert.level === 'P0' ? 'danger' : alert.level === 'P1' ? 'warning' : alert.level === 'P2' ? 'info' : 'neutral'}`,
             )}
           >
-            <div className="flex items-center justify-between">
-              <div className="alert-list__title">{alert.text}</div>
-              <ChevronRight className="h-3 w-3 text-[var(--text-muted)] shrink-0" />
-            </div>
-            <div className="alert-list__meta">{alert.time} · {alert.assignee} · {alert.taskCode}</div>
-          </Link>
+            <Link to={`/tasks?task=${encodeURIComponent(alert.taskCode)}&risk=attention`} className="block hover:opacity-80 transition-opacity">
+              <div className="flex items-center justify-between">
+                <div className="alert-list__title">{alert.text}</div>
+                <ChevronRight className="h-3 w-3 text-[var(--text-muted)] shrink-0" />
+              </div>
+              <div className="alert-list__meta">{alert.time} · {alert.assignee} · {alert.taskCode}</div>
+            </Link>
+            {isAdministrator && alert.level !== 'P0' && (
+              <button type="button" onClick={() => onAcknowledge(alert.id)} disabled={acknowledging} className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-medium text-[var(--brand)] hover:underline disabled:text-[var(--text-muted)]">
+                <Check className="h-3 w-3" />确认并记录审计
+              </button>
+            )}
+            {alert.level === 'P0' && <div className="mt-1.5 text-[10px] font-medium text-[var(--danger)]">需在任务中记录处置说明后确认</div>}
+          </div>
         ))}
       </div>
     </div>

@@ -24,7 +24,14 @@ function readPreferences(): { filters: TaskFilters; view: View } {
 export default function Tasks() {
   const actor = useAuthStore((state) => state.user?.name ?? '当前用户');
   const [preferences] = useState(readPreferences);
-  const [filters, setFilters] = useState<TaskFilters>(preferences.filters);
+  // 允许首页通过 URL 精确打开风险任务，同时让任务组件能在无 Router 的测试环境中独立渲染。
+  const taskQuery = typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search);
+  const taskCodeFromHome = taskQuery.get('task');
+  const [filters, setFilters] = useState<TaskFilters>(() => ({
+    ...preferences.filters,
+    search: taskCodeFromHome ?? preferences.filters.search,
+    risk: taskQuery.get('risk') === 'attention' ? 'attention' : preferences.filters.risk,
+  }));
   const [view, setView] = useState<View>(preferences.view);
   const [selected, setSelected] = useState<ControlledTask | null>(null);
   const [newTaskOpen, setNewTaskOpen] = useState(false);
@@ -60,6 +67,13 @@ export default function Tasks() {
   const moveTask = (task: ControlledTask, stage: TaskLifecycleStage) => transition.mutate({ id: task.id, stage, actor });
   const selectedCurrent = selected ? apiTasks.find((task) => task.id === selected.id) ?? selected : null;
   const mutationPending = transition.isPending || drawerPending;
+
+  // 首页的风险卡片必须落到唯一任务，而不是丢失上下文地进入任务列表。
+  useEffect(() => {
+    if (!taskCodeFromHome || selected) return;
+    const task = apiTasks.find((item) => item.code === taskCodeFromHome);
+    if (task) setSelected(task);
+  }, [apiTasks, selected, taskCodeFromHome]);
 
   return <main className="task-console px-3 py-3 md:px-4 md:py-4 lg:p-5">
     <div className="task-console-header-panel"><header className="task-console-header"><div><h1>任务控制台</h1><p>优先处理需要人工判断、审批与风险处置的数字员工任务。</p></div></header></div>

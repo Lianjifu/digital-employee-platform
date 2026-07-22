@@ -93,6 +93,7 @@ type Action =
   | { type: 'replace_msg'; sid: string; mid: string; msg: ChatMessageEx }
   | { type: 'del_msg'; sid: string; mid: string }
   | { type: 'regenerate'; sid: string; mid: string; msg: ChatMessageEx }
+  | { type: 'replace_from_message'; sid: string; mid: string; msg: ChatMessageEx }
   | { type: 'update_session'; sid: string; patch: Partial<ChatSession> }
   | { type: 'set_typing'; typing: boolean }
   | { type: 'stop_typing' }
@@ -236,6 +237,13 @@ function reducer(s: State, a: Action): State {
       if (idx < 0) return s;
       const messages = [...sess.messages.slice(0, idx), a.msg, ...sess.messages.slice(idx + 1)];
       return { ...s, sessions: { ...s.sessions, [a.sid]: { ...sess, messages, lastActiveAt: Date.now() } } };
+    }
+    case 'replace_from_message': {
+      const sess = s.sessions[a.sid];
+      if (!sess) return s;
+      const idx = sess.messages.findIndex((m) => m.id === a.mid);
+      if (idx < 0) return s;
+      return { ...s, sessions: { ...s.sessions, [a.sid]: { ...sess, messages: [...sess.messages.slice(0, idx), a.msg], lastActiveAt: Date.now() } } };
     }
     case 'update_session':
       return { ...s, sessions: { ...s.sessions, [a.sid]: { ...s.sessions[a.sid], ...a.patch } } };
@@ -978,6 +986,19 @@ export function useChat(agentMeta?: { name: string }) {
 
   const sendMessage = send; // 兼容别名
 
+  const replaceAndSend = useCallback((mid: string, content: string) => {
+    const sess = state.sessions[state.activeId];
+    const original = sess?.messages.find((message) => message.id === mid);
+    const text = content.trim();
+    if (!sess || !original || original.role !== 'user' || !text || state.typing) return;
+    const corr = correlationId();
+    const userMsg = { ...original, content: text, editedAt: new Date().toISOString(), correlationId: corr, status: 'succeeded' as const };
+    dispatch({ type: 'replace_from_message', sid: state.activeId, mid, msg: userMsg });
+    dispatch({ type: 'set_draft', value: '' }); dispatch({ type: 'set_active_correlation', id: corr }); dispatch({ type: 'set_typing', typing: true });
+    const ctrl = new AbortController(); dispatch({ type: 'set_abort', ctrl });
+    setTimeout(() => { const reply = generateMockReply(text); const replyId = uid('m_'); startStream(state.activeId, replyId, { ...reply, id: replyId }, ctrl, corr); }, 200);
+  }, [state.activeId, state.sessions, state.typing, startStream]);
+
   const regenerate = useCallback((mid: string) => {
     const sess = state.sessions[state.activeId];
     if (!sess) return;
@@ -1166,6 +1187,7 @@ export function useChat(agentMeta?: { name: string }) {
     toggleStar,
     send,
     sendMessage,
+    replaceAndSend,
     stop,
     regenerate,
     delMessage,

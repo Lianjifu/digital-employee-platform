@@ -1,7 +1,7 @@
 /**
  * 路由守卫 — 鉴权 + 权限
  */
-import { Navigate, useLocation } from 'react-router-dom';
+import { Link, Navigate, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { useAuthStore } from '@/stores/authStore';
 import type { Permission, Role } from '@de/web-types';
@@ -33,6 +33,9 @@ export function ProtectedRoute({ children, permission, roles }: Props) {
   }
 
   if (roles && !roles.includes(user.role)) {
+    if (user.role === 'auditor') {
+      return <div className="flex h-full items-center justify-center bg-[var(--bg-elevated)] p-6"><section className="w-full max-w-lg rounded-xl border border-[var(--border)] bg-[var(--bg)] p-6 text-center shadow-[var(--shadow-xs)]"><div className="mx-auto grid h-12 w-12 place-items-center rounded-full bg-[var(--brand-light)] text-xl">◉</div><h1 className="mt-4 text-lg font-semibold">审计工作范围</h1><p className="mt-2 text-sm leading-6 text-[var(--text-muted)]">当前页面属于运营或配置能力。审计用户保持独立只读复核，不参与资源修改、发布或运行处置。</p><div className="mt-5 grid gap-2 sm:grid-cols-2"><Link to="/audit-center" className="rounded-md bg-[var(--brand)] px-3 py-2 text-sm font-medium text-white">进入审计中心</Link><Link to="/zero-trust" className="rounded-md border border-[var(--border)] px-3 py-2 text-sm font-medium text-[var(--text)] hover:bg-[var(--bg-hover)]">查看零信事件</Link></div><p className="mt-4 text-[11px] text-[var(--text-muted)]">可查看授权范围内的策略版本、临时授权记录、合规复核与脱敏证据。</p></section></div>;
+    }
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
         <div className="text-5xl">🚫</div>

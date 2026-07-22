@@ -189,7 +189,17 @@ export interface HomeExtra {
   notifications: { id: string; tone: 'info' | 'warn' | 'success' | 'error'; icon: string; text: string; detail?: string; time: string; unread: boolean }[];
   agent7dTrend: Record<string, number[]>; // 7 天每日调用
   taskCompletion: { done: number; doing: number; review: number; todo: number };
-  slaAlerts: { id: string; level: 'P0' | 'P1' | 'P2' | 'P3'; text: string; time: string; assignee: string; taskCode: string }[];
+  slaAlerts: { id: string; level: 'P0' | 'P1' | 'P2' | 'P3'; text: string; time: string; assignee: string; taskCode: string; acknowledged?: boolean; acknowledgedAt?: string; acknowledgedBy?: string; acknowledgementNote?: string }[];
+  /** 所有运营指标均由服务端（Mock）返回，避免页面层拼装或硬编码。 */
+  operationalMetrics: {
+    taskSuccessRate: number;
+    activeAgents: number;
+    healthScore: number;
+    apiP95: number;
+    taskRate: number;
+    tokenUsage: { total: string; input: string; output: string };
+    trend24h: { time: string; health: number; apiP95: number; taskRate: number }[];
+  };
   costMonth: { used: number; budget: number; daily: number[] }; // 7 天
   roleDistribution: { role: string; count: number }[];
   suggestion: { id: string; tone: 'success' | 'warn' | 'info'; text: string; action: string; to: string }[];
@@ -233,6 +243,15 @@ export const mockHomeExtra: HomeExtra = {
     { id: 'sl7', level: 'P2', text: 'Prometheus 监控规则同步失败，影响 6 个服务', time: '昨天 18:40', assignee: '赵明', taskCode: 'TSK-20260711-007' },
     { id: 'sl8', level: 'P3', text: '外协沙箱访问策略将在本周五复核', time: '2 天前', assignee: '周慧', taskCode: 'TSK-20260710-003' },
   ],
+  operationalMetrics: {
+    taskSuccessRate: 20,
+    activeAgents: 3,
+    healthScore: 75,
+    apiP95: 649,
+    taskRate: 77,
+    tokenUsage: { total: '12.4M', input: '8.4M', output: '2.8M' },
+    trend24h: [92, 94, 95, 93, 96, 98, 97, 96, 98, 99, 98, 97, 99, 100, 99, 98, 97, 96, 98, 99, 98, 99, 100, 99].map((health, index) => ({ time: `${String(index).padStart(2, '0')}:00`, health, apiP95: 580 + Math.round(Math.cos(index / 4) * 80), taskRate: 85 + Math.round(Math.sin(index / 5) * 8) })),
+  },
   costMonth: { used: 1240, budget: 5000, daily: [22, 28, 31, 35, 30, 27, 25] },
   roleDistribution: [
     { role: 'Admin', count: 2 },
@@ -292,8 +311,10 @@ function homeExtraForWorkspace(workspaceId: string): HomeExtra {
   if (workspaceId === 'w1') return mockHomeExtra;
   const workspace = mockWorkspaces.find((item) => item.id === workspaceId);
   const members = (mockWorkspaceMembers[workspaceId as keyof typeof mockWorkspaceMembers] ?? []).map((member) => ({ id: member.id, name: member.name, role: member.role, online: member.lastActive.includes('刚刚') || member.lastActive.includes('min') }));
-  return { ...mockHomeExtra, teamMembers: members, notifications: [{ id: `workspace-${workspaceId}`, tone: 'info', icon: 'Building2', text: `${workspace?.name ?? workspaceId} 运营数据已加载`, time: '刚刚', unread: false }], recentActivities: [], slaAlerts: [], taskCompletion: { done: 0, doing: 0, review: 0, todo: 0 }, agentCallSummary: { total: 0, healthy: 0, warning: 0, offline: 0 }, suggestion: [], costMonth: { used: 0, budget: 0, daily: [] } };
+  return { ...mockHomeExtra, teamMembers: members, notifications: [{ id: `workspace-${workspaceId}`, tone: 'info', icon: 'Building2', text: `${workspace?.name ?? workspaceId} 运营数据已加载`, time: '刚刚', unread: false }], recentActivities: [], slaAlerts: [], taskCompletion: { done: 0, doing: 0, review: 0, todo: 0 }, agentCallSummary: { total: 0, healthy: 0, warning: 0, offline: 0 }, suggestion: [], costMonth: { used: 0, budget: 0, daily: [] }, operationalMetrics: { taskSuccessRate: 100, activeAgents: 0, healthScore: 100, apiP95: 0, taskRate: 100, tokenUsage: { total: '0', input: '0', output: '0' }, trend24h: [] } };
 }
+
+const homeAlertAcknowledgements = new Map<string, { acknowledgedAt: string; acknowledgedBy: string; acknowledgementNote: string }>();
 
 export const mockTasks: Task[] = [
   { id: 't1', code: 'TSK-20260713-001', title: 'Redis 集群 OOM 自愈', priority: 'P0', status: 'in_progress', assignee: '王昊', agentId: 'a1', progress: { done: 4, total: 6 }, slaRemainingMin: -8, tags: ['redis', '生产', 'OOM'], createdAt: '2026-07-13T08:12:00Z', updatedAt: '2026-07-13T08:24:00Z' },
@@ -1632,9 +1653,29 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   // 首页 KPI
   if (path === '/api/home/kpis') return mockKpis;
   const requestedWorkspaceId = opts.headers?.['x-workspace-id'] ?? 'w1';
+  const homeExtra = () => {
+    const source = homeExtraForWorkspace(requestedWorkspaceId);
+    return {
+      ...source,
+      slaAlerts: source.slaAlerts.map((alert) => ({ ...alert, ...homeAlertAcknowledgements.get(`${requestedWorkspaceId}:${alert.id}`) })),
+    };
+  };
   if (path === '/api/home/events') return homeExtraForWorkspace(requestedWorkspaceId).recentActivities;
-  if (path === '/api/home/extra') return homeExtraForWorkspace(requestedWorkspaceId);
+  if (path === '/api/home/extra') return homeExtra();
   if (path === '/api/home/team') return homeExtraForWorkspace(requestedWorkspaceId).teamMembers;
+  const homeAlertAction = path.match(/^\/api\/home\/alerts\/([^/]+)\/acknowledge$/);
+  if (homeAlertAction && method === 'POST') {
+    if (identity?.role !== 'admin') throw new Error('E_ROLE_FORBIDDEN: 仅管理员可确认运营告警');
+    const alertId = homeAlertAction[1];
+    const alert = homeExtraForWorkspace(requestedWorkspaceId).slaAlerts.find((item) => item.id === alertId);
+    if (!alert) throw new Error('E_HOME_ALERT_NOT_FOUND: 告警不存在或不属于当前工作区');
+    const note = String((opts.body as { note?: string } | undefined)?.note ?? '').trim();
+    if (alert.level === 'P0' && !note) throw new Error('E_ACK_NOTE_REQUIRED: P0 告警确认必须记录处置说明');
+    const acknowledgement = { acknowledgedAt: new Date().toISOString(), acknowledgedBy: identity.name, acknowledgementNote: note || '已确认，待进入任务处置。' };
+    homeAlertAcknowledgements.set(`${requestedWorkspaceId}:${alertId}`, acknowledgement);
+    appendDomainEvent('确认 SLA 告警', alert.taskCode, 'success');
+    return { id: alertId, ...acknowledgement };
+  }
   if (path === '/api/home/alerts') {
     return [
       { id: 'al1', severity: 'P0', tone: 'danger' as const, title: 'P0 · Redis cache-oom 临近超时', meta: '8 min 前 · 王昊 · INC-019', taskCode: 'TSK-20260713-001' },

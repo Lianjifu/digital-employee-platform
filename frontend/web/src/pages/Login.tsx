@@ -21,7 +21,7 @@ export default function Login() {
       onSuccess: (data) => {
         login(data.user, data.token);
         toast.success(`欢迎回来，${data.user.name}`);
-        const from = (location.state as any)?.from?.pathname ?? '/home';
+        const from = (location.state as any)?.from?.pathname ?? (data.user.role === 'auditor' ? '/audit-center' : '/home');
         navigate(from, { replace: true });
       },
       onError: (err: any) => {

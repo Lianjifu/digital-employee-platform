@@ -34,7 +34,7 @@ import {
   Hash, Activity, Languages, BookOpenCheck, Brain, RotateCcw,
   Paperclip, Mic, Send, ChevronRight, ThumbsUp, ThumbsDown,
   Copy, Trash2, Square, Plus, Archive, ArchiveRestore, FileDown, Lock, Eye, EyeOff, ArrowUp,
-  Archive as ArchiveIcon, MessageSquareWarning, ShieldAlert, Check, Hourglass, Plug, PlugZap,
+  Archive as ArchiveIcon, MessageSquareWarning, ShieldAlert, Check, Hourglass, Plug, PlugZap, Pencil,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import { DualSignModal } from '@/components/DualSignModal';
@@ -192,6 +192,7 @@ export default function Copilot() {
   const [sessionsOpen, setSessionsOpen] = useState(() => typeof window !== 'undefined' && sessionHistoryPresentation(window.innerWidth) === 'pinned');
   // 右栏由消息上下文驱动：没有可追溯信息时保持隐藏，避免空面板占用工作区。
   const [contextSelection, setContextSelection] = useState<ContextSelection>({ open: false, scope: 'session', tab: 'overview', pinned: false });
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [sessionMode, setSessionMode] = useState<'investigate' | 'execute'>('investigate');
   const [riskLevel, setRiskLevel] = useState<'low' | 'medium' | 'high'>('medium');
   const [closeoutOpen, setCloseoutOpen] = useState(false);
@@ -414,7 +415,7 @@ export default function Copilot() {
 
   const handleSend = () => {
     if (!chat.state.draftInput.trim() || chat.state.typing || isClosed) return;
-    chat.send(chat.state.draftInput);
+    if (editingMessageId) { chat.replaceAndSend(editingMessageId, chat.state.draftInput); setEditingMessageId(null); } else chat.send(chat.state.draftInput);
     setShowSlash(false);
     setShowMention(false);
   };
@@ -748,16 +749,16 @@ export default function Copilot() {
             <div className="copilot-header__actions flex flex-wrap items-center justify-end gap-1.5 shrink-0">
               <button ref={sessionToggleRef} type="button" onClick={() => { setSessionsOpen((open) => !open); closeContext(); }} className="copilot-mobile-toggle grid h-8 w-8 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]" aria-label="打开会话列表" aria-expanded={sessionsOpen} aria-controls="copilot-sessions"><ListChecksIcon className="h-4 w-4" /></button>
               {hasSessionContext && <Button ref={detailsToggleRef} variant="secondary" size="sm" className="copilot-header-action" onClick={() => openContext('overview')}>
-                <FileText className="h-3.5 w-3.5" />{detailsOpen ? '查看上下文' : '打开上下文'}
+                <FileText className="h-3.5 w-3.5" />上下文
               </Button>}
               <Button variant="secondary" size="sm" className="copilot-header-action" onClick={() => setCloseoutOpen(true)}>
-                <CheckCircle2 className="h-3.5 w-3.5" />会话结案
+                <CheckCircle2 className="h-3.5 w-3.5" />结束会话
               </Button>
               <Button variant="secondary" size="sm" className="copilot-header-action" onClick={() => setHandoffOpen(true)}>
                 <Users className="h-3.5 w-3.5" />人工接管
               </Button>
               <Button variant="secondary" size="sm" className="copilot-header-action" onClick={printAuditRecord}>
-                <ShieldCheck className="h-3.5 w-3.5" />导出审计
+                <ShieldCheck className="h-3.5 w-3.5" />导出证据
               </Button>
             </div>
           </div>
@@ -776,7 +777,7 @@ export default function Copilot() {
                   </div>
                   <div className="copilot-conversation-intro__security inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-1)] px-2.5 py-0.5 text-[10px] text-[var(--text-muted)]">
                     <ShieldCheck className="h-3 w-3 text-[var(--success)]" />
-                    对话已加密 · SignedLog 审计 · 等保 3 合规
+                    会话受保护 · 审计已启用
                   </div>
                 </div>
 
@@ -797,6 +798,7 @@ export default function Copilot() {
                       onCitation={(citation) => openCitation(citation, m.id)}
                       onRetry={(name) => chat.regenerate(m.id)}
                       onCopy={copyMessage}
+                      onEdit={(message) => { setEditingMessageId(message.id); chat.setDraft(message.content); inputRef.current?.focus(); }}
                       onRegenerate={(mid) => chat.regenerate(mid)}
                       onDelete={(mid) => chat.delMessage(mid)}
                       onRetryMessage={(mid) => chat.retryMessage(mid)}
@@ -1575,7 +1577,6 @@ function MessageWorkCards({ message, onOpenContext }: { message: ChatMessageEx; 
   const cards = [
     message.toolCalls?.length ? { key: 'tools', icon: Wrench, title: '工具执行', meta: `${message.toolCalls.length} 项 · ${message.toolCalls.filter((item) => item.status === 'success').length} 成功`, tone: 'brand' as const } : null,
     message.approvalRequest ? { key: 'approval', icon: ShieldCheck, title: '受控审批', meta: `${message.approvalRequest.signed}/${message.approvalRequest.required} 已签 · ${message.approvalRequest.decision === 'approved' ? '已通过' : '待决'}`, tone: message.approvalRequest.decision === 'approved' ? 'success' as const : 'warn' as const } : null,
-    message.citations?.length ? { key: 'evidence', icon: Link2, title: '证据依据', meta: `${message.citations.length} 条已引用 · 可追溯`, tone: 'success' as const } : null,
     taskRef ? { key: 'task', icon: ListChecksIcon, title: '关联任务', meta: taskRef, tone: 'brand' as const } : null,
   ].filter(Boolean) as { key: string; icon: typeof Wrench; title: string; meta: string; tone: 'brand' | 'success' | 'warn' }[];
   if (!cards.length) return null;
@@ -1589,12 +1590,16 @@ function MessageWorkCards({ message, onOpenContext }: { message: ChatMessageEx; 
   })}</div>;
 }
 
+function RiskDecisionCard({ onOpenContext, messageId }: { onOpenContext: (tab: WorkbenchContextTab, messageId?: string) => void; messageId: string }) {
+  return <section className="max-w-[760px] rounded-lg border border-[var(--warning)]/35 bg-[var(--warning-bg)]/25 p-3" aria-label="风险处置建议"><div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-1.5 text-xs font-semibold"><AlertTriangle className="h-3.5 w-3.5 text-[var(--warning)]" />风险处置建议</div><p className="mt-1 text-[11px] text-[var(--text-secondary)]">已识别高风险项。建议先核验受影响资产，再生成受控修复任务并发起人工复核。</p></div><Badge tone="warn" className="shrink-0 text-[10px]">需复核</Badge></div><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" variant="secondary" onClick={() => onOpenContext('evidence', messageId)}>查看受影响资产</Button><Button size="sm" onClick={() => onOpenContext('tasks', messageId)}>生成修复任务</Button><Button size="sm" variant="secondary" onClick={() => onOpenContext('approvals', messageId)}>发起人工复核</Button></div></section>;
+}
+
 // ============ 消息气泡 ============
 function MessageBubble({
   m, expandedThinking, setExpandedThinking, expandedArgs, setExpandedArgs,
   expandedReasoning, setExpandedReasoning, expandedApproval, setExpandedApproval,
   onApprove, onCitation, onRetry, onCopy, onRegenerate, onDelete, onRetryMessage, onFeedback,
-  onApproveSigner, onRequestReject,
+  onApproveSigner, onRequestReject, onEdit,
   hoverMsgId, setHoverMsgId, copiedId, agentName, onOpenContext, selectedContextMessageId, messageRef,
 }: {
   m: ChatMessageEx;
@@ -1610,6 +1615,7 @@ function MessageBubble({
   onCitation: (c: any, messageId?: string) => void;
   onRetry: (name: string) => void;
   onCopy: (m: ChatMessageEx) => void;
+  onEdit: (m: ChatMessageEx) => void;
   onRegenerate: (mid: string) => void;
   onDelete: (mid: string) => void;
   onRetryMessage: (mid: string) => void;
@@ -1629,6 +1635,7 @@ function MessageBubble({
   const isEmpty = !m.content;
   const isStreaming = m.status === 'streaming';
   const agentDisplayName = agentName ?? '故障自愈';
+  const needsDecision = !isUser && /CVE|高危|高风险|影响资产/.test(m.content ?? '');
 
   return (
     <div
@@ -1664,17 +1671,15 @@ function MessageBubble({
               {STATUS_LABEL[m.status]}
             </span>
           )}
-          {!isUser && m.metrics?.ttftMs !== undefined && (
-            <span className="text-[10px] text-[var(--text-muted)] font-mono tabular-nums" title="首 token 时间 · 耗时 · 模型">
-              TTFT {m.metrics.ttftMs}ms · {m.metrics.durationMs ? `${(m.metrics.durationMs / 1000).toFixed(1)}s` : ''}{m.metrics.model ? ` · ${m.metrics.model}` : ''}
-            </span>
-          )}
+          {!isUser && m.metrics?.ttftMs !== undefined && <details className="text-[10px] text-[var(--text-muted)]"><summary className="cursor-pointer">运行详情</summary><span className="font-mono">TTFT {m.metrics.ttftMs}ms · {m.metrics.durationMs ? `${(m.metrics.durationMs / 1000).toFixed(1)}s` : ''}{m.metrics.model ? ` · ${m.metrics.model}` : ''}</span></details>}
           <span className="text-[10px] text-[var(--text-muted)] font-mono tabular-nums" title={m.createdAt}>{m.createdAt.slice(11, 16)}</span>
           {isTool && <Badge tone="warn" className="text-[9px]">工具</Badge>}
           {m.approvalRequest && <Badge tone="error" className="text-[9px]">写操作</Badge>}
         </div>
 
         <MessageWorkCards message={m} onOpenContext={onOpenContext} />
+
+        {needsDecision && <RiskDecisionCard onOpenContext={onOpenContext} messageId={m.id} />}
 
         {/* 错误条（failed / cancelled / moderated） */}
         {m.status === 'failed' && (
@@ -2008,6 +2013,7 @@ function MessageBubble({
               {copiedId === m.id ? <CheckCircle2 className="h-3 w-3 text-[var(--success)]" /> : <Copy className="h-3 w-3" />}
               <span>{copiedId === m.id ? '已复制' : '复制'}</span>
             </button>
+            {isUser && <button onClick={() => onEdit(m)} className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]" title="编辑并重新发送" aria-label="编辑并重新发送"><Pencil className="h-3 w-3" /><span>编辑</span></button>}
             {!isUser && (
               <>
                 <button
