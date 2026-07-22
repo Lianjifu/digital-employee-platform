@@ -91,6 +91,8 @@ export interface ReasoningStep {
 }
 
 export interface Signer {
+  /** 已绑定的审批主体 ID；审批依据必须是身份而不是可编辑的显示姓名。 */
+  userId: string;
   name: string;
   role: SignerRole;
   signed: boolean;

@@ -22,6 +22,7 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { getApiClient } from '@de/web-api';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
+import { useAuthStore } from '@/stores/authStore';
 import type {
   ChatMessageEx,
   ChatSession,
@@ -85,6 +86,8 @@ type Action =
   | { type: 'set_draft'; value: string }
   | { type: 'push_history'; value: string }
   | { type: 'new_session'; session: ChatSession }
+  | { type: 'merge_sessions'; sessions: ChatSession[] }
+  | { type: 'sync_session'; session: ChatSession }
   | { type: 'del_session'; id: string }
   | { type: 'switch'; id: string }
   | { type: 'pin'; id: string; pinned: boolean }
@@ -108,7 +111,7 @@ type Action =
   | { type: 'set_metrics'; sid: string; mid: string; metrics: Partial<MessageMetrics> }
   | { type: 'append_reasoning_step'; sid: string; mid: string; step: ReasoningStep }
   | { type: 'set_safety'; sid: string; mid: string; safety: SafetyInfo }
-  | { type: 'approve'; sid: string; mid: string; signerIndex: number }
+  | { type: 'approve'; sid: string; mid: string; signerIndex: number; signedAt: string; signatureHash: string }
   | { type: 'reject'; sid: string; mid: string; signerIndex: number; reason?: string }
   | { type: 'archive_session'; id: string; archived: boolean }
   | { type: 'set_share_token'; id: string; token: string | null }
@@ -119,7 +122,7 @@ type Action =
 /* ============ 常量 ============ */
 
 const STORAGE_KEY = 'de-chat-state';
-const STORAGE_VERSION = 2;
+const STORAGE_VERSION = 4;
 const MAX_SESSIONS = 200; // 总会话上限
 const MAX_MESSAGES_PER_SESSION = 500; // 单会话消息上限
 const MAX_REQUESTS = 200; // 请求日志上限
@@ -150,8 +153,8 @@ function correlationId(): string {
   return `corr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function newSigner(name: string, role: Signer['role'] = 'approver'): Signer {
-  return { name, role, signed: false };
+function newSigner(userId: string, name: string, role: Signer['role'] = 'approver'): Signer {
+  return { userId, name, role, signed: false };
 }
 
 /* ============ 初始 state ============ */
@@ -191,6 +194,19 @@ function reducer(s: State, a: Action): State {
         overflow.forEach((k) => delete trimmed[k]);
       }
       return { ...s, sessions: trimmed, activeId: a.session.id };
+    }
+    case 'merge_sessions': {
+      // 服务端历史只补充缺失记录；浏览器本地的草稿、新会话和消息绝不被覆盖。
+      const merged = { ...s.sessions };
+      a.sessions.forEach((session) => {
+        if (!merged[session.id]) merged[session.id] = session;
+      });
+      return { ...s, sessions: merged };
+    }
+    case 'sync_session': {
+      const existing = s.sessions[a.session.id];
+      // 服务端详情覆盖会话事实字段；正在输入的草稿不属于会话详情，仍保留在全局 state。
+      return { ...s, sessions: { ...s.sessions, [a.session.id]: existing ? { ...existing, ...a.session } : a.session } };
     }
     case 'del_session': {
       const next = { ...s.sessions };
@@ -315,7 +331,7 @@ function reducer(s: State, a: Action): State {
         if (ar.signed >= ar.required) return m;
         const signers = ar.signers.map((sg, i) =>
           i === a.signerIndex && !sg.signed
-            ? { ...sg, signed: true, signedAt: new Date().toISOString(), signatureHash: uid('sig_') }
+            ? { ...sg, signed: true, signedAt: a.signedAt, signatureHash: a.signatureHash }
             : sg,
         );
         const signed = signers.filter((sg) => sg.signed).length;
@@ -444,7 +460,7 @@ const REPLY_TEMPLATES: { match: RegExp; reply: (q: string) => ReplyMock }[] = [
         required: 2,
         signed: 1,
         decision: 'pending',
-        signers: [newSigner('王昊', 'operator'), newSigner('李婷', 'auditor')].map((sg, i) => i === 0 ? { ...sg, signed: true, signedAt: new Date().toISOString(), signatureHash: uid('sig_') } : sg),
+        signers: [newSigner('u2', '王昊', 'operator'), newSigner('u1', '平台管理员', 'approver')].map((sg, i) => i === 0 ? { ...sg, signed: true, signedAt: new Date().toISOString(), signatureHash: uid('sig_') } : sg),
       },
       metrics: { ttftMs: 320, durationMs: 1200, promptTokens: 480, completionTokens: 220, cacheHits: 2, model: 'Sonnet-4', provider: 'anthropic' },
     }),
@@ -528,7 +544,7 @@ const REPLY_TEMPLATES: { match: RegExp; reply: (q: string) => ReplyMock }[] = [
         required: 2,
         signed: 1,
         decision: 'pending',
-        signers: [newSigner('王昊', 'operator'), newSigner('张睿', 'approver')].map((sg, i) => i === 0 ? { ...sg, signed: true, signedAt: new Date().toISOString(), signatureHash: uid('sig_') } : sg),
+        signers: [newSigner('u2', '王昊', 'operator'), newSigner('u1', '张睿', 'approver')].map((sg, i) => i === 0 ? { ...sg, signed: true, signedAt: new Date().toISOString(), signatureHash: uid('sig_') } : sg),
       },
       metrics: { ttftMs: 420, durationMs: 1480, promptTokens: 620, completionTokens: 320, cacheHits: 0, model: 'Sonnet-4', provider: 'anthropic' },
     }),
@@ -554,7 +570,7 @@ const REPLY_TEMPLATES: { match: RegExp; reply: (q: string) => ReplyMock }[] = [
         required: 2,
         signed: 0,
         decision: 'pending',
-        signers: [newSigner('王昊', 'operator'), newSigner('孙博', 'approver')],
+        signers: [newSigner('u2', '王昊', 'operator'), newSigner('u1', '孙博', 'approver')],
       },
       metrics: { ttftMs: 380, durationMs: 1620, promptTokens: 580, completionTokens: 300, cacheHits: 2, model: 'Sonnet-4', provider: 'anthropic' },
     }),
@@ -630,9 +646,12 @@ function loadState(): State | null {
     if (!stored) return null;
     const parsed = JSON.parse(stored);
     if (!parsed || !parsed.sessions) return null;
-    // 版本兼容：旧版本仅作 hydrate，缺字段补默认值
+    // v4 清理旧版自动生成的演示会话（s_ 前缀）；服务端会在页面加载后补齐正式历史。
+    // 用户主动输入的草稿不在 session 中，仍由 draftInput 保留。
     if ((parsed.schemaVersion ?? 1) < STORAGE_VERSION) {
-      parsed.schemaVersion = STORAGE_VERSION;
+      const sessions = Object.fromEntries(Object.entries(parsed.sessions as Record<string, ChatSession>).filter(([id]) => !id.startsWith('s_')));
+      const activeId = sessions[parsed.activeId] ? parsed.activeId : '';
+      return { ...initial, ...parsed, sessions, activeId, schemaVersion: STORAGE_VERSION, abortRef: { current: null }, typing: false, activeCorrelationId: null } as State;
     }
     return {
       ...parsed,
@@ -711,47 +730,7 @@ export function useChat(agentMeta?: { name: string }) {
     const loaded = loadState();
     if (loaded) return loaded;
 
-    // 默认会话（首启动）
-    const id = uid('s_');
-    const sid: ChatSession = {
-      id,
-      title: 'Redis OOM 处理',
-      preview: '已扩容到 16GB + volatile-lru',
-      agent: agentMeta?.name ?? '故障自愈',
-      status: 'active',
-      lifecycle: 'active',
-      group: 'today',
-      time: '14:32',
-      pinned: true,
-      ownerId: 'u1',
-      ownerName: '王昊',
-      workspaceId: useWorkspaceStore.getState().currentWorkspaceId ?? 'w1',
-      encrypted: true,
-      messages: [
-        {
-          id: 'm1',
-          role: 'user',
-          content: 'prod-redis-01 OOM 了，怎么处理？',
-          createdAt: new Date(Date.now() - 120_000).toISOString(),
-          clientMsgId: uid('c_'),
-          status: 'succeeded',
-        },
-      ],
-      createdAt: Date.now(),
-      lastActiveAt: Date.now(),
-    };
-    return {
-      sessions: { [id]: sid },
-      activeId: id,
-      draftInput: '',
-      inputHistory: [],
-      typing: false,
-      abortRef: { current: null },
-      requests: [],
-      activeCorrelationId: null,
-      debugOpen: false,
-      schemaVersion: STORAGE_VERSION,
-    };
+    return initial;
   });
 
   // 持久化
@@ -918,6 +897,15 @@ export function useChat(agentMeta?: { name: string }) {
     dispatch({ type: 'new_session', session: sess });
   }, [agentMeta?.name]);
 
+  /** 将当前工作区的只读历史记录并入本地会话，不改变用户正在进行的会话。 */
+  const importSessions = useCallback((sessions: ChatSession[]) => {
+    if (sessions.length) dispatch({ type: 'merge_sessions', sessions });
+  }, []);
+
+  const syncSession = useCallback((session: ChatSession) => {
+    dispatch({ type: 'sync_session', session });
+  }, []);
+
   const delSession = useCallback((id: string) => dispatch({ type: 'del_session', id }), []);
   const switchSession = useCallback((id: string) => dispatch({ type: 'switch', id }), []);
   const togglePin = useCallback((id: string) => {
@@ -1045,39 +1033,42 @@ export function useChat(agentMeta?: { name: string }) {
     if (state.activeId) dispatch({ type: 'del_msg', sid: state.activeId, mid });
   }, [state.activeId]);
 
-  /** 兼容旧 API：单签通过（默认签 0 号位） */
-  const approveSign = useCallback((mid: string) => {
-    if (!state.activeId) return;
-    const sess = state.sessions[state.activeId];
-    if (!sess) return;
-    const m = sess.messages.find((x) => x.id === mid);
-    if (!m?.approvalRequest) return;
-    const ar = m.approvalRequest;
-    if (ar.signed >= ar.required) return;
-    // 找第一个未签的人
-    const idx = ar.signers.findIndex((s) => !s.signed);
-    if (idx < 0) return;
-    dispatch({ type: 'approve', sid: state.activeId, mid, signerIndex: idx });
-  }, [state.activeId, state.sessions]);
-
-  /** 新 API：指定签名人 index 批准 */
-  const approve = useCallback((mid: string, signerIndex: number) => {
+  /** 指定签名位批准：服务端先完成身份、角色与职责分离校验，成功后才写入本地状态。 */
+  const approve = useCallback(async (mid: string, signerIndex: number) => {
     if (!state.activeId) return;
     const session = state.sessions[state.activeId];
     const message = session?.messages.find((item) => item.id === mid);
     if (!message?.approvalRequest) return;
-    dispatch({ type: 'approve', sid: state.activeId, mid, signerIndex });
-    void (async () => {
-      const api = getApiClient();
-      await api.post(`/api/actions/${mid}/approve`, { signerIndex, conversationId: state.activeId });
-      if (message.approvalRequest!.signed + 1 >= message.approvalRequest!.required) {
-        const task = await api.post<{ id: string; code: string }>(`/api/conversations/${state.activeId}/tasks`, {
-          title: `${session?.title ?? '数字员工会话'} · 受控执行`, priority: 'P1', assignee: '王昊', correlationId: message.correlationId,
-        });
-        await api.post(`/api/actions/${mid}/execute`, { taskId: task.id });
-      }
-    })().catch(() => undefined);
+    const signer = message.approvalRequest.signers[signerIndex];
+    const actor = useAuthStore.getState().user;
+    const expectedPlatformRole: Record<Signer['role'], 'user' | 'admin' | 'auditor'> = { operator: 'user', approver: 'admin', auditor: 'auditor' };
+    if (!actor || !signer || signer.signed) throw new Error('当前审批席位不可用，请刷新后重试。');
+    if (signer.userId !== actor.id || expectedPlatformRole[signer.role] !== actor.role) {
+      throw new Error(`仅待签人 ${signer.name}（${signer.role === 'auditor' ? '审计复核' : signer.role === 'operator' ? '执行复核' : '变更审批'}）可签发。`);
+    }
+
+    const api = getApiClient();
+    const result = await api.post<{ signedAt: string; signatureHash: string; completed: boolean }>(`/api/actions/${mid}/approve`, {
+      signerIndex,
+      conversationId: state.activeId,
+    });
+    dispatch({ type: 'approve', sid: state.activeId, mid, signerIndex, signedAt: result.signedAt, signatureHash: result.signatureHash });
+    if (result.completed) {
+      const task = await api.post<{ id: string; code: string }>(`/api/conversations/${state.activeId}/tasks`, {
+        title: `${session?.title ?? '数字员工会话'} · 受控执行`, priority: 'P1', assignee: '王昊', correlationId: message.correlationId,
+      });
+      await api.post(`/api/actions/${mid}/execute`, { taskId: task.id });
+    }
   }, [state.activeId]);
+
+  /** 兼容旧 API：不再绕过服务端校验，仍只尝试首个未签席位。 */
+  const approveSign = useCallback((mid: string) => {
+    const session = state.activeId ? state.sessions[state.activeId] : undefined;
+    const request = session?.messages.find((item) => item.id === mid)?.approvalRequest;
+    const signerIndex = request?.signers.findIndex((signer) => !signer.signed) ?? -1;
+    if (signerIndex >= 0) return approve(mid, signerIndex);
+    return Promise.resolve();
+  }, [approve, state.activeId, state.sessions]);
 
   /** 拒绝 */
   const reject = useCallback((mid: string, signerIndex: number, reason?: string) => {
@@ -1181,6 +1172,8 @@ export function useChat(agentMeta?: { name: string }) {
     /* 兼容 */
     setDraft,
     newSession,
+    importSessions,
+    syncSession,
     delSession,
     switchSession,
     togglePin,

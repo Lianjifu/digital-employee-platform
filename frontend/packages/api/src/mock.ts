@@ -1232,7 +1232,7 @@ const modelProviders: ModelProvider[] = [
   { id: 'p1', workspaceId: 'w1', name: 'Anthropic', tier: 'official', cloudRegion: 'us-west-2', dataResidency: 'global', status: 'active', credentialRef: 'vault://model-providers/p1/credential', credentialMasked: 'sk-…prod', lastVerifiedAt: '2026-07-19T14:32:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p1') },
   { id: 'p2', workspaceId: 'w1', name: 'Azure OpenAI', tier: 'official', cloudRegion: 'eastasia', dataResidency: 'global', status: 'standby', credentialRef: 'vault://model-providers/p2/credential', credentialMasked: 'key-…prod', lastVerifiedAt: '2026-07-19T14:28:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p2') },
   { id: 'p5', workspaceId: 'w1', name: 'Qwen2.5-72B', tier: 'self_hosted', cloudRegion: 'cn-east-1', dataResidency: 'cn', status: 'active', credentialRef: 'vault://model-providers/p5/credential', credentialMasked: 'vault-managed', lastVerifiedAt: '2026-07-19T14:31:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p5') },
-  { id: 'p9', workspaceId: 'w2', name: '隔离工作区 Provider', tier: 'self_hosted', cloudRegion: 'cn-east-1', dataResidency: 'cn', status: 'active', credentialRef: 'vault://model-providers/p9/credential', credentialMasked: 'vault-managed', lastVerifiedAt: '2026-07-19T14:31:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p9') },
+  { id: 'p9', workspaceId: 'w2', name: '隔离工作区供应商', tier: 'self_hosted', cloudRegion: 'cn-east-1', dataResidency: 'cn', status: 'active', credentialRef: 'vault://model-providers/p9/credential', credentialMasked: 'vault-managed', lastVerifiedAt: '2026-07-19T14:31:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p9') },
 ];
 
 const routingPolicies: RoutingPolicyDraft[] = [
@@ -1301,7 +1301,7 @@ function providerImpact(providerId: string): ProviderImpact {
   const routeReferences = routingVersions
     .filter((version) => [version.snapshot.primaryModelId, ...version.snapshot.fallbackModelIds].some((modelId) => modelById(modelId)?.providerId === providerId))
     .map((version) => ({ policyId: version.policyId, level: version.snapshot.level, versionId: version.id }));
-  return { providerId, routeReferences, deletionAllowed: routeReferences.length === 0, blockedReason: routeReferences.length ? 'Provider 被已发布路由引用，需先替换或停用路由。' : undefined };
+  return { providerId, routeReferences, deletionAllowed: routeReferences.length === 0, blockedReason: routeReferences.length ? '供应商被已发布路由引用，需先替换或停用路由。' : undefined };
 }
 
 // ============ P11 设置扩展数据 ============
@@ -1518,19 +1518,20 @@ export interface SessionItem {
   preview: string;
   agent: string;
   status: 'active' | 'done';
-  group: 'today' | 'yesterday' | 'week';
-  time: string;
+  createdAt: string;
+  updatedAt: string;
+  lastMessageAt: string;
   pinned?: boolean;
 }
 
 export const mockSessions: SessionItem[] = [
-  { id: 's1', workspaceId: 'w1', ownerId: 'u1', correlationId: 'corr_session_s1', title: 'Redis OOM 处理', preview: '已扩容到 16GB + volatile-lru', agent: '故障自愈', status: 'active', group: 'today', time: '14:32', pinned: true },
-  { id: 's2', workspaceId: 'w1', ownerId: 'u1', correlationId: 'corr_session_s2', title: '合规审计报告生成', preview: '本月 94 项审计已生成 PDF', agent: '合规审计', status: 'done', group: 'today', time: '11:20' },
-  { id: 's3', workspaceId: 'w2', ownerId: 'u2', correlationId: 'corr_session_s3', title: 'K8s 节点扩容申请', preview: '需要 2 个 c5.2xlarge，预计影响 5 个服务', agent: '变更辅助', status: 'active', group: 'today', time: '10:15' },
-  { id: 's4', workspaceId: 'w3', ownerId: 'u3', correlationId: 'corr_session_s4', title: 'CVE 周报', preview: '本周 12 个新漏洞，建议优先修复 CVE-2026-3321', agent: '漏洞修复', status: 'done', group: 'yesterday', time: '昨天 17:45' },
-  { id: 's5', workspaceId: 'w3', ownerId: 'u3', correlationId: 'corr_session_s5', title: '告警降噪规则', preview: '合并 23 条重复 SIEM 告警', agent: '告警降噪', status: 'done', group: 'yesterday', time: '昨天 14:30' },
-  { id: 's6', workspaceId: 'w1', ownerId: 'u1', correlationId: 'corr_session_s6', title: '客户咨询 · 价格问题', preview: '关于 Enterprise Plus 升级方案', agent: '客户支持', status: 'done', group: 'week', time: '7月10日' },
-  { id: 's7', workspaceId: 'w2', ownerId: 'u2', correlationId: 'corr_session_s7', title: '容量预测 · Q3', preview: '预计增长 24%，建议提前扩容', agent: '容量预测', status: 'done', group: 'week', time: '7月9日' },
+  { id: 's1', workspaceId: 'w1', ownerId: 'u1', correlationId: 'corr_session_s1', title: 'Redis OOM 处理', preview: '已扩容到 16GB + volatile-lru', agent: '故障自愈', status: 'active', createdAt: '2026-07-22T12:47:00.000Z', updatedAt: '2026-07-22T12:53:42.000Z', lastMessageAt: '2026-07-22T12:53:42.000Z', pinned: true },
+  { id: 's2', workspaceId: 'w1', ownerId: 'u1', correlationId: 'corr_session_s2', title: '合规审计报告生成', preview: '本月 94 项审计已生成 PDF', agent: '合规审计', status: 'done', createdAt: '2026-07-22T10:40:00.000Z', updatedAt: '2026-07-22T11:20:00.000Z', lastMessageAt: '2026-07-22T11:20:00.000Z' },
+  { id: 's3', workspaceId: 'w2', ownerId: 'u2', correlationId: 'corr_session_s3', title: 'K8s 节点扩容申请', preview: '需要 2 个 c5.2xlarge，预计影响 5 个服务', agent: '变更辅助', status: 'active', createdAt: '2026-07-22T09:40:00.000Z', updatedAt: '2026-07-22T10:15:00.000Z', lastMessageAt: '2026-07-22T10:15:00.000Z' },
+  { id: 's4', workspaceId: 'w3', ownerId: 'u3', correlationId: 'corr_session_s4', title: 'CVE 周报', preview: '本周 12 个新漏洞，建议优先修复 CVE-2026-3321', agent: '漏洞修复', status: 'done', createdAt: '2026-07-21T16:30:00.000Z', updatedAt: '2026-07-21T17:45:00.000Z', lastMessageAt: '2026-07-21T17:45:00.000Z' },
+  { id: 's5', workspaceId: 'w3', ownerId: 'u3', correlationId: 'corr_session_s5', title: '告警降噪规则', preview: '合并 23 条重复 SIEM 告警', agent: '告警降噪', status: 'done', createdAt: '2026-07-21T14:00:00.000Z', updatedAt: '2026-07-21T14:30:00.000Z', lastMessageAt: '2026-07-21T14:30:00.000Z' },
+  { id: 's6', workspaceId: 'w1', ownerId: 'u1', correlationId: 'corr_session_s6', title: '客户咨询 · 价格问题', preview: '关于 Enterprise Plus 升级方案', agent: '客户支持', status: 'done', createdAt: '2026-07-10T08:30:00.000Z', updatedAt: '2026-07-10T09:10:00.000Z', lastMessageAt: '2026-07-10T09:10:00.000Z' },
+  { id: 's7', workspaceId: 'w2', ownerId: 'u2', correlationId: 'corr_session_s7', title: '容量预测 · Q3', preview: '预计增长 24%，建议提前扩容', agent: '容量预测', status: 'done', createdAt: '2026-07-09T08:30:00.000Z', updatedAt: '2026-07-09T09:00:00.000Z', lastMessageAt: '2026-07-09T09:00:00.000Z' },
 ];
 
 // Slash 命令面板
@@ -1550,16 +1551,16 @@ export const mockSlashCommands = [
 ];
 
 export const mockConversation: Conversation = {
-  id: 'cv1',
+  id: 's1',
   workspaceId: 'w1',
   ownerId: 'u1',
-  correlationId: 'corr_conversation_cv1',
+  correlationId: 'corr_session_s1',
   agentId: 'a1',
-  title: 'Redis 集群 OOM 排查',
-  createdAt: '2026-07-13T08:12:00Z',
-  updatedAt: '2026-07-13T08:24:00Z',
+  title: 'Redis OOM 处理',
+  createdAt: '2026-07-22T12:47:00.000Z',
+  updatedAt: '2026-07-22T12:53:42.000Z',
   messages: [
-    { id: 'm1', role: 'user', content: 'prod-redis-01 OOM 了，怎么处理？', createdAt: '2026-07-13T08:12:00Z' },
+    { id: 'm1', role: 'user', content: 'prod-redis-01 OOM 了，怎么处理？', createdAt: '2026-07-22T12:47:00.000Z' },
     {
       id: 'm2',
       role: 'assistant',
@@ -1574,15 +1575,15 @@ export const mockConversation: Conversation = {
         { id: 't1', name: 'redis-cli INFO memory', args: {}, status: 'success', durationMs: 120, result: 'used_memory_human: 7.2G' },
         { id: 't2', name: 'redis-cli MONITOR', args: { duration: 5 }, status: 'success', durationMs: 5200 },
       ],
-      createdAt: '2026-07-13T08:12:30Z',
+      createdAt: '2026-07-22T12:47:30.000Z',
     },
     {
       id: 'm3',
       role: 'tool',
       content: '正在请求双签审批：调整 maxmemory 至 8GB（需 1 名 SRE + 1 名 Admin 签发）',
-      createdAt: '2026-07-13T08:13:00Z',
+      createdAt: '2026-07-22T12:48:00.000Z',
     },
-    { id: 'm4', role: 'user', content: '已批准', createdAt: '2026-07-13T08:14:00Z' },
+    { id: 'm4', role: 'user', content: '已批准', createdAt: '2026-07-22T12:53:42.000Z' },
   ],
 };
 
@@ -1604,7 +1605,7 @@ type MockDomainEvent = { id: string; time: string; user: string; action: string;
 const mockDomain = {
   audits: mockAuditStream.map((event: any) => ({ ...event, result: event.result === 'failed' ? 'failed' as const : 'success' as const })),
   messages: [...mockMessageStream] as any[],
-  actions: new Map<string, { id: string; conversationId: string; status: 'pending' | 'approved' | 'executed' | 'rejected'; taskId?: string }>(),
+  actions: new Map<string, { id: string; conversationId: string; status: 'pending' | 'approved' | 'executed' | 'rejected'; taskId?: string; approvedSignerIndexes?: number[] }>(),
 };
 const taskDomain = createTaskDomain(mockTasks);
 
@@ -2566,45 +2567,45 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     const body = (opts.body ?? {}) as any;
     const context = requireModelWrite(opts, body.workspaceId ?? 'w1');
     if (!body.name?.trim() || !body.model?.trim() || !body.credential?.trim()) {
-      appendModelAudit(opts, '接入 Provider', body.name ?? '未命名 Provider', 'failed', { reason: '名称、模型和凭据引用必填' });
-      throw new Error('E_PROVIDER_INVALID: Provider 名称、模型和凭据不能为空');
+      appendModelAudit(opts, '接入供应商', body.name ?? '未命名供应商', 'failed', { reason: '名称、模型和凭据引用必填' });
+      throw new Error('E_PROVIDER_INVALID: 供应商名称、模型和凭据不能为空');
     }
     const providerId = mockId('model_provider');
     const model: ModelProfile = { id: mockId('model'), providerId, name: body.model.trim(), cloudRegion: body.region ?? 'global', dataResidency: String(body.region ?? '').startsWith('cn-') ? 'cn' : 'global', capabilities: ['chat'], status: 'available', contextWindow: 32_000 };
     const provider: ModelProvider = { id: providerId, workspaceId: context.workspaceId, name: body.name.trim(), tier: body.tier ?? 'connectable', cloudRegion: model.cloudRegion, dataResidency: model.dataResidency, status: 'standby', credentialRef: `vault://model-providers/${providerId}/credential`, credentialMasked: '••••••••', models: [model] };
     modelProfiles.push(model);
     modelProviders.unshift(provider);
-    appendModelAudit(opts, '接入 Provider', provider.name, 'success', { reason: body.reason });
+    appendModelAudit(opts, '接入供应商', provider.name, 'success', { reason: body.reason });
     return provider;
   }
   const modelProviderAction = path.match(/^\/api\/model-providers\/([^/]+)(?:\/(impact|test|disable))?$/);
   if (modelProviderAction) {
     const [, providerId, action] = modelProviderAction;
     const provider = modelProviders.find((item) => item.id === providerId);
-    if (!provider) throw new Error('E_PROVIDER_NOT_FOUND: Provider 不存在');
+    if (!provider) throw new Error('E_PROVIDER_NOT_FOUND: 供应商不存在');
     if (method === 'GET' && action === 'impact') { const context = requireModelRead(opts); if (provider.workspaceId !== context.workspaceId) throw new Error('E_WORKSPACE_SCOPE: 无权读取其他工作区模型资源'); return providerImpact(provider.id); }
     const body = (opts.body ?? {}) as any;
     requireModelWrite(opts, provider.workspaceId);
     if (method === 'POST' && action === 'test') {
       provider.lastVerifiedAt = new Date().toISOString();
-      appendModelAudit(opts, '验证 Provider 连通性', provider.name, 'success', { reason: body.reason });
+      appendModelAudit(opts, '验证供应商连通性', provider.name, 'success', { reason: body.reason });
       return { providerId: provider.id, status: 'healthy', verifiedAt: provider.lastVerifiedAt };
     }
     if (method === 'POST' && action === 'disable') {
       provider.status = 'disabled';
       provider.models.forEach((model) => { model.status = 'unavailable'; });
-      appendModelAudit(opts, '停用 Provider', provider.name, 'success', { reason: body.reason });
+      appendModelAudit(opts, '停用供应商', provider.name, 'success', { reason: body.reason });
       return provider;
     }
     if (method === 'DELETE' && !action) {
       const impact = providerImpact(provider.id);
       if (!impact.deletionAllowed) {
-        appendModelAudit(opts, '删除 Provider', provider.name, 'failed', { reason: impact.blockedReason });
+        appendModelAudit(opts, '删除供应商', provider.name, 'failed', { reason: impact.blockedReason });
         throw new Error(`E_PROVIDER_IN_USE: ${impact.blockedReason}`);
       }
       modelProviders.splice(modelProviders.indexOf(provider), 1);
       provider.models.forEach((model) => modelProfiles.splice(modelProfiles.indexOf(model), 1));
-      appendModelAudit(opts, '删除 Provider', provider.name, 'success', { reason: body.reason });
+      appendModelAudit(opts, '删除供应商', provider.name, 'success', { reason: body.reason });
       return { id: provider.id, status: 'deleted' };
     }
   }
@@ -2770,11 +2771,11 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/notification-channels') return mockNotificationChannels;
 
   // 会话
-  if (path === '/api/conversations/cv1') {
+  if (path === `/api/conversations/${mockConversation.id}`) {
     if (!inCurrentWorkspace(mockConversation)) throw new Error('E_WORKSPACE_SCOPE: 无权读取其他工作区会话');
     return mockConversation;
   }
-  if (path === '/api/conversations/cv1/ex') return mockConversationEx;
+  if (path === `/api/conversations/${mockConversation.id}/ex`) return mockConversationEx;
   if (path === '/api/sessions') return mockSessions.filter(inCurrentWorkspace);
   if (path === '/api/slash-commands') return mockSlashCommands;
   if (path.startsWith('/api/agents/') && path.endsWith('/meta')) return mockAgentMeta;
@@ -2791,11 +2792,51 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   }
   if (path.startsWith('/api/actions/') && path.endsWith('/approve') && opts.method === 'POST') {
     const actionId = path.split('/')[3];
-    const action = mockDomain.actions.get(actionId) ?? { id: actionId, conversationId: 'cv1', status: 'pending' as const };
-    const next = { ...action, status: 'approved' as const };
+    const body = (opts.body ?? {}) as { signerIndex?: number; conversationId?: string };
+    const identity = mockIdentity(opts.headers);
+    if (!identity) throw new Error('E_AUTH_REQUIRED: 请先登录后再签发');
+    if (body.conversationId !== mockConversation.id || !inCurrentWorkspace(mockConversation)) {
+      throw new Error('E_APPROVAL_SCOPE: 当前会话不在您的工作区范围内');
+    }
+
+    // Mock 中的审批策略与生产策略保持同一语义：席位绑定身份、角色匹配、先后顺序及职责分离。
+    const approvalPolicy = [
+      { userId: 'u2', role: 'user' as const, label: '王昊', roleLabel: '执行复核' },
+      { userId: 'u1', role: 'admin' as const, label: '平台管理员', roleLabel: '变更审批' },
+    ];
+    const signerIndex = Number(body.signerIndex);
+    const expectedSigner = Number.isInteger(signerIndex) ? approvalPolicy[signerIndex] : undefined;
+    if (!expectedSigner) throw new Error('E_APPROVAL_SIGNER: 无效的审批席位');
+    if (identity.id !== expectedSigner.userId || identity.role !== expectedSigner.role) {
+      throw new Error(`E_APPROVAL_ASSIGNEE: 仅待签人 ${expectedSigner.label}（${expectedSigner.roleLabel}）可签发`);
+    }
+
+    const action = mockDomain.actions.get(actionId) ?? {
+      id: actionId,
+      conversationId: body.conversationId,
+      status: 'pending' as const,
+      // Redis OOM 示例在发起前已由执行复核人完成第一签。
+      approvedSignerIndexes: [0],
+    };
+    const approvedSignerIndexes = action.approvedSignerIndexes ?? [];
+    if (approvedSignerIndexes.includes(signerIndex)) throw new Error('E_APPROVAL_DUPLICATE: 当前审批席位已签发');
+    if (signerIndex > 0 && !approvedSignerIndexes.includes(signerIndex - 1)) {
+      throw new Error('E_APPROVAL_SEQUENCE: 请等待上一审批席位完成签发');
+    }
+    if (approvedSignerIndexes.some((index) => approvalPolicy[index]?.userId === identity.id)) {
+      throw new Error('E_APPROVAL_SOD: 同一用户不得完成多个审批席位');
+    }
+
+    const signedAt = new Date().toISOString();
+    const signatureHash = `sig_${actionId.slice(-6)}_${identity.id}_${Date.now().toString(36)}`;
+    const next = {
+      ...action,
+      status: 'approved' as const,
+      approvedSignerIndexes: [...approvedSignerIndexes, signerIndex],
+    };
     mockDomain.actions.set(actionId, next);
-    appendDomainEvent('审批通过', actionId);
-    return next;
+    appendDomainEvent('审批通过', `${actionId} · ${identity.name}`);
+    return { ...next, signedAt, signatureHash, completed: next.approvedSignerIndexes.length >= approvalPolicy.length };
   }
   if (path.startsWith('/api/actions/') && path.endsWith('/execute') && opts.method === 'POST') {
     const actionId = path.split('/')[3];

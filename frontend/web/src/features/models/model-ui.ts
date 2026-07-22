@@ -2,7 +2,7 @@ import type { ProviderImpact, RoutingPolicyStatus } from '@de/web-types';
 
 export function providerLifecycleAction(impact: Pick<ProviderImpact, 'deletionAllowed'>) {
   return impact.deletionAllowed
-    ? { disabled: false, label: '删除 Provider' }
+    ? { disabled: false, label: '删除供应商' }
     : { disabled: true, label: '已被路由引用' };
 }
 

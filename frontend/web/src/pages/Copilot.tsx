@@ -58,14 +58,48 @@ import type {
 
 interface SessionItem {
   id: string;
+  workspaceId?: string;
+  ownerId?: string;
+  correlationId?: string;
   title: string;
   preview: string;
   agent: string;
   status: 'active' | 'done';
-  group: 'today' | 'yesterday' | 'week';
-  time: string;
+  createdAt: string;
+  updatedAt: string;
+  lastMessageAt: string;
   pinned?: boolean;
   unread?: number;
+}
+
+function sessionGroup(lastMessageAt: string): ChatSession['group'] {
+  const day = new Date(lastMessageAt); const today = new Date();
+  const delta = Math.floor((new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime() - new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime()) / 86_400_000);
+  return delta <= 0 ? 'today' : delta === 1 ? 'yesterday' : delta < 7 ? 'week' : 'earlier';
+}
+
+const SHANGHAI_TIME_ZONE = 'Asia/Shanghai';
+
+function formatShanghaiTime(value: string | number | Date) {
+  return new Intl.DateTimeFormat('zh-CN', { timeZone: SHANGHAI_TIME_ZONE, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value));
+}
+
+function formatShanghaiDate(value: string | number | Date) {
+  return new Intl.DateTimeFormat('zh-CN', { timeZone: SHANGHAI_TIME_ZONE, year: 'numeric', month: 'numeric', day: 'numeric' }).format(new Date(value));
+}
+
+function sessionTime(lastMessageAt: string) {
+  const date = new Date(lastMessageAt); const today = new Date();
+  const sameDay = formatShanghaiDate(date) === formatShanghaiDate(today);
+  return sameDay ? formatShanghaiTime(date) : new Intl.DateTimeFormat('zh-CN', { timeZone: SHANGHAI_TIME_ZONE, month: 'numeric', day: 'numeric' }).format(date);
+}
+
+function toChatSession(session: SessionItem): ChatSession {
+  return {
+    id: session.id, workspaceId: session.workspaceId, ownerId: session.ownerId, title: session.title, preview: session.preview, agent: session.agent,
+    status: session.status, lifecycle: session.status === 'active' ? 'active' : 'idle', group: sessionGroup(session.lastMessageAt), time: sessionTime(session.lastMessageAt),
+    pinned: session.pinned, messages: [], createdAt: new Date(session.createdAt).getTime(), lastActiveAt: new Date(session.updatedAt).getTime(), encrypted: true,
+  };
 }
 
 type ContextSelection = {
@@ -178,12 +212,14 @@ const ERROR_HINT: Record<ErrorCategory, string> = {
 };
 
 export default function Copilot() {
-  const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
+  const currentUser = useAuthStore((state) => state.user);
+  const isAdmin = currentUser?.role === 'admin';
   const { t } = useT();
   const [searchQ, setSearchQ] = useState('');
+  const [historyReady, setHistoryReady] = useState(false);
   const [showSlash, setShowSlash] = useState(false);
   const [showMention, setShowMention] = useState(false);
-  const [showApproval, setShowApproval] = useState<string | null>(null);
+  const [showApproval, setShowApproval] = useState<{ messageId: string; signerIndex: number } | null>(null);
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [expandedArgs, setExpandedArgs] = useState<Record<string, boolean>>({});
   const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
@@ -226,8 +262,10 @@ export default function Copilot() {
   const { data: slashCmds = [] } = useApiQuery<{ cmd: string; desc: string; icon: string; category: string }[]>(
     ['slash-cmds'], '/api/slash-commands'
   );
+  const { data: sessionHistory = [], isLoading: sessionsLoading } = useApiQuery<SessionItem[]>(['sessions'], '/api/sessions');
   const chat = useChat(agentMeta);
   const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
+  const { data: activeConversation } = useApiQuery<any>(['conversation', chat.state.activeId], `/api/conversations/${chat.state.activeId}`, undefined, { enabled: !!chat.state.activeId });
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -235,6 +273,19 @@ export default function Copilot() {
   const detailsToggleRef = useRef<HTMLButtonElement>(null);
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const historyIdx = useRef(0);
+
+  // 服务器历史是当前工作区的权威列表；仅合并缺失项，避免覆盖本地正在编辑或刚创建的会话。
+  useEffect(() => {
+    chat.importSessions(sessionHistory.map(toChatSession));
+    if (!sessionsLoading) setHistoryReady(true);
+  }, [chat.importSessions, sessionHistory, sessionsLoading]);
+
+  useEffect(() => {
+    if (!activeConversation || activeConversation.id !== chat.state.activeId) return;
+    const summary = sessionHistory.find((item) => item.id === activeConversation.id);
+    if (!summary) return;
+    chat.syncSession({ ...toChatSession(summary), messages: activeConversation.messages as ChatMessageEx[] });
+  }, [activeConversation, chat.state.activeId, chat.syncSession, sessionHistory]);
 
   // todo 8: 上下方向键切换输入历史
   const onTextareaKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -398,6 +449,7 @@ export default function Copilot() {
     today: filteredSessions.filter((s) => !s.pinned && s.group === 'today'),
     yesterday: filteredSessions.filter((s) => !s.pinned && s.group === 'yesterday'),
     week: filteredSessions.filter((s) => !s.pinned && s.group === 'week'),
+    earlier: filteredSessions.filter((s) => !s.pinned && s.group === 'earlier'),
   }), [filteredSessions]);
 
   const charCount = chat.state.draftInput.length;
@@ -482,10 +534,10 @@ export default function Copilot() {
   const currentSession = chat.activeSession;
   useEffect(() => {
     const visible = Object.values(chat.state.sessions).filter((session) => (session.workspaceId ?? 'w1') === currentWorkspaceId);
-    if (visible.some((session) => session.id === chat.state.activeId)) return;
+    if (!historyReady || sessionsLoading || visible.some((session) => session.id === chat.state.activeId)) return;
     if (visible[0]) chat.switchSession(visible[0].id);
     else chat.newSession();
-  }, [chat.state.activeId, chat.state.sessions, currentWorkspaceId]);
+  }, [chat.state.activeId, chat.state.sessions, currentWorkspaceId, historyReady, sessionsLoading]);
   const sessionSignals = useMemo(() => {
     const messages = currentSession?.messages ?? [];
     const executions = messages.reduce((total, message) => total + (message.toolCalls?.length ?? 0), 0);
@@ -647,7 +699,7 @@ export default function Copilot() {
             <Button size="sm" className="flex-1" onClick={chat.newSession}>
               <Plus className="h-3.5 w-3.5" />新会话
             </Button>
-            <span className="text-[10px] text-[var(--text-muted)] font-mono">{Object.keys(chat.state.sessions).length}</span>
+            <span className="text-[10px] text-[var(--text-muted)] font-mono" title="当前工作区可见会话数">{filteredSessions.length}</span>
           </div>
           <div className="relative">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--text-muted)]" />
@@ -660,12 +712,12 @@ export default function Copilot() {
           </div>
         </div>
         <div className="flex-1 overflow-y-auto py-2">
-          {(['pinned', 'today', 'yesterday', 'week'] as const).map((g) =>
+          {(['pinned', 'today', 'yesterday', 'week', 'earlier'] as const).map((g) =>
             grouped[g].length === 0 ? null : (
               <div key={g} className="mb-2.5 last:mb-0">
                 <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
                   {g === 'pinned' && <Pin className="h-3 w-3" />}
-                  {g === 'today' ? '今天' : g === 'yesterday' ? '昨天' : g === 'week' ? '本周' : '置顶'}
+                  {g === 'today' ? '今天' : g === 'yesterday' ? '昨天' : g === 'week' ? '本周' : g === 'earlier' ? '更早' : '置顶'}
                   {g === 'pinned' && <Badge tone="brand" className="text-[9px] ml-auto">置顶</Badge>}
                 </div>
                 {grouped[g].map((s) => {
@@ -716,7 +768,7 @@ export default function Copilot() {
               </div>
             )
           )}
-          {Object.keys(chat.state.sessions).length === 0 && (
+          {filteredSessions.length === 0 && (
             <div className="text-center text-xs text-[var(--text-muted)] py-8">
               <Bot className="h-8 w-8 mx-auto mb-2 opacity-30" />
               还没有会话，点'新会话'开始
@@ -772,7 +824,7 @@ export default function Copilot() {
                 <div className="copilot-conversation-intro flex flex-col items-center gap-2 pt-6 pb-2" aria-label="会话安全与审计状态">
                   <div className="flex w-full items-center gap-3">
                     <div className="flex-1 h-px bg-gradient-to-r from-transparent to-[var(--border)]" />
-                    <span className="text-[10px] text-[var(--text-muted)] font-mono tabular-nums">{new Date(currentSession.createdAt).toLocaleDateString('zh-CN')}</span>
+                    <span className="text-[10px] text-[var(--text-muted)] font-mono tabular-nums">{formatShanghaiDate(currentSession.createdAt)}</span>
                     <div className="flex-1 h-px bg-gradient-to-l from-transparent to-[var(--border)]" />
                   </div>
                   <div className="copilot-conversation-intro__security inline-flex items-center gap-1.5 rounded-full border border-[var(--border)] bg-[var(--surface-1)] px-2.5 py-0.5 text-[10px] text-[var(--text-muted)]">
@@ -794,7 +846,7 @@ export default function Copilot() {
                       setExpandedReasoning={setExpandedReasoning}
                       expandedApproval={expandedApproval}
                       setExpandedApproval={setExpandedApproval}
-                      onApprove={(mid) => setShowApproval(mid)}
+                      onApprove={(mid) => setShowApproval({ messageId: mid, signerIndex: 0 })}
                       onCitation={(citation) => openCitation(citation, m.id)}
                       onRetry={(name) => chat.regenerate(m.id)}
                       onCopy={copyMessage}
@@ -809,8 +861,9 @@ export default function Copilot() {
                           setFeedbackOpen(mid);
                         }
                       }}
-                      onApproveSigner={(mid, idx) => chat.approve(mid, idx)}
+                      onApproveSigner={(mid, signerIndex) => setShowApproval({ messageId: mid, signerIndex })}
                       onRequestReject={(mid, idx) => setRejectionReason({ mid, idx, open: true })}
+                      currentUser={currentUser}
                       hoverMsgId={hoverMsgId}
                       setHoverMsgId={setHoverMsgId}
                       copiedId={copiedId}
@@ -1248,7 +1301,7 @@ export default function Copilot() {
                   <div className="copilot-agent-details__eyebrow">{contextSelection.scope === 'message' ? '消息上下文' : '会话上下文'}</div>
                   <div className="mt-0.5 truncate text-sm font-semibold text-[var(--text)]">{workbench.title}</div>
                   <div className="mt-0.5 truncate text-[11px] text-[var(--text-muted)]">
-                    {contextSelection.scope === 'message' && selectedContextMessage ? `来源消息 · ${selectedContextMessage.createdAt.slice(11, 16)}` : `下一步：${contextSummary.nextAction}`}
+                    {contextSelection.scope === 'message' && selectedContextMessage ? `来源消息 · ${formatShanghaiTime(selectedContextMessage.createdAt)}` : `下一步：${contextSummary.nextAction}`}
                   </div>
                 </div>
               </div>
@@ -1426,12 +1479,27 @@ export default function Copilot() {
 
       <DualSignModal
         open={!!showApproval}
-        title="写操作 · 等保 3 双签"
+        title={showApproval && currentSession ? (() => {
+          const request = currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest;
+          const signer = request?.signers[showApproval.signerIndex];
+          return `${signer?.name ?? '待签人'} · ${request?.action ?? '受控写操作'}`;
+        })() : '写操作 · 等保 3 双签'}
         description="执行 CONFIG SET maxmemory 16GB + volatile-lru"
+        currentIdentity={currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : null}
+        targetSigner={showApproval && currentSession ? currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest?.signers[showApproval.signerIndex] : undefined}
+        canApprove={!!(showApproval && currentUser && currentSession && (() => {
+          const signer = currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest?.signers[showApproval.signerIndex];
+          const expectedRoles: Record<Signer['role'], string> = { operator: 'user', auditor: 'auditor', approver: 'admin' };
+          return signer && !signer.signed && signer.userId === currentUser.id && expectedRoles[signer.role] === currentUser.role;
+        })())}
+        eligibilityMessage={showApproval && currentSession ? (() => {
+          const signer = currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest?.signers[showApproval.signerIndex];
+          return signer ? `仅待签人 ${signer.name}（${signer.role === 'auditor' ? '审计复核' : signer.role === 'operator' ? '执行复核' : '变更审批'}）可签发。` : '当前审批席位不可用，请刷新后重试。';
+        })() : '当前审批席位不可用，请刷新后重试。'}
         onClose={() => setShowApproval(null)}
-        onApprove={() => {
-          if (showApproval) chat.approveSign(showApproval);
-          setShowApproval(null);
+        onApprove={async () => {
+          if (!showApproval) throw new Error('当前审批席位不可用，请刷新后重试。');
+          await chat.approve(showApproval.messageId, showApproval.signerIndex);
         }}
       />
       <DebugPanel
@@ -1600,7 +1668,7 @@ function MessageBubble({
   expandedReasoning, setExpandedReasoning, expandedApproval, setExpandedApproval,
   onApprove, onCitation, onRetry, onCopy, onRegenerate, onDelete, onRetryMessage, onFeedback,
   onApproveSigner, onRequestReject, onEdit,
-  hoverMsgId, setHoverMsgId, copiedId, agentName, onOpenContext, selectedContextMessageId, messageRef,
+  hoverMsgId, setHoverMsgId, copiedId, agentName, onOpenContext, selectedContextMessageId, messageRef, currentUser,
 }: {
   m: ChatMessageEx;
   expandedThinking: Record<string, boolean>;
@@ -1629,6 +1697,7 @@ function MessageBubble({
   onOpenContext: (tab: WorkbenchContextTab, messageId?: string) => void;
   selectedContextMessageId?: string;
   messageRef?: (element: HTMLDivElement | null) => void;
+  currentUser: { id: string; name: string; role: 'user' | 'admin' | 'auditor' } | null;
 }) {
   const isUser = m.role === 'user';
   const isTool = m.role === 'tool';
@@ -1636,6 +1705,8 @@ function MessageBubble({
   const isStreaming = m.status === 'streaming';
   const agentDisplayName = agentName ?? '故障自愈';
   const needsDecision = !isUser && /CVE|高危|高风险|影响资产/.test(m.content ?? '');
+  const expectedPlatformRole: Record<Signer['role'], 'user' | 'admin' | 'auditor'> = { operator: 'user', approver: 'admin', auditor: 'auditor' };
+  const canSign = (signer: Signer) => !!currentUser && signer.userId === currentUser.id && expectedPlatformRole[signer.role] === currentUser.role;
 
   return (
     <div
@@ -1672,7 +1743,7 @@ function MessageBubble({
             </span>
           )}
           {!isUser && m.metrics?.ttftMs !== undefined && <details className="text-[10px] text-[var(--text-muted)]"><summary className="cursor-pointer">运行详情</summary><span className="font-mono">TTFT {m.metrics.ttftMs}ms · {m.metrics.durationMs ? `${(m.metrics.durationMs / 1000).toFixed(1)}s` : ''}{m.metrics.model ? ` · ${m.metrics.model}` : ''}</span></details>}
-          <span className="text-[10px] text-[var(--text-muted)] font-mono tabular-nums" title={m.createdAt}>{m.createdAt.slice(11, 16)}</span>
+          <span className="text-[10px] text-[var(--text-muted)] font-mono tabular-nums" title={m.createdAt}>{formatShanghaiTime(m.createdAt)}</span>
           {isTool && <Badge tone="warn" className="text-[9px]">工具</Badge>}
           {m.approvalRequest && <Badge tone="error" className="text-[9px]">写操作</Badge>}
         </div>
@@ -1954,14 +2025,14 @@ function MessageBubble({
               <div className="flex gap-1.5 flex-wrap">
                 {m.approvalRequest.signers.map((s, i) => (
                   !s.signed && (
-                    <Button key={i} size="sm" variant="danger" onClick={() => onApproveSigner(m.id, i)}>
-                      <ShieldCheck className="h-3 w-3" />批准（{s.name}）
+                    <Button key={i} size="sm" variant={canSign(s) ? 'danger' : 'secondary'} disabled={!canSign(s)} title={canSign(s) ? '使用当前登录身份签发' : `仅 ${s.name} 可签发`} onClick={() => onApproveSigner(m.id, i)}>
+                      <ShieldCheck className="h-3 w-3" />{canSign(s) ? `批准（${s.name}）` : `待 ${s.name} 签发`}
                     </Button>
                   )
                 ))}
-                {m.approvalRequest.signers.some((s) => !s.signed) && (
+                {m.approvalRequest.signers.some((s) => !s.signed && canSign(s)) && (
                   <Button size="sm" variant="secondary" onClick={() => {
-                    const idx = m.approvalRequest!.signers.findIndex((s) => !s.signed);
+                    const idx = m.approvalRequest!.signers.findIndex((s) => !s.signed && canSign(s));
                     if (idx >= 0) onRequestReject(m.id, idx);
                   }}>
                     <X className="h-3 w-3" />拒绝
