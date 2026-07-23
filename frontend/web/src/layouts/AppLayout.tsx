@@ -11,7 +11,7 @@ import {
   BookOpen, Wrench, Brain, BrainCircuit, Send,
   Menu, Settings2, Languages, Sun, Moon,
   LogOut, ChevronDown, X, CheckCircle2,
-  Shield, ShieldAlert, ScrollText,
+  Shield, ShieldAlert, ScrollText, Sparkles,
 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { useUiStore } from '@/stores/uiStore';
@@ -20,6 +20,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { Avatar, Badge } from '@de/web-ui';
 import { cn } from '@de/web-utils';
 import { useApiQuery } from '@/services/query';
+import { OnboardingGuide } from '@/features/onboarding/OnboardingGuide';
 import type { Permission, Workspace } from '@de/web-types';
 
 // 业务导航按工作场景分组；Settings / Workspace 移到左下角用户菜单。
@@ -69,10 +70,27 @@ export function AppLayout() {
   const { current, setCurrent, setList } = useWorkspaceStore();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
 
   const { data: workspaces } = useApiQuery<Workspace[]>(['workspaces'], '/api/workspaces');
+  const onboardingStorageKey = user ? `de-onboarding-completed:v1:${user.id}` : null;
+
+  // 引导仅对每个账号的首次登录展示；刷新或后续登录不重复打扰用户。
+  useEffect(() => {
+    if (!onboardingStorageKey) {
+      setOnboardingOpen(false);
+      return;
+    }
+    setOnboardingOpen(localStorage.getItem(onboardingStorageKey) !== 'true');
+  }, [onboardingStorageKey]);
+
+  const closeOnboarding = () => {
+    if (onboardingStorageKey) localStorage.setItem(onboardingStorageKey, 'true');
+    setOnboardingOpen(false);
+  };
+
   useEffect(() => {
     if (workspaces && workspaces.length) {
       setList(workspaces);
@@ -304,6 +322,7 @@ export function AppLayout() {
                   <span className="user-menu__value">{current?.name ?? 'ACME'}</span>
                   <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                 </button>}
+                <UserMenuItem icon={Sparkles} label="启用向导" onClick={() => { setUserMenuOpen(false); setOnboardingOpen(true); }} />
                 <button
                   className="user-menu__item"
                   onClick={() => { setLocale(locale === 'zh-CN' ? 'en-US' : 'zh-CN'); setUserMenuOpen(false); }}
@@ -348,6 +367,7 @@ export function AppLayout() {
       <main className={cn('row-start-2 col-span-2 min-w-0 bg-[var(--bg-elevated)] lg:col-start-2 lg:col-span-1', location.pathname.startsWith('/workflows') || location.pathname.startsWith('/agents') || location.pathname.startsWith('/copilot') ? 'overflow-hidden' : 'overflow-y-auto')}>
         <Outlet />
       </main>
+      <OnboardingGuide open={onboardingOpen} onClose={closeOnboarding} />
     </div>
   );
 }

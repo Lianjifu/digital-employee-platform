@@ -267,7 +267,7 @@ export default function Home() {
         </Button>
         {isAdministrator && <>
           <Button size="sm" variant="secondary" onClick={() => navigate('/agents')}>
-            <Bot className="h-3.5 w-3.5" />智能体
+            <Bot className="h-3.5 w-3.5" />数字员工
           </Button>
           <Button size="sm" variant="ghost" onClick={() => navigate('/workflows')}>
             <Workflow className="h-3.5 w-3.5" />工作流
@@ -297,10 +297,10 @@ export default function Home() {
           <KpiCard tone="brand" label="工作区任务" value={tcTotal} unit="项" sparkline={[tc.todo, tc.doing, tc.review, tc.done]} prev={`${inProgress.length} 进行中 · ${tc.done} 已完成`} />
         </button>
         <button type="button" onClick={() => navigate('/agents')} className="block cursor-pointer group text-left w-full">
-          <KpiCard tone="success" label="系统健康度" value={healthScore == null ? '--' : healthScore} unit={healthScore == null ? undefined : '%'} sparkline={healthData.slice(-7).map((item: any) => item.health)} prev={`${agentSummary?.healthy ?? 0}/${agentCount} Agent 健康`} />
+          <KpiCard tone="success" label="系统健康度" value={healthScore == null ? '--' : healthScore} unit={healthScore == null ? undefined : '%'} sparkline={healthData.slice(-7).map((item: any) => item.health)} prev={`${agentSummary?.healthy ?? 0}/${agentCount} 个执行内核健康`} />
         </button>
         <button type="button" onClick={() => navigate('/agents')} className="block cursor-pointer group text-left w-full">
-          <KpiCard tone="success" label="AI 调用量" value={(agentSummary?.total ?? 0).toLocaleString()} unit="次/日" sparkline={Object.values(extra?.agent7dTrend ?? {}).slice(0, 1).flat() as number[]} prev={`${agentSummary?.healthy ?? 0} 健康 Agent · ${agentSummary?.warning ?? 0} 告警`} />
+          <KpiCard tone="success" label="数字员工调用" value={(agentSummary?.total ?? 0).toLocaleString()} unit="次/日" sparkline={Object.values(extra?.agent7dTrend ?? {}).slice(0, 1).flat() as number[]} prev={`${agentSummary?.healthy ?? 0} 个运行稳定 · ${agentSummary?.warning ?? 0} 项告警`} />
         </button>
         <button type="button" onClick={() => navigate('/models')} className="block cursor-pointer group text-left w-full">
           <KpiCard tone="purple" label="Token 用量" value={metrics?.tokenUsage?.total ?? '--'} unit="tokens" sparkline={extra?.costMonth?.daily ?? []} prev={`${metrics?.tokenUsage?.input ?? '--'} 输入 / ${metrics?.tokenUsage?.output ?? '--'} 输出`} />
@@ -515,26 +515,26 @@ export default function Home() {
         />
       </div>
 
-      {/* ============ 第二行：Agent 状态 + 团队成员 + 建议 ============ */}
+      {/* ============ 第二行：数字员工状态 + 团队成员 + 建议 ============ */}
       {isAdministrator && <div className="home-lists px-6 md:px-8 pb-6 grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Agent 调用趋势（7 天） */}
+        {/* 数字员工调用趋势（7 天） */}
         <div className="list-card agent-trend-card">
           <div className="list-card__header">
             <div>
               <div className="list-card__title">
-                <Bot className="h-3.5 w-3.5" />Agent 调用趋势（7 天）
+                <Bot className="h-3.5 w-3.5" />数字员工调用趋势（7 天）
               </div>
-              <div className="agent-trend-card__subtitle">按各 Agent 峰值归一化，查看相对变化</div>
+              <div className="agent-trend-card__subtitle">按各数字员工峰值归一化，查看相对变化</div>
             </div>
             <Link to="/agents" className="chart-card__action">管理 <ArrowRight className="h-3.5 w-3.5" /></Link>
           </div>
           {Object.entries(extra?.agent7dTrend ?? {}).length === 0 ? (
-            <EmptyState icon={BarChart3} title="暂无 Agent 趋势数据" />
+            <EmptyState icon={BarChart3} title="暂无数字员工趋势数据" />
           ) : (() => {
             const agentTrend = buildAgentTrendData(extra?.agent7dTrend ?? {});
             return (
               <>
-                <div className="agent-trend-chart" aria-label="Agent 最近七天相对调用趋势">
+                <div className="agent-trend-chart" aria-label="数字员工最近七天相对调用趋势">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={agentTrend.rows} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
                       <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
@@ -583,7 +583,7 @@ export default function Home() {
                   <summary>查看原始调用量</summary>
                   <div className="agent-trend-table-wrap">
                     <table className="agent-trend-table">
-                      <thead><tr><th>Agent</th>{agentTrend.rows.map((row) => <th key={String(row.day)}>{row.day}</th>)}<th>7 日总量</th></tr></thead>
+                      <thead><tr><th>数字员工</th>{agentTrend.rows.map((row) => <th key={String(row.day)}>{row.day}</th>)}<th>7 日总量</th></tr></thead>
                       <tbody>{agentTrend.agents.map((agent) => {
                         const values = extra?.agent7dTrend?.[agent] ?? [];
                         return <tr key={agent}><th>{agent}</th>{agentTrend.rows.map((row, index) => <td key={`${agent}-${row.day}`}>{(values[index] ?? 0).toLocaleString()}</td>)}<td>{values.reduce((sum: number, value: number) => sum + value, 0).toLocaleString()}</td></tr>;

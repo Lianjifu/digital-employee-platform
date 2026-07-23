@@ -12,7 +12,7 @@ const Home = lazy(() => import('./pages/Home'));
 const Copilot = lazy(() => import('./pages/Copilot'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 const Workspaces = lazy(() => import('./pages/Workspaces'));
-const Agents = lazy(() => import('./pages/Agents'));
+const DigitalEmployees = lazy(() => import('./pages/DigitalEmployees'));
 const Workflows = lazy(() => import('./pages/Workflows'));
 const Knowledge = lazy(() => import('./pages/Knowledge'));
 const Memory = lazy(() => import('./pages/Memory'));
@@ -54,7 +54,8 @@ export default function App() {
             <Route path="/copilot/:id" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Copilot /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/tasks" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Tasks /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/workspaces" element={<ProtectedRoute roles={['admin']}><ErrorBoundary><Workspaces /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/agents" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Agents /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/agents" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><DigitalEmployees /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/digital-employees" element={<Navigate to="/agents" replace />} />
             <Route path="/workflows" element={<ProtectedRoute permission="workflow.read" roles={['user', 'admin']}><ErrorBoundary><Workflows /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/knowledge" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Knowledge /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/memory" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Memory /></ErrorBoundary></ProtectedRoute>} />

@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import { Button } from '@de/web-ui';
 
-export type ModalSize = 'sm' | 'md' | 'lg';
+export type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
 
 export interface ModalProps {
   open: boolean;
@@ -20,6 +20,7 @@ const SIZE_CLASS: Record<ModalSize, string> = {
   sm: 'max-w-md',
   md: 'max-w-xl',
   lg: 'max-w-3xl',
+  xl: 'max-w-6xl',
 };
 
 /**

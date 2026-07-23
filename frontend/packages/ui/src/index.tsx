@@ -193,6 +193,7 @@ export function Separator({ className }: { className?: string }) {
 
 // ============ Avatar ============
 export function Avatar({ name, src, size = 28, className }: { name: string; src?: string; size?: number; className?: string }) {
+  const [imageFailed, setImageFailed] = useState(false);
   const initial = name?.[0]?.toUpperCase() ?? '?';
   const hue = Array.from(name || '').reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0);
   const bg = `linear-gradient(135deg, hsl(${Math.abs(hue) % 360}, 65%, 55%), hsl(${(Math.abs(hue) + 60) % 360}, 65%, 50%))`;
@@ -201,7 +202,7 @@ export function Avatar({ name, src, size = 28, className }: { name: string; src?
       className={cn('inline-flex shrink-0 items-center justify-center rounded-full text-white font-semibold shadow-sm', className)}
       style={{ width: size, height: size, background: bg, fontSize: size * 0.42 }}
     >
-      {src ? <img src={src} alt={name} className="h-full w-full rounded-full object-cover" /> : initial}
+      {src && !imageFailed ? <img src={src} alt={name} onError={() => setImageFailed(true)} className="h-full w-full rounded-full object-cover" /> : initial}
     </div>
   );
 }

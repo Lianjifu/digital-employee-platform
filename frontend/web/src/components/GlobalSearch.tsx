@@ -1,5 +1,5 @@
 /**
- * 全局搜索（⌘K）— 任务 / Agent / 文档
+ * 全局搜索（⌘K）— 任务 / 数字员工 / 文档
  */
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -9,9 +9,9 @@ import {
   Search, FileText, Bot, ListChecks, ArrowRight, Sparkles, X, CornerDownLeft,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
-import type { Task, Agent, KnowledgeDoc } from '@de/web-types';
+import type { Task, DigitalEmployee, KnowledgeDoc } from '@de/web-types';
 
-type Result = { type: 'task' | 'agent' | 'doc'; id: string; title: string; subtitle?: string; to: string; meta?: string };
+type Result = { type: 'task' | 'employee' | 'doc'; id: string; title: string; subtitle?: string; to: string; meta?: string };
 
 export function GlobalSearch() {
   const [open, setOpen] = useState(false);
@@ -21,7 +21,7 @@ export function GlobalSearch() {
   const navigate = useNavigate();
 
   const { data: tasks = [] } = useApiQuery<Task[]>(['search-tasks'], '/api/tasks');
-  const { data: agents = [] } = useApiQuery<Agent[]>(['search-agents'], '/api/agents');
+  const { data: employees = [] } = useApiQuery<DigitalEmployee[]>(['search-digital-employees'], '/api/digital-employees');
   const { data: docs = [] } = useApiQuery<KnowledgeDoc[]>(['search-docs'], '/api/knowledge/docs');
 
   // ⌘K / Ctrl+K 全局打开
@@ -51,7 +51,7 @@ export function GlobalSearch() {
     if (!q.trim()) {
       return [
         ...tasks.slice(0, 3).map((t) => ({ type: 'task' as const, id: t.id, title: t.title, subtitle: t.code, to: '/tasks', meta: t.assignee })),
-        ...agents.slice(0, 3).map((a) => ({ type: 'agent' as const, id: a.id, title: a.name, subtitle: a.description, to: '/agents', meta: `v${a.version}` })),
+        ...employees.slice(0, 3).map((employee) => ({ type: 'employee' as const, id: employee.id, title: employee.name, subtitle: employee.role, to: '/agents', meta: `${employee.department} · v${employee.version}` })),
         ...docs.slice(0, 3).map((d) => ({ type: 'doc' as const, id: d.id, title: d.title, subtitle: d.source, to: '/knowledge', meta: `${d.chunks} chunks` })),
       ];
     }
@@ -62,9 +62,9 @@ export function GlobalSearch() {
         out.push({ type: 'task', id: t.id, title: t.title, subtitle: t.code, to: '/tasks', meta: t.assignee });
       }
     });
-    agents.forEach((a) => {
-      if (a.name.toLowerCase().includes(ql) || a.description.toLowerCase().includes(ql)) {
-        out.push({ type: 'agent', id: a.id, title: a.name, subtitle: a.description, to: '/agents', meta: `v${a.version}` });
+    employees.forEach((employee) => {
+      if ([employee.name, employee.role, employee.department, employee.description].join(' ').toLowerCase().includes(ql)) {
+        out.push({ type: 'employee', id: employee.id, title: employee.name, subtitle: employee.role, to: '/agents', meta: `${employee.department} · v${employee.version}` });
       }
     });
     docs.forEach((d) => {
@@ -73,7 +73,7 @@ export function GlobalSearch() {
       }
     });
     return out.slice(0, 20);
-  }, [q, tasks, agents, docs]);
+  }, [q, tasks, employees, docs]);
 
   // 键盘上下选择
   useEffect(() => {
@@ -104,7 +104,7 @@ export function GlobalSearch() {
         className="relative flex-1 max-w-md h-9 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] pl-9 pr-12 text-left text-sm text-[var(--text-muted)] hover:border-[var(--brand)] transition-colors"
       >
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4" />
-        <span className="leading-9">搜索任务、Agent、文档...</span>
+        <span className="leading-9">搜索任务、数字员工、文档...</span>
         <kbd className="absolute right-2 top-1/2 -translate-y-1/2 rounded bg-[var(--bg)] px-1.5 py-0.5 text-[10px] font-mono border border-[var(--border)]">
           ⌘K
         </kbd>
@@ -129,7 +129,7 @@ export function GlobalSearch() {
                 ref={inputRef}
                 value={q}
                 onChange={(e) => { setQ(e.target.value); setActive(0); }}
-                placeholder="搜索任务、Agent、文档..."
+                placeholder="搜索任务、数字员工、文档..."
                 className="flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--text-muted)]"
                 aria-label="搜索输入"
               />
@@ -158,11 +158,11 @@ export function GlobalSearch() {
                     <div className={cn(
                       'grid h-8 w-8 place-items-center rounded-md shrink-0',
                       r.type === 'task' ? 'bg-[var(--info-bg)] text-[var(--info)]' :
-                      r.type === 'agent' ? 'bg-[var(--brand-light)] text-[var(--brand)]' :
+                      r.type === 'employee' ? 'bg-[var(--brand-light)] text-[var(--brand)]' :
                       'bg-[var(--purple-bg)] text-[var(--purple)]',
                     )}>
                       {r.type === 'task' ? <ListChecks className="h-4 w-4" /> :
-                       r.type === 'agent' ? <Bot className="h-4 w-4" /> :
+                       r.type === 'employee' ? <Bot className="h-4 w-4" /> :
                        <FileText className="h-4 w-4" />}
                     </div>
                     <div className="flex-1 min-w-0">

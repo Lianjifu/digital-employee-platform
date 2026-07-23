@@ -300,6 +300,48 @@ export interface Agent {
   isStarred?: boolean;
 }
 
+// ============ 数字员工 ============
+/**
+ * 数字员工是面向业务岗位的一等对象；Agent 仅是其底层执行内核之一。
+ * 业务身份、职责边界、受控能力、上岗状态和运行证据均收敛在此对象。
+ */
+export type DigitalEmployeeLifecycle = 'draft' | 'testing' | 'pending_approval' | 'active' | 'paused' | 'quarantined';
+export type DigitalEmployeeRisk = 'low' | 'medium' | 'high';
+
+export interface DigitalEmployeeCapabilities {
+  agentId?: ID;
+  model: string;
+  knowledge: string[];
+  skills: string[];
+  tools: string[];
+  workflows: string[];
+  channels: string[];
+}
+
+export interface DigitalEmployee {
+  id: ID;
+  workspaceId: ID;
+  name: string;
+  role: string;
+  department: string;
+  description: string;
+  owner: string;
+  escalationOwner: string;
+  serviceObject: string;
+  version: string;
+  environment: WorkspaceEnvironmentKind;
+  lifecycle: DigitalEmployeeLifecycle;
+  risk: DigitalEmployeeRisk;
+  responsibilities: string[];
+  prohibitedActions: string[];
+  capabilities: DigitalEmployeeCapabilities;
+  memoryPolicy: { shortTermHours: number; workingDays: number; longTermCadence: 'daily' | 'weekly'; knowledgePromotion: 'approval_required' | 'disabled' };
+  runtime: { calls24h: number; successRate: number; p95Ms: number; costToday: number; handoffs24h: number; anomalies: number };
+  evaluation: { status: 'not_started' | 'passed' | 'failed' | 'running'; score?: number; lastRunAt?: ISODate };
+  release: { status: 'not_released' | 'pending_approval' | 'released'; releasedAt?: ISODate; approver?: string };
+  updatedAt: ISODate;
+}
+
 // ============ 工作流 P6 ============
 export type WorkflowNodeKind =
   | 'trigger'
