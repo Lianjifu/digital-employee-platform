@@ -19,7 +19,8 @@ import {
   Save, List, LayoutGrid, Power, ShieldX, ArrowUpCircle,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
-import type { Skill, SkillAuditEvent, SkillImpactReport, SkillInstallPreflight, SkillPermission, SkillGovernancePolicy, SkillLifecycleStatus, SkillIntegration, SkillRuntimeHealth, SkillGovernanceIncident, SkillGovernanceEvent } from '@de/web-types';
+import type { Skill, SkillAuditEvent, SkillImpactReport, SkillInstallPreflight, SkillPermission, SkillGovernancePolicy, SkillLifecycleStatus, SkillIntegration, SkillRuntimeHealth, SkillGovernanceIncident, SkillGovernanceEvent, WorkflowSkill } from '@de/web-types';
+import { Link } from 'react-router-dom';
 import { Modal, Drawer, ConfirmDialog, EmptyState, Sparkline } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
 import { useT } from '@/i18n';
@@ -88,7 +89,7 @@ type ModalKind = 'importSkill' | 'configureMcp' | 'configureTool' | 'uninstall' 
 export default function Skills() {
   const { t } = useT();
   const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
-  const [tab, setTab] = useState<'workspace' | 'store' | 'integration' | 'governance'>('workspace');
+  const [tab, setTab] = useState<'workspace' | 'store' | 'atomic' | 'workflowSkills' | 'integration' | 'governance'>('workspace');
   const [typeFilters, setTypeFilters] = useState<Record<'workspace' | 'store' | 'integration' | 'governance', 'all' | Skill['kind']>>({ workspace: 'all', store: 'all', integration: 'all', governance: 'all' });
   const [lifecycleFilter, setLifecycleFilter] = useState<'all' | SkillLifecycleStatus>('all');
   const [viewMode, setViewMode] = useState<'list' | 'cards'>('list');
@@ -121,6 +122,7 @@ export default function Skills() {
   const { data: apiCatalog = [] } = useApiQuery<Skill[]>(['skills', 'catalog'], '/api/skills/catalog');
   const { data: availableAgents = [] } = useApiQuery<Array<{ id: string; name: string; status: string }>>(['agents', 'skill-binding'], '/api/agents');
   const { data: availableWorkflows = [] } = useApiQuery<Array<{ id: string; name: string; version: string }>>(['workflows', 'skill-binding'], '/api/workflows');
+  const { data: workflowSkills = [] } = useApiQuery<WorkflowSkill[]>(['workflow-skills'], '/api/workflow-skills');
 
   // 列表以 API 数据为准；页面仅保留性能展示的补充字段，避免业务事实分叉。
   useEffect(() => {
@@ -141,11 +143,12 @@ export default function Skills() {
   // 不同 tab 的数据源
   const tabList: SkillRow[] = useMemo(() => {
     if (tab === 'workspace') return installed;
+    if (tab === 'atomic') return installed.filter((skill) => skill.kind === 'skill');
     if (tab === 'integration') return installed.filter((skill) => skill.kind === 'mcp' || skill.kind === 'tool');
     if (tab === 'store') return (apiCatalog.length ? apiCatalog : STORE_LIST).map((skill: any) => ({ calls: '—', perf: { calls24h: 0, errorRate: 0, p95Ms: 0 }, ...skill })) as SkillRow[];
     return installed;
-  }, [tab, installed]);
-  const typeFilter = typeFilters[tab];
+  }, [tab, installed, apiCatalog]);
+  const typeFilter = tab === 'workspace' || tab === 'store' || tab === 'integration' || tab === 'governance' ? typeFilters[tab] : 'all';
 
   const filtered = useMemo(() => {
     return tabList
@@ -357,21 +360,44 @@ export default function Skills() {
             onChange={(k) => setTab(k as any)}
             items={[
               { key: 'workspace', label: <>{t('module.skills.tabs.installed')} <Badge tone="brand" className="ml-1">{installed.length}</Badge></> },
-              { key: 'store', label: <>{t('module.skills.tabs.catalog')} <Badge tone="neutral" className="ml-1">{STORE_LIST.length}</Badge></> },
-              ...(isAdmin ? [{ key: 'integration', label: <>{t('module.skills.tabs.integration')} <Badge tone="purple" className="ml-1">{installed.filter((skill) => skill.kind !== 'skill').length}</Badge></> }, { key: 'governance', label: <>{t('module.skills.tabs.governance')} <Badge tone="info" className="ml-1">{installed.length}</Badge></> }] : []),
+              { key: 'store', label: <>{t('module.skills.tabs.catalog')} <Badge tone="neutral" className="ml-1">{(apiCatalog.length || STORE_LIST.length)}</Badge></> },
+              { key: 'atomic', label: <>{t('module.skills.tabs.atomic')} <Badge tone="info" className="ml-1">{installed.filter((s) => s.kind === 'skill').length}</Badge></> },
+              { key: 'workflowSkills', label: <>{t('module.skills.tabs.workflowSkills')} <Badge tone="purple" className="ml-1">{workflowSkills.length}</Badge></> },
+              ...(isAdmin ? [{ key: 'governance', label: <>{t('module.skills.tabs.governance')} <Badge tone="info" className="ml-1">{installed.length}</Badge></> }] : []),
             ]}
           />
         </div>
 
         <div className="skills-content-panel p-4 pb-8 sm:p-5 sm:pb-10">
-          {tab === 'integration' ? <IntegrationWorkspace onImport={() => setActiveModal('importSkill')} onMcp={() => setActiveModal('configureMcp')} onTool={() => setActiveModal('configureTool')} /> : tab === 'governance' ? <GovernanceWorkspace onOpenSkill={(id) => openSkillDetails(id)} /> : <>
+          {tab === 'workflowSkills' ? (
+            <section className="space-y-3">
+              <div className="rounded-xl border border-[var(--brand)]/25 bg-[var(--brand-light)]/35 px-4 py-3 text-xs leading-5 text-[var(--text-secondary)]">
+                流程技能来自「工作流程 → 发布技能」。此处只读展示已发布产物；装配请进入数字员工「能力装配」。
+                <div className="mt-2 flex gap-2">
+                  <Link to="/workflows" className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--brand)]">前往工作流程</Link>
+                  <Link to="/agents" className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--brand)]">数字员工装配</Link>
+                </div>
+              </div>
+              <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)]">
+                <div className="border-b border-[var(--border)] px-4 py-3"><h3 className="text-sm font-semibold">流程技能目录</h3><p className="mt-1 text-[11px] text-[var(--text-muted)]">{workflowSkills.length} 项 · 均回链流程版本</p></div>
+                <div className="divide-y divide-[var(--border)]">
+                  {workflowSkills.length ? workflowSkills.map((skill) => (
+                    <div key={skill.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                      <div className="min-w-0"><div className="flex items-center gap-2"><GitBranch className="h-3.5 w-3.5 text-[var(--brand)]" /><span className="text-sm font-medium">{skill.name}</span></div><p className="mt-1 text-[11px] text-[var(--text-muted)]">{skill.description}</p><p className="mt-1 font-mono text-[10px] text-[var(--text-muted)]">{skill.sourceWorkflowId} @ {skill.sourceVersionId}</p></div>
+                      <div className="flex items-center gap-2"><Badge tone={skill.status === 'published' ? 'success' : 'neutral'}>{skill.status === 'published' ? '已发布' : skill.status}</Badge>{skill.approvalRequired && <Badge tone="warn">需审批</Badge>}{skill.rollbackSupported && <Badge tone="info">可回滚</Badge>}</div>
+                    </div>
+                  )) : <EmptyState icon={GitBranch} title="暂无流程技能" description="在工作流程完成编排校验后，通过「发布技能」写入此处。" />}
+                </div>
+              </div>
+            </section>
+          ) : tab === 'integration' ? <IntegrationWorkspace onImport={() => setActiveModal('importSkill')} onMcp={() => setActiveModal('configureMcp')} onTool={() => setActiveModal('configureTool')} /> : tab === 'governance' ? <GovernanceWorkspace onOpenSkill={(id) => openSkillDetails(id)} /> : <>
           <div className="skills-directory-toolbar mb-4">
-            <span className="skills-directory-toolbar__title">{tab === 'store' ? '技能商店' : '技能列表'}</span>
-            <span>{tab === 'store' ? '安装前将执行发布方、签名、依赖与风险预检' : '选择能力后可分配给智能体或固定版本引用到工作流'}</span>
+            <span className="skills-directory-toolbar__title">{tab === 'store' ? '技能目录' : tab === 'atomic' ? '原子技能' : '启用清单'}</span>
+            <span>{tab === 'store' ? '安装前将执行发布方、签名、依赖与风险预检' : tab === 'atomic' ? '工具 / MCP / 可执行脚本等原子能力' : '选择能力后可分配给数字员工或固定版本引用'}</span>
             <Badge tone="neutral" className="ml-auto">{filtered.length} 项</Badge>
           </div>
           {tab === 'store' && <div className="mb-4 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="flex flex-wrap items-center gap-2"><div className="relative"><Search className="absolute left-2.5 top-1/2 h-3 w-3 -translate-y-1/2 text-[var(--text-muted)]" /><Input value={storeSearchQ} onChange={(event) => setStoreSearchQ(event.target.value)} placeholder="搜索技能、系统或发布方" className="h-8 w-56 pl-7 text-xs" /></div><div className="flex rounded-md bg-[var(--bg-elevated)] p-1">{(['all', 'skill', 'mcp', 'tool'] as const).map((kind) => <button key={kind} onClick={() => setTypeFilters((filters) => ({ ...filters, store: kind }))} className={cn('rounded px-2.5 py-1 text-[11px]', typeFilter === kind ? 'bg-[var(--surface-1)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)]')}>{kind === 'all' ? '全部类型' : kind.toUpperCase()}</button>)}</div><select value={storeRiskFilter} onChange={(event) => setStoreRiskFilter(event.target.value as typeof storeRiskFilter)} className="h-8 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-[11px]"><option value="all">全部风险</option><option value="low">低风险</option><option value="mid">中风险</option><option value="high">高风险</option></select><label className="ml-auto flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)]"><input type="checkbox" checked={certifiedOnly} onChange={(event) => setCertifiedOnly(event.target.checked)} className="accent-[var(--brand)]" />仅企业认证</label></div><p className="mt-2 text-[10px] text-[var(--text-muted)]">安装前将校验发布方、签名、依赖、权限与风险策略；不会自动绑定到智能体或工作流。</p></div>}
-          {tab === 'workspace' && <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3">
+          {(tab === 'workspace' || tab === 'atomic') && <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3">
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-[var(--text-muted)]" />
               <Input value={searchQ} onChange={(e) => setSearchQ(e.target.value)} placeholder="搜索技能..." className="h-8 pl-7 w-52 text-xs" />
@@ -382,7 +408,7 @@ export default function Skills() {
             <select value={lifecycleFilter} onChange={(event) => setLifecycleFilter(event.target.value as typeof lifecycleFilter)} className="h-8 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-[11px] text-[var(--text-secondary)]"><option value="all">全部状态</option><option value="enabled">已启用</option><option value="disabled">已暂停</option><option value="pending_approval">待审批</option><option value="quarantined">已隔离</option><option value="deprecated">已废弃</option></select>
             <div className="ml-auto flex overflow-hidden rounded-md border border-[var(--border)] bg-[var(--bg)]"><button type="button" aria-label="列表视图" onClick={() => setViewMode('list')} className={cn('grid h-8 w-8 place-items-center', viewMode === 'list' ? 'bg-[var(--brand-light)] text-[var(--brand)]' : 'text-[var(--text-muted)]')}><List className="h-3.5 w-3.5" /></button><button type="button" aria-label="卡片视图" onClick={() => setViewMode('cards')} className={cn('grid h-8 w-8 place-items-center', viewMode === 'cards' ? 'bg-[var(--brand-light)] text-[var(--brand)]' : 'text-[var(--text-muted)]')}><LayoutGrid className="h-3.5 w-3.5" /></button></div>
           </div>}
-          {tab === 'workspace' && viewMode === 'list' ? (
+          {(tab === 'workspace' || tab === 'atomic') && viewMode === 'list' ? (
             <div className="overflow-x-auto rounded-xl border border-[var(--border)] bg-[var(--surface-1)]">
               <table className="w-full min-w-[1080px] text-left text-xs">
                 <thead className="bg-[var(--bg-elevated)] text-[10px] font-medium text-[var(--text-muted)]"><tr><th className="px-4 py-3">技能资产</th><th className="px-3 py-3">状态 / 风险</th><th className="px-3 py-3">来源 / 责任</th><th className="px-3 py-3">版本</th><th className="px-3 py-3">引用</th><th className="px-3 py-3">最近验证</th><th className="px-4 py-3 text-right">操作</th></tr></thead>
@@ -398,7 +424,7 @@ export default function Skills() {
             />
           ) : (
             <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-              {(tab === 'workspace' ? pagedSkills : tab === 'store' ? pagedStoreSkills : filtered).map((s) => {
+              {(tab === 'workspace' || tab === 'atomic' ? pagedSkills : tab === 'store' ? pagedStoreSkills : filtered).map((s) => {
                 const meta = KIND_META[s.kind];
                 const profile = KIND_PROFILE[s.kind];
                 const Icon = meta.icon;

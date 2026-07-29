@@ -5,6 +5,9 @@
 import type {
   Agent,
   DigitalEmployee,
+  DigitalEmployeeConfigurationVersion,
+  DigitalEmployeeTemplate,
+  DigitalEmployeeTemplateAdoption,
   CapabilityBinding,
   AuditItem,
   Channel,
@@ -318,13 +321,72 @@ function homeExtraForWorkspace(workspaceId: string): HomeExtra {
 const homeAlertAcknowledgements = new Map<string, { acknowledgedAt: string; acknowledgedBy: string; acknowledgementNote: string }>();
 
 export const mockTasks: Task[] = [
-  { id: 't1', code: 'TSK-20260713-001', title: 'Redis 集群 OOM 自愈', priority: 'P0', status: 'in_progress', assignee: '王昊', agentId: 'a1', progress: { done: 4, total: 6 }, slaRemainingMin: -8, tags: ['redis', '生产', 'OOM'], createdAt: '2026-07-13T08:12:00Z', updatedAt: '2026-07-13T08:24:00Z' },
-  { id: 't2', code: 'TSK-20260713-002', title: 'K8s 节点扩容审批', priority: 'P1', status: 'review', assignee: '李婷', agentId: 'a2', progress: { done: 3, total: 4 }, slaRemainingMin: 32, tags: ['k8s', '扩容'], relatedTaskCode: 'INC-019', createdAt: '2026-07-13T07:55:00Z', updatedAt: '2026-07-13T08:20:00Z' },
-  { id: 't3', code: 'TSK-20260713-003', title: '威胁狩猎 - 横向移动检测', priority: 'P1', status: 'in_progress', assignee: '张睿', agentId: 'a5', progress: { done: 2, total: 5 }, slaRemainingMin: 120, tags: ['siem', 'edr'], createdAt: '2026-07-13T07:30:00Z', updatedAt: '2026-07-13T08:00:00Z' },
-  { id: 't4', code: 'TSK-20260713-004', title: '告警降噪 - 重复规则合并', priority: 'P2', status: 'in_progress', assignee: '陈雪', agentId: 'a6', progress: { done: 1, total: 3 }, slaRemainingMin: 240, tags: ['siem'], createdAt: '2026-07-13T06:40:00Z', updatedAt: '2026-07-13T07:50:00Z' },
-  { id: 't5', code: 'TSK-20260712-019', title: '漏洞修复 CVE-2026-3321', priority: 'P1', status: 'review', assignee: '赵明', agentId: 'a7', progress: { done: 5, total: 5 }, tags: ['cve', '安全'], createdAt: '2026-07-12T16:20:00Z', updatedAt: '2026-07-13T02:00:00Z' },
-  { id: 't6', code: 'TSK-20260712-018', title: '容量预测 - Q3 评估', priority: 'P3', status: 'completed', assignee: '周慧', agentId: 'a4', progress: { done: 4, total: 4 }, tags: ['容量'], createdAt: '2026-07-12T10:00:00Z', updatedAt: '2026-07-12T18:00:00Z' },
-  { id: 't7', code: 'TSK-20260712-017', title: '变更辅助 - 网关灰度', priority: 'P2', status: 'completed', assignee: '孙博', agentId: 'a3', progress: { done: 6, total: 6 }, tags: ['灰度'], createdAt: '2026-07-12T09:15:00Z', updatedAt: '2026-07-12T11:30:00Z' },
+  {
+    id: 't-dispatch-1', code: 'TSK-20260722-101', title: '本部门派工 · 告警降噪复核', priority: 'P1', status: 'pending',
+    assignee: '王昊', digitalEmployeeId: 'de-alert-ops', digitalEmployeeName: '告警运营专员', agentId: 'a1',
+    coordinatorId: 'de-it-head', coordinatorName: '信息技术部负责人', dispatchKind: 'assign', assistStatus: 'not_required',
+    progress: { done: 0, total: 3 }, slaRemainingMin: 180, tags: ['派工', '告警'],
+    description: '北辰向本部门观星派工：复核重复告警合并建议并回报值班影响。',
+    createdAt: '2026-07-22T08:00:00Z', updatedAt: '2026-07-22T08:00:00Z',
+  },
+  {
+    id: 't-assist-1', code: 'TSK-20260722-102', title: '跨部门协办 · 发布窗口费用核验', priority: 'P2', status: 'review',
+    assignee: '钱财', digitalEmployeeId: 'de-expense-ops', digitalEmployeeName: '费用核算专员', agentId: 'a2',
+    coordinatorId: 'de-it-head', coordinatorName: '信息技术部负责人', dispatchKind: 'assist',
+    collaboratorIds: ['de-expense-ops'], collaboratorNames: ['费用核算专员'], assistStatus: 'pending',
+    progress: { done: 0, total: 2 }, slaRemainingMin: 360, tags: ['协办', '财务', '发布'],
+    description: '北辰请求财务部精算协助核验灰度发布相关费用单据；待对方确认协办后执行。',
+    createdAt: '2026-07-22T08:10:00Z', updatedAt: '2026-07-22T08:10:00Z',
+  },
+  {
+    id: 't1', code: 'TSK-20260713-001', title: '与夜航协同处置 Redis OOM', priority: 'P0', status: 'in_progress',
+    assignee: '王昊', digitalEmployeeId: 'de-sre', digitalEmployeeName: 'SRE 故障处置专员', agentId: 'a1',
+    progress: { done: 4, total: 6 }, slaRemainingMin: -8, tags: ['redis', '生产', 'OOM'],
+    description: 'prod-redis-01 触发 maxmemory；需与在岗专家夜航确认扩容方案并完成双重审批后执行。',
+    createdAt: '2026-07-13T08:12:00Z', updatedAt: '2026-07-13T08:24:00Z',
+  },
+  {
+    id: 't2', code: 'TSK-20260713-002', title: 'K8s 节点扩容 · 待专家确认', priority: 'P1', status: 'review',
+    assignee: '李婷', digitalEmployeeId: 'de-change', digitalEmployeeName: '变更协同专员', agentId: 'a3',
+    progress: { done: 3, total: 4 }, slaRemainingMin: 32, tags: ['k8s', '扩容'], relatedTaskCode: 'INC-019',
+    description: '扩容影响 5 个服务；磐石已汇集风险，等待双重审批与负责人确认。',
+    createdAt: '2026-07-13T07:55:00Z', updatedAt: '2026-07-13T08:20:00Z',
+  },
+  {
+    id: 't3', code: 'TSK-20260713-003', title: '威胁狩猎 · 横向移动线索复核', priority: 'P1', status: 'in_progress',
+    assignee: '张睿', digitalEmployeeId: 'de-threat-hunt', digitalEmployeeName: '威胁狩猎专员', agentId: 'a5',
+    progress: { done: 2, total: 5 }, slaRemainingMin: 120, tags: ['siem', 'edr'],
+    description: '追影已关联 SIEM/EDR 线索，需安全分析师复核后决定是否升级响应。',
+    createdAt: '2026-07-13T07:30:00Z', updatedAt: '2026-07-13T08:00:00Z',
+  },
+  {
+    id: 't4', code: 'TSK-20260713-004', title: '告警降噪 · 重复规则合并建议', priority: 'P2', status: 'in_progress',
+    assignee: '陈雪', digitalEmployeeId: 'de-alert-ops', digitalEmployeeName: '告警运营专员', agentId: 'a1',
+    progress: { done: 1, total: 3 }, slaRemainingMin: 240, tags: ['siem'],
+    description: '观星归并重复规则后，由值班经理确认静默策略。',
+    createdAt: '2026-07-13T06:40:00Z', updatedAt: '2026-07-13T07:50:00Z',
+  },
+  {
+    id: 't5', code: 'TSK-20260712-019', title: '漏洞 CVE-2026-3321 · 修复协同', priority: 'P1', status: 'review',
+    assignee: '赵明', digitalEmployeeId: 'de-vulnerability', digitalEmployeeName: '漏洞响应专员', agentId: 'a5',
+    progress: { done: 5, total: 5 }, tags: ['cve', '安全'],
+    description: '破晓已完成影响分析；待安全负责人确认修复窗口。',
+    createdAt: '2026-07-12T16:20:00Z', updatedAt: '2026-07-13T02:00:00Z',
+  },
+  {
+    id: 't6', code: 'TSK-20260712-018', title: '容量预测 · Q3 评估结论', priority: 'P3', status: 'completed',
+    assignee: '周慧', digitalEmployeeId: 'de-capacity', digitalEmployeeName: '容量与性能专员', agentId: 'a3',
+    progress: { done: 4, total: 4 }, tags: ['容量'],
+    description: '衡山完成 Q3 评估，结论已交由平台运维负责人决策。',
+    createdAt: '2026-07-12T10:00:00Z', updatedAt: '2026-07-12T18:00:00Z',
+  },
+  {
+    id: 't7', code: 'TSK-20260712-017', title: '网关灰度发布 · 保障协同', priority: 'P2', status: 'completed',
+    assignee: '孙博', digitalEmployeeId: 'de-release-guard', digitalEmployeeName: '发布保障专员', agentId: 'a3',
+    progress: { done: 6, total: 6 }, tags: ['灰度'],
+    description: '守望完成灰度观察与回滚预案确认。',
+    createdAt: '2026-07-12T09:15:00Z', updatedAt: '2026-07-12T11:30:00Z',
+  },
 ];
 
 // 演示数据也必须经过工作区边界。真实服务端应由认证后的主体决定该字段。
@@ -342,29 +404,95 @@ type TaskSeed = Task | ControlledTask;
 
 const cloneTask = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
+const EMPLOYEE_BY_ID: Record<string, { name: string; role: string; agentId?: string }> = {
+  'de-sre': { name: '夜航', role: 'SRE 故障处置专员', agentId: 'a1' },
+  'de-it': { name: '青禾', role: 'IT 服务台专员', agentId: 'a2' },
+  'de-change': { name: '磐石', role: '变更协同专员', agentId: 'a3' },
+  'de-capacity': { name: '衡山', role: '容量与性能专员', agentId: 'a3' },
+  'de-alert-ops': { name: '观星', role: '告警运营专员', agentId: 'a1' },
+  'de-release-guard': { name: '守望', role: '发布保障专员', agentId: 'a3' },
+  'de-vulnerability': { name: '破晓', role: '漏洞响应专员', agentId: 'a5' },
+  'de-threat-hunt': { name: '追影', role: '威胁狩猎专员', agentId: 'a5' },
+  'de-secops': { name: '听潮', role: '安全事件分析专员', agentId: 'a5' },
+  'de-expense-ops': { name: '精算', role: '费用核算专员', agentId: 'a2' },
+  'de-it-head': { name: '北辰', role: '信息技术部负责人', agentId: 'a3' },
+  'de-compliance': { name: '明鉴', role: '安全合规核查专员', agentId: 'a5' },
+};
+
+const EMPLOYEE_BY_AGENT: Record<string, { id: string; name: string; role: string }> = {
+  a1: { id: 'de-sre', name: '夜航', role: 'SRE 故障处置专员' },
+  a2: { id: 'de-it', name: '青禾', role: 'IT 服务台专员' },
+  a3: { id: 'de-change', name: '磐石', role: '变更协同专员' },
+  a4: { id: 'de-capacity', name: '衡山', role: '容量与性能专员' },
+  a5: { id: 'de-secops', name: '听潮', role: '安全事件分析专员' },
+  a6: { id: 'de-alert-ops', name: '观星', role: '告警运营专员' },
+  a7: { id: 'de-vulnerability', name: '破晓', role: '漏洞响应专员' },
+};
+
+function resolveEmployeeFields(seed: Partial<Task>) {
+  if (seed.digitalEmployeeId) {
+    const known = EMPLOYEE_BY_ID[seed.digitalEmployeeId];
+    return {
+      digitalEmployeeId: seed.digitalEmployeeId,
+      digitalEmployeeName: seed.digitalEmployeeName ?? known?.role ?? known?.name,
+      agentId: seed.agentId ?? known?.agentId,
+    };
+  }
+  if (seed.agentId && EMPLOYEE_BY_AGENT[seed.agentId]) {
+    const mapped = EMPLOYEE_BY_AGENT[seed.agentId];
+    return { digitalEmployeeId: mapped.id, digitalEmployeeName: seed.digitalEmployeeName ?? mapped.role ?? mapped.name, agentId: seed.agentId };
+  }
+  return {
+    digitalEmployeeId: seed.digitalEmployeeId,
+    digitalEmployeeName: seed.digitalEmployeeName,
+    agentId: seed.agentId,
+  };
+}
+
 function controlledTask(seed: TaskSeed): ControlledTask {
   if ('lifecycleStage' in seed) return cloneTask(seed);
 
   const task = cloneTask(seed);
+  const employee = resolveEmployeeFields(task);
   const lifecycleStage = task.status === 'completed' ? 'completed'
     : task.status === 'review' ? 'human_action'
       : task.status === 'in_progress' ? 'running' : 'pending';
-  const approvalPending = task.id === 't2';
+  const approvalPending = task.id === 't2' || task.dispatchKind === 'assist' || task.assistStatus === 'pending';
+  const fromConversation = task.id === 't1' || task.id === 't7';
+  const fromAlert = task.id === 't4';
+  const fromDispatch = task.dispatchKind === 'assign' || task.dispatchKind === 'assist';
   return {
     ...task,
+    ...employee,
     lifecycleStage,
-    source: 'manual',
+    source: fromDispatch ? 'dispatch' : fromConversation ? 'conversation' : fromAlert ? 'alert' : 'manual',
     sla: {
       remainingMin: task.slaRemainingMin,
       risk: task.slaRemainingMin !== undefined && task.slaRemainingMin < 0 ? 'overdue' : 'none',
       escalated: false,
     },
-    execution: { retryCount: 0, paused: false },
+    execution: {
+      retryCount: 0,
+      paused: false,
+      currentStep: lifecycleStage === 'completed'
+        ? (fromConversation ? '已回链会话' : '可归档')
+        : lifecycleStage === 'human_action'
+          ? (task.dispatchKind === 'assist' ? '待跨部门协办确认' : approvalPending ? '待双重审批' : '待专家确认')
+          : lifecycleStage === 'running'
+            ? '与数字员工协同执行中'
+            : lifecycleStage === 'pending'
+              ? (task.dispatchKind === 'assign' ? '本部门派工待执行' : '待开始')
+              : undefined,
+    },
     governance: {
       approvalRequired: approvalPending,
       approvalStatus: approvalPending ? 'pending' : 'not_required',
     },
-    links: {},
+    links: fromConversation
+      ? { conversationId: task.id === 't1' ? 's1' : 's1', assetName: task.id === 't1' ? 'prod-redis-01' : undefined }
+      : fromAlert
+        ? { alertCode: 'ALT-REDIS-NOISE' }
+        : {},
     auditEvents: [],
     version: 1,
   };
@@ -410,6 +538,7 @@ export function createTaskDomain(seed: TaskSeed[] = mockTasks) {
     },
     create: (input: Partial<ControlledTask> & Pick<Task, 'title'>, meta: TaskActor = {}) => {
       const now = new Date().toISOString();
+      const employee = resolveEmployeeFields(input);
       const task = controlledTask({
         id: input.id ?? mockId('task'),
         code: input.code ?? `TSK-${now.slice(0, 10).replaceAll('-', '')}-${String(tasks.length + 1).padStart(3, '0')}`,
@@ -418,7 +547,9 @@ export function createTaskDomain(seed: TaskSeed[] = mockTasks) {
         priority: input.priority ?? 'P1',
         status: input.status ?? 'pending',
         assignee: input.assignee,
-        agentId: input.agentId,
+        digitalEmployeeId: employee.digitalEmployeeId,
+        digitalEmployeeName: employee.digitalEmployeeName,
+        agentId: employee.agentId,
         progress: input.progress ?? { done: 0, total: 1 },
         slaRemainingMin: input.slaRemainingMin,
         tags: input.tags ?? [],
@@ -426,7 +557,33 @@ export function createTaskDomain(seed: TaskSeed[] = mockTasks) {
         createdAt: now,
         updatedAt: now,
       });
-      Object.assign(task, input, { auditEvents: [], version: 0, createdAt: now, updatedAt: now });
+      Object.assign(task, input, employee, {
+        coordinatorId: input.coordinatorId,
+        coordinatorName: input.coordinatorName,
+        dispatchKind: input.dispatchKind,
+        collaboratorIds: input.collaboratorIds,
+        collaboratorNames: input.collaboratorNames,
+        assistStatus: input.assistStatus ?? (input.dispatchKind === 'assist' ? 'pending' : input.dispatchKind === 'assign' ? 'not_required' : undefined),
+        auditEvents: [],
+        version: 0,
+        createdAt: now,
+        updatedAt: now,
+      });
+      if (input.dispatchKind === 'assist') {
+        task.source = 'dispatch';
+        task.governance.approvalRequired = true;
+        task.governance.approvalStatus = 'pending';
+        task.lifecycleStage = 'human_action';
+        task.status = 'review';
+        task.execution.currentStep = '待跨部门协办确认';
+      } else if (input.dispatchKind === 'assign') {
+        task.source = 'dispatch';
+        task.execution.currentStep = '本部门派工待执行';
+      }
+      if (input.source) task.source = input.source;
+      if (input.links) task.links = { ...task.links, ...input.links };
+      if (input.execution?.currentStep) task.execution.currentStep = input.execution.currentStep;
+      else if (input.source === 'conversation') task.execution.currentStep = '待专家确认';
       tasks.unshift(task);
       return cloneTask(write(task, '创建任务', meta, 'success'));
     },
@@ -445,7 +602,15 @@ export function createTaskDomain(seed: TaskSeed[] = mockTasks) {
     approve: (id: string, input: TaskActor & { approved?: boolean } = {}) => {
       const task = find(id);
       task.governance.approvalStatus = input.approved === false ? 'rejected' : 'approved';
-      return cloneTask(write(task, input.approved === false ? '审批拒绝' : '审批通过', input, input.approved === false ? 'error' : 'success'));
+      if (task.dispatchKind === 'assist') {
+        task.assistStatus = input.approved === false ? 'rejected' : 'accepted';
+        if (input.approved !== false) {
+          task.lifecycleStage = 'pending';
+          task.status = 'pending';
+          task.execution.currentStep = '协办已接受，待开始协同';
+        }
+      }
+      return cloneTask(write(task, input.approved === false ? (task.dispatchKind === 'assist' ? '拒绝协办' : '审批拒绝') : (task.dispatchKind === 'assist' ? '接受协办' : '审批通过'), input, input.approved === false ? 'error' : 'success'));
     },
     takeover: (id: string, meta: TaskActor = {}) => {
       const task = find(id);
@@ -575,27 +740,91 @@ const mockAgentImports: any[] = [];
 
 // ============ 数字员工：岗位身份与受控运行控制面 ============
 const mockDigitalEmployees: DigitalEmployee[] = [
-  { id: 'de-sre', workspaceId: 'w1', name: 'SRE 故障处置专员', role: '生产故障诊断与处置', department: '运维部', description: '关联告警、日志和资产上下文定位生产故障；在受控工作流内执行恢复操作，超出边界立即转人工。', owner: '陈晓', escalationOwner: '王昊', serviceObject: '生产业务系统', version: '1.3.0', environment: 'production', lifecycle: 'active', risk: 'high', responsibilities: ['告警关联与影响分析', '故障定位建议', '执行已批准的恢复流程'], prohibitedActions: ['不得绕过生产变更审批', '不得执行未批准的写操作', '不得关闭重大事件证据'], capabilities: { agentId: 'a1', model: '企业通用路由 v2', knowledge: ['运行手册库', '故障知识库'], skills: ['日志检索', '告警分析'], tools: ['Prometheus', 'Loki', 'CMDB'], workflows: ['生产故障处置流'], channels: ['企业微信', '事件中心'] }, memoryPolicy: { shortTermHours: 24, workingDays: 7, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 286, successRate: 0.982, p95Ms: 840, costToday: 46.8, handoffs24h: 12, anomalies: 0 }, evaluation: { status: 'passed', score: 94.2, lastRunAt: '2026-07-22T02:30:00Z' }, release: { status: 'released', releasedAt: '2026-07-20T08:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T08:00:00Z' },
-  { id: 'de-it', workspaceId: 'w1', name: 'IT 服务台专员', role: '员工 IT 服务', department: '信息技术部', description: '受理常见 IT 服务请求，执行低风险标准操作并对高风险请求发起人工交接。', owner: '李婷', escalationOwner: '王昊', serviceObject: '内部员工', version: '2.1.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['工单分诊', '知识问答', '受控执行标准操作'], prohibitedActions: ['不得重置高权限账号', '不得绕过变更审批', '不得导出终端数据'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['IT 服务知识库'], skills: ['工单分诊', '资产查询'], tools: ['CMDB', 'Jira'], workflows: ['IT 服务请求流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 462, successRate: 0.976, p95Ms: 680, costToday: 61.4, handoffs24h: 21, anomalies: 1 }, evaluation: { status: 'passed', score: 92.8, lastRunAt: '2026-07-21T09:20:00Z' }, release: { status: 'released', releasedAt: '2026-07-18T09:30:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T07:40:00Z' },
-  { id: 'de-secops', workspaceId: 'w1', name: '安全事件分析专员', role: '安全告警研判与响应', department: '安全部', description: '关联 SIEM、EDR 与资产信息研判安全告警，形成处置建议并对高风险事件升级至安全响应人员。', owner: '张睿', escalationOwner: '安全负责人', serviceObject: '企业安全运营中心', version: '0.9.0', environment: 'staging', lifecycle: 'pending_approval', risk: 'high', responsibilities: ['安全告警去重与研判', '事件证据汇集', '响应建议与升级'], prohibitedActions: ['不得自动隔离核心生产资产', '不得删除安全证据', '不得绕过双人复核'], capabilities: { agentId: 'a5', model: '受限数据路由 v1', knowledge: ['安全运行手册', '威胁情报库'], skills: ['告警研判', '威胁狩猎'], tools: ['SIEM', 'EDR', 'CMDB'], workflows: ['安全事件响应流'], channels: ['事件中心'] }, memoryPolicy: { shortTermHours: 8, workingDays: 7, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 38, successRate: 0.947, p95Ms: 1120, costToday: 12.6, handoffs24h: 8, anomalies: 0 }, evaluation: { status: 'passed', score: 91.4, lastRunAt: '2026-07-22T03:10:00Z' }, release: { status: 'pending_approval' }, updatedAt: '2026-07-22T09:10:00Z' },
-  { id: 'de-change', workspaceId: 'w1', name: '变更协同专员', role: '变更风险评估与协同', department: '运维部', description: '在发布前汇集变更上下文、验证风险与依赖，协同审批、灰度和回滚；不替代变更负责人决策。', owner: '周慧', escalationOwner: '变更经理', serviceObject: '应用与运维团队', version: '0.1.0', environment: 'sandbox', lifecycle: 'draft', risk: 'medium', responsibilities: ['变更单完整性检查', '风险与依赖分析', '灰度发布协同'], prohibitedActions: ['不得自行批准生产变更', '不得绕过回滚门禁', '不得修改变更记录'], capabilities: { agentId: 'a3', model: '企业通用路由 v2', knowledge: ['变更规范库', '运行手册库'], skills: ['变更风险评估'], tools: ['Jira', 'CMDB'], workflows: ['生产变更协同流'], channels: ['企业微信', '事件中心'] }, memoryPolicy: { shortTermHours: 24, workingDays: 7, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 0, successRate: 0, p95Ms: 0, costToday: 0, handoffs24h: 0, anomalies: 0 }, evaluation: { status: 'not_started' }, release: { status: 'not_released' }, updatedAt: '2026-07-22T10:00:00Z' },
-  { id: 'de-alert-ops', workspaceId: 'w1', name: '告警运营专员', role: '告警聚合与值班分派', department: '运维部', description: '持续归并重复告警、识别影响范围并按值班规则分派；为重大事件提供静默建议，不直接关闭关键告警。', owner: '陈晓', escalationOwner: '值班经理', serviceObject: '生产监控与值班团队', version: '1.1.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['告警去重与聚合', '影响范围初判', '值班分派与升级建议'], prohibitedActions: ['不得关闭重大告警', '不得修改监控阈值', '不得绕过事件升级规则'], capabilities: { agentId: 'a1', model: '企业通用路由 v2', knowledge: ['运行手册库', '告警规则库'], skills: ['告警分析', '事件分派'], tools: ['Prometheus', '事件中心', 'CMDB'], workflows: ['告警响应协同流'], channels: ['企业微信', '事件中心'] }, memoryPolicy: { shortTermHours: 24, workingDays: 7, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 684, successRate: 0.989, p95Ms: 520, costToday: 38.2, handoffs24h: 16, anomalies: 0 }, evaluation: { status: 'passed', score: 95.1, lastRunAt: '2026-07-22T04:00:00Z' }, release: { status: 'released', releasedAt: '2026-07-19T09:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T09:30:00Z' },
-  { id: 'de-capacity', workspaceId: 'w1', name: '容量与性能专员', role: '容量预测与性能分析', department: '运维部', description: '结合指标、变更与业务周期识别容量趋势和性能瓶颈，形成扩缩容建议并交由负责人决策执行。', owner: '周慧', escalationOwner: '平台运维负责人', serviceObject: '生产计算与存储资源', version: '1.0.2', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['容量趋势预测', '性能瓶颈分析', '扩缩容建议与复盘'], prohibitedActions: ['不得直接调整生产资源配额', '不得跳过成本审批', '不得修改性能基线证据'], capabilities: { agentId: 'a3', model: '企业通用路由 v2', knowledge: ['容量规划规范', '性能基线库'], skills: ['指标分析', '容量评估'], tools: ['Prometheus', 'Grafana', 'CMDB'], workflows: ['容量评估协同流'], channels: ['Web', '企业微信'] }, memoryPolicy: { shortTermHours: 24, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 124, successRate: 0.971, p95Ms: 760, costToday: 21.8, handoffs24h: 5, anomalies: 0 }, evaluation: { status: 'passed', score: 93.6, lastRunAt: '2026-07-22T05:10:00Z' }, release: { status: 'released', releasedAt: '2026-07-17T08:30:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T08:45:00Z' },
-  { id: 'de-release-guard', workspaceId: 'w1', name: '发布保障专员', role: '灰度发布观察与回滚协同', department: '运维部', description: '在既定变更窗口内跟踪灰度指标和依赖状态，提示放量或回滚条件，不替代变更负责人审批。', owner: '周慧', escalationOwner: '变更经理', serviceObject: '应用发布与变更团队', version: '0.8.0', environment: 'staging', lifecycle: 'testing', risk: 'high', responsibilities: ['灰度指标观察', '发布风险提示', '回滚协同与记录'], prohibitedActions: ['不得自行批准生产发布', '不得触发未批准的回滚', '不得覆盖发布审计记录'], capabilities: { agentId: 'a3', model: '企业通用路由 v2', knowledge: ['变更规范库', '发布运行手册'], skills: ['发布风险评估', '指标分析'], tools: ['Jira', 'Grafana', '事件中心'], workflows: ['生产发布保障流'], channels: ['企业微信', '事件中心'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 26, successRate: 0.923, p95Ms: 960, costToday: 9.4, handoffs24h: 6, anomalies: 1 }, evaluation: { status: 'passed', score: 90.2, lastRunAt: '2026-07-22T06:20:00Z' }, release: { status: 'not_released' }, updatedAt: '2026-07-22T10:20:00Z' },
-  { id: 'de-vulnerability', workspaceId: 'w1', name: '漏洞响应专员', role: '漏洞影响分析与修复协同', department: '安全部', description: '匹配漏洞情报与资产清单，评估暴露和业务影响，生成修复优先级与任务建议并跟踪处置证据。', owner: '张睿', escalationOwner: '安全负责人', serviceObject: '企业资产与漏洞管理', version: '1.2.0', environment: 'production', lifecycle: 'active', risk: 'high', responsibilities: ['漏洞影响与暴露分析', '修复优先级建议', '处置任务与证据跟踪'], prohibitedActions: ['不得自动修复生产资产', '不得忽略高危漏洞', '不得删除漏洞处置证据'], capabilities: { agentId: 'a5', model: '受限数据路由 v1', knowledge: ['漏洞处置规范', '资产风险基线'], skills: ['漏洞研判', '资产匹配'], tools: ['漏洞管理平台', 'CMDB', 'Jira'], workflows: ['漏洞响应协同流'], channels: ['事件中心', '企业微信'] }, memoryPolicy: { shortTermHours: 12, workingDays: 30, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 186, successRate: 0.964, p95Ms: 890, costToday: 29.6, handoffs24h: 9, anomalies: 0 }, evaluation: { status: 'passed', score: 92.9, lastRunAt: '2026-07-22T02:50:00Z' }, release: { status: 'released', releasedAt: '2026-07-16T11:00:00Z', approver: '安全管理员' }, updatedAt: '2026-07-22T09:05:00Z' },
-  { id: 'de-threat-hunt', workspaceId: 'w1', name: '威胁狩猎专员', role: '威胁情报关联与主动检索', department: '安全部', description: '依据威胁情报和攻击链假设检索异常行为，沉淀调查线索与处置建议，高风险结论必须由分析师复核。', owner: '张睿', escalationOwner: '安全响应负责人', serviceObject: '企业安全运营中心', version: '0.7.0', environment: 'staging', lifecycle: 'pending_approval', risk: 'high', responsibilities: ['威胁情报关联', '异常行为检索', '调查线索与处置建议'], prohibitedActions: ['不得自动隔离资产', '不得访问无授权业务数据', '不得对外发送安全事件结论'], capabilities: { agentId: 'a5', model: '受限数据路由 v1', knowledge: ['威胁情报库', '安全运行手册'], skills: ['威胁狩猎', '日志检索'], tools: ['SIEM', 'EDR', 'Loki'], workflows: ['威胁调查协同流'], channels: ['事件中心'] }, memoryPolicy: { shortTermHours: 8, workingDays: 14, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 42, successRate: 0.938, p95Ms: 1240, costToday: 18.7, handoffs24h: 11, anomalies: 0 }, evaluation: { status: 'passed', score: 90.8, lastRunAt: '2026-07-22T03:40:00Z' }, release: { status: 'pending_approval' }, updatedAt: '2026-07-22T10:35:00Z' },
-  { id: 'de-compliance', workspaceId: 'w1', name: '安全合规核查专员', role: '安全基线核查与整改跟踪', department: '安全部', description: '周期性核查资产安全基线和控制项证据，汇总整改差距并持续跟踪；不替代审计人员作出合规结论。', owner: '林雅', escalationOwner: '安全合规负责人', serviceObject: '安全控制项与合规证据', version: '0.5.0', environment: 'staging', lifecycle: 'pending_approval', risk: 'medium', responsibilities: ['安全基线检查', '合规证据汇总', '整改进度跟踪'], prohibitedActions: ['不得修改合规证据原件', '不得关闭未验证整改项', '不得替代审计签署结论'], capabilities: { agentId: 'a5', model: '受限数据路由 v1', knowledge: ['安全基线规范', '合规控制库'], skills: ['基线核查', '证据汇总'], tools: ['CMDB', 'SIEM', 'Jira'], workflows: ['安全合规核查流'], channels: ['Web', '企业微信'] }, memoryPolicy: { shortTermHours: 12, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 67, successRate: 0.956, p95Ms: 710, costToday: 13.2, handoffs24h: 4, anomalies: 0 }, evaluation: { status: 'passed', score: 91.7, lastRunAt: '2026-07-22T04:30:00Z' }, release: { status: 'pending_approval' }, updatedAt: '2026-07-22T09:50:00Z' },
-  { id: 'de-ops-manager', workspaceId: 'w1', name: '运维部经理', role: '运维态势统筹与风险升级', department: '运维部', description: '汇总故障、变更、容量和服务水位，形成值班与风险优先级建议，协助部门负责人统筹资源与升级处置。', owner: '王昊', escalationOwner: '技术平台主管', serviceObject: '运维部运行与服务目标', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['运行态势汇总', '跨岗位任务协调', '风险升级与经营简报'], prohibitedActions: ['不得批准生产变更', '不得直接执行生产操作', '不得替代负责人作出人员或预算决策'], capabilities: { agentId: 'a1', model: '企业通用路由 v2', knowledge: ['运行手册库', '变更规范库', '容量规划规范'], skills: ['态势汇总', '风险评估'], tools: ['Prometheus', 'Jira', 'CMDB'], workflows: ['运维态势协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 24, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 89, successRate: 0.978, p95Ms: 640, costToday: 15.7, handoffs24h: 3, anomalies: 0 }, evaluation: { status: 'passed', score: 94.6, lastRunAt: '2026-07-22T05:40:00Z' }, release: { status: 'released', releasedAt: '2026-07-15T09:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T10:40:00Z' },
-  { id: 'de-security-manager', workspaceId: 'w1', name: '安全部经理', role: '安全态势统筹与风险升级', department: '安全部', description: '汇总安全事件、漏洞与合规差距，辅助安全负责人识别处置优先级和跨团队依赖，不替代安全决策与签署。', owner: '安全负责人', escalationOwner: '首席信息安全官', serviceObject: '安全部风险与控制态势', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'high', responsibilities: ['安全态势汇总', '重大风险升级', '跨团队整改协调'], prohibitedActions: ['不得关闭安全事件', '不得批准安全例外', '不得替代审计或安全负责人签署结论'], capabilities: { agentId: 'a5', model: '受限数据路由 v1', knowledge: ['安全运行手册', '合规控制库', '威胁情报库'], skills: ['风险评估', '事件汇总'], tools: ['SIEM', '漏洞管理平台', 'Jira'], workflows: ['安全态势协同流'], channels: ['企业微信', '事件中心'] }, memoryPolicy: { shortTermHours: 12, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 73, successRate: 0.966, p95Ms: 830, costToday: 19.8, handoffs24h: 6, anomalies: 0 }, evaluation: { status: 'passed', score: 93.8, lastRunAt: '2026-07-22T05:55:00Z' }, release: { status: 'released', releasedAt: '2026-07-15T10:00:00Z', approver: '安全管理员' }, updatedAt: '2026-07-22T10:45:00Z' },
-  { id: 'de-it-manager', workspaceId: 'w1', name: '信息技术部经理', role: 'IT 服务统筹与体验改进', department: '信息技术部', description: '汇总服务请求、终端健康、身份访问和协作平台指标，协助 IT 负责人调配资源、跟踪服务质量与风险。', owner: '李婷', escalationOwner: '技术平台主管', serviceObject: '信息技术部服务与员工体验', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['IT 服务态势汇总', '跨服务任务协调', '服务质量与风险升级'], prohibitedActions: ['不得批准高权限访问', '不得直接修改生产租户配置', '不得替代 IT 负责人作出采购或人员决策'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['IT 服务知识库', '终端管理规范', '身份访问规范'], skills: ['服务分析', '风险评估'], tools: ['Jira', 'CMDB', '服务台'], workflows: ['IT 服务态势协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 24, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 112, successRate: 0.981, p95Ms: 590, costToday: 18.4, handoffs24h: 4, anomalies: 0 }, evaluation: { status: 'passed', score: 94.1, lastRunAt: '2026-07-22T06:00:00Z' }, release: { status: 'released', releasedAt: '2026-07-14T09:30:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T10:50:00Z' },
-  { id: 'de-endpoint-support', workspaceId: 'w1', name: '终端支持专员', role: '终端健康与故障支持', department: '信息技术部', description: '关联设备资产、终端健康与工单上下文，诊断常见终端问题并执行获批的低风险修复操作。', owner: '李婷', escalationOwner: '终端服务负责人', serviceObject: '员工终端与办公设备', version: '1.1.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['终端健康巡检', '故障诊断与分派', '低风险修复建议'], prohibitedActions: ['不得擦除终端数据', '不得变更高权限设备策略', '不得绕过终端安全基线'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['终端管理规范', 'IT 服务知识库'], skills: ['终端诊断', '工单分诊'], tools: ['终端管理平台', 'CMDB', 'Jira'], workflows: ['终端支持服务流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 318, successRate: 0.972, p95Ms: 710, costToday: 35.6, handoffs24h: 14, anomalies: 0 }, evaluation: { status: 'passed', score: 92.5, lastRunAt: '2026-07-22T04:45:00Z' }, release: { status: 'released', releasedAt: '2026-07-17T10:30:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T10:55:00Z' },
-  { id: 'de-identity-access', workspaceId: 'w1', name: '身份与访问专员', role: '访问申请核验与权限协同', department: '信息技术部', description: '校验访问申请的身份、岗位与策略上下文，生成低风险授权建议并将敏感权限交由授权人复核。', owner: '李婷', escalationOwner: '身份与访问负责人', serviceObject: '员工身份与应用访问', version: '0.9.0', environment: 'staging', lifecycle: 'pending_approval', risk: 'high', responsibilities: ['访问申请完整性核验', '权限策略匹配', '敏感访问升级与证据留存'], prohibitedActions: ['不得授予高权限账号', '不得绕过双人复核', '不得导出身份目录数据'], capabilities: { agentId: 'a2', model: '受限数据路由 v1', knowledge: ['身份访问规范', '权限矩阵库'], skills: ['访问核验', '权限分析'], tools: ['IAM', 'CMDB', 'Jira'], workflows: ['访问申请协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 8, workingDays: 14, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 88, successRate: 0.952, p95Ms: 940, costToday: 17.3, handoffs24h: 12, anomalies: 0 }, evaluation: { status: 'passed', score: 91.9, lastRunAt: '2026-07-22T03:55:00Z' }, release: { status: 'pending_approval' }, updatedAt: '2026-07-22T11:00:00Z' },
-  { id: 'de-workplace', workspaceId: 'w1', name: '协作平台运营专员', role: '协作平台服务与使用治理', department: '信息技术部', description: '受理企业协作平台的配置与使用请求，分析服务健康和使用问题；涉及组织级配置时转交管理员审批。', owner: '李婷', escalationOwner: '协作平台负责人', serviceObject: '企业协作与办公平台', version: '0.6.0', environment: 'staging', lifecycle: 'testing', risk: 'medium', responsibilities: ['协作服务请求分诊', '平台健康观察', '组织级配置升级建议'], prohibitedActions: ['不得修改组织级安全策略', '不得导出协作内容', '不得跳过管理员审批'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['协作平台操作手册', 'IT 服务知识库'], skills: ['服务分诊', '配置核验'], tools: ['服务台', 'Jira', 'CMDB'], workflows: ['协作平台服务流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 51, successRate: 0.941, p95Ms: 820, costToday: 11.6, handoffs24h: 7, anomalies: 0 }, evaluation: { status: 'passed', score: 90.6, lastRunAt: '2026-07-22T05:20:00Z' }, release: { status: 'not_released' }, updatedAt: '2026-07-22T11:05:00Z' },
+  { id: 'de-sre', workspaceId: 'w1', name: '夜航', role: 'SRE 故障处置专员', department: '信息技术部', description: '关联告警、日志和资产上下文定位生产故障；在受控工作流内执行恢复操作，超出边界立即转人工。', owner: '陈晓', escalationOwner: '王昊', serviceObject: '生产业务系统', version: '1.3.0', environment: 'production', lifecycle: 'active', risk: 'high', responsibilities: ['告警关联与影响分析', '故障定位建议', '执行已批准的恢复流程'], prohibitedActions: ['不得绕过生产变更审批', '不得执行未批准的写操作', '不得关闭重大事件证据'], capabilities: { agentId: 'a1', model: '企业通用路由 v2', knowledge: ['运行手册库', '故障知识库'], skills: ['日志检索', '告警分析'], tools: ['Prometheus', 'Loki', 'CMDB'], workflows: ['生产故障处置流'], channels: ['企业微信', '事件中心'] }, memoryPolicy: { shortTermHours: 24, workingDays: 7, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 286, successRate: 0.982, p95Ms: 840, costToday: 46.8, handoffs24h: 12, anomalies: 0 }, evaluation: { status: 'passed', score: 94.2, lastRunAt: '2026-07-22T02:30:00Z' }, release: { status: 'released', releasedAt: '2026-07-20T08:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T08:00:00Z' },
+  { id: 'de-it', workspaceId: 'w1', name: '青禾', role: 'IT 服务台专员', department: '信息技术部', description: '受理常见 IT 服务请求，执行低风险标准操作并对高风险请求发起人工交接。', owner: '李婷', escalationOwner: '王昊', serviceObject: '内部员工', version: '2.1.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['工单分诊', '知识问答', '受控执行标准操作'], prohibitedActions: ['不得重置高权限账号', '不得绕过变更审批', '不得导出终端数据'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['IT 服务知识库'], skills: ['工单分诊', '资产查询'], tools: ['CMDB', 'Jira'], workflows: ['IT 服务请求流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 462, successRate: 0.976, p95Ms: 680, costToday: 61.4, handoffs24h: 21, anomalies: 1 }, evaluation: { status: 'passed', score: 92.8, lastRunAt: '2026-07-21T09:20:00Z' }, release: { status: 'released', releasedAt: '2026-07-18T09:30:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T07:40:00Z' },
+  { id: 'de-secops', workspaceId: 'w1', name: '听潮', role: '安全事件分析专员', department: '信息技术部', description: '关联 SIEM、EDR 与资产信息研判安全告警，形成处置建议并对高风险事件升级至安全响应人员。', owner: '张睿', escalationOwner: '安全负责人', serviceObject: '企业安全运营中心', version: '0.9.0', environment: 'staging', lifecycle: 'pending_approval', risk: 'high', responsibilities: ['安全告警去重与研判', '事件证据汇集', '响应建议与升级'], prohibitedActions: ['不得自动隔离核心生产资产', '不得删除安全证据', '不得绕过双人复核'], capabilities: { agentId: 'a5', model: '受限数据路由 v1', knowledge: ['安全运行手册', '威胁情报库'], skills: ['告警研判', '威胁狩猎'], tools: ['SIEM', 'EDR', 'CMDB'], workflows: ['安全事件响应流'], channels: ['事件中心'] }, memoryPolicy: { shortTermHours: 8, workingDays: 7, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 38, successRate: 0.947, p95Ms: 1120, costToday: 12.6, handoffs24h: 8, anomalies: 0 }, evaluation: { status: 'passed', score: 91.4, lastRunAt: '2026-07-22T03:10:00Z' }, release: { status: 'pending_approval' }, updatedAt: '2026-07-22T09:10:00Z' },
+  { id: 'de-change', workspaceId: 'w1', name: '磐石', role: '变更协同专员', department: '信息技术部', description: '在发布前汇集变更上下文、验证风险与依赖，协同审批、灰度和回滚；不替代变更负责人决策。', owner: '周慧', escalationOwner: '变更经理', serviceObject: '应用与运维团队', version: '0.1.0', environment: 'sandbox', lifecycle: 'draft', risk: 'medium', responsibilities: ['变更单完整性检查', '风险与依赖分析', '灰度发布协同'], prohibitedActions: ['不得自行批准生产变更', '不得绕过回滚门禁', '不得修改变更记录'], capabilities: { agentId: 'a3', model: '企业通用路由 v2', knowledge: ['变更规范库', '运行手册库'], skills: ['变更风险评估'], tools: ['Jira', 'CMDB'], workflows: ['生产变更协同流'], channels: ['企业微信', '事件中心'] }, memoryPolicy: { shortTermHours: 24, workingDays: 7, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 0, successRate: 0, p95Ms: 0, costToday: 0, handoffs24h: 0, anomalies: 0 }, evaluation: { status: 'not_started' }, release: { status: 'not_released' }, updatedAt: '2026-07-22T10:00:00Z' },
+  { id: 'de-alert-ops', workspaceId: 'w1', name: '观星', role: '告警运营专员', department: '信息技术部', description: '持续归并重复告警、识别影响范围并按值班规则分派；为重大事件提供静默建议，不直接关闭关键告警。', owner: '陈晓', escalationOwner: '值班经理', serviceObject: '生产监控与值班团队', version: '1.1.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['告警去重与聚合', '影响范围初判', '值班分派与升级建议'], prohibitedActions: ['不得关闭重大告警', '不得修改监控阈值', '不得绕过事件升级规则'], capabilities: { agentId: 'a1', model: '企业通用路由 v2', knowledge: ['运行手册库', '告警规则库'], skills: ['告警分析', '事件分派'], tools: ['Prometheus', '事件中心', 'CMDB'], workflows: ['告警响应协同流'], channels: ['企业微信', '事件中心'] }, memoryPolicy: { shortTermHours: 24, workingDays: 7, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 684, successRate: 0.989, p95Ms: 520, costToday: 38.2, handoffs24h: 16, anomalies: 0 }, evaluation: { status: 'passed', score: 95.1, lastRunAt: '2026-07-22T04:00:00Z' }, release: { status: 'released', releasedAt: '2026-07-19T09:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T09:30:00Z' },
+  { id: 'de-capacity', workspaceId: 'w1', name: '衡山', role: '容量与性能专员', department: '信息技术部', description: '结合指标、变更与业务周期识别容量趋势和性能瓶颈，形成扩缩容建议并交由负责人决策执行。', owner: '周慧', escalationOwner: '平台运维负责人', serviceObject: '生产计算与存储资源', version: '1.0.2', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['容量趋势预测', '性能瓶颈分析', '扩缩容建议与复盘'], prohibitedActions: ['不得直接调整生产资源配额', '不得跳过成本审批', '不得修改性能基线证据'], capabilities: { agentId: 'a3', model: '企业通用路由 v2', knowledge: ['容量规划规范', '性能基线库'], skills: ['指标分析', '容量评估'], tools: ['Prometheus', 'Grafana', 'CMDB'], workflows: ['容量评估协同流'], channels: ['Web', '企业微信'] }, memoryPolicy: { shortTermHours: 24, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 124, successRate: 0.971, p95Ms: 760, costToday: 21.8, handoffs24h: 5, anomalies: 0 }, evaluation: { status: 'passed', score: 93.6, lastRunAt: '2026-07-22T05:10:00Z' }, release: { status: 'released', releasedAt: '2026-07-17T08:30:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T08:45:00Z' },
+  { id: 'de-release-guard', workspaceId: 'w1', name: '守望', role: '发布保障专员', department: '信息技术部', description: '在既定变更窗口内跟踪灰度指标和依赖状态，提示放量或回滚条件，不替代变更负责人审批。', owner: '周慧', escalationOwner: '变更经理', serviceObject: '应用发布与变更团队', version: '0.8.0', environment: 'staging', lifecycle: 'testing', risk: 'high', responsibilities: ['灰度指标观察', '发布风险提示', '回滚协同与记录'], prohibitedActions: ['不得自行批准生产发布', '不得触发未批准的回滚', '不得覆盖发布审计记录'], capabilities: { agentId: 'a3', model: '企业通用路由 v2', knowledge: ['变更规范库', '发布运行手册'], skills: ['发布风险评估', '指标分析'], tools: ['Jira', 'Grafana', '事件中心'], workflows: ['生产发布保障流'], channels: ['企业微信', '事件中心'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 26, successRate: 0.923, p95Ms: 960, costToday: 9.4, handoffs24h: 6, anomalies: 1 }, evaluation: { status: 'passed', score: 90.2, lastRunAt: '2026-07-22T06:20:00Z' }, release: { status: 'not_released' }, updatedAt: '2026-07-22T10:20:00Z' },
+  { id: 'de-vulnerability', workspaceId: 'w1', name: '破晓', role: '漏洞响应专员', department: '信息技术部', description: '匹配漏洞情报与资产清单，评估暴露和业务影响，生成修复优先级与任务建议并跟踪处置证据。', owner: '张睿', escalationOwner: '安全负责人', serviceObject: '企业资产与漏洞管理', version: '1.2.0', environment: 'production', lifecycle: 'active', risk: 'high', responsibilities: ['漏洞影响与暴露分析', '修复优先级建议', '处置任务与证据跟踪'], prohibitedActions: ['不得自动修复生产资产', '不得忽略高危漏洞', '不得删除漏洞处置证据'], capabilities: { agentId: 'a5', model: '受限数据路由 v1', knowledge: ['漏洞处置规范', '资产风险基线'], skills: ['漏洞研判', '资产匹配'], tools: ['漏洞管理平台', 'CMDB', 'Jira'], workflows: ['漏洞响应协同流'], channels: ['事件中心', '企业微信'] }, memoryPolicy: { shortTermHours: 12, workingDays: 30, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 186, successRate: 0.964, p95Ms: 890, costToday: 29.6, handoffs24h: 9, anomalies: 0 }, evaluation: { status: 'passed', score: 92.9, lastRunAt: '2026-07-22T02:50:00Z' }, release: { status: 'released', releasedAt: '2026-07-16T11:00:00Z', approver: '安全管理员' }, updatedAt: '2026-07-22T09:05:00Z' },
+  { id: 'de-threat-hunt', workspaceId: 'w1', name: '追影', role: '威胁狩猎专员', department: '信息技术部', description: '依据威胁情报和攻击链假设检索异常行为，沉淀调查线索与处置建议，高风险结论必须由分析师复核。', owner: '张睿', escalationOwner: '安全响应负责人', serviceObject: '企业安全运营中心', version: '0.7.0', environment: 'staging', lifecycle: 'pending_approval', risk: 'high', responsibilities: ['威胁情报关联', '异常行为检索', '调查线索与处置建议'], prohibitedActions: ['不得自动隔离资产', '不得访问无授权业务数据', '不得对外发送安全事件结论'], capabilities: { agentId: 'a5', model: '受限数据路由 v1', knowledge: ['威胁情报库', '安全运行手册'], skills: ['威胁狩猎', '日志检索'], tools: ['SIEM', 'EDR', 'Loki'], workflows: ['威胁调查协同流'], channels: ['事件中心'] }, memoryPolicy: { shortTermHours: 8, workingDays: 14, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 42, successRate: 0.938, p95Ms: 1240, costToday: 18.7, handoffs24h: 11, anomalies: 0 }, evaluation: { status: 'passed', score: 90.8, lastRunAt: '2026-07-22T03:40:00Z' }, release: { status: 'pending_approval' }, updatedAt: '2026-07-22T10:35:00Z' },
+  { id: 'de-compliance', workspaceId: 'w1', name: '明鉴', role: '安全合规核查专员', department: '信息技术部', description: '周期性核查资产安全基线和控制项证据，汇总整改差距并持续跟踪；不替代审计人员作出合规结论。', owner: '林雅', escalationOwner: '安全合规负责人', serviceObject: '安全控制项与合规证据', version: '0.5.0', environment: 'staging', lifecycle: 'pending_approval', risk: 'medium', responsibilities: ['安全基线检查', '合规证据汇总', '整改进度跟踪'], prohibitedActions: ['不得修改合规证据原件', '不得关闭未验证整改项', '不得替代审计签署结论'], capabilities: { agentId: 'a5', model: '受限数据路由 v1', knowledge: ['安全基线规范', '合规控制库'], skills: ['基线核查', '证据汇总'], tools: ['CMDB', 'SIEM', 'Jira'], workflows: ['安全合规核查流'], channels: ['Web', '企业微信'] }, memoryPolicy: { shortTermHours: 12, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 67, successRate: 0.956, p95Ms: 710, costToday: 13.2, handoffs24h: 4, anomalies: 0 }, evaluation: { status: 'passed', score: 91.7, lastRunAt: '2026-07-22T04:30:00Z' }, release: { status: 'pending_approval' }, updatedAt: '2026-07-22T09:50:00Z' },
+  { id: 'de-it-head', workspaceId: 'w1', name: '北辰', role: '信息技术部负责人', department: '信息技术部', description: '汇总运维、安全与 IT 服务水位，形成值班、风险与资源优先级建议，协助部门负责人统筹跨岗位协同与升级处置；不替代生产变更、安全签署与采购决策。', owner: '王昊', escalationOwner: '技术平台主管', serviceObject: '信息技术部运行、安全与员工服务', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['部门态势汇总', '跨岗位任务协调', '风险升级与经营简报'], prohibitedActions: ['不得批准生产变更', '不得关闭安全事件或批准安全例外', '不得替代负责人作出人员、预算或采购决策'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['运行手册库', '安全运行手册', 'IT 服务知识库'], skills: ['态势汇总', '风险评估'], tools: ['Prometheus', 'SIEM', 'Jira', 'CMDB'], workflows: ['信息技术部态势协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 24, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 112, successRate: 0.981, p95Ms: 590, costToday: 18.4, handoffs24h: 4, anomalies: 0 }, evaluation: { status: 'passed', score: 94.1, lastRunAt: '2026-07-22T06:00:00Z' }, release: { status: 'released', releasedAt: '2026-07-14T09:30:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T10:50:00Z' },
+  { id: 'de-endpoint-support', workspaceId: 'w1', name: '知秋', role: '终端支持专员', department: '信息技术部', description: '关联设备资产、终端健康与工单上下文，诊断常见终端问题并执行获批的低风险修复操作。', owner: '李婷', escalationOwner: '终端服务负责人', serviceObject: '员工终端与办公设备', version: '1.1.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['终端健康巡检', '故障诊断与分派', '低风险修复建议'], prohibitedActions: ['不得擦除终端数据', '不得变更高权限设备策略', '不得绕过终端安全基线'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['终端管理规范', 'IT 服务知识库'], skills: ['终端诊断', '工单分诊'], tools: ['终端管理平台', 'CMDB', 'Jira'], workflows: ['终端支持服务流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 318, successRate: 0.972, p95Ms: 710, costToday: 35.6, handoffs24h: 14, anomalies: 0 }, evaluation: { status: 'passed', score: 92.5, lastRunAt: '2026-07-22T04:45:00Z' }, release: { status: 'released', releasedAt: '2026-07-17T10:30:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T10:55:00Z' },
+  { id: 'de-identity-access', workspaceId: 'w1', name: '钥灵', role: '身份与访问专员', department: '信息技术部', description: '校验访问申请的身份、岗位与策略上下文，生成低风险授权建议并将敏感权限交由授权人复核。', owner: '李婷', escalationOwner: '身份与访问负责人', serviceObject: '员工身份与应用访问', version: '0.9.0', environment: 'staging', lifecycle: 'pending_approval', risk: 'high', responsibilities: ['访问申请完整性核验', '权限策略匹配', '敏感访问升级与证据留存'], prohibitedActions: ['不得授予高权限账号', '不得绕过双人复核', '不得导出身份目录数据'], capabilities: { agentId: 'a2', model: '受限数据路由 v1', knowledge: ['身份访问规范', '权限矩阵库'], skills: ['访问核验', '权限分析'], tools: ['IAM', 'CMDB', 'Jira'], workflows: ['访问申请协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 8, workingDays: 14, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 88, successRate: 0.952, p95Ms: 940, costToday: 17.3, handoffs24h: 12, anomalies: 0 }, evaluation: { status: 'passed', score: 91.9, lastRunAt: '2026-07-22T03:55:00Z' }, release: { status: 'pending_approval' }, updatedAt: '2026-07-22T11:00:00Z' },
+  { id: 'de-workplace', workspaceId: 'w1', name: '云桥', role: '协作平台运营专员', department: '信息技术部', description: '受理企业协作平台的配置与使用请求，分析服务健康和使用问题；涉及组织级配置时转交管理员审批。', owner: '李婷', escalationOwner: '协作平台负责人', serviceObject: '企业协作与办公平台', version: '0.6.0', environment: 'staging', lifecycle: 'testing', risk: 'medium', responsibilities: ['协作服务请求分诊', '平台健康观察', '组织级配置升级建议'], prohibitedActions: ['不得修改组织级安全策略', '不得导出协作内容', '不得跳过管理员审批'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['协作平台操作手册', 'IT 服务知识库'], skills: ['服务分诊', '配置核验'], tools: ['服务台', 'Jira', 'CMDB'], workflows: ['协作平台服务流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 51, successRate: 0.941, p95Ms: 820, costToday: 11.6, handoffs24h: 7, anomalies: 0 }, evaluation: { status: 'passed', score: 90.6, lastRunAt: '2026-07-22T05:20:00Z' }, release: { status: 'not_released' }, updatedAt: '2026-07-22T11:05:00Z' },
+  // —— 中小企业业务部门：市场 / 运营 / 人事 / 财务 / 研发 / 销售 ——
+  { id: 'de-rd-manager', workspaceId: 'w1', name: '铸锋', role: '研发部负责人', department: '研发部', description: '汇总需求、缺陷与版本节奏，协助研发负责人识别交付风险与跨团队依赖，不替代技术决策与排期拍板。', owner: '赵研', escalationOwner: '技术负责人', serviceObject: '产品研发与交付节奏', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['交付态势汇总', '跨团队依赖协调', '风险升级与周报'], prohibitedActions: ['不得擅自变更发布窗口', '不得绕过代码评审门禁', '不得替代负责人作出排期决策'], capabilities: { agentId: 'a3', model: '企业通用路由 v2', knowledge: ['研发规范库', '缺陷知识库'], skills: ['交付分析', '风险评估'], tools: ['Jira', 'Git', 'CI'], workflows: ['研发交付协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 24, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 96, successRate: 0.974, p95Ms: 620, costToday: 16.2, handoffs24h: 5, anomalies: 0 }, evaluation: { status: 'passed', score: 93.4, lastRunAt: '2026-07-22T06:10:00Z' }, release: { status: 'released', releasedAt: '2026-07-14T08:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T11:10:00Z' },
+  { id: 'de-qa-assistant', workspaceId: 'w1', name: '拾光', role: '质量保障专员', department: '研发部', description: '关联缺陷、用例与版本上下文做分诊与回归建议；高风险放行必须由测试负责人确认。', owner: '赵研', escalationOwner: '测试负责人', serviceObject: '产品质量与发布门禁', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['缺陷分诊与优先级建议', '回归范围建议', '发布门禁检查清单'], prohibitedActions: ['不得直接关闭阻塞缺陷', '不得绕过发布门禁', '不得修改测试结论原件'], capabilities: { agentId: 'a3', model: '企业通用路由 v2', knowledge: ['测试用例库', '缺陷知识库'], skills: ['缺陷分诊', '回归分析'], tools: ['Jira', 'TestRail', 'CI'], workflows: ['质量保障协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 24, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 142, successRate: 0.968, p95Ms: 580, costToday: 22.4, handoffs24h: 8, anomalies: 0 }, evaluation: { status: 'passed', score: 92.7, lastRunAt: '2026-07-22T05:30:00Z' }, release: { status: 'released', releasedAt: '2026-07-16T09:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T11:12:00Z' },
+  { id: 'de-sales-manager', workspaceId: 'w1', name: '远航', role: '销售部负责人', department: '销售部', description: '汇总商机、跟进与回款风险，协助销售负责人调配资源；不替代商务签约与价格决策。', owner: '孙销', escalationOwner: '销售负责人', serviceObject: '销售漏斗与客户关系', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['商机态势汇总', '跟进节奏提醒', '风险升级与周报'], prohibitedActions: ['不得擅自承诺折扣', '不得对外发送未审合同', '不得替代负责人作出签约决策'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['销售话术库', '产品资料库'], skills: ['商机分析', '跟进提醒'], tools: ['CRM', '企业微信', '文档中心'], workflows: ['销售态势协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 24, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 118, successRate: 0.979, p95Ms: 540, costToday: 19.1, handoffs24h: 6, anomalies: 0 }, evaluation: { status: 'passed', score: 93.9, lastRunAt: '2026-07-22T06:20:00Z' }, release: { status: 'released', releasedAt: '2026-07-13T09:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T11:14:00Z' },
+  { id: 'de-crm-assistant', workspaceId: 'w1', name: '暖橙', role: '客户跟进专员', department: '销售部', description: '根据 CRM 与沟通记录整理跟进要点、下次动作与风险提示；报价与合同须人工确认。', owner: '孙销', escalationOwner: '大客户经理', serviceObject: '在跟客户与商机', version: '1.1.0', environment: 'production', lifecycle: 'active', risk: 'low', responsibilities: ['跟进记录整理', '下次动作建议', '会议纪要草稿'], prohibitedActions: ['不得擅自发送报价', '不得修改成交金额', '不得对外泄露客户敏感信息'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['销售话术库', '客户档案库'], skills: ['跟进整理', '纪要生成'], tools: ['CRM', '企业微信', '日历'], workflows: ['客户跟进协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 256, successRate: 0.983, p95Ms: 490, costToday: 28.7, handoffs24h: 11, anomalies: 0 }, evaluation: { status: 'passed', score: 94.2, lastRunAt: '2026-07-22T04:50:00Z' }, release: { status: 'released', releasedAt: '2026-07-15T10:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T11:16:00Z' },
+  { id: 'de-marketing-manager', workspaceId: 'w1', name: '星河', role: '市场部负责人', department: '市场部', description: '汇总活动、内容和线索质量，协助市场负责人识别投放与品牌风险；不替代预算与对外发布审批。', owner: '周市', escalationOwner: '市场负责人', serviceObject: '品牌与获客活动', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['活动态势汇总', '内容排期协同', '线索质量简报'], prohibitedActions: ['不得擅自对外发布物料', '不得绕过品牌审核', '不得替代负责人批准投放预算'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['品牌规范库', '活动案例库'], skills: ['活动分析', '内容排期'], tools: ['内容中心', '数据分析', '企业微信'], workflows: ['市场态势协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 24, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 84, successRate: 0.976, p95Ms: 610, costToday: 14.8, handoffs24h: 4, anomalies: 0 }, evaluation: { status: 'passed', score: 93.1, lastRunAt: '2026-07-22T06:30:00Z' }, release: { status: 'released', releasedAt: '2026-07-14T11:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T11:18:00Z' },
+  { id: 'de-content-ops', workspaceId: 'w1', name: '墨白', role: '内容运营专员', department: '市场部', description: '根据选题与品牌规范生成内容草稿、发布清单与渠道适配建议；正式发布须完成品牌与合规审核。', owner: '周市', escalationOwner: '品牌负责人', serviceObject: '官网与社媒内容', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'low', responsibilities: ['内容草稿生成', '发布清单整理', '渠道适配建议'], prohibitedActions: ['不得跳过品牌审核直接发布', '不得使用未授权素材', '不得对外承诺未上线能力'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['品牌规范库', '内容素材库'], skills: ['文案起草', '发布清单'], tools: ['内容中心', '素材库', '企业微信'], workflows: ['内容发布协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 198, successRate: 0.981, p95Ms: 520, costToday: 24.3, handoffs24h: 9, anomalies: 0 }, evaluation: { status: 'passed', score: 94.0, lastRunAt: '2026-07-22T05:00:00Z' }, release: { status: 'released', releasedAt: '2026-07-16T08:30:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T11:20:00Z' },
+  { id: 'de-bizops-manager', workspaceId: 'w1', name: '行远', role: '运营部负责人', department: '运营部', description: '汇总转化、留存与流程瓶颈，协助运营负责人识别改进优先级；不替代经营决策与资源分配拍板。', owner: '吴运', escalationOwner: '运营负责人', serviceObject: '业务运营与用户增长', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['运营指标汇总', '流程瓶颈识别', '改进建议与周报'], prohibitedActions: ['不得擅自变更计费规则', '不得绕过活动审批', '不得替代负责人作出经营决策'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['运营指标库', '流程规范库'], skills: ['指标分析', '流程诊断'], tools: ['数据分析', 'CRM', 'Jira'], workflows: ['运营态势协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 24, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 102, successRate: 0.972, p95Ms: 640, costToday: 17.5, handoffs24h: 5, anomalies: 0 }, evaluation: { status: 'passed', score: 93.5, lastRunAt: '2026-07-22T06:40:00Z' }, release: { status: 'released', releasedAt: '2026-07-13T10:30:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T11:22:00Z' },
+  { id: 'de-growth-ops', workspaceId: 'w1', name: '破浪', role: '增长运营专员', department: '运营部', description: '检查活动配置完整性、汇总转化漏斗异常并给出优化建议；上线与预算变更须运营负责人审批。', owner: '吴运', escalationOwner: '增长负责人', serviceObject: '获客活动与转化漏斗', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['活动配置完整性检查', '转化漏斗异常提示', '实验结论草稿'], prohibitedActions: ['不得擅自上线活动', '不得修改用户权益规则', '不得跳过预算审批'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['活动规范库', '转化分析手册'], skills: ['漏斗分析', '配置核验'], tools: ['数据分析', '活动后台', '企业微信'], workflows: ['增长运营协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 24, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 167, successRate: 0.969, p95Ms: 600, costToday: 21.9, handoffs24h: 7, anomalies: 0 }, evaluation: { status: 'passed', score: 92.8, lastRunAt: '2026-07-22T05:15:00Z' }, release: { status: 'released', releasedAt: '2026-07-17T09:30:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T11:24:00Z' },
+  { id: 'de-hr-manager', workspaceId: 'w1', name: '春晖', role: '人事部负责人', department: '人事部', description: '汇总入转调离、考勤与招聘进度，提醒合规节点；不替代录用、处分与薪酬决策。', owner: '郑人', escalationOwner: '人事负责人', serviceObject: '组织人事与员工服务', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['人事态势汇总', '合规节点提醒', '招聘进度简报'], prohibitedActions: ['不得擅自发送录用通知', '不得修改薪酬数据', '不得替代负责人作出人事处分'], capabilities: { agentId: 'a2', model: '受限数据路由 v1', knowledge: ['人事制度库', '劳动法要点库'], skills: ['流程提醒', '态势汇总'], tools: ['HRIS', '企业微信', '文档中心'], workflows: ['人事态势协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 76, successRate: 0.977, p95Ms: 570, costToday: 13.9, handoffs24h: 4, anomalies: 0 }, evaluation: { status: 'passed', score: 94.3, lastRunAt: '2026-07-22T06:50:00Z' }, release: { status: 'released', releasedAt: '2026-07-12T09:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T11:26:00Z' },
+  { id: 'de-hr-assistant', workspaceId: 'w1', name: '清欢', role: '人事服务专员', department: '人事部', description: '回答常见人事政策、生成入职指引与材料清单；涉及录用、薪酬与处分须转交人事负责人。', owner: '郑人', escalationOwner: '人事业务伙伴', serviceObject: '在职与入职员工', version: '1.1.0', environment: 'production', lifecycle: 'active', risk: 'low', responsibilities: ['政策问答', '入职材料清单', '流程进度查询'], prohibitedActions: ['不得承诺未审批的编制', '不得泄露员工隐私数据', '不得代签劳动合同'], capabilities: { agentId: 'a2', model: '受限数据路由 v1', knowledge: ['人事制度库', '入职手册'], skills: ['政策问答', '清单生成'], tools: ['HRIS', '企业微信', '知识库'], workflows: ['人事服务协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 8, workingDays: 14, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 214, successRate: 0.985, p95Ms: 460, costToday: 18.6, handoffs24h: 10, anomalies: 0 }, evaluation: { status: 'passed', score: 95.0, lastRunAt: '2026-07-22T04:20:00Z' }, release: { status: 'released', releasedAt: '2026-07-15T08:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T11:28:00Z' },
+  { id: 'de-finance-manager', workspaceId: 'w1', name: '衡通', role: '财务部负责人', department: '财务部', description: '汇总报销、付款与合规异常，协助财务负责人识别风险；不替代审批签字与账务处理。', owner: '钱财', escalationOwner: '财务负责人', serviceObject: '费用控制与财务合规', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'high', responsibilities: ['费用态势汇总', '异常单据提示', '合规节点提醒'], prohibitedActions: ['不得擅自批准付款', '不得修改账务凭证', '不得替代负责人完成审批签字'], capabilities: { agentId: 'a2', model: '受限数据路由 v1', knowledge: ['费用制度库', '税务合规要点'], skills: ['费用分析', '异常识别'], tools: ['费控', 'ERP', '企业微信'], workflows: ['财务态势协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 30, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 91, successRate: 0.971, p95Ms: 680, costToday: 15.4, handoffs24h: 6, anomalies: 0 }, evaluation: { status: 'passed', score: 93.7, lastRunAt: '2026-07-22T07:00:00Z' }, release: { status: 'released', releasedAt: '2026-07-12T10:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T11:30:00Z' },
+  { id: 'de-expense-ops', workspaceId: 'w1', name: '精算', role: '费用核算专员', department: '财务部', description: '核验报销单完整性、发票与制度匹配度，生成补正建议；付款与入账须财务审批。', owner: '钱财', escalationOwner: '费用会计', serviceObject: '员工报销与对公付款申请', version: '1.0.0', environment: 'production', lifecycle: 'active', risk: 'medium', responsibilities: ['单据完整性核验', '制度匹配检查', '补正建议'], prohibitedActions: ['不得直接批准付款', '不得篡改票据信息', '不得跳过双重审批'], capabilities: { agentId: 'a2', model: '受限数据路由 v1', knowledge: ['费用制度库', '发票核验规范'], skills: ['单据核验', '补正建议'], tools: ['费控', '发票验真', '企业微信'], workflows: ['费用核算协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 289, successRate: 0.978, p95Ms: 550, costToday: 26.8, handoffs24h: 13, anomalies: 1 }, evaluation: { status: 'passed', score: 94.5, lastRunAt: '2026-07-22T04:10:00Z' }, release: { status: 'released', releasedAt: '2026-07-16T11:00:00Z', approver: '平台管理员' }, updatedAt: '2026-07-22T11:32:00Z' },
 ];
+
+// 员工广场：岗位模板与工作区员工实例分离。模板可被采用，实例必须重新评测和上岗。
+const mockDigitalEmployeeTemplates: DigitalEmployeeTemplate[] = [
+  { id: 'det-sre', name: 'SRE 故障处置专员', role: '生产故障诊断与处置', department: '信息技术部', description: '关联告警、日志和资产上下文定位生产故障，在受控流程内执行已批准的恢复操作。', serviceObject: '生产业务系统', version: '1.3.0', risk: 'high', responsibilities: ['告警关联与影响分析', '故障定位建议', '执行已批准的恢复流程'], prohibitedActions: ['不得绕过生产变更审批', '不得执行未批准的写操作', '不得关闭重大事件证据'], capabilities: { agentId: 'a1', model: '企业通用路由 v2', knowledge: ['运行手册库', '故障知识库'], skills: ['日志检索', '告警分析'], tools: ['Prometheus', 'Loki', 'CMDB'], workflows: ['生产故障处置流'], channels: ['企业微信', '事件中心'] }, memoryPolicy: { shortTermHours: 24, workingDays: 7, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, source: 'platform', sourceName: '平台认证模板', status: 'certified', scope: 'organization', applicableEnvironments: ['staging', 'production'], evaluationScore: 94.2, adoptionCount: 12, tags: ['运维', '故障处置', '生产'], publishedAt: '2026-06-20T08:00:00Z', updatedAt: '2026-07-20T08:00:00Z' },
+  { id: 'det-secops', name: '安全事件分析专员', role: '安全告警研判与响应', department: '信息技术部', description: '关联 SIEM、EDR 与资产信息研判安全告警，形成处置建议并将高风险事件升级至安全响应人员。', serviceObject: '企业安全运营中心', version: '1.0.0', risk: 'high', responsibilities: ['安全告警去重与研判', '事件证据汇集', '响应建议与升级'], prohibitedActions: ['不得自动隔离核心生产资产', '不得删除安全证据', '不得绕过双人复核'], capabilities: { agentId: 'a5', model: '受限数据路由 v1', knowledge: ['安全运行手册', '威胁情报库'], skills: ['告警研判', '威胁狩猎'], tools: ['SIEM', 'EDR', 'CMDB'], workflows: ['安全事件响应流'], channels: ['事件中心'] }, memoryPolicy: { shortTermHours: 8, workingDays: 7, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, source: 'platform', sourceName: '平台认证模板', status: 'certified', scope: 'organization', applicableEnvironments: ['staging', 'production'], evaluationScore: 93.6, adoptionCount: 8, tags: ['安全', '事件响应', '高风险'], publishedAt: '2026-06-28T08:00:00Z', updatedAt: '2026-07-18T08:00:00Z' },
+  { id: 'det-service-desk', name: 'IT 服务台专员', role: '员工 IT 服务', department: '信息技术部', description: '受理常见 IT 服务请求，执行低风险标准操作，并将高风险请求交接至人工处理。', serviceObject: '内部员工', version: '2.1.0', risk: 'medium', responsibilities: ['工单分诊', '知识问答', '受控执行标准操作'], prohibitedActions: ['不得重置高权限账号', '不得绕过变更审批', '不得导出终端数据'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['IT 服务知识库'], skills: ['工单分诊', '资产查询'], tools: ['CMDB', 'Jira'], workflows: ['IT 服务请求流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, source: 'platform', sourceName: '平台认证模板', status: 'certified', scope: 'organization', applicableEnvironments: ['sandbox', 'staging', 'production'], evaluationScore: 92.8, adoptionCount: 18, tags: ['IT 服务', '服务台', '员工体验'], publishedAt: '2026-06-10T08:00:00Z', updatedAt: '2026-07-16T08:00:00Z' },
+  { id: 'det-alert-ops', name: '告警运营专员', role: '告警聚合与值班分派', department: '信息技术部', description: '归并重复告警、识别影响范围并按值班规则分派，向重大事件提供静默与升级建议。', serviceObject: '生产监控与值班团队', version: '1.1.0', risk: 'medium', responsibilities: ['告警去重与聚合', '影响范围初判', '值班分派与升级建议'], prohibitedActions: ['不得关闭重大告警', '不得修改监控阈值', '不得绕过事件升级规则'], capabilities: { agentId: 'a1', model: '企业通用路由 v2', knowledge: ['运行手册库', '告警规则库'], skills: ['告警分析', '事件分派'], tools: ['Prometheus', '事件中心', 'CMDB'], workflows: ['告警响应协同流'], channels: ['企业微信', '事件中心'] }, memoryPolicy: { shortTermHours: 24, workingDays: 7, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, source: 'department', sourceName: '信息技术部共享模板', status: 'review', scope: 'workspace', workspaceId: 'w1', applicableEnvironments: ['sandbox', 'staging'], evaluationScore: 91.5, adoptionCount: 3, tags: ['运维', '告警', '值班'], publishedAt: '2026-07-02T08:00:00Z', updatedAt: '2026-07-21T08:00:00Z' },
+  { id: 'det-crm-assistant', name: '客户跟进专员', role: '商机跟进与会议纪要整理', department: '销售部', description: '整理跟进要点与下次动作；报价与合同须人工确认。', serviceObject: '在跟客户与商机', version: '1.1.0', risk: 'low', responsibilities: ['跟进记录整理', '下次动作建议', '会议纪要草稿'], prohibitedActions: ['不得擅自发送报价', '不得修改成交金额', '不得对外泄露客户敏感信息'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['销售话术库', '客户档案库'], skills: ['跟进整理', '纪要生成'], tools: ['CRM', '企业微信', '日历'], workflows: ['客户跟进协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, source: 'platform', sourceName: '平台认证模板', status: 'certified', scope: 'organization', applicableEnvironments: ['sandbox', 'staging', 'production'], evaluationScore: 94.2, adoptionCount: 9, tags: ['销售', 'CRM', '跟进'], publishedAt: '2026-07-01T08:00:00Z', updatedAt: '2026-07-20T08:00:00Z' },
+  { id: 'det-content-ops', name: '内容运营专员', role: '内容草稿与发布清单协同', department: '市场部', description: '按品牌规范生成内容草稿与发布清单；正式发布须审核。', serviceObject: '官网与社媒内容', version: '1.0.0', risk: 'low', responsibilities: ['内容草稿生成', '发布清单整理', '渠道适配建议'], prohibitedActions: ['不得跳过品牌审核直接发布', '不得使用未授权素材', '不得对外承诺未上线能力'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['品牌规范库', '内容素材库'], skills: ['文案起草', '发布清单'], tools: ['内容中心', '素材库', '企业微信'], workflows: ['内容发布协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, source: 'platform', sourceName: '平台认证模板', status: 'certified', scope: 'organization', applicableEnvironments: ['sandbox', 'staging', 'production'], evaluationScore: 94.0, adoptionCount: 7, tags: ['市场', '内容', '品牌'], publishedAt: '2026-07-03T08:00:00Z', updatedAt: '2026-07-19T08:00:00Z' },
+  { id: 'det-hr-assistant', name: '人事服务专员', role: '入职指引与政策问答', department: '人事部', description: '回答常见人事政策并生成入职指引；录用与薪酬须负责人确认。', serviceObject: '在职与入职员工', version: '1.1.0', risk: 'low', responsibilities: ['政策问答', '入职材料清单', '流程进度查询'], prohibitedActions: ['不得承诺未审批的编制', '不得泄露员工隐私数据', '不得代签劳动合同'], capabilities: { agentId: 'a2', model: '受限数据路由 v1', knowledge: ['人事制度库', '入职手册'], skills: ['政策问答', '清单生成'], tools: ['HRIS', '企业微信', '知识库'], workflows: ['人事服务协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 8, workingDays: 14, longTermCadence: 'weekly', knowledgePromotion: 'approval_required' }, source: 'platform', sourceName: '平台认证模板', status: 'certified', scope: 'organization', applicableEnvironments: ['sandbox', 'staging', 'production'], evaluationScore: 95.0, adoptionCount: 11, tags: ['人事', '员工服务', '入职'], publishedAt: '2026-07-04T08:00:00Z', updatedAt: '2026-07-18T08:00:00Z' },
+  { id: 'det-expense-ops', name: '费用核算专员', role: '报销核验与票据完整性检查', department: '财务部', description: '核验报销完整性与制度匹配；付款入账须财务审批。', serviceObject: '员工报销与对公付款申请', version: '1.0.0', risk: 'medium', responsibilities: ['单据完整性核验', '制度匹配检查', '补正建议'], prohibitedActions: ['不得直接批准付款', '不得篡改票据信息', '不得跳过双重审批'], capabilities: { agentId: 'a2', model: '受限数据路由 v1', knowledge: ['费用制度库', '发票核验规范'], skills: ['单据核验', '补正建议'], tools: ['费控', '发票验真', '企业微信'], workflows: ['费用核算协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 12, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, source: 'platform', sourceName: '平台认证模板', status: 'certified', scope: 'organization', applicableEnvironments: ['sandbox', 'staging', 'production'], evaluationScore: 94.5, adoptionCount: 10, tags: ['财务', '报销', '合规'], publishedAt: '2026-07-05T08:00:00Z', updatedAt: '2026-07-17T08:00:00Z' },
+  { id: 'det-qa-assistant', name: '质量保障专员', role: '缺陷分诊与回归建议', department: '研发部', description: '缺陷分诊与回归建议；高风险放行须测试负责人确认。', serviceObject: '产品质量与发布门禁', version: '1.0.0', risk: 'medium', responsibilities: ['缺陷分诊与优先级建议', '回归范围建议', '发布门禁检查清单'], prohibitedActions: ['不得直接关闭阻塞缺陷', '不得绕过发布门禁', '不得修改测试结论原件'], capabilities: { agentId: 'a3', model: '企业通用路由 v2', knowledge: ['测试用例库', '缺陷知识库'], skills: ['缺陷分诊', '回归分析'], tools: ['Jira', 'TestRail', 'CI'], workflows: ['质量保障协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 24, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, source: 'platform', sourceName: '平台认证模板', status: 'certified', scope: 'organization', applicableEnvironments: ['sandbox', 'staging', 'production'], evaluationScore: 92.7, adoptionCount: 6, tags: ['研发', '质量', '发布'], publishedAt: '2026-07-06T08:00:00Z', updatedAt: '2026-07-16T08:00:00Z' },
+  { id: 'det-growth-ops', name: '增长运营专员', role: '活动配置检查与转化分析', department: '运营部', description: '检查活动配置并汇总转化异常；上线与预算变更须审批。', serviceObject: '获客活动与转化漏斗', version: '1.0.0', risk: 'medium', responsibilities: ['活动配置完整性检查', '转化漏斗异常提示', '实验结论草稿'], prohibitedActions: ['不得擅自上线活动', '不得修改用户权益规则', '不得跳过预算审批'], capabilities: { agentId: 'a2', model: '企业通用路由 v2', knowledge: ['活动规范库', '转化分析手册'], skills: ['漏斗分析', '配置核验'], tools: ['数据分析', '活动后台', '企业微信'], workflows: ['增长运营协同流'], channels: ['企业微信', 'Web'] }, memoryPolicy: { shortTermHours: 24, workingDays: 14, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, source: 'platform', sourceName: '平台认证模板', status: 'certified', scope: 'organization', applicableEnvironments: ['sandbox', 'staging', 'production'], evaluationScore: 92.8, adoptionCount: 5, tags: ['运营', '增长', '活动'], publishedAt: '2026-07-07T08:00:00Z', updatedAt: '2026-07-15T08:00:00Z' },
+];
+
+const mockDigitalEmployeeTemplateAdoptions: DigitalEmployeeTemplateAdoption[] = [
+  { id: 'deta-1', templateId: 'det-sre', templateVersion: '1.3.0', employeeId: 'de-sre', workspaceId: 'w1', adoptedBy: '王昊', status: 'active', createdAt: '2026-07-20T08:00:00Z' },
+  { id: 'deta-2', templateId: 'det-service-desk', templateVersion: '2.1.0', employeeId: 'de-it', workspaceId: 'w1', adoptedBy: '李婷', status: 'active', createdAt: '2026-07-18T09:30:00Z' },
+];
+
+type DigitalEmployeeConfigurationInput = {
+  profile: Pick<DigitalEmployee, 'name' | 'role' | 'department' | 'description' | 'owner' | 'escalationOwner' | 'serviceObject' | 'risk' | 'environment'>;
+  boundary: Pick<DigitalEmployee, 'responsibilities' | 'prohibitedActions' | 'handoffPolicy' | 'boundaryPolicy'>;
+  capabilities: DigitalEmployee['capabilities'];
+  memoryPolicy: DigitalEmployee['memoryPolicy'];
+};
+
+const mockDigitalEmployeeConfigurationVersions: DigitalEmployeeConfigurationVersion[] = mockDigitalEmployees.map((employee) => ({
+  id: `decv-${employee.id}-1`, employeeId: employee.id, version: '配置 v1', status: 'current', changeSummary: '初始化岗位配置', changedFields: ['岗位档案', '职责边界', '能力装配', '记忆策略'], updatedBy: employee.owner, updatedAt: employee.updatedAt,
+}));
+const mockDigitalEmployeeConfigurationDrafts = new Map<string, DigitalEmployeeConfigurationInput>();
+
+function applyDigitalEmployeeConfiguration(employee: DigitalEmployee, input: DigitalEmployeeConfigurationInput) {
+  Object.assign(employee, input.profile, {
+    responsibilities: [...input.boundary.responsibilities],
+    prohibitedActions: [...input.boundary.prohibitedActions],
+    handoffPolicy: input.boundary.handoffPolicy ? { triggers: [...input.boundary.handoffPolicy.triggers], approvalRequiredFor: [...input.boundary.handoffPolicy.approvalRequiredFor] } : undefined,
+    boundaryPolicy: input.boundary.boundaryPolicy ? {
+      ...input.boundary.boundaryPolicy,
+      responsibilities: input.boundary.boundaryPolicy.responsibilities.map((item) => ({ ...item, deliverables: [...item.deliverables] })),
+      capabilityModes: input.boundary.boundaryPolicy.capabilityModes.map((item) => ({ ...item })),
+      allowedEnvironments: [...input.boundary.boundaryPolicy.allowedEnvironments],
+      handoff: {
+        ...input.boundary.boundaryPolicy.handoff,
+        triggers: [...input.boundary.boundaryPolicy.handoff.triggers],
+        approvers: [...input.boundary.boundaryPolicy.handoff.approvers],
+        notificationChannels: [...input.boundary.boundaryPolicy.handoff.notificationChannels],
+      },
+    } : undefined,
+    capabilities: { ...input.capabilities, knowledge: [...input.capabilities.knowledge], skills: [...input.capabilities.skills], tools: [...input.capabilities.tools], workflows: [...input.capabilities.workflows], channels: [...input.capabilities.channels] },
+    memoryPolicy: { ...input.memoryPolicy }, updatedAt: new Date().toISOString(),
+  });
+}
 
 function digitalEmployeeEvidence(employee: DigitalEmployee) {
   return [
-    { id: `${employee.id}-e1`, time: employee.updatedAt, actor: employee.owner, action: '更新员工配置', target: `${employee.name} · v${employee.version}`, result: 'success' },
+    { id: `${employee.id}-e1`, time: employee.updatedAt, actor: employee.owner, action: '更新员工配置', target: `${employee.role} · ${employee.name} · v${employee.version}`, result: 'success' },
     { id: `${employee.id}-e2`, time: employee.evaluation.lastRunAt ?? employee.updatedAt, actor: '评测服务', action: '执行质量评测', target: `评分 ${employee.evaluation.score ?? '待执行'}`, result: employee.evaluation.status === 'failed' ? 'failed' : 'success' },
     { id: `${employee.id}-e3`, time: employee.release.releasedAt ?? employee.updatedAt, actor: employee.release.approver ?? employee.owner, action: employee.release.status === 'released' ? '批准上岗' : '更新上岗状态', target: employee.environment, result: employee.release.status === 'released' ? 'success' : 'pending' },
   ];
@@ -1178,7 +1407,10 @@ const mockCapabilityBindings: CapabilityBinding[] = [
   { id: 'cap_a1_s1', targetType: 'agent', targetId: 'a1', capabilityKind: 'skill', capabilityId: 's1', pinnedVersion: '1.0', status: 'active', createdBy: '系统', createdAt: '2026-07-19T09:40:00Z', auditId: 'audit_cap_a1_s1' },
   { id: 'cap_wf1_s1', targetType: 'workflow', targetId: 'wf1', capabilityKind: 'skill', capabilityId: 's1', pinnedVersion: '1.0', status: 'active', createdBy: '系统', createdAt: '2026-07-19T09:45:00Z', auditId: 'audit_cap_wf1_s1' },
 ];
-const mockWorkflowSkills: WorkflowSkill[] = [];
+const mockWorkflowSkills: WorkflowSkill[] = [
+  { id: 'wfs-incident', sourceWorkflowId: 'wf1', sourceVersionId: 'v3', name: '生产故障处置流程技能', description: '标准告警关联、定位建议与受控恢复步骤，供 SRE 岗位装配。', riskLevel: 'high', approvalRequired: true, rollbackSupported: true, status: 'published' },
+  { id: 'wfs-change', sourceWorkflowId: 'wf-change', sourceVersionId: 'v2', name: '生产变更协同流程技能', description: '变更风险评估、审批协同与灰度观察的标准作业能力。', riskLevel: 'mid', approvalRequired: true, rollbackSupported: true, status: 'published' },
+];
 
 function skillAuditEvents(): SkillAuditEvent[] {
   return mockControlPlaneAudit.filter((event) => event.domain === 'skill').map((event) => ({ ...event, correlationId: `skill:${event.target}` }));
@@ -1456,7 +1688,26 @@ export interface ChatMessageEx {
   codeBlock?: { lang: string; code: string };
   attachment?: { name: string; size: string; type: 'file' | 'image' };
   thinking?: string;
-  approvalRequest?: { action: string; approver?: string; status: 'pending' | 'approved' | 'rejected' };
+  approvalRequest?: {
+    action: string;
+    resource?: string;
+    reason?: string;
+    ticketId?: string;
+    required: number;
+    signed: number;
+    decision: 'pending' | 'approved' | 'rejected';
+    policyHash?: string;
+    decidedAt?: string;
+    signers: Array<{
+      userId: string;
+      name: string;
+      role: 'operator' | 'approver' | 'auditor';
+      signed: boolean;
+      signedAt?: string;
+      signatureHash?: string;
+    }>;
+  };
+  linkedTaskId?: string;
   createdAt: string;
 }
 
@@ -1473,9 +1724,9 @@ export const mockConversationEx = {
       id: 'm2',
       role: 'assistant' as const,
       agentId: 'a1',
-      agentName: '故障自愈',
+      agentName: 'SRE 故障处置专员',
       thinking: '用户问 OOM，我需要先查 Redis 指标 + 最近变更 + Runbook ...',
-      content: '检测到 prod-redis-01 在 14:25 触发 maxmemory 限制（used_memory 7.2G / maxmemory 8G）。我已检索相关 Runbook 与最近变更记录，建议执行以下步骤：',
+      content: '检测到 prod-redis-01 在 14:25 触发 maxmemory 限制（used_memory 7.2G / maxmemory 8G）。我已检索相关 Runbook 与最近变更记录，建议执行以下步骤：\n\n1. 临时将 maxmemory 提升至 16GB（需切换受控执行并完成双重审批）\n2. 清理过期 session 缓存（预计释放约 2GB）\n3. 排查近 24h 大 Key 写入来源',
       citations: [
         { id: 'c1', docId: 'k1', text: '当触发 OOM 时，优先检查 maxmemory-policy 与最近写入速率...', score: 0.92, source: 'Redis 故障 Runbook v3.2', page: 12 },
         { id: 'c2', docId: 'k2', text: 'prod-redis-01 资产编号 PRD-CACHE-019，归属 ACME 生产集群 cn-east-1 区...', score: 0.78, source: 'CMDB 全量资产清单' },
@@ -1502,16 +1753,29 @@ export const mockConversationEx = {
       id: 'm5',
       role: 'assistant' as const,
       agentId: 'a1',
-      agentName: '故障自愈',
-      content: '需要写操作，触发双签审批（等保 3）：',
-      approvalRequest: { action: 'CONFIG SET maxmemory 16GB + volatile-lru', status: 'pending' as const },
+      agentName: 'SRE 故障处置专员',
+      content: '需要写操作，触发双重审批（等保 3）：',
+      approvalRequest: {
+        action: 'CONFIG SET maxmemory 16GB + volatile-lru',
+        resource: 'prod-redis-01',
+        reason: '等保 3 · 高危配置变更',
+        ticketId: 'CHG-2026-0156',
+        required: 2,
+        signed: 1,
+        decision: 'pending' as const,
+        policyHash: 'pol_redis_oom_v1',
+        signers: [
+          { userId: 'u2', name: '王昊', role: 'operator' as const, signed: true, signedAt: '2026-07-13T14:26:40Z', signatureHash: 'sig_m5_u2' },
+          { userId: 'u1', name: '平台管理员', role: 'approver' as const, signed: false },
+        ],
+      },
       createdAt: '2026-07-13T14:26:18Z',
     },
     {
       id: 'm6',
       role: 'assistant' as const,
       agentId: 'a1',
-      agentName: '故障自愈',
+      agentName: 'SRE 故障处置专员',
       content: '审批通过，已执行：',
       toolCalls: [
         { id: 't3', name: 'redis-cli CONFIG SET', args: { maxmemory: '16GB', 'maxmemory-policy': 'volatile-lru' }, result: 'OK', status: 'success' as const, durationMs: 45 },
@@ -1530,7 +1794,7 @@ export const mockConversationEx = {
       id: 'm8',
       role: 'assistant' as const,
       agentId: 'a1',
-      agentName: '故障自愈',
+      agentName: 'SRE 故障处置专员',
       content: '根据你的截图，14:00-14:25 内存从 4.8G 涨到 7.2G（斜率 13%/15min），这是异常写入。已识别 3 个大 Key：\n\n• session:user:8a3f:1.4GB\n• cache:render:html:5e2:1.1GB\n• analytics:event:raw:2026-07-13:0.9GB\n\n建议：\n1. volatile-lru 已生效（最近 5min 释放 800MB）\n2. 大 Key 拆分（运维窗口执行）\n3. 加监控告警：内存 > 70% 持续 5min',
       createdAt: '2026-07-13T14:30:20Z',
     },
@@ -1545,7 +1809,10 @@ export interface SessionItem {
   correlationId: string;
   title: string;
   preview: string;
+  /** 岗位专家显示名（兼容侧栏旧字段） */
   agent: string;
+  digitalEmployeeId?: string;
+  digitalEmployeeName?: string;
   status: 'active' | 'done';
   createdAt: string;
   updatedAt: string;
@@ -1554,22 +1821,22 @@ export interface SessionItem {
 }
 
 export const mockSessions: SessionItem[] = [
-  { id: 's1', workspaceId: 'w1', ownerId: 'u1', correlationId: 'corr_session_s1', title: 'Redis OOM 处理', preview: '已扩容到 16GB + volatile-lru', agent: '故障自愈', status: 'active', createdAt: '2026-07-22T12:47:00.000Z', updatedAt: '2026-07-22T12:53:42.000Z', lastMessageAt: '2026-07-22T12:53:42.000Z', pinned: true },
-  { id: 's2', workspaceId: 'w1', ownerId: 'u1', correlationId: 'corr_session_s2', title: '合规审计报告生成', preview: '本月 94 项审计已生成 PDF', agent: '合规审计', status: 'done', createdAt: '2026-07-22T10:40:00.000Z', updatedAt: '2026-07-22T11:20:00.000Z', lastMessageAt: '2026-07-22T11:20:00.000Z' },
-  { id: 's3', workspaceId: 'w2', ownerId: 'u2', correlationId: 'corr_session_s3', title: 'K8s 节点扩容申请', preview: '需要 2 个 c5.2xlarge，预计影响 5 个服务', agent: '变更辅助', status: 'active', createdAt: '2026-07-22T09:40:00.000Z', updatedAt: '2026-07-22T10:15:00.000Z', lastMessageAt: '2026-07-22T10:15:00.000Z' },
-  { id: 's4', workspaceId: 'w3', ownerId: 'u3', correlationId: 'corr_session_s4', title: 'CVE 周报', preview: '本周 12 个新漏洞，建议优先修复 CVE-2026-3321', agent: '漏洞修复', status: 'done', createdAt: '2026-07-21T16:30:00.000Z', updatedAt: '2026-07-21T17:45:00.000Z', lastMessageAt: '2026-07-21T17:45:00.000Z' },
-  { id: 's5', workspaceId: 'w3', ownerId: 'u3', correlationId: 'corr_session_s5', title: '告警降噪规则', preview: '合并 23 条重复 SIEM 告警', agent: '告警降噪', status: 'done', createdAt: '2026-07-21T14:00:00.000Z', updatedAt: '2026-07-21T14:30:00.000Z', lastMessageAt: '2026-07-21T14:30:00.000Z' },
-  { id: 's6', workspaceId: 'w1', ownerId: 'u1', correlationId: 'corr_session_s6', title: '客户咨询 · 价格问题', preview: '关于 Enterprise Plus 升级方案', agent: '客户支持', status: 'done', createdAt: '2026-07-10T08:30:00.000Z', updatedAt: '2026-07-10T09:10:00.000Z', lastMessageAt: '2026-07-10T09:10:00.000Z' },
-  { id: 's7', workspaceId: 'w2', ownerId: 'u2', correlationId: 'corr_session_s7', title: '容量预测 · Q3', preview: '预计增长 24%，建议提前扩容', agent: '容量预测', status: 'done', createdAt: '2026-07-09T08:30:00.000Z', updatedAt: '2026-07-09T09:00:00.000Z', lastMessageAt: '2026-07-09T09:00:00.000Z' },
+  { id: 's1', workspaceId: 'w1', ownerId: 'u1', correlationId: 'corr_session_s1', title: 'Redis OOM 处理', preview: '已扩容到 16GB + volatile-lru', agent: 'SRE 故障处置专员', digitalEmployeeId: 'de-sre', digitalEmployeeName: 'SRE 故障处置专员', status: 'active', createdAt: '2026-07-22T12:47:00.000Z', updatedAt: '2026-07-22T12:53:42.000Z', lastMessageAt: '2026-07-22T12:53:42.000Z', pinned: true },
+  { id: 's2', workspaceId: 'w1', ownerId: 'u1', correlationId: 'corr_session_s2', title: '合规审计报告生成', preview: '本月 94 项审计已生成 PDF', agent: '安全合规核查专员', digitalEmployeeId: 'de-compliance', digitalEmployeeName: '安全合规核查专员', status: 'done', createdAt: '2026-07-22T10:40:00.000Z', updatedAt: '2026-07-22T11:20:00.000Z', lastMessageAt: '2026-07-22T11:20:00.000Z' },
+  { id: 's3', workspaceId: 'w2', ownerId: 'u2', correlationId: 'corr_session_s3', title: 'K8s 节点扩容申请', preview: '需要 2 个 c5.2xlarge，预计影响 5 个服务', agent: '变更协同专员', digitalEmployeeId: 'de-change', digitalEmployeeName: '变更协同专员', status: 'active', createdAt: '2026-07-22T09:40:00.000Z', updatedAt: '2026-07-22T10:15:00.000Z', lastMessageAt: '2026-07-22T10:15:00.000Z' },
+  { id: 's4', workspaceId: 'w3', ownerId: 'u3', correlationId: 'corr_session_s4', title: 'CVE 周报', preview: '本周 12 个新漏洞，建议优先修复 CVE-2026-3321', agent: '漏洞响应专员', digitalEmployeeId: 'de-vulnerability', digitalEmployeeName: '漏洞响应专员', status: 'done', createdAt: '2026-07-21T16:30:00.000Z', updatedAt: '2026-07-21T17:45:00.000Z', lastMessageAt: '2026-07-21T17:45:00.000Z' },
+  { id: 's5', workspaceId: 'w3', ownerId: 'u3', correlationId: 'corr_session_s5', title: '告警降噪规则', preview: '合并 23 条重复 SIEM 告警', agent: '告警运营专员', digitalEmployeeId: 'de-alert-ops', digitalEmployeeName: '告警运营专员', status: 'done', createdAt: '2026-07-21T14:00:00.000Z', updatedAt: '2026-07-21T14:30:00.000Z', lastMessageAt: '2026-07-21T14:30:00.000Z' },
+  { id: 's6', workspaceId: 'w1', ownerId: 'u1', correlationId: 'corr_session_s6', title: '客户咨询 · 价格问题', preview: '关于 Enterprise Plus 升级方案', agent: 'IT 服务台专员', digitalEmployeeId: 'de-it', digitalEmployeeName: 'IT 服务台专员', status: 'done', createdAt: '2026-07-10T08:30:00.000Z', updatedAt: '2026-07-10T09:10:00.000Z', lastMessageAt: '2026-07-10T09:10:00.000Z' },
+  { id: 's7', workspaceId: 'w2', ownerId: 'u2', correlationId: 'corr_session_s7', title: '容量预测 · Q3', preview: '预计增长 24%，建议提前扩容', agent: '容量与性能专员', digitalEmployeeId: 'de-capacity', digitalEmployeeName: '容量与性能专员', status: 'done', createdAt: '2026-07-09T08:30:00.000Z', updatedAt: '2026-07-09T09:00:00.000Z', lastMessageAt: '2026-07-09T09:00:00.000Z' },
 ];
 
 // Slash 命令面板
 export const mockSlashCommands = [
-  { cmd: '/agent', desc: '切换 Agent', icon: 'Bot', category: 'agent' },
+  { cmd: '/expert', desc: '切换岗位专家', icon: 'Bot', category: 'agent' },
   { cmd: '/search', desc: '检索知识库', icon: 'Search', category: 'kb' },
   { cmd: '/task', desc: '创建任务', icon: 'ListChecks', category: 'task' },
   { cmd: '/skill', desc: '调用技能', icon: 'Wrench', category: 'tool' },
-  { cmd: '/workflow', desc: '触发工作流', icon: 'Workflow', category: 'tool' },
+  { cmd: '/workflow', desc: '触发已装配流程技能', icon: 'Workflow', category: 'tool' },
   { cmd: '/model', desc: '切换模型', icon: 'Cpu', category: 'tool' },
   { cmd: '/doc', desc: '查询文档', icon: 'FileText', category: 'kb' },
   { cmd: '/member', desc: '@ 提及成员', icon: 'Users', category: 'collab' },
@@ -1584,6 +1851,7 @@ export const mockConversation: Conversation = {
   workspaceId: 'w1',
   ownerId: 'u1',
   correlationId: 'corr_session_s1',
+  digitalEmployeeId: 'de-sre',
   agentId: 'a1',
   title: 'Redis OOM 处理',
   createdAt: '2026-07-22T12:47:00.000Z',
@@ -1594,8 +1862,9 @@ export const mockConversation: Conversation = {
       id: 'm2',
       role: 'assistant',
       agentId: 'a1',
+      agentName: 'SRE 故障处置专员',
       content:
-        '检测到 prod-redis-01 在 08:09:32 触发 maxmemory 限制。我已检索相关 Runbook 与最近变更记录，建议执行以下步骤：\n1. 临时提升 maxmemory 至 8GB（需双签）\n2. 清理已过期的会话缓存（预计释放 2.1GB）\n3. 排查最近 24h 是否存在大 Key 写入',
+        '检测到 prod-redis-01 在 08:09:32 触发 maxmemory 限制。我已检索相关 Runbook 与最近变更记录，建议执行以下步骤：\n1. 临时提升 maxmemory 至 8GB（需双重审批）\n2. 清理已过期的会话缓存（预计释放 2.1GB）\n3. 排查最近 24h 是否存在大 Key 写入',
       citations: [
         { id: 'c1', docId: 'k1', text: '当触发 OOM 时，优先检查 maxmemory-policy 与最近写入速率...', score: 0.92, source: 'Redis 故障 Runbook v3.2', page: 12 },
         { id: 'c2', docId: 'k2', text: 'prod-redis-01 资产编号 PRD-CACHE-019，归属 ACME 生产集群...', score: 0.78, source: 'CMDB 全量资产清单' },
@@ -1608,19 +1877,46 @@ export const mockConversation: Conversation = {
     },
     {
       id: 'm3',
-      role: 'tool',
-      content: '正在请求双签审批：调整 maxmemory 至 8GB（需 1 名 SRE + 1 名 Admin 签发）',
+      role: 'assistant',
+      agentId: 'a1',
+      agentName: 'SRE 故障处置专员',
+      content: '正在请求双重审批：调整 maxmemory 至 8GB（需 1 名 SRE + 1 名 Admin 签发）',
+      approvalRequest: {
+        action: 'CONFIG SET maxmemory 8GB',
+        resource: 'prod-redis-01',
+        reason: '等保 3 · 高危配置变更',
+        ticketId: 'CHG-2026-0198',
+        required: 2,
+        signed: 1,
+        decision: 'pending',
+        policyHash: 'pol_redis_oom_s1',
+        signers: [
+          {
+            userId: 'u2',
+            name: '王昊',
+            role: 'operator',
+            signed: true,
+            signedAt: '2026-07-22T12:48:20.000Z',
+            signatureHash: 'sig_m3_u2_op',
+          },
+          {
+            userId: 'u1',
+            name: '平台管理员',
+            role: 'approver',
+            signed: false,
+          },
+        ],
+      },
       createdAt: '2026-07-22T12:48:00.000Z',
     },
-    { id: 'm4', role: 'user', content: '已批准', createdAt: '2026-07-22T12:53:42.000Z' },
   ],
 };
 
 // ============ 记忆中心：受控运行记忆，不作为权威知识直接使用 ============
 const memoryRecords: MemoryRecord[] = [
-  { id: 'mem-short-1', workspaceId: 'w1', ownerId: 'u1', layer: 'short_term', scope: 'user', title: 'Redis OOM 会话上下文', content: '当前会话已确认 prod-redis-01 的 maxmemory 风险，等待双签执行。', classification: 'internal', sourceType: 'conversation', sourceId: 'cv1', correlationId: 'corr_conversation_cv1', confidence: .92, status: 'active', expiresAt: '2026-07-22T08:00:00.000Z', createdAt: '2026-07-21T08:12:00.000Z', updatedAt: '2026-07-21T08:24:00.000Z' },
+  { id: 'mem-short-1', workspaceId: 'w1', ownerId: 'u1', layer: 'short_term', scope: 'user', title: 'Redis OOM 会话上下文', content: '当前会话已确认 prod-redis-01 的 maxmemory 风险，等待双重审批执行。', classification: 'internal', sourceType: 'conversation', sourceId: 'cv1', correlationId: 'corr_conversation_cv1', confidence: .92, status: 'active', expiresAt: '2026-07-22T08:00:00.000Z', createdAt: '2026-07-21T08:12:00.000Z', updatedAt: '2026-07-21T08:24:00.000Z' },
   { id: 'mem-work-1', workspaceId: 'w1', ownerId: 'u1', layer: 'working', scope: 'team', title: 'TSK-20260713-001 处置上下文', content: '已完成内存趋势验证与大 Key 识别；人工接管前需保留执行证据。', classification: 'internal', sourceType: 'task', sourceId: 't1', correlationId: 'corr_task_t1', confidence: .96, status: 'active', expiresAt: '2026-08-20T00:00:00.000Z', createdAt: '2026-07-13T08:24:00.000Z', updatedAt: '2026-07-21T08:24:00.000Z' },
-  { id: 'mem-long-1', workspaceId: 'w1', ownerId: 'u1', layer: 'long_term', scope: 'workspace', title: 'Redis OOM 处置偏好', content: '生产 Redis OOM 优先检索已发布 Runbook；涉及配置写入必须由 SRE 与管理员双签。', classification: 'restricted', sourceType: 'workflow', sourceId: 'wf1', correlationId: 'corr_task_t1', confidence: .91, status: 'active', createdAt: '2026-07-18T09:00:00.000Z', updatedAt: '2026-07-21T08:24:00.000Z' },
+  { id: 'mem-long-1', workspaceId: 'w1', ownerId: 'u1', layer: 'long_term', scope: 'workspace', title: 'Redis OOM 处置偏好', content: '生产 Redis OOM 优先检索已发布 Runbook；涉及配置写入必须由 SRE 与管理员完成双重审批。', classification: 'restricted', sourceType: 'workflow', sourceId: 'wf1', correlationId: 'corr_task_t1', confidence: .91, status: 'active', createdAt: '2026-07-18T09:00:00.000Z', updatedAt: '2026-07-21T08:24:00.000Z' },
   { id: 'mem-long-2', workspaceId: 'w2', ownerId: 'u2', layer: 'long_term', scope: 'workspace', title: '预发扩容验收规则', content: '预发扩容先完成 10% 灰度与回滚演练，再提交生产发布审批。', classification: 'internal', sourceType: 'task', sourceId: 't6', correlationId: 'corr_task_t6', confidence: .88, status: 'active', createdAt: '2026-07-17T09:00:00.000Z', updatedAt: '2026-07-20T08:00:00.000Z' },
 ];
 const memoryCandidates: MemoryKnowledgeCandidate[] = [];
@@ -2004,14 +2300,74 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 智能体
   // 数字员工：业务岗位对象。其能力引用技术资产，但不复用 /api/agents 的技术语义。
-  if (path === '/api/digital-employees' && method === 'GET') return mockDigitalEmployees.filter((item) => item.workspaceId === currentWorkspaceId);
+  if (path === '/api/digital-employee-templates' && method === 'GET') return mockDigitalEmployeeTemplates.filter((item) => item.scope === 'organization' || item.workspaceId === currentWorkspaceId);
+  if (path === '/api/digital-employee-template-adoptions' && method === 'GET') return mockDigitalEmployeeTemplateAdoptions.filter((item) => item.workspaceId === currentWorkspaceId);
+  // 数字员工仅能从各能力中心已准入/已发布资产中选择，不能由前端手填名称。
+  if (path === '/api/digital-employee-capability-catalog' && method === 'GET') {
+    const modelOptions = modelProviders.filter((provider) => provider.workspaceId === currentWorkspaceId && provider.status === 'active').flatMap((provider) => provider.models.filter((model) => model.status === 'available').map((model) => ({ id: model.id, name: model.name, meta: `${provider.name} · ${model.cloudRegion}` })));
+    const knowledgeOptions = mockKnowledgePackages.filter(inCurrentWorkspace).filter((item) => item.status === 'published').map((item) => ({ id: item.id, name: item.name, meta: `${item.domain} · ${item.currentVersion.version}` }));
+    const capabilityAssets = mockSkills.filter(inCurrentWorkspace).map(skillAsset).filter((item) => item.lifecycleStatus === 'enabled');
+    const skillOptions = capabilityAssets.filter((item) => item.kind === 'skill').map((item) => ({ id: item.id, name: item.name, meta: `技能 · ${item.version}` }));
+    const toolOptions = capabilityAssets.filter((item) => item.kind === 'tool' || item.kind === 'mcp').map((item) => ({ id: item.id, name: item.name, meta: item.kind === 'mcp' ? `MCP · ${item.version}` : `工具 · ${item.version}` }));
+    const workflowSkillOptions = mockWorkflowSkills.filter((item) => item.status === 'published').map((item) => ({ id: item.id, name: item.name, meta: `流程技能 · ${item.sourceVersionId}` }));
+    const workflowOptions = [
+      ...workflowSkillOptions,
+      ...[{ ...mockWorkflow, workspaceId: currentWorkspaceId, lifecycleStatus: mockWorkflow.status }].filter((item) => item.status === 'active').map((item) => ({ id: item.id, name: item.name, meta: `工作流 · ${item.nodes.length} 个节点` })),
+    ];
+    const channelOptions = mockChannels.filter((item) => item.enabled).map((item) => ({ id: item.id, name: item.name, meta: `渠道 · ${item.kind}` }));
+    return { models: modelOptions, knowledge: knowledgeOptions, skills: skillOptions, tools: toolOptions, workflows: workflowOptions, channels: channelOptions };
+  }
+  if (path === '/api/digital-employee-templates' && method === 'POST') {
+    requireAdministrator('发布部门岗位模板');
+    const body = (opts.body ?? {}) as Partial<DigitalEmployeeTemplate>;
+    if (!body.name?.trim() || !body.role?.trim() || !body.department?.trim()) throw new Error('E_DIGITAL_EMPLOYEE_TEMPLATE_REQUIRED');
+    const template: DigitalEmployeeTemplate = { id: mockId('digital_employee_template'), name: body.name.trim(), role: body.role.trim(), department: body.department.trim(), description: body.description?.trim() || '待完善岗位模板说明。', serviceObject: body.serviceObject?.trim() || '内部用户', version: '0.1.0', risk: body.risk ?? 'low', responsibilities: body.responsibilities?.length ? body.responsibilities : ['待配置岗位职责'], prohibitedActions: body.prohibitedActions?.length ? body.prohibitedActions : ['待配置禁止行为'], capabilities: body.capabilities ?? { model: '企业通用路由 v2', knowledge: [], skills: [], tools: [], workflows: [], channels: ['Web'] }, memoryPolicy: body.memoryPolicy ?? { shortTermHours: 24, workingDays: 7, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, source: 'department', sourceName: `${body.department.trim()}共享模板`, status: 'review', scope: 'workspace', workspaceId: currentWorkspaceId, applicableEnvironments: body.applicableEnvironments ?? ['sandbox'], adoptionCount: 0, tags: body.tags ?? [], publishedAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+    mockDigitalEmployeeTemplates.unshift(template); workspaceAudit(currentWorkspaceId, '发布部门岗位模板', template.name); return template;
+  }
+  const digitalEmployeeTemplateRoute = path.match(/^\/api\/digital-employee-templates\/([^/]+)(?:\/(adopt))?$/);
+  if (digitalEmployeeTemplateRoute) {
+    const [, templateId, action] = digitalEmployeeTemplateRoute;
+    const template = mockDigitalEmployeeTemplates.find((item) => item.id === templateId && (item.scope === 'organization' || item.workspaceId === currentWorkspaceId));
+    if (!template) throw new Error('E_DIGITAL_EMPLOYEE_TEMPLATE_NOT_FOUND');
+    if (!action && method === 'GET') return template;
+    if (action === 'adopt' && method === 'POST') {
+      if (!identity || identity.role === 'auditor') throw new Error('E_DIGITAL_EMPLOYEE_WRITE_FORBIDDEN');
+      if (template.status === 'deprecated') throw new Error('E_DIGITAL_EMPLOYEE_TEMPLATE_DEPRECATED');
+      const body = (opts.body ?? {}) as Partial<Pick<DigitalEmployee, 'owner' | 'escalationOwner' | 'environment' | 'department' | 'name'>>;
+      const employee: DigitalEmployee = { id: mockId('digital_employee'), workspaceId: currentWorkspaceId, name: body.name?.trim() || template.name, role: template.role, department: body.department?.trim() || template.department, description: template.description, owner: body.owner?.trim() || identity.name, escalationOwner: body.escalationOwner?.trim() || '待指定', serviceObject: template.serviceObject, version: template.version, environment: body.environment ?? 'sandbox', lifecycle: 'draft', risk: template.risk, responsibilities: [...template.responsibilities], prohibitedActions: [...template.prohibitedActions], capabilities: { ...template.capabilities, knowledge: [...template.capabilities.knowledge], skills: [...template.capabilities.skills], tools: [...template.capabilities.tools], workflows: [...template.capabilities.workflows], channels: [...template.capabilities.channels] }, memoryPolicy: { ...template.memoryPolicy }, runtime: { calls24h: 0, successRate: 0, p95Ms: 0, costToday: 0, handoffs24h: 0, anomalies: 0 }, evaluation: { status: 'not_started' }, release: { status: 'not_released' }, templateId: template.id, templateVersion: template.version, updatedAt: new Date().toISOString() };
+      mockDigitalEmployees.unshift(employee); template.adoptionCount += 1; mockDigitalEmployeeTemplateAdoptions.unshift({ id: mockId('digital_employee_adoption'), templateId: template.id, templateVersion: template.version, employeeId: employee.id, workspaceId: currentWorkspaceId, adoptedBy: identity.name, status: 'draft', createdAt: new Date().toISOString() }); workspaceAudit(currentWorkspaceId, '采用岗位模板', `${template.name} · v${template.version}`); return employee;
+    }
+    if (!action && method === 'PATCH') {
+      requireAdministrator('治理岗位模板');
+      const body = (opts.body ?? {}) as Partial<Pick<DigitalEmployeeTemplate, 'status' | 'version' | 'description' | 'tags'>>;
+      if (body.status && !['certified', 'review', 'deprecated'].includes(body.status)) throw new Error('E_DIGITAL_EMPLOYEE_TEMPLATE_STATUS_INVALID');
+      Object.assign(template, body, { updatedAt: new Date().toISOString() }); workspaceAudit(currentWorkspaceId, '治理岗位模板', `${template.name} · ${template.status}`); return template;
+    }
+  }
+  if (path === '/api/digital-employees' && method === 'GET') {
+    const departmentOrder = ['研发部', '销售部', '市场部', '运营部', '人事部', '财务部', '信息技术部'];
+    const isHead = (item: { id: string; name: string; role?: string }) => /-(manager|head)$/.test(item.id) || Boolean(item.role && /部负责人$|部经理$|负责人$|经理$|总监$|主管$/.test(item.role));
+    return mockDigitalEmployees
+      .filter((item) => item.workspaceId === currentWorkspaceId)
+      .slice()
+      .sort((left, right) => {
+        const headCompare = Number(isHead(right)) - Number(isHead(left));
+        if (headCompare !== 0) return headCompare;
+        const leftDept = departmentOrder.indexOf(left.department);
+        const rightDept = departmentOrder.indexOf(right.department);
+        const departmentCompare = (leftDept === -1 ? departmentOrder.length : leftDept) - (rightDept === -1 ? departmentOrder.length : rightDept);
+        if (departmentCompare !== 0) return departmentCompare;
+        return left.name.localeCompare(right.name, 'zh-CN');
+      });
+  }
   if (path === '/api/digital-employees/overview' && method === 'GET') {
     const employees = mockDigitalEmployees.filter((item) => item.workspaceId === currentWorkspaceId);
     return {
       total: employees.length,
       active: employees.filter((item) => item.lifecycle === 'active').length,
-      pending: employees.filter((item) => item.lifecycle === 'pending_approval').length,
-      anomalies: employees.reduce((sum, item) => sum + item.runtime.anomalies, 0),
+      pending: employees.filter((item) => item.release.status === 'pending_approval' || item.lifecycle === 'pending_approval').length,
+      anomalies: employees.filter((item) => item.runtime.anomalies > 0 || item.lifecycle === 'quarantined').length,
+      handoffAttention: employees.filter((item) => item.runtime.handoffs24h >= 10).length,
       costToday: Number(employees.reduce((sum, item) => sum + item.runtime.costToday, 0).toFixed(2)),
     };
   }
@@ -2026,7 +2382,56 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       capabilities: body.capabilities ?? { model: '企业通用路由 v2', knowledge: [], skills: [], tools: [], workflows: [], channels: ['Web'] },
       memoryPolicy: body.memoryPolicy ?? { shortTermHours: 24, workingDays: 7, longTermCadence: 'daily', knowledgePromotion: 'approval_required' }, runtime: { calls24h: 0, successRate: 0, p95Ms: 0, costToday: 0, handoffs24h: 0, anomalies: 0 }, evaluation: { status: 'not_started' }, release: { status: 'not_released' }, updatedAt: new Date().toISOString(),
     };
-    mockDigitalEmployees.unshift(employee); workspaceAudit(currentWorkspaceId, '创建数字员工', employee.name); return employee;
+    mockDigitalEmployees.unshift(employee); workspaceAudit(currentWorkspaceId, '创建数字员工', `${employee.role} · ${employee.name}`); return employee;
+  }
+  const digitalEmployeeConfigurationVersionsRoute = path.match(/^\/api\/digital-employees\/([^/]+)\/configuration-versions(?:\/([^/]+)\/approve)?$/);
+  if (digitalEmployeeConfigurationVersionsRoute) {
+    const [, employeeId, versionId] = digitalEmployeeConfigurationVersionsRoute;
+    const employee = mockDigitalEmployees.find((item) => item.id === employeeId && item.workspaceId === currentWorkspaceId);
+    if (!employee) throw new Error('E_DIGITAL_EMPLOYEE_NOT_FOUND');
+    if (!versionId && method === 'GET') return mockDigitalEmployeeConfigurationVersions.filter((item) => item.employeeId === employee.id);
+    if (versionId && method === 'POST') {
+      requireAdministrator('批准员工受控配置变更');
+      const version = mockDigitalEmployeeConfigurationVersions.find((item) => item.id === versionId && item.employeeId === employee.id);
+      const draft = mockDigitalEmployeeConfigurationDrafts.get(versionId);
+      if (!version || !draft || version.status !== 'pending_approval') throw new Error('E_DIGITAL_EMPLOYEE_CONFIGURATION_CHANGE_NOT_FOUND');
+      if (version.updatedById && identity && version.updatedById === identity.id) throw new Error('E_SOD_SELF_APPROVAL: 配置提交人不能批准自己的受控变更');
+      if (!version.updatedById && identity && version.updatedBy === identity.name) throw new Error('E_SOD_SELF_APPROVAL: 配置提交人不能批准自己的受控变更');
+      mockDigitalEmployeeConfigurationVersions.filter((item) => item.employeeId === employee.id && item.status === 'current').forEach((item) => { item.status = 'superseded'; });
+      applyDigitalEmployeeConfiguration(employee, draft); version.status = 'current'; version.updatedAt = new Date().toISOString(); mockDigitalEmployeeConfigurationDrafts.delete(versionId);
+      workspaceAudit(currentWorkspaceId, '批准员工受控配置变更', `${employee.role} · ${employee.name} · ${version.version} · 批准人 ${identity?.name ?? '平台管理员'}`); return version;
+    }
+  }
+  const digitalEmployeeConfigurationRoute = path.match(/^\/api\/digital-employees\/([^/]+)\/configuration$/);
+  if (digitalEmployeeConfigurationRoute && method === 'POST') {
+    const employee = mockDigitalEmployees.find((item) => item.id === digitalEmployeeConfigurationRoute[1] && item.workspaceId === currentWorkspaceId);
+    if (!employee) throw new Error('E_DIGITAL_EMPLOYEE_NOT_FOUND');
+    if (!identity || identity.role === 'auditor') throw new Error('E_DIGITAL_EMPLOYEE_WRITE_FORBIDDEN');
+    const body = (opts.body ?? {}) as DigitalEmployeeConfigurationInput;
+    if (!body.profile?.name?.trim() || !body.profile?.role?.trim() || !body.profile?.department?.trim() || !body.capabilities?.model?.trim()) throw new Error('E_DIGITAL_EMPLOYEE_CONFIGURATION_REQUIRED');
+    const policy = body.boundary?.boundaryPolicy;
+    if (!body.boundary?.responsibilities?.length || !policy?.responsibilities?.length || !policy.handoff?.triggers?.length || !policy.handoff?.approvers?.length) throw new Error('E_DIGITAL_EMPLOYEE_BOUNDARY_REQUIRED');
+    const boundCapabilities = new Map<string, Set<string>>([
+      ['tool', new Set(body.capabilities.tools)], ['workflow', new Set(body.capabilities.workflows)], ['skill', new Set(body.capabilities.skills)],
+    ]);
+    const allowedModes = new Set(['recommend', 'approval_required', 'execute', 'prohibited']);
+    const invalidCapability = policy.capabilityModes.some((item) => !allowedModes.has(item.mode) || !boundCapabilities.get(item.capabilityType)?.has(item.capabilityName));
+    if (invalidCapability) throw new Error('E_DIGITAL_EMPLOYEE_BOUNDARY_CAPABILITY_INVALID');
+    if (!['internal', 'confidential', 'restricted'].includes(policy.dataClassification) || !policy.allowedEnvironments.length || !policy.allowedEnvironments.every((item) => ['sandbox', 'staging', 'production'].includes(item)) || policy.handoff.slaMinutes < 1) throw new Error('E_DIGITAL_EMPLOYEE_BOUNDARY_POLICY_INVALID');
+    const changedFields = [
+      JSON.stringify(employee.responsibilities) !== JSON.stringify(body.boundary.responsibilities) ? '岗位职责' : null,
+      JSON.stringify(employee.boundaryPolicy) !== JSON.stringify(policy) ? '执行边界与升级审批' : null,
+      JSON.stringify(employee.capabilities) !== JSON.stringify(body.capabilities) ? '能力装配' : null,
+      JSON.stringify(employee.memoryPolicy) !== JSON.stringify(body.memoryPolicy) ? '记忆策略' : null,
+      ['name', 'role', 'department', 'description', 'owner', 'escalationOwner', 'serviceObject', 'risk', 'environment'].some((key) => (employee as any)[key] !== (body.profile as any)[key]) ? '岗位档案' : null,
+    ].filter(Boolean) as string[];
+    const requiresApproval = employee.lifecycle === 'active' || body.profile.environment === 'production' || body.profile.risk === 'high';
+    const revisions = mockDigitalEmployeeConfigurationVersions.filter((item) => item.employeeId === employee.id).length + 1;
+    const executionElevated = policy.capabilityModes.some((item) => item.mode === 'execute');
+    const version: DigitalEmployeeConfigurationVersion = { id: mockId('digital_employee_config'), employeeId: employee.id, version: `配置 v${revisions}`, status: requiresApproval ? 'pending_approval' : 'current', changeSummary: requiresApproval ? `${executionElevated ? '包含可执行授权；' : ''}生产、在岗或高风险配置变更，等待审批后生效` : '更新岗位授权契约', changedFields: changedFields.length ? changedFields : ['职责与边界'], updatedBy: identity.name, updatedById: identity.id, updatedAt: new Date().toISOString() };
+    if (requiresApproval) { mockDigitalEmployeeConfigurationDrafts.set(version.id, body); workspaceAudit(currentWorkspaceId, '提交员工受控配置变更', `${employee.role} · ${employee.name} · ${version.version}`); }
+    else { mockDigitalEmployeeConfigurationVersions.filter((item) => item.employeeId === employee.id && item.status === 'current').forEach((item) => { item.status = 'superseded'; }); applyDigitalEmployeeConfiguration(employee, body); workspaceAudit(currentWorkspaceId, '更新员工配置', `${employee.role} · ${employee.name} · ${version.version}`); }
+    mockDigitalEmployeeConfigurationVersions.unshift(version); return { ...version, requiresApproval };
   }
   const digitalEmployeeRoute = path.match(/^\/api\/digital-employees\/([^/]+)(?:\/(capabilities|boundary|memory-policy|evaluate|release|lifecycle|runtime|evidence))?$/);
   if (digitalEmployeeRoute) {
@@ -2042,13 +2447,64 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       const profile = ['name', 'role', 'department', 'description', 'owner', 'escalationOwner', 'serviceObject', 'risk', 'environment'];
       profile.forEach((key) => { if (body[key] !== undefined) (employee as any)[key] = body[key]; });
     }
-    if (action === 'capabilities' && method === 'PATCH') employee.capabilities = { ...employee.capabilities, ...body };
-    if (action === 'boundary' && method === 'PATCH') { employee.responsibilities = body.responsibilities ?? employee.responsibilities; employee.prohibitedActions = body.prohibitedActions ?? employee.prohibitedActions; }
-    if (action === 'memory-policy' && method === 'PATCH') employee.memoryPolicy = { ...employee.memoryPolicy, ...body };
-    if (action === 'evaluate' && method === 'POST') { employee.evaluation = { status: 'passed', score: Number((91 + Math.random() * 7).toFixed(1)), lastRunAt: new Date().toISOString() }; if (employee.lifecycle === 'draft') employee.lifecycle = 'testing'; }
-    if (action === 'release' && method === 'POST') { if (employee.evaluation.status !== 'passed') throw new Error('E_DIGITAL_EMPLOYEE_EVALUATION_REQUIRED'); employee.lifecycle = 'pending_approval'; employee.release = { status: 'pending_approval' }; }
-    if (action === 'lifecycle' && method === 'POST') { const target = body.lifecycle as DigitalEmployee['lifecycle']; if (!['draft', 'testing', 'active', 'paused', 'quarantined'].includes(target)) throw new Error('E_DIGITAL_EMPLOYEE_LIFECYCLE_INVALID'); if (target === 'active' && employee.release.status !== 'released') { employee.release = { status: 'released', releasedAt: new Date().toISOString(), approver: identity.name }; } employee.lifecycle = target; }
-    employee.updatedAt = new Date().toISOString(); workspaceAudit(currentWorkspaceId, `数字员工：${action ?? '更新'}`, employee.name); return employee;
+    if ((action === 'capabilities' || action === 'boundary' || action === 'memory-policy') && method === 'PATCH') {
+      throw new Error('E_DIGITAL_EMPLOYEE_USE_CONFIGURATION: 请通过配置版本接口提交变更，禁止直接 PATCH 能力/边界/记忆');
+    }
+    if (action === 'evaluate' && method === 'POST') {
+      const incomplete = !employee.responsibilities.length || employee.responsibilities.includes('待配置岗位职责') || !employee.capabilities.model
+        || (employee.capabilities.skills.length + employee.capabilities.tools.length + employee.capabilities.workflows.length) === 0;
+      const forceFail = Boolean(body.forceFail);
+      if (incomplete || forceFail) {
+        employee.evaluation = { status: 'failed', score: Number((62 + Math.random() * 12).toFixed(1)), lastRunAt: new Date().toISOString() };
+      } else {
+        employee.evaluation = { status: 'passed', score: Number((91 + Math.random() * 7).toFixed(1)), lastRunAt: new Date().toISOString() };
+        if (employee.lifecycle === 'draft') employee.lifecycle = 'testing';
+      }
+    }
+    if (action === 'release' && method === 'POST') {
+      if (!employee.owner?.trim() || !employee.escalationOwner?.trim() || employee.escalationOwner === '待指定' || !employee.serviceObject?.trim()) throw new Error('E_DIGITAL_EMPLOYEE_PROFILE_INCOMPLETE: 请先完善岗位负责人、接管人与服务对象');
+      if (!employee.responsibilities.length || employee.responsibilities.includes('待配置岗位职责')) throw new Error('E_DIGITAL_EMPLOYEE_BOUNDARY_REQUIRED: 请先配置岗位职责边界');
+      const capabilityCount = employee.capabilities.skills.length + employee.capabilities.tools.length + employee.capabilities.workflows.length;
+      if (!employee.capabilities.model || capabilityCount === 0) throw new Error('E_DIGITAL_EMPLOYEE_CAPABILITY_REQUIRED: 请先装配已发布模型与至少一项技能/工具/流程技能');
+      if (employee.evaluation.status !== 'passed') throw new Error('E_DIGITAL_EMPLOYEE_EVALUATION_REQUIRED: 质量评测未通过，无法申请上岗');
+      if (employee.release.status === 'pending_approval') throw new Error('E_DIGITAL_EMPLOYEE_RELEASE_PENDING: 上岗申请已提交，等待双重审批');
+      if (employee.release.status === 'released' && employee.lifecycle === 'active') throw new Error('E_DIGITAL_EMPLOYEE_ALREADY_RELEASED: 员工已上岗');
+      employee.lifecycle = 'pending_approval';
+      employee.release = { status: 'pending_approval', requestedBy: identity.name, requestedById: identity.id };
+    }
+    if (action === 'lifecycle' && method === 'POST') {
+      const target = body.lifecycle as DigitalEmployee['lifecycle'];
+      if (!['draft', 'testing', 'active', 'paused', 'quarantined'].includes(target)) throw new Error('E_DIGITAL_EMPLOYEE_LIFECYCLE_INVALID');
+      if (target === 'active') {
+        if (employee.release.status === 'released' && (employee.lifecycle === 'paused' || employee.lifecycle === 'quarantined')) {
+          // 已上岗后的恢复运行
+        } else if (employee.release.status === 'pending_approval') {
+          requireAdministrator('确认双重审批上岗');
+          if (employee.release.requestedById && employee.release.requestedById === identity.id) {
+            throw new Error('E_SOD_SELF_APPROVAL: 上岗申请人不能批准自己的申请');
+          }
+          employee.release = {
+            status: 'released',
+            releasedAt: new Date().toISOString(),
+            requestedBy: employee.release.requestedBy,
+            requestedById: employee.release.requestedById,
+            approver: identity.name,
+            approverId: identity.id,
+          };
+        } else {
+          throw new Error('E_DIGITAL_EMPLOYEE_RELEASE_REQUIRED: 须先完成评测并经双重审批后方可上岗');
+        }
+      }
+      if ((target === 'paused' || target === 'quarantined') && employee.lifecycle !== 'active' && employee.lifecycle !== 'paused') {
+        throw new Error('E_DIGITAL_EMPLOYEE_LIFECYCLE_INVALID: 仅在岗或已暂停员工可进入暂停/隔离');
+      }
+      if (target === 'quarantined') requireAdministrator('隔离数字员工');
+      employee.lifecycle = target;
+    }
+    // 采用记录只作为模板溯源视图，始终镜像员工实例的生命周期，避免两处状态漂移。
+    const adoption = employee.templateId ? mockDigitalEmployeeTemplateAdoptions.find((item) => item.employeeId === employee.id) : undefined;
+    if (adoption) adoption.status = employee.lifecycle;
+    employee.updatedAt = new Date().toISOString(); workspaceAudit(currentWorkspaceId, `数字员工：${action ?? '更新'}`, `${employee.role} · ${employee.name}`); return employee;
   }
   const capabilityTarget = path.match(/^\/api\/(agents|workflows)\/([^/]+)\/capabilities(?:\/([^/]+))?$/);
   if (capabilityTarget) {
@@ -2859,9 +3315,33 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   // 会话工作台写接口：用于演示“会话 → 任务/审批/执行 → 审计/通知”的闭环。
   if (path.startsWith('/api/conversations/') && path.endsWith('/tasks') && opts.method === 'POST') {
     const conversationId = path.split('/')[3];
-    const body = (opts.body ?? {}) as { title?: string; priority?: string; assignee?: string; agentId?: string; workflowId?: string; correlationId?: string };
+    const body = (opts.body ?? {}) as {
+      title?: string;
+      priority?: string;
+      assignee?: string;
+      agentId?: string;
+      digitalEmployeeId?: string;
+      workflowId?: string;
+      correlationId?: string;
+    };
+    const employeeId = body.digitalEmployeeId ?? body.agentId ?? 'de-sre';
     const task = taskDomain.create({
-      title: body.title ?? '数字员工会话行动项', description: `由会话 ${conversationId} 创建`, priority: (body.priority as Task['priority']) ?? 'P1', assignee: body.assignee ?? '王昊', agentId: body.agentId ?? 'a1', progress: { done: 0, total: 3 }, tags: ['会话转任务'], source: 'conversation', workspaceId: currentWorkspaceId, ownerId: 'u1', environment: 'production', classification: 'internal', createdBy: 'u1', correlationId: body.correlationId ?? `corr_conversation_${conversationId}`, links: { conversationId, workflowId: body.workflowId },
+      title: body.title ?? '协同会话待办事项',
+      description: `由专家协同会话 ${conversationId} 转出，可回会话继续双重审批与能力调用。`,
+      priority: (body.priority as Task['priority']) ?? 'P1',
+      assignee: body.assignee ?? '王昊',
+      digitalEmployeeId: employeeId,
+      agentId: body.agentId ?? employeeId,
+      progress: { done: 0, total: 3 },
+      tags: ['会话转任务'],
+      source: 'conversation',
+      workspaceId: currentWorkspaceId,
+      ownerId: 'u1',
+      environment: 'production',
+      classification: 'internal',
+      createdBy: 'u1',
+      correlationId: body.correlationId ?? `corr_conversation_${conversationId}`,
+      links: { conversationId, workflowId: body.workflowId },
     }, { actor: '数字员工' });
     appendTaskDomainEvent(task);
     return task;
@@ -2871,15 +3351,33 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     const body = (opts.body ?? {}) as { signerIndex?: number; conversationId?: string };
     const identity = mockIdentity(opts.headers);
     if (!identity) throw new Error('E_AUTH_REQUIRED: 请先登录后再签发');
-    if (body.conversationId !== mockConversation.id || !inCurrentWorkspace(mockConversation)) {
-      throw new Error('E_APPROVAL_SCOPE: 当前会话不在您的工作区范围内');
-    }
+    if (!body.conversationId) throw new Error('E_APPROVAL_SCOPE: 缺少会话 ID');
+    // 权威演示会话 s1 需在工作区；客户端新建会话 id 以 s_ 开头；其余视为伪造范围
+    const scopedOk =
+      body.conversationId === mockConversation.id
+        ? inCurrentWorkspace(mockConversation)
+        : /^s_/.test(body.conversationId);
+    if (!scopedOk) throw new Error('E_APPROVAL_SCOPE: 当前会话不在您的工作区范围内');
 
-    // Mock 中的审批策略与生产策略保持同一语义：席位绑定身份、角色匹配、先后顺序及职责分离。
-    const approvalPolicy = [
-      { userId: 'u2', role: 'user' as const, label: '王昊', roleLabel: '执行复核' },
-      { userId: 'u1', role: 'admin' as const, label: '平台管理员', roleLabel: '变更审批' },
-    ];
+    // 优先从会话消息的审批席位派生策略，避免与 UI signers 分叉
+    const conversationMessage =
+      body.conversationId === mockConversation.id
+        ? mockConversation.messages.find((message) => message.id === actionId)
+        : undefined;
+    const messageSigners = conversationMessage?.approvalRequest?.signers;
+    const approvalPolicy = (messageSigners?.length
+      ? messageSigners.map((signer) => ({
+          userId: signer.userId,
+          role: (signer.role === 'approver' ? 'admin' : signer.role === 'auditor' ? 'auditor' : 'user') as Role,
+          label: signer.name,
+          roleLabel: signer.role === 'auditor' ? '审计复核' : signer.role === 'operator' ? '执行复核' : '变更审批',
+          alreadySigned: signer.signed,
+        }))
+      : [
+          { userId: 'u2', role: 'user' as const, label: '王昊', roleLabel: '执行复核', alreadySigned: true },
+          { userId: 'u1', role: 'admin' as const, label: '平台管理员', roleLabel: '变更审批', alreadySigned: false },
+        ]);
+
     const signerIndex = Number(body.signerIndex);
     const expectedSigner = Number.isInteger(signerIndex) ? approvalPolicy[signerIndex] : undefined;
     if (!expectedSigner) throw new Error('E_APPROVAL_SIGNER: 无效的审批席位');
@@ -2887,14 +3385,18 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       throw new Error(`E_APPROVAL_ASSIGNEE: 仅待签人 ${expectedSigner.label}（${expectedSigner.roleLabel}）可签发`);
     }
 
-    const action = mockDomain.actions.get(actionId) ?? {
+    const existing = mockDomain.actions.get(actionId);
+    const seededIndexes = approvalPolicy
+      .map((signer, index) => (signer.alreadySigned ? index : -1))
+      .filter((index) => index >= 0);
+    const action = existing ?? {
       id: actionId,
       conversationId: body.conversationId,
       status: 'pending' as const,
-      // Redis OOM 示例在发起前已由执行复核人完成第一签。
-      approvedSignerIndexes: [0],
+      // 无消息席位上下文时，沿用演示约定：执行复核已完成，待变更审批签发
+      approvedSignerIndexes: seededIndexes.length ? seededIndexes : [0],
     };
-    const approvedSignerIndexes = action.approvedSignerIndexes ?? [];
+    const approvedSignerIndexes = [...(action.approvedSignerIndexes ?? [])];
     if (approvedSignerIndexes.includes(signerIndex)) throw new Error('E_APPROVAL_DUPLICATE: 当前审批席位已签发');
     if (signerIndex > 0 && !approvedSignerIndexes.includes(signerIndex - 1)) {
       throw new Error('E_APPROVAL_SEQUENCE: 请等待上一审批席位完成签发');
@@ -2905,14 +3407,36 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
     const signedAt = new Date().toISOString();
     const signatureHash = `sig_${actionId.slice(-6)}_${identity.id}_${Date.now().toString(36)}`;
+    const nextIndexes = [...approvedSignerIndexes, signerIndex];
+    const completed = nextIndexes.length >= approvalPolicy.length;
     const next = {
       ...action,
-      status: 'approved' as const,
-      approvedSignerIndexes: [...approvedSignerIndexes, signerIndex],
+      status: (completed ? 'approved' : 'pending') as 'pending' | 'approved' | 'executed' | 'rejected',
+      approvedSignerIndexes: nextIndexes,
     };
     mockDomain.actions.set(actionId, next);
-    appendDomainEvent('审批通过', `${actionId} · ${identity.name}`);
-    return { ...next, signedAt, signatureHash, completed: next.approvedSignerIndexes.length >= approvalPolicy.length };
+    appendDomainEvent(completed ? '双重审批通过' : '双重审批签发', `${actionId} · ${identity.name}`);
+
+    // 写回权威演示会话，避免 syncSession 再次拉取时冲掉本地签署进度
+    if (conversationMessage?.approvalRequest) {
+      const request = conversationMessage.approvalRequest;
+      const signers = request.signers.map((signer, index) =>
+        index === signerIndex
+          ? { ...signer, signed: true, signedAt, signatureHash }
+          : signer,
+      );
+      const signed = signers.filter((signer) => signer.signed).length;
+      conversationMessage.approvalRequest = {
+        ...request,
+        signers,
+        signed,
+        decision: signed >= request.required ? 'approved' : 'pending',
+        decidedAt: signed >= request.required ? signedAt : request.decidedAt,
+      };
+      mockConversation.updatedAt = signedAt;
+    }
+
+    return { ...next, signedAt, signatureHash, completed };
   }
   if (path.startsWith('/api/actions/') && path.endsWith('/execute') && opts.method === 'POST') {
     const actionId = path.split('/')[3];
@@ -2924,6 +3448,25 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     const next = { ...action, status: 'executed' as const };
     mockDomain.actions.set(actionId, next);
     appendDomainEvent('受控执行完成', completedTask?.code ?? actionId);
+
+    const conversationMessage = mockConversation.messages.find((message) => message.id === actionId);
+    if (conversationMessage) {
+      conversationMessage.linkedTaskId = completedTask?.id ?? action.taskId;
+      if (conversationMessage.approvalRequest?.decision === 'approved') {
+        conversationMessage.toolCalls = [
+          ...(conversationMessage.toolCalls ?? []),
+          {
+            id: mockId('t'),
+            name: conversationMessage.approvalRequest.action,
+            args: { resource: conversationMessage.approvalRequest.resource },
+            result: `OK · 任务 ${completedTask?.code ?? actionId} 已回链`,
+            status: 'success',
+            durationMs: 48,
+          },
+        ];
+      }
+      mockConversation.updatedAt = new Date().toISOString();
+    }
     return { ...next, task: completedTask };
   }
   if (path === '/api/mock/reset' && opts.method === 'POST') {

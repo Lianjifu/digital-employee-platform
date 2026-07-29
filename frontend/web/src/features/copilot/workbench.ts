@@ -15,11 +15,12 @@ export function deriveWorkbenchSummary(session?: Pick<ChatSession, 'title' | 'me
     linkedTasks,
     evidence,
     executions,
+    /** 无待办时为空，避免「等待下一条指令」空转占用工作头 */
     nextAction: pendingApprovals
-      ? `等待 ${pendingApprovals} 项审批`
+      ? `处理 ${pendingApprovals} 项双重审批`
       : linkedTasks
         ? '查看关联任务执行状态'
-        : '等待下一条指令',
+        : '',
     tone: pendingApprovals ? 'warning' as const : 'brand' as const,
   };
 }

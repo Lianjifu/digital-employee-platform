@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import type { Task, DigitalEmployee, KnowledgeDoc } from '@de/web-types';
+import { sortDigitalEmployees } from '@/lib/digital-employees';
 
 type Result = { type: 'task' | 'employee' | 'doc'; id: string; title: string; subtitle?: string; to: string; meta?: string };
 
@@ -23,6 +24,8 @@ export function GlobalSearch() {
   const { data: tasks = [] } = useApiQuery<Task[]>(['search-tasks'], '/api/tasks');
   const { data: employees = [] } = useApiQuery<DigitalEmployee[]>(['search-digital-employees'], '/api/digital-employees');
   const { data: docs = [] } = useApiQuery<KnowledgeDoc[]>(['search-docs'], '/api/knowledge/docs');
+
+  const orderedEmployees = useMemo(() => sortDigitalEmployees(employees), [employees]);
 
   // ⌘K / Ctrl+K 全局打开
   useEffect(() => {
@@ -51,7 +54,7 @@ export function GlobalSearch() {
     if (!q.trim()) {
       return [
         ...tasks.slice(0, 3).map((t) => ({ type: 'task' as const, id: t.id, title: t.title, subtitle: t.code, to: '/tasks', meta: t.assignee })),
-        ...employees.slice(0, 3).map((employee) => ({ type: 'employee' as const, id: employee.id, title: employee.name, subtitle: employee.role, to: '/agents', meta: `${employee.department} · v${employee.version}` })),
+        ...orderedEmployees.slice(0, 3).map((employee) => ({ type: 'employee' as const, id: employee.id, title: employee.role || employee.name, subtitle: `${employee.department} · ${employee.name}`, to: '/agents', meta: `v${employee.version}` })),
         ...docs.slice(0, 3).map((d) => ({ type: 'doc' as const, id: d.id, title: d.title, subtitle: d.source, to: '/knowledge', meta: `${d.chunks} chunks` })),
       ];
     }
@@ -62,9 +65,9 @@ export function GlobalSearch() {
         out.push({ type: 'task', id: t.id, title: t.title, subtitle: t.code, to: '/tasks', meta: t.assignee });
       }
     });
-    employees.forEach((employee) => {
+    orderedEmployees.forEach((employee) => {
       if ([employee.name, employee.role, employee.department, employee.description].join(' ').toLowerCase().includes(ql)) {
-        out.push({ type: 'employee', id: employee.id, title: employee.name, subtitle: employee.role, to: '/agents', meta: `${employee.department} · v${employee.version}` });
+        out.push({ type: 'employee', id: employee.id, title: employee.role || employee.name, subtitle: `${employee.department} · ${employee.name}`, to: '/agents', meta: `v${employee.version}` });
       }
     });
     docs.forEach((d) => {
@@ -73,7 +76,7 @@ export function GlobalSearch() {
       }
     });
     return out.slice(0, 20);
-  }, [q, tasks, employees, docs]);
+  }, [q, tasks, orderedEmployees, docs]);
 
   // 键盘上下选择
   useEffect(() => {

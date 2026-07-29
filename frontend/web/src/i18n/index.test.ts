@@ -24,7 +24,22 @@ describe('enterprise navigation translations', () => {
   });
 
   it('keeps the workspace release label explicit in both languages', () => {
-    expect(DICTS['zh-CN']['module.workspace.tabs.environment']).toBe('环境与发布');
-    expect(DICTS['en-US']['module.workspace.tabs.environment']).toBe('Environments & Releases');
+    expect(DICTS['zh-CN']['module.workspace.tabs.environment']).toBe('环境发布');
+    expect(DICTS['en-US']['module.workspace.tabs.environment']).toBe('Environments');
+  });
+
+  it('uses four-character Chinese primary nav labels', () => {
+    const navKeys = [
+      'nav.home', 'nav.copilot', 'nav.tasks', 'nav.agents', 'nav.workflows',
+      'nav.models', 'nav.knowledge', 'nav.skills', 'nav.memory', 'nav.channels',
+      'nav.accessControl', 'nav.zeroTrust', 'nav.auditCenter',
+    ] as const;
+    for (const key of navKeys) {
+      expect([...DICTS['zh-CN'][key]].length).toBe(4);
+    }
+    expect(DICTS['zh-CN']['nav.group.operations']).toBe('协作');
+    expect(DICTS['zh-CN']['nav.workflows']).toBe('工作流程');
+    expect(DICTS['zh-CN']['nav.zeroTrust']).toBe('持续验证');
+    expect(DICTS['zh-CN']['module.agents.tabs.market']).not.toContain('工厂');
   });
 });

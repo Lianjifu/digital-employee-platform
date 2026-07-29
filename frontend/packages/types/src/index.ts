@@ -34,7 +34,7 @@ export type Permission =
   | 'model.write'
   | 'task.read'
   | 'task.write'
-  | 'task.approve' // 双签
+  | 'task.approve' // 双重审批 / 任务放行
   | 'channel.read'
   | 'channel.write'
   | 'audit.read'
@@ -211,7 +211,22 @@ export interface Task {
   priority: Priority;
   status: TaskStatus;
   assignee?: string;
+  /** 绑定的在岗数字员工（主对象） */
+  digitalEmployeeId?: ID;
+  /** 展示用岗位专家名称；以员工档案为准，列表可缓存 */
+  digitalEmployeeName?: string;
+  /** @deprecated 执行内核；由数字员工 capabilities.agentId 派生，不对外主称 */
   agentId?: ID;
+  /** 发起调度的部门负责人数字员工 */
+  coordinatorId?: ID;
+  coordinatorName?: string;
+  /** assign=本部门派工；assist=跨部门协办 */
+  dispatchKind?: 'assign' | 'assist';
+  /** 跨部门协办专家 */
+  collaboratorIds?: ID[];
+  collaboratorNames?: string[];
+  /** 跨部门协办确认；本部门派工为 not_required */
+  assistStatus?: 'not_required' | 'pending' | 'accepted' | 'rejected';
   progress: { done: number; total: number };
   slaRemainingMin?: number;
   tags: string[];
@@ -241,7 +256,7 @@ export interface TaskAuditEvent {
 
 export interface ControlledTask extends Task {
   lifecycleStage: TaskLifecycleStage;
-  source: 'alert' | 'conversation' | 'workflow' | 'manual';
+  source: 'alert' | 'conversation' | 'workflow' | 'manual' | 'dispatch';
   sla: {
     dueAt?: ISODate;
     remainingMin?: number;
@@ -307,6 +322,8 @@ export interface Agent {
  */
 export type DigitalEmployeeLifecycle = 'draft' | 'testing' | 'pending_approval' | 'active' | 'paused' | 'quarantined';
 export type DigitalEmployeeRisk = 'low' | 'medium' | 'high';
+export type DigitalEmployeeTemplateSource = 'platform' | 'department';
+export type DigitalEmployeeTemplateStatus = 'certified' | 'review' | 'deprecated';
 
 export interface DigitalEmployeeCapabilities {
   agentId?: ID;
@@ -316,6 +333,38 @@ export interface DigitalEmployeeCapabilities {
   tools: string[];
   workflows: string[];
   channels: string[];
+}
+
+/**
+ * 岗位授权契约：将数字员工的业务职责、可执行范围和人工升级条件结构化，
+ * 而不是以不可审计的大段自由文本保存。
+ */
+export type DigitalEmployeeExecutionMode = 'recommend' | 'approval_required' | 'execute' | 'prohibited';
+export interface DigitalEmployeeResponsibility {
+  id: ID;
+  title: string;
+  objective: string;
+  trigger: string;
+  deliverables: string[];
+  evidenceRequired: boolean;
+  workflowRef?: string;
+}
+export interface DigitalEmployeeCapabilityBoundary {
+  capabilityType: 'tool' | 'workflow' | 'skill';
+  capabilityName: string;
+  mode: DigitalEmployeeExecutionMode;
+}
+export interface DigitalEmployeeBoundaryPolicy {
+  responsibilities: DigitalEmployeeResponsibility[];
+  capabilityModes: DigitalEmployeeCapabilityBoundary[];
+  dataClassification: 'internal' | 'confidential' | 'restricted';
+  allowedEnvironments: WorkspaceEnvironmentKind[];
+  handoff: {
+    triggers: string[];
+    approvers: string[];
+    notificationChannels: string[];
+    slaMinutes: number;
+  };
 }
 
 export interface DigitalEmployee {
@@ -332,14 +381,83 @@ export interface DigitalEmployee {
   environment: WorkspaceEnvironmentKind;
   lifecycle: DigitalEmployeeLifecycle;
   risk: DigitalEmployeeRisk;
+  /** Optional portrait URL; when absent UI renders a deterministic illustrated avatar. */
+  avatarUrl?: string;
   responsibilities: string[];
   prohibitedActions: string[];
+  handoffPolicy?: { triggers: string[]; approvalRequiredFor: string[] };
+  /** 新版岗位授权契约；历史字段保留以兼容已发布员工与模板。 */
+  boundaryPolicy?: DigitalEmployeeBoundaryPolicy;
   capabilities: DigitalEmployeeCapabilities;
   memoryPolicy: { shortTermHours: number; workingDays: number; longTermCadence: 'daily' | 'weekly'; knowledgePromotion: 'approval_required' | 'disabled' };
   runtime: { calls24h: number; successRate: number; p95Ms: number; costToday: number; handoffs24h: number; anomalies: number };
   evaluation: { status: 'not_started' | 'passed' | 'failed' | 'running'; score?: number; lastRunAt?: ISODate };
-  release: { status: 'not_released' | 'pending_approval' | 'released'; releasedAt?: ISODate; approver?: string };
+  release: {
+    status: 'not_released' | 'pending_approval' | 'released';
+    releasedAt?: ISODate;
+    /** 上岗申请提交人（花名/展示名） */
+    requestedBy?: string;
+    requestedById?: string;
+    /** 双重审批批准人；不得与 requestedById 相同 */
+    approver?: string;
+    approverId?: string;
+  };
+  templateId?: ID;
+  templateVersion?: string;
   updatedAt: ISODate;
+}
+
+/** 员工配置的不可变版本记录；生产或高风险变更需先进入受控审批。 */
+export interface DigitalEmployeeConfigurationVersion {
+  id: ID;
+  employeeId: ID;
+  version: string;
+  status: 'current' | 'pending_approval' | 'superseded';
+  changeSummary: string;
+  changedFields: string[];
+  updatedBy: string;
+  /** 提交人 ID；批准时用于职责分离校验 */
+  updatedById?: string;
+  updatedAt: ISODate;
+}
+
+/** 可复用岗位蓝图；采用后会创建独立员工草稿并锁定模板版本。 */
+export interface DigitalEmployeeTemplate {
+  id: ID;
+  name: string;
+  role: string;
+  department: string;
+  description: string;
+  serviceObject: string;
+  version: string;
+  risk: DigitalEmployeeRisk;
+  responsibilities: string[];
+  prohibitedActions: string[];
+  capabilities: DigitalEmployeeCapabilities;
+  memoryPolicy: DigitalEmployee['memoryPolicy'];
+  source: DigitalEmployeeTemplateSource;
+  sourceName: string;
+  status: DigitalEmployeeTemplateStatus;
+  scope: 'organization' | 'workspace';
+  /** 工作区模板必须绑定工作区；组织模板由平台统一维护。 */
+  workspaceId?: ID;
+  applicableEnvironments: WorkspaceEnvironmentKind[];
+  evaluationScore?: number;
+  adoptionCount: number;
+  tags: string[];
+  publishedAt: ISODate;
+  updatedAt: ISODate;
+}
+
+export interface DigitalEmployeeTemplateAdoption {
+  id: ID;
+  templateId: ID;
+  templateVersion: string;
+  employeeId: ID;
+  workspaceId: ID;
+  adoptedBy: string;
+  status: DigitalEmployeeLifecycle;
+  createdAt: ISODate;
 }
 
 // ============ 工作流 P6 ============
@@ -977,13 +1095,50 @@ export interface ChannelAuditEvent {
 }
 
 // ============ 会话 P2 ============
+export type SignerRole = 'operator' | 'approver' | 'auditor';
+export type ApprovalDecision = 'pending' | 'approved' | 'rejected';
+
+export interface Signer {
+  /** 已绑定的审批主体 ID；审批依据必须是身份而不是可编辑的显示姓名 */
+  userId: ID;
+  name: string;
+  role: SignerRole;
+  signed: boolean;
+  signedAt?: ISODate;
+  /** 签名 hash（合规审计链） */
+  signatureHash?: string;
+}
+
+export interface ApprovalRequest {
+  action: string;
+  /** 写操作对应的命令/资源标识 */
+  resource?: string;
+  /** 至少需要的签名人数 */
+  required: number;
+  /** 已完成签名人数 */
+  signed: number;
+  signers: Signer[];
+  decision: ApprovalDecision;
+  /** 关联工单 / 变更单 */
+  ticketId?: string;
+  /** 触发原因（如等保 3 / 高危命令） */
+  reason?: string;
+  /** 该审批在审计日志中的 hash */
+  policyHash?: string;
+  decidedAt?: ISODate;
+}
+
 export interface ChatMessage {
   id: ID;
   role: 'user' | 'assistant' | 'tool' | 'system';
   content: string;
   agentId?: ID;
+  agentName?: string;
   citations?: KnowledgeChunk[];
   toolCalls?: ToolCall[];
+  /** 受控写操作的双重审批请求 */
+  approvalRequest?: ApprovalRequest;
+  linkedTaskId?: ID;
   createdAt: ISODate;
 }
 
@@ -992,8 +1147,11 @@ export interface ToolCall {
   name: string;
   args: Record<string, unknown>;
   result?: string;
-  status: 'pending' | 'running' | 'success' | 'failed';
+  status: 'pending' | 'running' | 'success' | 'failed' | 'denied';
   durationMs?: number;
+  permission?: 'auto' | 'ask' | 'deny';
+  sandboxId?: string;
+  traceId?: string;
 }
 
 export interface Conversation {
@@ -1001,6 +1159,9 @@ export interface Conversation {
   workspaceId?: ID;
   ownerId?: ID;
   correlationId?: string;
+  /** 绑定的数字员工（主对象） */
+  digitalEmployeeId?: ID;
+  /** @deprecated 执行内核；由数字员工 capabilities.agentId 派生 */
   agentId: ID;
   title: string;
   messages: ChatMessage[];

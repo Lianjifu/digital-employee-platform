@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, LoaderCircle, Plus } from 'lucide-react';
 import type { ControlledTask, Priority, TaskLifecycleStage } from '@de/web-types';
-import { Button, Input } from '@de/web-ui';
+import { Input } from '@de/web-ui';
 import { Drawer } from '@/components/shared';
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { TaskActionSummary, type TaskPreset } from '@/features/tasks/TaskActionSummary';
 import { TaskLifecycleBoard } from '@/features/tasks/TaskLifecycleBoard';
 import { TaskToolbar, defaultTaskFilters, type TaskFilters } from '@/features/tasks/TaskToolbar';
-import { getStageMeta, isRiskTask, sourceLabel } from '@/features/tasks/task-ui';
+import { employeeLabel, getStageMeta, isRiskTask, sourceLabel } from '@/features/tasks/task-ui';
 import { TaskLifecycleDrawer } from '@/features/tasks/TaskLifecycleDrawer';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -53,16 +53,26 @@ export default function Tasks() {
       if (filters.risk === 'attention' && task.lifecycleStage !== 'risk' && !isRiskTask(task.sla)) return false;
       if (filters.risk !== 'all' && filters.risk !== 'attention' && task.sla.risk !== filters.risk) return false;
       if (filters.priority !== 'all' && task.priority !== filters.priority) return false;
-      if (filters.agent !== 'all' && task.agentId !== filters.agent) return false;
+      if (filters.agent !== 'all' && task.digitalEmployeeId !== filters.agent && task.digitalEmployeeName !== filters.agent) return false;
       if (filters.source !== 'all' && task.source !== filters.source) return false;
       if (filters.approval !== 'all' && task.governance.approvalStatus !== filters.approval) return false;
       if (filters.blocked && !task.links.blockedBy && task.sla.risk !== 'blocked') return false;
-      if (query && !`${task.title} ${task.code} ${sourceLabel(task.source)}`.toLowerCase().includes(query)) return false;
+      if (query && !`${task.title} ${task.code} ${employeeLabel(task)} ${sourceLabel(task.source)}`.toLowerCase().includes(query)) return false;
       return true;
     });
   }, [apiTasks, filters]);
-  const counts = useMemo(() => ({ pending: apiTasks.filter((task) => task.lifecycleStage === 'pending').length, human_action: apiTasks.filter((task) => task.lifecycleStage === 'human_action').length, risk: apiTasks.filter((task) => task.lifecycleStage === 'risk' || isRiskTask(task.sla)).length }), [apiTasks]);
-  const applyPreset = (preset: TaskPreset) => setFilters({ ...defaultTaskFilters, stage: preset === 'pending' ? 'pending' : preset === 'human_action' ? 'human_action' : 'all', risk: preset === 'risk' ? 'attention' : 'all' });
+  const counts = useMemo(() => ({
+    pending: apiTasks.filter((task) => task.lifecycleStage === 'pending').length,
+    human_action: apiTasks.filter((task) => task.lifecycleStage === 'human_action' || task.governance.approvalStatus === 'pending').length,
+    risk: apiTasks.filter((task) => task.lifecycleStage === 'risk' || isRiskTask(task.sla)).length,
+    conversation: apiTasks.filter((task) => task.source === 'conversation' || Boolean(task.links.conversationId)).length,
+  }), [apiTasks]);
+  const applyPreset = (preset: TaskPreset) => setFilters({
+    ...defaultTaskFilters,
+    stage: preset === 'pending' ? 'pending' : preset === 'human_action' ? 'human_action' : 'all',
+    risk: preset === 'risk' ? 'attention' : 'all',
+    source: preset === 'conversation' ? 'conversation' : 'all',
+  });
   const openTask = (task: ControlledTask) => { setSelected(task); setMessage(null); };
   const moveTask = (task: ControlledTask, stage: TaskLifecycleStage) => transition.mutate({ id: task.id, stage, actor });
   const selectedCurrent = selected ? apiTasks.find((task) => task.id === selected.id) ?? selected : null;
@@ -76,16 +86,16 @@ export default function Tasks() {
   }, [apiTasks, selected, taskCodeFromHome]);
 
   return <main className="task-console px-3 py-3 md:px-4 md:py-4 lg:p-5">
-    <div className="task-console-header-panel"><header className="task-console-header"><div><h1>任务控制台</h1><p>优先处理需要人工判断、审批与风险处置的数字员工任务。</p></div></header></div>
+    <div className="task-console-header-panel"><header className="task-console-header"><div><h1>任务中心</h1><p>优先处理需要判断、双重审批与风险处置的数字员工协同任务。</p></div></header></div>
     <div className="task-console-content-panel">
     <TaskActionSummary counts={counts} onPreset={applyPreset} />
     <TaskToolbar filters={filters} onChange={setFilters} view={view} onViewChange={setView} tasks={apiTasks} onCreate={() => setNewTaskOpen(true)} />
     {message && <div className="task-feedback" role="status">{message}<button type="button" onClick={() => setMessage(null)}>关闭</button></div>}
-    {isLoading ? <div className="task-loading"><LoaderCircle className="animate-spin" />正在加载受控任务…</div> : error ? <div className="task-loading error" role="alert"><AlertCircle />无法加载任务：{error instanceof Error ? error.message : '请求失败'}<button type="button" onClick={() => refetch()}>重试</button></div> : <TaskLifecycleBoard tasks={tasks} view={view} disabled={mutationPending} onOpen={openTask} onTransition={moveTask} />}
+    {isLoading ? <div className="task-loading"><LoaderCircle className="animate-spin" />正在加载协同任务…</div> : error ? <div className="task-loading error" role="alert"><AlertCircle />无法加载任务：{error instanceof Error ? error.message : '请求失败'}<button type="button" onClick={() => refetch()}>重试</button></div> : <TaskLifecycleBoard tasks={tasks} view={view} disabled={mutationPending} onOpen={openTask} onTransition={moveTask} />}
     </div>
-    <Drawer open={!!selectedCurrent} onClose={() => setSelected(null)} title={selectedCurrent?.title} description={selectedCurrent ? `${selectedCurrent.code} · ${getStageMeta(selectedCurrent.lifecycleStage).label}` : undefined} width={520}>
-      {selectedCurrent && <TaskLifecycleDrawer task={selectedCurrent} onPendingChange={setDrawerPending} />}
+    <Drawer open={!!selectedCurrent} onClose={() => setSelected(null)} title={selectedCurrent?.title} description={selectedCurrent ? `${selectedCurrent.code} · ${getStageMeta(selectedCurrent.lifecycleStage).label}` : undefined} width={520} className="task-detail-drawer" flush>
+      {selectedCurrent && <div className="task-detail-drawer-body"><TaskLifecycleDrawer task={selectedCurrent} onPendingChange={setDrawerPending} /></div>}
     </Drawer>
-    <Drawer open={newTaskOpen} onClose={() => setNewTaskOpen(false)} title="新建受控任务" description="创建后由统一任务领域记录状态与审计。" width={440} footer={<Button disabled={!newTitle.trim() || create.isPending} loading={create.isPending} onClick={() => create.mutate({ title: newTitle.trim(), priority: 'P1', actor })}><Plus size={16} />创建任务</Button>}><label className="task-new-label">任务标题<Input autoFocus value={newTitle} onChange={(event) => setNewTitle(event.target.value)} placeholder="描述需要处置的生产运营任务" /></label></Drawer>
+    <Drawer open={newTaskOpen} onClose={() => setNewTaskOpen(false)} title="新建任务" description="创建后由任务中心统一记录状态与审计。" width={440} footer={<button type="button" className="task-create-btn" disabled={!newTitle.trim() || create.isPending} onClick={() => create.mutate({ title: newTitle.trim(), priority: 'P1', actor })}><Plus size={16} />{create.isPending ? '创建中…' : '创建任务'}</button>}><label className="task-new-label">任务标题<Input autoFocus value={newTitle} onChange={(event) => setNewTitle(event.target.value)} placeholder="描述需要与数字员工协同处置的事项" /></label></Drawer>
   </main>;
 }

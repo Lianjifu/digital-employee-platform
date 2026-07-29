@@ -219,8 +219,12 @@ export interface ChatSession {
   id: string;
   title: string;
   preview: string;
+  /** @deprecated 展示用岗位专家名称；请优先使用 digitalEmployeeName / digitalEmployeeId */
   agent: string;
   agentKey?: string;
+  /** 绑定的在岗数字员工（主对象） */
+  digitalEmployeeId?: string;
+  digitalEmployeeName?: string;
   status: 'active' | 'done';
   group: SessionGroup;
   time: string;
@@ -264,12 +268,14 @@ export interface SendMessageInput {
   text: string;
   /** 携带附件（图片 / 文件） */
   attachments?: { name: string; size: string; type: 'file' | 'image'; url?: string }[];
-  /** 显式指定 Agent（默认沿用会话 agent） */
+  /** 显式指定数字员工（默认沿用会话绑定） */
+  digitalEmployeeId?: string;
+  /** @deprecated 内部执行内核引用 */
   agentId?: string;
   /** 显式指定模型 */
   model?: string;
   /** 携带的 @ 提及 */
-  mentions?: { kind: 'agent' | 'skill' | 'doc' | 'member'; key: string }[];
+  mentions?: { kind: 'expert' | 'skill' | 'doc' | 'member' | 'agent'; key: string }[];
 }
 
 /* ---------- 导出 ---------- */

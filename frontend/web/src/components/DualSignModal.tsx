@@ -1,5 +1,5 @@
 /**
- * 双签 Modal — 等保 3 写动作必须 2 人签发
+ * 双重审批 Modal — 等保 3 写动作必须 2 人签发
  */
 import { Modal, Button, Badge } from '@de/web-ui';
 import { ShieldCheck, UserCheck, ShieldAlert } from 'lucide-react';
@@ -45,7 +45,7 @@ export function DualSignModal({ open, title, description, currentIdentity, targe
     <Modal
       open={open}
       onClose={onClose}
-      title="🔐 双签审批（等保 3）"
+      title="双重审批"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -63,7 +63,7 @@ export function DualSignModal({ open, title, description, currentIdentity, targe
     >
       <div className="space-y-3">
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-5 text-amber-700 dark:text-amber-300">
-          <ShieldAlert className="mr-1 inline h-3.5 w-3.5" />该操作会修改生产环境数据，需由不同职责的已授权用户完成双签。签发身份由当前登录会话校验，不接受手工填写姓名。
+          <ShieldAlert className="mr-1 inline h-3.5 w-3.5" />该操作会修改生产环境数据，需由不同职责的已授权用户完成双重审批。签发身份由当前登录会话校验，不接受手工填写姓名。
         </div>
         <div>
           <div className="mb-1 text-xs text-[var(--color-text-muted)]">操作</div>

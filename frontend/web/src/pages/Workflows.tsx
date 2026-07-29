@@ -29,7 +29,7 @@ import {
   Edit3, Copy, Box, ArrowRight, GripVertical, RefreshCw,
   Undo2, Redo2, FileJson, MessageSquare, StepForward, StepBack, SkipForward, SkipBack, History as HistoryIcon,
 } from 'lucide-react';
-import type { KnowledgePackage, KnowledgeRetrievalProfile, Workflow, WorkflowNodeKind } from '@de/web-types';
+import type { KnowledgePackage, KnowledgeRetrievalProfile, Workflow, WorkflowNodeKind, WorkflowSkill } from '@de/web-types';
 import { cn } from '@de/web-utils';
 import { Drawer, ConfirmDialog } from '@/components/shared';
 import { useApiMutation, useApiQuery } from '@/services/query';
@@ -38,7 +38,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useT } from '@/i18n';
 
 type SidePanelKey = 'library' | 'debug' | 'properties';
-type TabKey = 'canvas' | 'templates' | 'history';
+type TabKey = 'canvas' | 'templates' | 'publishSkill' | 'history' | 'versions';
 
 type GenerationResult = {
   id: string;
@@ -421,6 +421,13 @@ export default function Workflows() {
     onSuccess: () => { setVersionMenuOpen(false); showToast('已提交生产发布申请，等待管理员审批', 'success'); },
     onError: () => showToast('发布申请提交失败，请稍后重试', 'error'),
   });
+  const { data: workflowSkills = [], refetch: refetchWorkflowSkills } = useApiQuery<WorkflowSkill[]>(['workflow-skills'], '/api/workflow-skills');
+  const publishAsSkillApi = useApiMutation<WorkflowSkill, { version: string; name: string; description: string }>('/api/workflows/wf1/publish-as-skill', {
+    onSuccess: (skill) => { showToast(`已发布流程技能「${skill.name}」`, 'success'); refetchWorkflowSkills(); },
+    onError: () => showToast('发布技能失败，请确认流程版本已校验', 'error'),
+  });
+  const [skillName, setSkillName] = useState('生产故障处置流程技能');
+  const [skillDesc, setSkillDesc] = useState('由工作流程发布的标准作业能力，可供数字员工在能力装配中引用。');
   const requestProductionRelease = () => {
     if (isAdmin) publishWorkflowApi.mutate({ version: activeVersion });
     else releaseRequestApi.mutate({ resourceType: 'workflow', resourceName: `工作流 ${activeVersion}`, risk: 'medium' });
@@ -977,7 +984,9 @@ export default function Workflows() {
             {([
               { k: 'templates' as TabKey, labelKey: 'module.workflows.tabs.templates', icon: Layers },
               { k: 'canvas' as TabKey, labelKey: 'module.workflows.tabs.canvas', icon: GitBranch },
+              { k: 'publishSkill' as TabKey, labelKey: 'module.workflows.tabs.publishSkill', icon: Sparkles },
               { k: 'history' as TabKey, labelKey: 'module.workflows.tabs.history', icon: History },
+              { k: 'versions' as TabKey, labelKey: 'module.workflows.tabs.versions', icon: GitCompare },
             ]).map((v) => (
               <button
                 key={v.k}
@@ -1082,6 +1091,53 @@ export default function Workflows() {
 
         {tab === 'history' && (
           <HistoryView showToast={showToast} />
+        )}
+
+        {tab === 'publishSkill' && (
+          <div className="h-full overflow-y-auto p-5 space-y-4">
+            <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-5">
+              <h2 className="text-sm font-semibold">发布技能</h2>
+              <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">将已校验的流程版本发布为「流程技能」，写入技能中心供数字员工装配。未发布流程不可在专家协作中直接调用。</p>
+              <div className="mt-4 grid gap-3 sm:grid-cols-2">
+                <label className="grid gap-1.5 text-xs font-medium">技能名称<input value={skillName} onChange={(e) => setSkillName(e.target.value)} className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-xs outline-none focus:border-[var(--brand)]" /></label>
+                <label className="grid gap-1.5 text-xs font-medium">来源版本<select value={activeVersion} onChange={(e) => setActiveVersion(e.target.value)} className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-xs outline-none focus:border-[var(--brand)]">{versions.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}</select></label>
+                <label className="grid gap-1.5 text-xs font-medium sm:col-span-2">说明<textarea value={skillDesc} onChange={(e) => setSkillDesc(e.target.value)} rows={3} className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2 text-xs outline-none focus:border-[var(--brand)]" /></label>
+              </div>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <Button size="sm" disabled={!canWrite || !skillName.trim() || isDirty} loading={publishAsSkillApi.isPending} onClick={() => publishAsSkillApi.mutate({ version: activeVersion, name: skillName.trim(), description: skillDesc.trim() })}><Sparkles className="h-3.5 w-3.5" />发布为流程技能</Button>
+                {isDirty && <span className="text-[11px] text-[var(--warning)]">请先保存画布草稿后再发布技能</span>}
+                <Button size="sm" variant="ghost" onClick={() => setTab('canvas')}>返回流程编排</Button>
+              </div>
+            </section>
+            <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)]">
+              <div className="border-b border-[var(--border)] px-5 py-4"><h3 className="text-sm font-semibold">本工作区已发布的流程技能</h3><p className="mt-1 text-xs text-[var(--text-muted)]">可在技能中心「流程技能」查看，并在数字员工能力装配中引用。</p></div>
+              <div className="divide-y divide-[var(--border)]">
+                {workflowSkills.length ? workflowSkills.map((skill) => (
+                  <div key={skill.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+                    <div className="min-w-0"><div className="text-sm font-medium">{skill.name}</div><div className="mt-1 text-[11px] text-[var(--text-muted)]">来源流程 {skill.sourceWorkflowId} · 版本 {skill.sourceVersionId} · {skill.description}</div></div>
+                    <div className="flex items-center gap-2"><Badge tone={skill.status === 'published' ? 'success' : 'neutral'}>{skill.status === 'published' ? '已发布' : skill.status}</Badge><Badge tone={skill.riskLevel === 'high' ? 'error' : skill.riskLevel === 'mid' ? 'warn' : 'success'}>{skill.riskLevel === 'high' ? '高风险' : skill.riskLevel === 'mid' ? '中风险' : '低风险'}</Badge></div>
+                  </div>
+                )) : <div className="px-5 py-10 text-center text-xs text-[var(--text-muted)]">尚未发布流程技能</div>}
+              </div>
+            </section>
+          </div>
+        )}
+
+        {tab === 'versions' && (
+          <div className="h-full overflow-y-auto p-5 space-y-3">
+            <div className="mb-2"><h2 className="text-sm font-semibold">版本管理</h2><p className="mt-1 text-xs text-[var(--text-muted)]">版本快照仅影响画布草稿；发布到生产与发布技能是独立动作。</p></div>
+            {versions.map((version) => (
+              <button key={version.id} type="button" onClick={() => { loadSnapshot(version, version.id); setTab('canvas'); showToast(`已加载 ${version.label}`, 'info'); }} className={cn('flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition-colors hover:bg-[var(--bg-hover)]', version.id === activeVersion ? 'border-[var(--brand)] bg-[var(--brand-light)]' : 'border-[var(--border)] bg-[var(--bg)]')}>
+                <span className="font-mono text-sm font-semibold text-[var(--brand)]">{version.label}</span>
+                <span className="min-w-0 flex-1"><span className="block text-[11px] text-[var(--text-muted)]">{version.time}</span><span className="block truncate text-xs text-[var(--text-secondary)]">{version.desc}</span></span>
+                {version.id === activeVersion && <Badge tone="success">当前</Badge>}
+              </button>
+            ))}
+            <div className="flex gap-2 pt-2">
+              <Button size="sm" variant="secondary" onClick={() => setVersionDiffOpen(true)}><GitCompare className="h-3.5 w-3.5" />查看差异</Button>
+              <Button size="sm" onClick={requestProductionRelease} loading={publishWorkflowApi.isPending || releaseRequestApi.isPending} disabled={!canWrite || isDirty}>{isAdmin ? '发布版本' : '提交发布申请'}</Button>
+            </div>
+          </div>
         )}
       </div>
 

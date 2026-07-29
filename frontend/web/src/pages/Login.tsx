@@ -64,8 +64,8 @@ export default function Login() {
                 <Bot className="h-5 w-5" />
               </div>
               <div>
-                <div className="text-lg font-bold">数字员工平台</div>
-                <div className="text-xs opacity-80 font-mono">Enterprise Digital Workforce</div>
+                <div className="text-lg font-bold">企业可信数字员工平台</div>
+                <div className="text-xs opacity-80">专家团队协同 · 岗位边界清晰</div>
               </div>
             </div>
 

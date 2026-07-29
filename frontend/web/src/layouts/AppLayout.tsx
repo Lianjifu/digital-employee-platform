@@ -7,7 +7,7 @@
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import {
-  Home, MessageSquare, ListChecks, Building2, Bot, Workflow,
+  Home, MessageSquare, ListChecks, Building2, BriefcaseBusiness, Workflow,
   BookOpen, Wrench, Brain, BrainCircuit, Send,
   Menu, Settings2, Languages, Sun, Moon,
   LogOut, ChevronDown, X, CheckCircle2,
@@ -37,7 +37,7 @@ const NAV_GROUPS: { labelKey: string | null; items: NavItem[] }[] = [
   {
     labelKey: 'nav.group.orchestration',
     items: [
-      { to: '/agents', i18n: 'nav.agents', icon: Bot, roles: ['user', 'admin'] },
+      { to: '/agents', i18n: 'nav.agents', icon: BriefcaseBusiness, roles: ['user', 'admin'] },
       { to: '/workflows', i18n: 'nav.workflows', icon: Workflow, roles: ['user', 'admin'] },
     ],
   },
@@ -141,7 +141,7 @@ export function AppLayout() {
       )}
       {/* ============ Topbar ============ */}
       <header
-        className="col-span-2 flex h-[60px] items-center gap-2 md:gap-6 border-b border-[var(--border)] bg-[var(--bg)] px-3 md:px-6 shadow-[var(--shadow-xs)] sticky top-0 z-30"
+        className="app-glass col-span-2 sticky top-0 z-30 flex h-[60px] items-center gap-2 border-b px-3 shadow-[var(--shadow-xs)] md:gap-6 md:px-6"
         style={{ gridColumn: '1 / -1' }}
       >
         <button
@@ -178,7 +178,7 @@ export function AppLayout() {
             <ChevronDown className={cn('h-3.5 w-3.5 shrink-0 text-[var(--text-muted)] transition-transform', workspaceMenuOpen && 'rotate-180')} />
           </button>
           {workspaceMenuOpen && (
-            <div role="menu" className="absolute left-0 top-full z-50 mt-2 w-[320px] overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl">
+            <div role="menu" className="app-glass-panel absolute left-0 top-full z-50 mt-2 w-[320px] overflow-hidden rounded-lg shadow-xl">
               <div className="border-b border-[var(--border)] px-3 py-2">
                 <div className="text-xs font-semibold">{t('workspace.switch')}</div>
                 <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{t('workspace.switch.desc')}</div>

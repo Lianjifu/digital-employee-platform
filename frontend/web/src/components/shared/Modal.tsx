@@ -66,7 +66,7 @@ export function Modal({
       >
         {/* Header */}
         {(title || description) && (
-          <div className="flex items-start justify-between gap-3 border-b border-[var(--border)] bg-[var(--surface-1)] px-6 py-5">
+          <div className="app-glass flex items-start justify-between gap-3 border-b px-6 py-5">
             <div className="min-w-0">
               {title && <h3 className="text-[15px] font-semibold text-[var(--text)]">{title}</h3>}
               {description && <p className="mt-1 text-[13px] text-[var(--text-muted)]">{description}</p>}
@@ -84,7 +84,7 @@ export function Modal({
         <div className="max-h-[72vh] overflow-y-auto px-6 py-5">{children}</div>
         {/* Footer */}
         {footer && (
-          <div className="flex items-center justify-end gap-2 border-t border-[var(--border)] bg-[var(--bg-elevated)]/50 px-6 py-4">
+          <div className="app-glass flex items-center justify-end gap-2 border-t px-6 py-4">
             {footer}
           </div>
         )}

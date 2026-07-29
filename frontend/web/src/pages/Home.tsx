@@ -230,9 +230,12 @@ export default function Home() {
         <div className="home-hero__layout">
         <div className="home-hero__content">
           <h1 className="home-hero__title">
-            <span className="text-gradient">{isAdministrator ? '数字员工运营中枢' : '数字员工工作台'}</span>
+            <span className="text-gradient">运营总览</span>
             <span className="home-hero__greeting">{greeting}，{user?.name ?? '管理员'}</span>
           </h1>
+          <p className="home-hero__sub mt-2 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">
+            专家团队协同视图：看清在岗数字员工、待处理事项，以及成本与产出是否值得继续投入。
+          </p>
         </div>
       </div>
       </div>
@@ -263,24 +266,24 @@ export default function Home() {
           <Plus className="h-3.5 w-3.5" />任务
         </Button>
         <Button size="sm" variant="secondary" onClick={() => navigate('/copilot')}>
-          <MessageSquare className="h-3.5 w-3.5" />会话
+          <MessageSquare className="h-3.5 w-3.5" />专家协作
         </Button>
         {isAdministrator && <>
           <Button size="sm" variant="secondary" onClick={() => navigate('/agents')}>
             <Bot className="h-3.5 w-3.5" />数字员工
           </Button>
           <Button size="sm" variant="ghost" onClick={() => navigate('/workflows')}>
-            <Workflow className="h-3.5 w-3.5" />工作流
+            <Workflow className="h-3.5 w-3.5" />工作流程
           </Button>
         </>}
       </div>
 
       <section className="mx-6 mt-3 rounded-md border border-[var(--border)] bg-[var(--bg)] px-4 py-3 md:mx-8" aria-label="工作区运营待办">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2 text-xs font-semibold"><Inbox className="h-4 w-4 text-[var(--brand)]" />{isAdministrator ? '工作区运营待办' : '我的待办'}</div>
+          <div className="flex items-center gap-2 text-xs font-semibold"><Inbox className="h-4 w-4 text-[var(--brand)]" />{isAdministrator ? '专家团队待办' : '我的待办'}</div>
           <div className="flex items-center gap-3 text-[11px] text-[var(--text-muted)]">
             <span>任务成功率 <strong className="text-[var(--text)]">{metrics?.taskSuccessRate ?? operations?.health?.taskSuccessRate ?? '--'}%</strong></span>
-            <span>运行中数字员工 <strong className="text-[var(--text)]">{metrics?.activeAgents ?? operations?.health?.activeAgents ?? '--'}</strong></span>
+            <span>在岗专家 <strong className="text-[var(--text)]">{metrics?.activeAgents ?? operations?.health?.activeAgents ?? '--'}</strong></span>
             <span>待处理 <strong className="text-[var(--danger)]">{operations?.pending?.length ?? 0}</strong></span>
           </div>
         </div>
@@ -289,6 +292,36 @@ export default function Home() {
             {operations.pending.slice(0, 3).map((item: any) => <Link key={item.id} to={item.to} className="rounded border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:border-[var(--brand)] hover:text-[var(--brand)]">{item.title}</Link>)}
           </div>
         )}
+      </section>
+
+      <section className="mx-6 mt-3 grid gap-3 md:mx-8 md:grid-cols-2" aria-label="成本与产出">
+        <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-4 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-semibold">本月成本</div>
+            <Link to="/agents" className="text-[11px] text-[var(--brand)]">按岗位查看 →</Link>
+          </div>
+          <div className="mt-2 flex items-end gap-2">
+            <strong className="text-xl tabular-nums">¥{extra?.costMonth?.used ?? 0}</strong>
+            <span className="pb-0.5 text-[11px] text-[var(--text-muted)]">/ 预算 ¥{extra?.costMonth?.budget ?? 0}</span>
+          </div>
+          <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--bg-elevated)]">
+            <div className="h-full rounded-full bg-[var(--brand)]" style={{ width: `${Math.min(100, ((extra?.costMonth?.used ?? 0) / Math.max(1, extra?.costMonth?.budget ?? 1)) * 100)}%` }} />
+          </div>
+          {(extra?.costMonth?.used ?? 0) / Math.max(1, extra?.costMonth?.budget ?? 1) > 0.8 && (
+            <p className="mt-2 text-[11px] text-[var(--warning)]">已用超 80% 预算，建议复核高成本岗位或下调非关键调用。</p>
+          )}
+        </div>
+        <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-4 py-3">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-xs font-semibold">本月产出</div>
+            <span className="text-[11px] text-[var(--text-muted)]">与成本并排，衡量是否值得</span>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2 text-center">
+            <div><div className="text-lg font-semibold tabular-nums">{tc.done}</div><div className="mt-0.5 text-[10px] text-[var(--text-muted)]">完成任务</div></div>
+            <div><div className="text-lg font-semibold tabular-nums">{Math.round((metrics?.taskSuccessRate ?? 96))}%</div><div className="mt-0.5 text-[10px] text-[var(--text-muted)]">成功率</div></div>
+            <div><div className="text-lg font-semibold tabular-nums">{Math.max(1, Math.round((extra?.costMonth?.used ?? 1) > 0 ? (tc.done / Math.max(1, (extra?.costMonth?.used ?? 1) / 100)) : tc.done))}</div><div className="mt-0.5 text-[10px] text-[var(--text-muted)]">每百元任务</div></div>
+          </div>
+        </div>
       </section>
 
       {/* ============ 6 KPI 卡（可点击跳转）============ */}

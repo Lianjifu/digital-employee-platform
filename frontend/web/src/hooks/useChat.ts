@@ -434,8 +434,8 @@ const REPLY_TEMPLATES: { match: RegExp; reply: (q: string) => ReplyMock }[] = [
     match: /(redis|缓存|cache)/i,
     reply: (q) => ({
       role: 'assistant',
-      agentName: '故障自愈',
-      content: '已检测到 Redis 相关问题。正在按 Runbook §3.1 执行：\n1. 检查 maxmemory-policy（当前 noeviction）\n2. 临时扩容到 16GB（需双签）\n3. 切换 volatile-lru 策略\n4. 监控 OOM 频率',
+      agentName: 'SRE 故障处置专员',
+      content: '已检测到 Redis 相关问题。正在按 Runbook §3.1 执行：\n1. 检查 maxmemory-policy（当前 noeviction）\n2. 临时扩容到 16GB（需双重审批）\n3. 切换 volatile-lru 策略\n4. 监控 OOM 频率',
       thinkingSummary: '用户提到 Redis，先查 maxmemory-policy + 最近写入速率。',
       reasoningSteps: [
         { id: uid('r_'), kind: 'plan', title: '识别问题域', detail: '关键词命中 Redis，定位缓存层', startedAt: now(), endedAt: now() },
@@ -875,13 +875,17 @@ export function useChat(agentMeta?: { name: string }) {
 
   const setDraft = useCallback((v: string) => dispatch({ type: 'set_draft', value: v }), []);
 
-  const newSession = useCallback(() => {
+  const newSession = useCallback((opts?: { digitalEmployeeId?: string; digitalEmployeeName?: string; agentKey?: string }) => {
     const id = uid('s_');
+    const expertName = opts?.digitalEmployeeName ?? agentMeta?.name ?? '岗位专家';
     const sess: ChatSession = {
       id,
       title: '新会话',
       preview: '',
-      agent: agentMeta?.name ?? '故障自愈',
+      agent: expertName,
+      agentKey: opts?.agentKey,
+      digitalEmployeeId: opts?.digitalEmployeeId,
+      digitalEmployeeName: expertName,
       status: 'active',
       lifecycle: 'active',
       group: 'today',
@@ -895,6 +899,7 @@ export function useChat(agentMeta?: { name: string }) {
       encrypted: true,
     };
     dispatch({ type: 'new_session', session: sess });
+    return id;
   }, [agentMeta?.name]);
 
   /** 将当前工作区的只读历史记录并入本地会话，不改变用户正在进行的会话。 */
@@ -1055,9 +1060,52 @@ export function useChat(agentMeta?: { name: string }) {
     dispatch({ type: 'approve', sid: state.activeId, mid, signerIndex, signedAt: result.signedAt, signatureHash: result.signatureHash });
     if (result.completed) {
       const task = await api.post<{ id: string; code: string }>(`/api/conversations/${state.activeId}/tasks`, {
-        title: `${session?.title ?? '数字员工会话'} · 受控执行`, priority: 'P1', assignee: '王昊', correlationId: message.correlationId,
+        title: `${session?.title ?? '专家协同会话'} · 待办事项`,
+        priority: 'P1',
+        assignee: '王昊',
+        digitalEmployeeId: session?.digitalEmployeeId,
+        correlationId: message.correlationId,
       });
       await api.post(`/api/actions/${mid}/execute`, { taskId: task.id });
+      const request = message.approvalRequest!;
+      const signers = request.signers.map((signer, index) =>
+        index === signerIndex || signer.signed
+          ? {
+              ...signer,
+              signed: true,
+              signedAt: index === signerIndex ? result.signedAt : signer.signedAt,
+              signatureHash: index === signerIndex ? result.signatureHash : signer.signatureHash,
+            }
+          : signer,
+      );
+      dispatch({
+        type: 'replace_msg',
+        sid: state.activeId,
+        mid,
+        msg: {
+          ...message,
+          approvalRequest: {
+            ...request,
+            signers,
+            signed: request.required,
+            decision: 'approved',
+            decidedAt: result.signedAt,
+          },
+          linkedTaskId: task.id,
+          toolCalls: [
+            ...(message.toolCalls ?? []),
+            {
+              id: uid('t_'),
+              name: request.action,
+              args: { resource: request.resource, ticketId: request.ticketId },
+              result: `OK · 任务 ${task.code ?? task.id} 已回链`,
+              status: 'success',
+              durationMs: 48,
+              permission: 'approval-required',
+            },
+          ],
+        },
+      });
     }
   }, [state.activeId]);
 

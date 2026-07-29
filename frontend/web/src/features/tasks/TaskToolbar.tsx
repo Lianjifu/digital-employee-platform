@@ -1,7 +1,6 @@
 import { Check, ChevronDown, List, Plus, Search, TableProperties } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import type { ControlledTask, Priority, TaskLifecycleStage, TaskRisk } from '@de/web-types';
-import { Button } from '@de/web-ui';
 import { getStageMeta, riskLabel } from './task-ui';
 
 export type TaskFilters = {
@@ -38,15 +37,22 @@ export function TaskToolbar({ filters, onChange, view, onViewChange, tasks, onCr
 }) {
   const update = <K extends keyof TaskFilters>(key: K, value: TaskFilters[K]) => onChange({ ...filters, [key]: value });
   const assignees = Array.from(new Set(tasks.map((task) => task.assignee).filter(Boolean))) as string[];
-  const agents = Array.from(new Set(tasks.map((task) => task.agentId).filter(Boolean))) as string[];
+  const employees = Array.from(
+    new Map(
+      tasks
+        .filter((task) => task.digitalEmployeeId || task.digitalEmployeeName)
+        .map((task) => [task.digitalEmployeeId ?? task.digitalEmployeeName!, task.digitalEmployeeName ?? task.digitalEmployeeId!]),
+    ).entries(),
+  );
   return <div className="task-toolbar">
-    <label className="task-search"><Search size={16} /><input value={filters.search} onChange={(event) => update('search', event.target.value)} placeholder="搜索任务、编号、来源" /></label>
+    <label className="task-search"><Search size={16} /><input value={filters.search} onChange={(event) => update('search', event.target.value)} placeholder="搜索任务、编号、专家、来源" /></label>
     <Select label="状态" value={filters.stage} onChange={(value) => update('stage', value as TaskFilters['stage'])} options={[{ value: 'all', label: '全部状态' }, ...(['pending', 'running', 'human_action', 'risk', 'completed'] as TaskLifecycleStage[]).map((stage) => ({ value: stage, label: getStageMeta(stage).label }))]} />
     <Select label="负责人" value={filters.assignee} onChange={(value) => update('assignee', value)} options={[{ value: 'all', label: '全部负责人' }, ...assignees.map((name) => ({ value: name, label: name }))]} />
     <Select label="风险" value={filters.risk} onChange={(value) => update('risk', value as TaskFilters['risk'])} options={[{ value: 'all', label: '全部风险' }, { value: 'attention', label: '风险异常' }, ...(['warning', 'critical', 'overdue', 'failed', 'blocked'] as TaskRisk[]).map((risk) => ({ value: risk, label: riskLabel(risk) }))]} />
     <Select label="优先级" value={filters.priority} onChange={(value) => update('priority', value as TaskFilters['priority'])} options={[{ value: 'all', label: '全部优先级' }, ...(['P0', 'P1', 'P2', 'P3'] as Priority[]).map((value) => ({ value, label: value }))]} />
-    <Select label="数字员工" value={filters.agent} onChange={(value) => update('agent', value)} options={[{ value: 'all', label: '全部数字员工' }, ...agents.map((value) => ({ value, label: value }))]} />
-    <Select label="审批状态" value={filters.approval} onChange={(value) => update('approval', value as TaskFilters['approval'])} options={[{ value: 'all', label: '全部审批状态' }, { value: 'pending', label: '待审批' }, { value: 'approved', label: '已批准' }, { value: 'rejected', label: '已拒绝' }]} />
-    <div className="task-toolbar-actions"><div className="task-view-toggle"><button aria-label="看板视图" className={view === 'board' ? 'active' : ''} onClick={() => onViewChange('board')}><TableProperties size={16} /></button><button aria-label="列表视图" className={view === 'list' ? 'active' : ''} onClick={() => onViewChange('list')}><List size={16} /></button></div><Button onClick={onCreate}><Plus size={16} />新建任务</Button></div>
+    <Select label="数字员工" value={filters.agent} onChange={(value) => update('agent', value)} options={[{ value: 'all', label: '全部数字员工' }, ...employees.map(([value, label]) => ({ value, label }))]} />
+    <Select label="来源" value={filters.source} onChange={(value) => update('source', value as TaskFilters['source'])} options={[{ value: 'all', label: '全部来源' }, { value: 'conversation', label: '会话' }, { value: 'alert', label: '告警' }, { value: 'manual', label: '手工创建' }]} />
+    <Select label="审批状态" value={filters.approval} onChange={(value) => update('approval', value as TaskFilters['approval'])} options={[{ value: 'all', label: '全部审批状态' }, { value: 'pending', label: '待双重审批' }, { value: 'approved', label: '已批准' }, { value: 'rejected', label: '已拒绝' }]} />
+    <div className="task-toolbar-actions"><div className="task-view-toggle"><button aria-label="看板视图" className={view === 'board' ? 'active' : ''} onClick={() => onViewChange('board')}><TableProperties size={16} /></button><button aria-label="列表视图" className={view === 'list' ? 'active' : ''} onClick={() => onViewChange('list')}><List size={16} /></button></div><button type="button" className="task-create-btn" onClick={onCreate}><Plus size={16} />新建任务</button></div>
   </div>;
 }

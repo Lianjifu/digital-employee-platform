@@ -4,7 +4,7 @@
  *  1. 消息状态机（queued / streaming / succeeded / failed / cancelled / expired / moderated）
  *  2. 多会话管理（增/删/置顶/星标/归档/分享/TTL）
  *  3. 流式响应（chunk 级 + AbortController + 超时）
- *  4. 双签审批（operator + auditor 角色 + 时间戳 + hash）
+ *  4. 双重审批（operator + auditor 角色 + 时间戳 + hash）
  *  5. Reasoning steps 折叠（plan / search / analyze / tool_call / reflect / finalize）
  *  6. RAG 引用（chunkId / rerankScore / evalLabel + Drawer）
  *  7. Tool call（permission / sandboxId / traceId + 失败重试）
@@ -23,8 +23,9 @@
  * 20. 升级人工（escalate to human）
  */
 import { useState, useRef, useEffect, useMemo } from 'react';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useApiQuery } from '@/services/query';
-import { Avatar, Badge, Button, Input, Dot, Row, CollapsedPanelHandle } from '@de/web-ui';
+import { Avatar, Badge, Button, Input, Row, CollapsedPanelHandle } from '@de/web-ui';
 import {
   Bot, Search, ListChecks as ListChecksIcon, Wrench, Workflow as WorkflowIcon, FileText, ShieldCheck,
   AlertTriangle, Upload, MoreHorizontal, Download,
@@ -32,12 +33,17 @@ import {
   Star, Share2, Settings, X, Pin, ChevronDown, ChevronLeft,
   Sparkles, Database, Code, Cpu, Users, Loader2, AlertCircle, AtSign,
   Hash, Activity, Languages, BookOpenCheck, Brain, RotateCcw,
-  Paperclip, Mic, Send, ChevronRight, ThumbsUp, ThumbsDown,
+  Paperclip, Send, ChevronRight, ThumbsUp, ThumbsDown,
   Copy, Trash2, Square, Plus, Archive, ArchiveRestore, FileDown, Lock, Eye, EyeOff, ArrowUp,
   Archive as ArchiveIcon, MessageSquareWarning, ShieldAlert, Check, Hourglass, Plug, PlugZap, Pencil,
+  BriefcaseBusiness,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import { DualSignModal } from '@/components/DualSignModal';
+import { DigitalEmployeeAvatar } from '@/components/DigitalEmployeeAvatar';
+import { compareDigitalEmployees, employeePrimaryLabel, employeeSecondaryLabel, isDepartmentHead } from '@/lib/digital-employees';
+import { Modal } from '@/components/shared';
+import type { DigitalEmployee } from '@de/web-types';
 import { DebugPanel } from '@/components/DebugPanel';
 import { useChat } from '@/hooks/useChat';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
@@ -64,6 +70,8 @@ interface SessionItem {
   title: string;
   preview: string;
   agent: string;
+  digitalEmployeeId?: string;
+  digitalEmployeeName?: string;
   status: 'active' | 'done';
   createdAt: string;
   updatedAt: string;
@@ -96,9 +104,23 @@ function sessionTime(lastMessageAt: string) {
 
 function toChatSession(session: SessionItem): ChatSession {
   return {
-    id: session.id, workspaceId: session.workspaceId, ownerId: session.ownerId, title: session.title, preview: session.preview, agent: session.agent,
-    status: session.status, lifecycle: session.status === 'active' ? 'active' : 'idle', group: sessionGroup(session.lastMessageAt), time: sessionTime(session.lastMessageAt),
-    pinned: session.pinned, messages: [], createdAt: new Date(session.createdAt).getTime(), lastActiveAt: new Date(session.updatedAt).getTime(), encrypted: true,
+    id: session.id,
+    workspaceId: session.workspaceId,
+    ownerId: session.ownerId,
+    title: session.title,
+    preview: session.preview,
+    agent: session.digitalEmployeeName ?? session.agent,
+    digitalEmployeeId: session.digitalEmployeeId,
+    digitalEmployeeName: session.digitalEmployeeName ?? session.agent,
+    status: session.status,
+    lifecycle: session.status === 'active' ? 'active' : 'idle',
+    group: sessionGroup(session.lastMessageAt),
+    time: sessionTime(session.lastMessageAt),
+    pinned: session.pinned,
+    messages: [],
+    createdAt: new Date(session.createdAt).getTime(),
+    lastActiveAt: new Date(session.updatedAt).getTime(),
+    encrypted: true,
   };
 }
 
@@ -124,15 +146,15 @@ const SLASH_ICON: Record<string, any> = {
 };
 
 const SOURCE_COLOR: Record<string, string> = {
-  Runbook: 'text-[var(--brand)] bg-[var(--brand-light)] border-[var(--brand)]/30',
-  CMDB: 'text-[var(--info)] bg-[var(--info-bg)] border-[var(--info)]/30',
-  CVE: 'text-[var(--danger)] bg-[var(--danger-bg)] border-[var(--danger)]/30',
-  SIEM: 'text-[var(--warning)] bg-[var(--warning-bg)] border-[var(--warning)]/30',
+  Runbook: 'text-slate-700 bg-slate-100',
+  CMDB: 'text-[var(--info)] bg-[var(--info-bg)]',
+  CVE: 'text-[var(--danger)] bg-[var(--danger-bg)]',
+  SIEM: 'text-[var(--warning)] bg-[var(--warning-bg)]',
 };
 
 const MENTIONS = [
-  { key: '@agent', label: 'Agent', icon: Bot, desc: '故障自愈 / 变更辅助 ...' },
-  { key: '@skill', label: 'Skill', icon: Wrench, desc: 'redis-cli / kubectl ...' },
+  { key: '@expert', label: '专家', icon: BriefcaseBusiness, desc: '在岗数字员工 ...' },
+  { key: '@skill', label: '技能', icon: Wrench, desc: 'redis-cli / 流程技能 ...' },
   { key: '@doc', label: '文档', icon: FileText, desc: 'Runbook / CMDB ...' },
   { key: '@member', label: '成员', icon: Users, desc: '王昊 / 李婷 ...' },
 ];
@@ -153,7 +175,7 @@ const MODELS: { key: string; label: string; tier: string; tone: 'success' | 'bra
 
 const availableTools: { key: string; name: string; desc: string; requiresApproval?: boolean }[] = [
   { key: 'redis-cli', name: 'redis-cli', desc: '查询 / 设置 Redis 配置' },
-  { key: 'kubectl', name: 'kubectl', desc: 'K8s 资源管理（需双签）', requiresApproval: true },
+  { key: 'kubectl', name: 'kubectl', desc: 'K8s 资源管理（需双重审批）', requiresApproval: true },
   { key: 'prometheus', name: 'prometheus', desc: '指标查询 · PromQL' },
   { key: 'loki-query', name: 'loki-query', desc: '日志检索' },
   { key: 'siem', name: 'siem', desc: '威胁狩猎 · ATT&CK 时间线' },
@@ -212,6 +234,10 @@ const ERROR_HINT: Record<ErrorCategory, string> = {
 };
 
 export default function Copilot() {
+  const navigate = useNavigate();
+  const { id: routeSessionId } = useParams<{ id?: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const employeeIdFromQuery = searchParams.get('employeeId');
   const currentUser = useAuthStore((state) => state.user);
   const isAdmin = currentUser?.role === 'admin';
   const { t } = useT();
@@ -240,9 +266,16 @@ export default function Copilot() {
   const [hoverMsgId, setHoverMsgId] = useState<string | null>(null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [feedbackOpen, setFeedbackOpen] = useState<string | null>(null);
-  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [shareDialog, setShareDialog] = useState<{ open: boolean; token?: string }>({ open: false });
   const [rejectionReason, setRejectionReason] = useState<{ mid: string; idx: number; open: boolean }>({ mid: '', idx: -1, open: false });
+  const [expertPickerOpen, setExpertPickerOpen] = useState(false);
+  const [expertPickerMode, setExpertPickerMode] = useState<'new' | 'rebind'>('new');
+  const [expertPickerQuery, setExpertPickerQuery] = useState('');
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [exportSubOpen, setExportSubOpen] = useState(false);
+  const [rebindBlockedReason, setRebindBlockedReason] = useState<string | null>(null);
+  const deepLinkHandled = useRef<string | null>(null);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
 
   // Composer 增强状态
   const [modelOpen, setModelOpen] = useState(false);
@@ -251,21 +284,48 @@ export default function Copilot() {
   const [enabledTools, setEnabledTools] = useState<string[]>(availableTools.map((t) => t.key));
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
-  const [voiceOn, setVoiceOn] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const currentModel = MODELS.find((m) => m.key === currentModelKey) ?? MODELS[0];
   const enabledToolCount = enabledTools.length;
 
-  // 真实状态管理（持久化 + 流式响应 + 多会话）
-  const { data: agentMeta } = useApiQuery<AgentMeta>(['agent', 'meta'], '/api/agents/a1/meta');
+  const { data: employees = [] } = useApiQuery<DigitalEmployee[]>(['digital-employees'], '/api/digital-employees');
+  const onDutyEmployees = useMemo(
+    () => employees.filter((item) => item.lifecycle === 'active').sort(compareDigitalEmployees),
+    [employees],
+  );
   const { data: slashCmds = [] } = useApiQuery<{ cmd: string; desc: string; icon: string; category: string }[]>(
     ['slash-cmds'], '/api/slash-commands'
   );
   const { data: sessionHistory = [], isLoading: sessionsLoading } = useApiQuery<SessionItem[]>(['sessions'], '/api/sessions');
-  const chat = useChat(agentMeta);
+  const chat = useChat({ name: '岗位专家' });
   const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
   const { data: activeConversation } = useApiQuery<any>(['conversation', chat.state.activeId], `/api/conversations/${chat.state.activeId}`, undefined, { enabled: !!chat.state.activeId });
+
+  const activeSession = chat.activeSession;
+  const activeEmployeeId = activeSession?.digitalEmployeeId ?? employeeIdFromQuery ?? undefined;
+  const activeEmployee = employees.find((item) => item.id === activeEmployeeId) ?? null;
+  const expertName = activeEmployee ? employeePrimaryLabel(activeEmployee) : (activeSession?.digitalEmployeeName ?? activeSession?.agent ?? '岗位专家');
+  const expertMeta = activeEmployee ? employeeSecondaryLabel(activeEmployee) : null;
+  const expertDescription = activeEmployee?.description ?? '选择在岗数字员工后开始专家协作。';
+  const agentMeta = {
+    id: activeEmployee?.capabilities.agentId ?? 'runtime',
+    name: expertName,
+    category: activeEmployee?.department ?? '专家团队',
+    version: activeEmployee?.version ?? '—',
+    rating: 0,
+    ratingCount: 0,
+    lastActive: '—',
+    installCount: 0,
+    responseP95: activeEmployee?.runtime.p95Ms ?? 0,
+    totalTokens: 0,
+    sla: activeEmployee ? Number((activeEmployee.runtime.successRate * 100).toFixed(1)) : 0,
+    errorRate: activeEmployee ? Math.max(0, 1 - activeEmployee.runtime.successRate) : 0,
+    knowledgeBases: activeEmployee?.capabilities.knowledge.length ?? 0,
+    tools: (activeEmployee?.capabilities.tools.length ?? 0) + (activeEmployee?.capabilities.skills.length ?? 0),
+    languages: ['zh-CN'],
+    description: expertDescription,
+  };
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -286,6 +346,102 @@ export default function Copilot() {
     if (!summary) return;
     chat.syncSession({ ...toChatSession(summary), messages: activeConversation.messages as ChatMessageEx[] });
   }, [activeConversation, chat.state.activeId, chat.syncSession, sessionHistory]);
+
+  // 深链：/copilot/:id 切换到对应会话
+  useEffect(() => {
+    if (!historyReady || !routeSessionId) return;
+    if (routeSessionId === chat.state.activeId) return;
+    const exists = Boolean(chat.state.sessions[routeSessionId]) || sessionHistory.some((item) => item.id === routeSessionId);
+    if (exists) chat.switchSession(routeSessionId);
+  }, [historyReady, routeSessionId, chat.state.activeId, chat.state.sessions, chat.switchSession, sessionHistory]);
+
+  // 活动会话同步到 URL
+  useEffect(() => {
+    if (!historyReady || !chat.state.activeId) return;
+    const target = `/copilot/${chat.state.activeId}`;
+    if (routeSessionId === chat.state.activeId) return;
+    navigate(target, { replace: true });
+  }, [historyReady, chat.state.activeId, routeSessionId, navigate]);
+
+  // 深链：?employeeId= 选中在岗专家并发起/绑定会话
+  useEffect(() => {
+    if (!historyReady || !employeeIdFromQuery) return;
+    if (deepLinkHandled.current === employeeIdFromQuery) return;
+    const employee = employees.find((item) => item.id === employeeIdFromQuery);
+    if (!employee) return;
+    deepLinkHandled.current = employeeIdFromQuery;
+    if (employee.lifecycle !== 'active') {
+      setExpertPickerOpen(true);
+      return;
+    }
+    const existing = Object.values(chat.state.sessions).find((session) => session.digitalEmployeeId === employee.id && session.status === 'active');
+    if (existing) {
+      chat.switchSession(existing.id);
+    } else {
+      const id = chat.newSession({
+        digitalEmployeeId: employee.id,
+        digitalEmployeeName: employeePrimaryLabel(employee),
+        agentKey: employee.capabilities.agentId,
+      });
+      if (id) navigate(`/copilot/${id}`, { replace: true });
+    }
+    setSearchParams({}, { replace: true });
+  }, [historyReady, employeeIdFromQuery, employees, chat, navigate, setSearchParams]);
+
+  const startSessionWithExpert = (employee: DigitalEmployee) => {
+    if (employee.lifecycle !== 'active') return;
+    const active = chat.activeSession;
+    if (expertPickerMode === 'rebind' && active) {
+      const pending = (active.messages ?? []).filter((message) => message.approvalRequest?.decision === 'pending').length;
+      if (pending > 0) {
+        setRebindBlockedReason(`当前会话有 ${pending} 项待审批，请先完成或拒绝后再改绑专家。`);
+        return;
+      }
+      if (isClosed || handoffActive) {
+        setRebindBlockedReason(isClosed ? '会话已结案，无法改绑专家。' : '人工交接中，无法改绑专家。');
+        return;
+      }
+      chat.syncSession({
+        ...active,
+        digitalEmployeeId: employee.id,
+        digitalEmployeeName: employeePrimaryLabel(employee),
+        agent: employeePrimaryLabel(employee),
+        agentKey: employee.capabilities.agentId,
+      });
+      setExpertPickerOpen(false);
+      setExpertPickerQuery('');
+      setRebindBlockedReason(null);
+      return;
+    }
+    const id = chat.newSession({
+      digitalEmployeeId: employee.id,
+      digitalEmployeeName: employeePrimaryLabel(employee),
+      agentKey: employee.capabilities.agentId,
+    });
+    setExpertPickerOpen(false);
+    setExpertPickerQuery('');
+    setRebindBlockedReason(null);
+    if (id) navigate(`/copilot/${id}`);
+  };
+
+  const openNewSessionPicker = () => {
+    setExpertPickerMode('new');
+    setExpertPickerOpen(true);
+    setExpertPickerQuery('');
+    setRebindBlockedReason(null);
+  };
+
+  const openRebindExpertPicker = () => {
+    setExpertPickerMode('rebind');
+    setExpertPickerOpen(true);
+    setExpertPickerQuery('');
+    setRebindBlockedReason(null);
+  };
+
+  const filteredExperts = useMemo(() => {
+    const q = expertPickerQuery.trim().toLowerCase();
+    return onDutyEmployees.filter((item) => !q || [item.name, item.role, item.department].join(' ').toLowerCase().includes(q));
+  }, [onDutyEmployees, expertPickerQuery]);
 
   // todo 8: 上下方向键切换输入历史
   const onTextareaKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -346,7 +502,6 @@ export default function Copilot() {
     a.download = `${currentSession.title || 'session'}-${currentSession.id}.${format === 'json' ? 'json' : 'md'}`;
     a.click();
     URL.revokeObjectURL(url);
-    setExportMenuOpen(false);
   };
 
   const printAuditRecord = () => {
@@ -377,7 +532,6 @@ export default function Copilot() {
     printWindow.document.close();
     printWindow.focus();
     printWindow.print();
-    setExportMenuOpen(false);
   };
 
   // 归档 / 取消归档
@@ -466,7 +620,19 @@ export default function Copilot() {
   };
 
   const handleSend = () => {
-    if (!chat.state.draftInput.trim() || chat.state.typing || isClosed) return;
+    if (!chat.state.draftInput.trim() || chat.state.typing || isClosed || handoffActive) return;
+    if (!activeSession?.digitalEmployeeId && !activeEmployee) {
+      openNewSessionPicker();
+      return;
+    }
+    // 研判模式：仅允许检索与分析指令；写操作类 slash 需先切到受控执行
+    if (sessionMode === 'investigate') {
+      const draft = chat.state.draftInput.trim();
+      const writeHint = /\/(exec|kubectl|write|apply|config)|CONFIG SET|kubectl\s+(apply|delete|exec)/i.test(draft);
+      if (writeHint) {
+        setSessionMode('execute');
+      }
+    }
     if (editingMessageId) { chat.replaceAndSend(editingMessageId, chat.state.draftInput); setEditingMessageId(null); } else chat.send(chat.state.draftInput);
     setShowSlash(false);
     setShowMention(false);
@@ -522,6 +688,7 @@ export default function Copilot() {
 
   const switchSession = (id: string) => {
     chat.switchSession(id);
+    navigate(`/copilot/${id}`, { replace: true });
     setSessionsOpen(false);
     requestAnimationFrame(() => inputRef.current?.focus());
   };
@@ -532,12 +699,24 @@ export default function Copilot() {
   };
 
   const currentSession = chat.activeSession;
+  const sessionUsage = useMemo(() => {
+    const messages = currentSession?.messages ?? [];
+    const tokens = messages.reduce((sum, message) => sum + (message.metrics?.promptTokens ?? 0) + (message.metrics?.completionTokens ?? 0), 0);
+    const priced = tokens > 0 ? Number(((tokens / 1000) * (riskLevel === 'high' ? 0.08 : 0.045)).toFixed(2)) : null;
+    return { tokens, priced };
+  }, [currentSession, riskLevel]);
   useEffect(() => {
     const visible = Object.values(chat.state.sessions).filter((session) => (session.workspaceId ?? 'w1') === currentWorkspaceId);
     if (!historyReady || sessionsLoading || visible.some((session) => session.id === chat.state.activeId)) return;
     if (visible[0]) chat.switchSession(visible[0].id);
-    else chat.newSession();
-  }, [chat.state.activeId, chat.state.sessions, currentWorkspaceId, historyReady, sessionsLoading]);
+    else if (onDutyEmployees[0]) {
+      chat.newSession({
+        digitalEmployeeId: onDutyEmployees[0].id,
+        digitalEmployeeName: employeePrimaryLabel(onDutyEmployees[0]),
+        agentKey: onDutyEmployees[0].capabilities.agentId,
+      });
+    }
+  }, [chat.state.activeId, chat.state.sessions, currentWorkspaceId, historyReady, sessionsLoading, onDutyEmployees, chat]);
   const sessionSignals = useMemo(() => {
     const messages = currentSession?.messages ?? [];
     const executions = messages.reduce((total, message) => total + (message.toolCalls?.length ?? 0), 0);
@@ -565,6 +744,7 @@ export default function Copilot() {
     [contextMessages, currentSession, workbench],
   );
   const hasSessionContext = workbench.evidence + workbench.linkedTasks + workbench.pendingApprovals + workbench.executions > 0;
+  const canOpenExpertContext = Boolean(currentSession && (activeEmployee || currentSession.digitalEmployeeId || hasSessionContext));
   const hasSelectedContext = !!selectedContextMessage && (
     (selectedContextMessage.citations?.length ?? 0) > 0
     || (selectedContextMessage.toolCalls?.length ?? 0) > 0
@@ -650,15 +830,15 @@ export default function Copilot() {
 
   useEffect(() => {
     if (!contextSelection.open) return;
-    if (contextSelection.scope === 'session' && hasSessionContext) return;
+    if (contextSelection.scope === 'session' && canOpenExpertContext) return;
     if (contextSelection.scope === 'message' && hasSelectedContext) return;
     setContextSelection((selection) => ({ ...selection, open: false, messageId: undefined }));
-  }, [contextSelection.open, contextSelection.scope, hasSelectedContext, hasSessionContext]);
+  }, [contextSelection.open, contextSelection.scope, hasSelectedContext, canOpenExpertContext]);
 
   // P2：Cmd/Ctrl + Shift + E 快速打开或关闭当前会话上下文。
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== 'e' || !hasSessionContext) return;
+      if (!(event.metaKey || event.ctrlKey) || !event.shiftKey || event.key.toLowerCase() !== 'e' || !canOpenExpertContext) return;
       event.preventDefault();
       if (contextSelection.open) {
         closeContext();
@@ -668,7 +848,25 @@ export default function Copilot() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [contextSelection.open, hasSessionContext]);
+  }, [contextSelection.open, canOpenExpertContext]);
+
+  // 切回研判时卸下需审批的写工具，避免「模式显示研判、工具仍可写」
+  useEffect(() => {
+    if (sessionMode !== 'investigate') return;
+    setEnabledTools((prev) => prev.filter((key) => !availableTools.find((tool) => tool.key === key)?.requiresApproval));
+  }, [sessionMode]);
+
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    const onPointer = (event: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
+        setMoreMenuOpen(false);
+        setExportSubOpen(false);
+      }
+    };
+    window.addEventListener('mousedown', onPointer);
+    return () => window.removeEventListener('mousedown', onPointer);
+  }, [moreMenuOpen]);
 
   return (
     <div className="copilot-shell relative flex h-full min-h-0 min-w-0 bg-[var(--bg-elevated)]" data-sessions-open={sessionsOpen ? 'true' : 'false'} data-details-open={detailsOpen ? 'true' : 'false'}>
@@ -696,7 +894,7 @@ export default function Copilot() {
             <span className="text-[10px] text-[var(--text-muted)]">固定保留</span>
           </div>
           <div className="flex items-center gap-2">
-            <Button size="sm" className="flex-1" onClick={chat.newSession}>
+            <Button size="sm" className="flex-1" onClick={openNewSessionPicker}>
               <Plus className="h-3.5 w-3.5" />新会话
             </Button>
             <span className="text-[10px] text-[var(--text-muted)] font-mono" title="当前工作区可见会话数">{filteredSessions.length}</span>
@@ -780,40 +978,117 @@ export default function Copilot() {
       {/* ============ 中间对话 ============ */}
       <section className="copilot-conversation flex min-w-0 min-h-0 flex-1 flex-col bg-[var(--bg)] overflow-hidden">
         {/* 当前事件工作头：对话页首先呈现处置对象和下一待办。 */}
-        <header className="copilot-header border-b border-[var(--border)] bg-[var(--bg)] px-4 py-3 sm:px-5">
-          <div className="copilot-work-header flex min-w-0 items-center justify-between gap-3">
+        <header className="app-glass copilot-header px-4 py-3 sm:px-5">
+          {(() => {
+            const decision = handoffActive
+              ? { label: '人工交接', tone: 'warn' as const, text: `写操作已暂停，由 ${handoffOwner} 继续处置。` }
+              : workbench.pendingApprovals
+                ? { label: '需审批', tone: 'warn' as const, text: `${workbench.pendingApprovals} 项写操作待双重审批 · 打开消息中的审批卡签署` }
+                : sessionMode === 'execute' && riskLevel === 'high'
+                  ? { label: '需审批', tone: 'warn' as const, text: '高风险受控执行 · 写操作需双重审批与回滚点' }
+                  : sessionMode === 'execute'
+                    ? { label: '脱敏放行', tone: 'info' as const, text: '受控执行中 · 写操作进入审批与审计' }
+                    : { label: '允许研判', tone: 'success' as const, text: '可检索分析 · 变更请切换受控执行' };
+            const showCost = sessionUsage.tokens > 0;
+            return (
+              <>
+          <div className="copilot-work-header">
             <div className="flex min-w-0 items-center gap-3">
               <div className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-lg', workbench.tone === 'warning' ? 'bg-[var(--warning-bg)] text-[var(--warning)]' : 'bg-[var(--brand-light)] text-[var(--brand)]')}>
                 {workbench.tone === 'warning' ? <AlertTriangle className="h-5 w-5" /> : <Activity className="h-5 w-5" />}
               </div>
               <div className="min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
+                <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   <span className="copilot-work-title truncate font-semibold">{workbench.title}</span>
-                  <Badge tone={workbench.tone === 'warning' ? 'warn' : 'brand'} className="text-[10px]">{workbench.pendingApprovals ? '待处置' : sessionMode === 'execute' ? '受控执行' : '研判中'}</Badge>
-                  {riskLevel !== 'low' && <Badge tone={riskLevel === 'high' ? 'error' : 'warn'} className="text-[10px]">{riskLevel === 'high' ? '高风险' : '中风险'}</Badge>}
+                  <Badge tone={workbench.tone === 'warning' ? 'warn' : 'brand'} className="shrink-0 text-[10px]">{workbench.pendingApprovals ? '待处置' : sessionMode === 'execute' ? '受控执行' : '研判中'}</Badge>
+                  {riskLevel !== 'low' && <Badge tone={riskLevel === 'high' ? 'error' : 'warn'} className="shrink-0 text-[10px]">{riskLevel === 'high' ? '高风险' : '中风险'}</Badge>}
                 </div>
-                <div className="copilot-header__meta copilot-work-next mt-0.5 flex items-center gap-1.5 text-[var(--text-muted)]">
-                  <span className="truncate">下一步：{workbench.nextAction}</span>
-                  {handoffActive && <span className="hidden sm:inline">· 已由 {handoffOwner} 接管</span>}
-                </div>
+                {(workbench.nextAction || handoffActive) && (
+                  <div className="copilot-header__meta copilot-work-next mt-0.5 flex items-center gap-1.5 text-[var(--text-muted)]">
+                    {workbench.nextAction && <span className="truncate">下一步：{workbench.nextAction}</span>}
+                    {handoffActive && <span className="hidden sm:inline">{workbench.nextAction ? '· ' : ''}已由 {handoffOwner} 接管</span>}
+                  </div>
+                )}
               </div>
             </div>
-            <div className="copilot-header__actions flex flex-wrap items-center justify-end gap-1.5 shrink-0">
-              <button ref={sessionToggleRef} type="button" onClick={() => { setSessionsOpen((open) => !open); closeContext(); }} className="copilot-mobile-toggle grid h-8 w-8 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]" aria-label="打开会话列表" aria-expanded={sessionsOpen} aria-controls="copilot-sessions"><ListChecksIcon className="h-4 w-4" /></button>
-              {hasSessionContext && <Button ref={detailsToggleRef} variant="secondary" size="sm" className="copilot-header-action" onClick={() => openContext('overview')}>
-                <FileText className="h-3.5 w-3.5" />上下文
-              </Button>}
-              <Button variant="secondary" size="sm" className="copilot-header-action" onClick={() => setCloseoutOpen(true)}>
-                <CheckCircle2 className="h-3.5 w-3.5" />结束会话
-              </Button>
-              <Button variant="secondary" size="sm" className="copilot-header-action" onClick={() => setHandoffOpen(true)}>
-                <Users className="h-3.5 w-3.5" />人工接管
-              </Button>
-              <Button variant="secondary" size="sm" className="copilot-header-action" onClick={printAuditRecord}>
-                <ShieldCheck className="h-3.5 w-3.5" />导出证据
-              </Button>
+
+            <div className="copilot-header__actions shrink-0">
+              <div className="copilot-mode-toggle hidden sm:inline-flex" role="group" aria-label="协作模式">
+                <button type="button" disabled={isClosed || handoffActive} onClick={() => setSessionMode('investigate')} className={cn('copilot-mode-toggle__btn', sessionMode === 'investigate' && 'is-active')}>研判</button>
+                <button type="button" disabled={isClosed || handoffActive} onClick={() => setSessionMode('execute')} className={cn('copilot-mode-toggle__btn', sessionMode === 'execute' && 'is-active is-execute')}>受控执行</button>
+              </div>
+              <button type="button" onClick={openRebindExpertPicker} className="copilot-toolbar-btn copilot-toolbar-btn--expert hidden sm:inline-flex" title="查看或改绑数字员工">
+                <span className="copilot-toolbar-btn__icon relative !bg-transparent !p-0" style={{ boxShadow: 'none' }}>
+                  <DigitalEmployeeAvatar
+                    employee={activeEmployee ?? { id: activeEmployeeId ?? 'expert', name: expertName }}
+                    size={22}
+                  />
+                  {activeEmployee?.lifecycle === 'active' && <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-[var(--success)] ring-1 ring-white" />}
+                </span>
+                <span className="copilot-toolbar-btn__label">
+                  <span className="copilot-toolbar-btn__name">{expertName}</span>
+                  {expertMeta && <span className="copilot-toolbar-btn__role">{expertMeta}</span>}
+                </span>
+              </button>
+              <button ref={sessionToggleRef} type="button" onClick={() => { setSessionsOpen((open) => !open); closeContext(); }} className="copilot-mobile-toggle copilot-toolbar-btn !px-0 !w-8 justify-center" aria-label="打开会话列表" aria-expanded={sessionsOpen} aria-controls="copilot-sessions"><ListChecksIcon className="h-4 w-4" /></button>
+              {canOpenExpertContext && (
+                <Button ref={detailsToggleRef} variant="secondary" size="sm" className="copilot-header-action" onClick={() => openContext('overview')}>
+                  <FileText className="h-3.5 w-3.5" />专家上下文
+                </Button>
+              )}
+              <div className="relative" ref={moreMenuRef}>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  className="copilot-header-action"
+                  aria-haspopup="menu"
+                  aria-expanded={moreMenuOpen}
+                  onClick={() => { setMoreMenuOpen((open) => !open); setExportSubOpen(false); }}
+                >
+                  <MoreHorizontal className="h-3.5 w-3.5" />更多
+                </Button>
+                {moreMenuOpen && (
+                  <div role="menu" className="absolute right-0 top-full z-40 mt-1 w-48 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-1)] py-1 shadow-lg">
+                    <button type="button" role="menuitem" disabled={isClosed} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-[var(--bg-hover)] disabled:opacity-40" onClick={() => { setMoreMenuOpen(false); setCloseoutOpen(true); }}>
+                      <CheckCircle2 className="h-3.5 w-3.5 text-[var(--text-muted)]" />结束会话
+                    </button>
+                    <button type="button" role="menuitem" disabled={isClosed || handoffActive} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-[var(--bg-hover)] disabled:opacity-40" onClick={() => { setMoreMenuOpen(false); setHandoffOpen(true); }}>
+                      <Users className="h-3.5 w-3.5 text-[var(--text-muted)]" />人工交接
+                    </button>
+                    <div className="my-1 border-t border-[var(--border)]" />
+                    <button type="button" role="menuitem" className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs hover:bg-[var(--bg-hover)]" onClick={() => setExportSubOpen((open) => !open)}>
+                      <ShieldCheck className="h-3.5 w-3.5 text-[var(--text-muted)]" />导出证据
+                      <ChevronRight className="ml-auto h-3 w-3 text-[var(--text-muted)]" />
+                    </button>
+                    {exportSubOpen && (
+                      <div className="border-t border-[var(--border)] bg-[var(--bg-elevated)] py-1">
+                        <button type="button" role="menuitem" className="flex w-full px-3 py-1.5 text-left text-[11px] hover:bg-[var(--bg-hover)]" onClick={() => { setMoreMenuOpen(false); printAuditRecord(); }}>证据包 · 打印 / PDF</button>
+                        <button type="button" role="menuitem" className="flex w-full px-3 py-1.5 text-left text-[11px] hover:bg-[var(--bg-hover)]" onClick={() => { setMoreMenuOpen(false); handleExport('markdown'); }}>Markdown</button>
+                        <button type="button" role="menuitem" className="flex w-full px-3 py-1.5 text-left text-[11px] hover:bg-[var(--bg-hover)]" onClick={() => { setMoreMenuOpen(false); handleExport('json'); }}>JSON</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
+
+            <div className="copilot-header__decision" role="status" aria-label="策略裁决">
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                <Badge tone={decision.tone} className="shrink-0">{decision.label}</Badge>
+                <span className="copilot-header__decision-text">{decision.text}</span>
+              </div>
+              {showCost ? (
+                <span className="shrink-0 font-mono text-[10px] text-[var(--text-muted)]" title={`计入 ${expertName}`}>
+                  {sessionUsage.priced != null ? `¥${sessionUsage.priced}` : '计量中'} · {sessionUsage.tokens} tok · {expertName}
+                </span>
+              ) : (
+                <span className="shrink-0 text-[10px] text-[var(--text-muted)]">与 {expertName} 协作</span>
+              )}
+            </div>
+              </>
+            );
+          })()}
         </header>
 
         {/* 消息流 */}
@@ -867,7 +1142,9 @@ export default function Copilot() {
                       hoverMsgId={hoverMsgId}
                       setHoverMsgId={setHoverMsgId}
                       copiedId={copiedId}
-                      agentName={agentMeta?.name}
+                      agentName={expertName}
+                      expertRole={expertMeta ?? undefined}
+                      expert={activeEmployee ?? (activeEmployeeId ? { id: activeEmployeeId, name: expertName } : { id: 'expert', name: expertName })}
                       onOpenContext={openContext}
                       selectedContextMessageId={contextSelection.scope === 'message' ? contextSelection.messageId : undefined}
                       messageRef={(element) => { messageRefs.current[m.id] = element; }}
@@ -876,15 +1153,16 @@ export default function Copilot() {
                 </div>
 
                 {chat.state.typing && (
-                  <div className="copilot-streaming-status flex gap-3 px-4 sm:px-8 md:px-12 pb-4" aria-live="polite" aria-label="Agent 正在思考">
-                    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white" aria-hidden="true">
-                      <Bot className="h-4 w-4" />
-                    </div>
+                  <div className="copilot-streaming-status flex gap-3 px-4 sm:px-8 md:px-12 pb-4" aria-live="polite" aria-label="数字员工正在思考">
+                    <DigitalEmployeeAvatar
+                      employee={activeEmployee ?? { id: activeEmployeeId ?? 'expert', name: expertName }}
+                      size={32}
+                    />
                     <div className="inline-flex items-center gap-1.5 pt-2 text-[12px] text-[var(--text-muted)]">
                       {[0, 1, 2].map((i) => (
-                        <span key={i} aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--brand)] animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                        <span key={i} aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--text-secondary)] animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
                       ))}
-                      <span className="ml-1.5">{agentMeta?.name ?? '故障自愈'} 正在思考</span>
+                      <span className="ml-1.5">{expertName} 正在思考</span>
                     </div>
                   </div>
                 )}
@@ -893,38 +1171,64 @@ export default function Copilot() {
               <div className="copilot-empty-state h-full grid place-items-center px-6">
                 <div className="w-full max-w-2xl">
                   <div className="text-center mb-8">
-                    <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white shadow-lg">
-                      <Bot className="h-7 w-7" />
-                    </div>
-                    <h2 className="text-xl font-semibold text-[var(--text)]">{agentMeta?.name ?? '故障自愈'}</h2>
-                    <p className="text-sm text-[var(--text-muted)] mt-1">{agentMeta?.description ?? '基于 Runbook 的自动故障定位与恢复 · 内置 8 个 Skill'}</p>
+                    {activeEmployee ? (
+                      <div className="mx-auto mb-4 inline-flex"><DigitalEmployeeAvatar employee={activeEmployee} size={56} rounded="lg" /></div>
+                    ) : (
+                      <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-[var(--bg-elevated)] text-[var(--text-secondary)]" style={{ boxShadow: 'var(--saas-ring), var(--saas-elev-2)' }}>
+                        <BriefcaseBusiness className="h-7 w-7" />
+                      </div>
+                    )}
+                    {activeEmployee ? (
+                      <>
+                        <h2 className="text-xl font-semibold text-[var(--text)]">{expertName}</h2>
+                        {expertMeta && <p className="mt-1 text-xs text-[var(--text-secondary)]">{expertMeta}</p>}
+                        <p className="text-sm text-[var(--text-muted)] mt-1">{expertDescription}</p>
+                      </>
+                    ) : (
+                      <>
+                        <h2 className="text-xl font-semibold text-[var(--text)]">选择在岗专家</h2>
+                        <p className="text-sm text-[var(--text-muted)] mt-1">专家协作面向已上岗的数字员工；请先选择协作对象再开始会话。</p>
+                        <Button size="sm" className="mt-4" onClick={openNewSessionPicker}>
+                          <BriefcaseBusiness className="h-3.5 w-3.5" />选择在岗专家
+                        </Button>
+                        {onDutyEmployees.length === 0 && (
+                          <p className="mt-3 text-[11px] text-[var(--text-muted)]">
+                            当前工作区暂无在岗员工，请先到 <Link to="/agents" className="text-[var(--brand)]">数字员工</Link> 完成上岗。
+                          </p>
+                        )}
+                      </>
+                    )}
                   </div>
-                  <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                    <Sparkles className="h-3 w-3" />建议试试
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {[
-                      { Icon: Zap, title: 'Redis 集群 OOM', desc: 'prod-redis-01 触发 maxmemory 限制' },
-                      { Icon: Server, title: 'K8s 节点扩容', desc: '为 cn-east-1 增加 2 个 worker' },
-                      { Icon: ShieldCheck, title: 'CVE 周报', desc: '本周漏洞与影响资产' },
-                      { Icon: BellOff, title: '告警降噪', desc: '合并重复告警规则' },
-                    ].map((p) => (
-                      <button
-                        key={p.title}
-                        onClick={() => { chat.setDraft(`${p.title} - ${p.desc}`); inputRef.current?.focus(); }}
-                        className="copilot-suggestion-card group flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3 text-left transition-colors hover:border-[var(--brand)] hover:bg-[var(--bg-elevated)]"
-                      >
-                        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[var(--brand-light)] text-[var(--brand)] group-hover:bg-[var(--brand)] group-hover:text-white transition-colors">
-                          <p.Icon className="h-4.5 w-4.5" />
-                        </span>
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold text-[var(--text)]">{p.title}</div>
-                          <div className="text-[11px] text-[var(--text-muted)] truncate">{p.desc}</div>
-                        </div>
-                        <ArrowUp className="h-3.5 w-3.5 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 ml-auto self-center" />
-                      </button>
-                    ))}
-                  </div>
+                  {activeEmployee && (
+                    <>
+                      <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
+                        <Sparkles className="h-3 w-3" />建议试试
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {[
+                          { Icon: Zap, title: 'Redis 集群 OOM', desc: 'prod-redis-01 触发 maxmemory 限制' },
+                          { Icon: Server, title: 'K8s 节点扩容', desc: '为 cn-east-1 增加 2 个 worker' },
+                          { Icon: ShieldCheck, title: 'CVE 周报', desc: '本周漏洞与影响资产' },
+                          { Icon: BellOff, title: '告警降噪', desc: '合并重复告警规则' },
+                        ].map((p) => (
+                          <button
+                            key={p.title}
+                            onClick={() => { chat.setDraft(`${p.title} - ${p.desc}`); inputRef.current?.focus(); }}
+                            className="copilot-suggestion-card group flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3 text-left transition-colors hover:border-[var(--brand)] hover:bg-[var(--bg-elevated)]"
+                          >
+                            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[var(--brand-light)] text-[var(--brand)] group-hover:bg-[var(--brand)] group-hover:text-white transition-colors">
+                              <p.Icon className="h-4.5 w-4.5" />
+                            </span>
+                            <div className="min-w-0">
+                              <div className="text-sm font-semibold text-[var(--text)]">{p.title}</div>
+                              <div className="text-[11px] text-[var(--text-muted)] truncate">{p.desc}</div>
+                            </div>
+                            <ArrowUp className="h-3.5 w-3.5 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 ml-auto self-center" />
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             )}
@@ -1013,32 +1317,21 @@ export default function Copilot() {
             </div>
           )}
 
-          {/* 上下文条：Agent · 会话 · 按需运行配置 */}
-          <div className="copilot-composer__context" aria-label="会话运行上下文">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="grid h-5 w-5 place-items-center rounded-md bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-white shrink-0">
-                <Bot className="h-3 w-3" />
-              </span>
-              <span className="font-semibold text-[11px] text-[var(--text)] truncate">{agentMeta?.name ?? '故障自愈'}</span>
-              <Badge tone="success" className="text-[9px]"><Dot tone="success" />在线</Badge>
-              <span className="text-[var(--text-muted)] text-[10px]">·</span>
-              <span className="text-[10px] text-[var(--text-muted)] truncate">{currentSession?.title ?? '新会话'}</span>
-            </div>
-            <div className="flex items-center gap-1.5 shrink-0">
+          {/* 运行配置：不再重复挂专家条，专家身份已在工作头芯片 */}
+          <div className="mb-1.5 flex items-center justify-end gap-1.5" aria-label="会话运行配置">
               <button
                 type="button"
                 onClick={() => { if (isAdmin) { setToolsOpen(false); setModelOpen((v) => !v); } }}
                 aria-haspopup={isAdmin ? 'menu' : undefined}
                 aria-expanded={isAdmin ? modelOpen : undefined}
-                className="copilot-composer__model-pill flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)] hover:border-[var(--brand)] hover:text-[var(--text)] transition-colors"
+                className="copilot-composer__model-pill flex items-center gap-1.5 rounded-md bg-[var(--bg-elevated)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)] transition-colors"
                 title={isAdmin ? '调整本次会话的模型与工具链' : '由工作区策略分配的受控运行路由'}
               >
-                <Settings className="h-3 w-3 text-[var(--brand)]" />
+                <Settings className="h-3 w-3 text-[var(--text-muted)]" />
                 <span className="font-medium">{isAdmin ? '运行配置' : '受控运行路由'}</span>
                 <span className="font-mono text-[var(--text-muted)]">{isAdmin ? `${currentModel.label} · ${enabledToolCount} 工具` : '由工作区策略分配'}</span>
                 {isAdmin && <ChevronDown className="h-3 w-3 opacity-60" />}
               </button>
-            </div>
           </div>
 
           {/* 运行配置 popover */}
@@ -1053,15 +1346,15 @@ export default function Copilot() {
                   aria-checked={currentModelKey === m.key}
                   className={cn(
                     'flex w-full items-start gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]',
-                    currentModelKey === m.key && 'bg-[var(--brand-light)]/40',
+                    currentModelKey === m.key && 'bg-[var(--bg-hover)]',
                   )}
                 >
-                  <Cpu className="h-3.5 w-3.5 text-[var(--brand)] mt-0.5" />
+                  <Cpu className="h-3.5 w-3.5 text-[var(--text-muted)] mt-0.5" />
                   <div className="flex-1 min-w-0">
                     <div className="text-xs font-semibold flex items-center gap-1.5">
                       {m.label}
                       <Badge tone={m.tone} className="text-[9px]">{m.tier}</Badge>
-                      {currentModelKey === m.key && <Check className="h-3 w-3 text-[var(--brand)] ml-auto" />}
+                      {currentModelKey === m.key && <Check className="h-3 w-3 text-[var(--text)] ml-auto" />}
                     </div>
                     <div className="text-[10px] text-[var(--text-muted)]">{m.desc}</div>
                   </div>
@@ -1089,27 +1382,35 @@ export default function Copilot() {
             <div role="menu" className="absolute right-3 bottom-full mb-2 w-72 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-1 z-30">
               <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
                 <Wrench className="h-3 w-3" />本会话工具链
-                <button className="ml-auto text-[10px] text-[var(--brand)] hover:underline" onClick={() => setEnabledTools(availableTools.map((t) => t.key))}>全选</button>
+                <button className="ml-auto text-[10px] text-[var(--text-secondary)] hover:underline" onClick={() => setEnabledTools(availableTools.map((t) => t.key))}>全选</button>
               </div>
               {availableTools.map((t) => {
                 const on = enabledTools.includes(t.key);
+                const writeLocked = Boolean(t.requiresApproval && sessionMode === 'investigate');
                 return (
                   <button
                     key={t.key}
-                    onClick={() => setEnabledTools((prev) => on ? prev.filter((k) => k !== t.key) : [...prev, t.key])}
+                    onClick={() => {
+                      if (writeLocked) {
+                        setSessionMode('execute');
+                        setToolsOpen(false);
+                        return;
+                      }
+                      setEnabledTools((prev) => on ? prev.filter((k) => k !== t.key) : [...prev, t.key]);
+                    }}
                     role="menuitemcheckbox"
-                    aria-checked={on}
-                    className={cn('flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]', on && 'bg-[var(--brand-light)]/30')}
+                    aria-checked={on && !writeLocked}
+                    className={cn('flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]', on && !writeLocked && 'bg-[var(--bg-hover)]', writeLocked && 'opacity-60')}
                   >
-                    <span className={cn('grid h-5 w-5 place-items-center rounded border text-[10px]', on ? 'bg-[var(--brand)] text-white border-[var(--brand)]' : 'border-[var(--border)] text-[var(--text-muted)]')}>
-                      {on && <Check className="h-3 w-3" />}
+                    <span className={cn('grid h-5 w-5 place-items-center rounded border text-[10px]', on && !writeLocked ? 'bg-[#0f172a] text-white border-[#0f172a]' : 'border-[var(--border)] text-[var(--text-muted)]')}>
+                      {on && !writeLocked && <Check className="h-3 w-3" />}
                     </span>
-                    <Plug className="h-3.5 w-3.5 text-[var(--brand)]" />
+                    <Plug className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-mono font-semibold">{t.name}</div>
-                      <div className="text-[10px] text-[var(--text-muted)]">{t.desc}</div>
+                      <div className="text-[10px] text-[var(--text-muted)]">{writeLocked ? '研判模式不可用 · 点击切换到受控执行' : t.desc}</div>
                     </div>
-                    {t.requiresApproval && <Badge tone="warn" className="text-[9px]">需双签</Badge>}
+                    {t.requiresApproval && <Badge tone="warn" className="text-[9px]">需双重审批</Badge>}
                   </button>
                 );
               })}
@@ -1137,7 +1438,7 @@ export default function Copilot() {
               <button
                 type="button"
                 onClick={() => addAttachments([])}
-                className="copilot-composer__attach-chip flex items-center gap-1 rounded-md border border-dashed border-[var(--border)] px-2 py-1 text-[10px] text-[var(--text-muted)] hover:border-[var(--brand)] hover:text-[var(--text)]"
+                className="copilot-composer__attach-chip flex items-center gap-1 rounded-md border border-dashed border-[var(--border)] px-2 py-1 text-[10px] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]"
               >
                 <Plus className="h-3 w-3" />添加
               </button>
@@ -1146,15 +1447,14 @@ export default function Copilot() {
 
           {/* 编辑器卡片 */}
           <div className={cn(
-            'copilot-composer__editor group relative rounded-xl border bg-[var(--surface-1)] shadow-sm transition-all',
-            'border-[var(--border)]',
-            isDragging && 'border-[var(--brand)] shadow-[0_0_0_3px_var(--brand-light)]',
+            'copilot-composer__editor group relative rounded-xl bg-[var(--surface-1)] transition-all',
+            isDragging && 'is-dragging',
           )}>
             {/* 自动 @ token 渲染预览（输入含 @ 时显示） */}
             {/[@#]\w+/.test(chat.state.draftInput) && (
               <div className="copilot-composer__chips flex flex-wrap items-center gap-1 px-3 pt-2 text-[10px]">
                 {Array.from(new Set(chat.state.draftInput.match(/[@#]\w+/g) ?? [])).map((tok, i) => (
-                  <span key={i} className="inline-flex items-center gap-1 rounded-md bg-[var(--brand-light)] text-[var(--brand)] px-1.5 py-0.5 font-mono">
+                  <span key={i} className="inline-flex items-center gap-1 rounded-md bg-[var(--bg-elevated)] text-[var(--text-secondary)] px-1.5 py-0.5 font-mono">
                     <AtSign className="h-2.5 w-2.5" />{tok}
                   </span>
                 ))}
@@ -1168,15 +1468,17 @@ export default function Copilot() {
               onKeyDown={onTextareaKey}
               onPaste={onPaste}
               aria-label="输入会话消息"
-              placeholder="向 故障自愈 提问 · 试试 / 唤起命令、@ 提及资源、粘贴截图 (Shift+Enter 换行 · Esc 停止)"
+              placeholder={sessionMode === 'execute'
+                ? `向 ${expertName} 下达受控执行指令 · / 命令 · @ 资源`
+                : `向 ${expertName} 发起研判 · / 命令 · @ 资源`}
               maxLength={MAX_CHARS}
               rows={2}
               className="copilot-composer__textarea block w-full resize-none bg-transparent px-3.5 py-2.5 text-sm leading-relaxed outline-none placeholder:text-[var(--text-muted)]/80"
             />
 
-            {/* 操作栏 */}
-            <div className="copilot-composer__footer flex items-center justify-between gap-2 border-t border-[var(--border)]/60 px-2 py-1.5">
-              <div className="copilot-composer__tools flex items-center gap-0.5">
+            {/* 操作栏：左工具 / 右字数+发送 */}
+            <div className="copilot-composer__footer flex items-center justify-between">
+              <div className="copilot-composer__tools flex items-center">
                 <input
                   ref={fileInputRef}
                   type="file"
@@ -1193,20 +1495,6 @@ export default function Copilot() {
                 >
                   <Paperclip className="h-3.5 w-3.5" />
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setVoiceOn((v) => !v)}
-                  className={cn(
-                    'copilot-composer__tool grid h-7 w-7 place-items-center rounded-md transition-colors',
-                    voiceOn ? 'text-[var(--danger)] bg-[var(--danger-bg)]' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]',
-                  )}
-                  title={voiceOn ? '语音输入已开启' : '语音输入'}
-                  aria-label="语音输入"
-                  aria-pressed={voiceOn}
-                >
-                  <Mic className="h-3.5 w-3.5" />
-                </button>
-                <span className="mx-1 h-4 w-px bg-[var(--border)]" aria-hidden="true" />
                 <button
                   type="button"
                   onClick={() => chat.setDraft(chat.state.draftInput + ' @')}
@@ -1235,30 +1523,23 @@ export default function Copilot() {
                     <Square className="h-2.5 w-2.5 fill-current" />停止
                   </button>
                 ) : (
-                  <Badge tone="info" className="ml-1 text-[9px]" title="AI 正在等待输入">
-                    <Hourglass className="h-2.5 w-2.5 mr-0.5" />就绪
-                  </Badge>
+                  <span className="copilot-composer__status" title="等待输入">
+                    <Hourglass className="h-2.5 w-2.5" />就绪
+                  </span>
                 )}
               </div>
 
-              <div className="copilot-composer__send flex items-center gap-2">
-                <span className="copilot-composer__model hidden sm:inline-flex items-center gap-1 text-[10px] text-[var(--text-muted)] font-mono">
-                  <kbd className="px-1 py-0.5 rounded border border-[var(--border)] bg-[var(--bg)] text-[9px]">Enter</kbd>
-                  <span>发送 ·</span>
-                  <kbd className="px-1 py-0.5 rounded border border-[var(--border)] bg-[var(--bg)] text-[9px]">Shift+Enter</kbd>
-                  <span>换行</span>
-                </span>
-                <span className={cn('copilot-composer__usage hidden sm:flex', tokenPercent > 90 && 'copilot-composer__usage--danger', tokenPercent > 60 && tokenPercent <= 90 && 'copilot-composer__usage--warning')}>
-                  <Hash className="h-3 w-3" aria-hidden="true" />
-                  <span className="font-mono">{charCount}/{MAX_CHARS}</span>
+              <div className="copilot-composer__send flex items-center">
+                <span className={cn('copilot-composer__usage hidden sm:flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]', tokenPercent > 90 && 'copilot-composer__usage--danger', tokenPercent > 60 && tokenPercent <= 90 && 'copilot-composer__usage--warning')}>
+                  <span className="font-mono tabular-nums">{charCount}/{MAX_CHARS}</span>
                   <div className="copilot-composer__usage-bar" aria-hidden="true"><div style={{ width: `${Math.min(100, tokenPercent)}%` }} /></div>
                 </span>
                 <Button
                   onClick={handleSend}
-                  disabled={!chat.state.draftInput.trim() || chat.state.typing || isClosed}
+                  disabled={!chat.state.draftInput.trim() || chat.state.typing || isClosed || handoffActive}
                   size="sm"
                   className="copilot-composer__send-btn"
-                  aria-label={isClosed ? '会话已结案，发送已禁用' : chat.state.typing ? '生成中，发送已禁用' : '发送消息（Enter）'}
+                  aria-label={isClosed ? '会话已结案，发送已禁用' : handoffActive ? '人工交接中，发送已禁用' : chat.state.typing ? '生成中，发送已禁用' : '发送消息（Enter）'}
                 >
                   <Send className="h-3.5 w-3.5" />发送
                 </Button>
@@ -1266,15 +1547,20 @@ export default function Copilot() {
             </div>
           </div>
 
-          {/* 提示条 */}
-          <div className="mt-1.5 px-1 flex items-center justify-between text-[10px] text-[var(--text-muted)]">
-            <span className="flex items-center gap-1">
-              <ShieldCheck className={cn('h-3 w-3', sessionMode === 'execute' ? 'text-[var(--warning)]' : 'text-[var(--success)]')} />{isClosed ? '会话已结案 · 仅可查看和导出' : handoffActive ? `人工接管中 · 由 ${handoffOwner} 处理后续变更` : sessionMode === 'execute' ? `受控执行 · ${riskLevel === 'high' ? '高风险双签与回滚必需' : '写操作将进入审批与审计'}` : '研判模式 · 默认不执行写操作'}
+          {/* 提示条：协作状态 + 快捷键 + 草稿用量 */}
+          <div className="mt-1.5 px-1 flex items-center justify-between gap-3 text-[10px] text-[var(--text-muted)]">
+            <span className="truncate min-w-0">
+              {isClosed ? '会话已结案 · 仅可查看和导出' : handoffActive ? `交接中 · ${handoffOwner}` : `与 ${expertName} 协作中`}
             </span>
-            <span className="hidden sm:flex items-center gap-2 font-mono">
-              <span>{enabledToolCount} 工具 · {attachments.length} 附件</span>
-              <span>·</span>
-              <span>{tokenEstimate} tokens / 8k</span>
+            <span className="hidden sm:inline-flex items-center gap-2 shrink-0 font-mono">
+              <span className="inline-flex items-center gap-1">
+                <kbd className="px-1 py-0.5 rounded border border-[var(--border)] bg-[var(--surface-1)] text-[9px] font-sans">Enter</kbd>
+                <span>发送</span>
+              </span>
+              <span className="text-[var(--border-strong)]">·</span>
+              <span>{attachments.length} 附件</span>
+              <span className="text-[var(--border-strong)]">·</span>
+              <span>草稿约 {tokenEstimate} tok</span>
             </span>
           </div>
         </div>
@@ -1296,19 +1582,28 @@ export default function Copilot() {
           <header className="copilot-agent-details__header shrink-0 border-b border-[var(--border)] px-4 py-3">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-2.5">
-                <span className="copilot-agent-details__avatar grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[var(--brand-light)] text-[var(--brand)]"><Bot className="h-4 w-4" /></span>
+                <span className="copilot-agent-details__avatar shrink-0">
+                  <DigitalEmployeeAvatar
+                    employee={activeEmployee ?? { id: activeEmployeeId ?? 'expert', name: expertName }}
+                    size={32}
+                    rounded="lg"
+                  />
+                </span>
                 <div className="min-w-0">
-                  <div className="copilot-agent-details__eyebrow">{contextSelection.scope === 'message' ? '消息上下文' : '会话上下文'}</div>
-                  <div className="mt-0.5 truncate text-sm font-semibold text-[var(--text)]">{workbench.title}</div>
-                  <div className="mt-0.5 truncate text-[11px] text-[var(--text-muted)]">
-                    {contextSelection.scope === 'message' && selectedContextMessage ? `来源消息 · ${formatShanghaiTime(selectedContextMessage.createdAt)}` : `下一步：${contextSummary.nextAction}`}
+                  <div className="copilot-agent-details__eyebrow">{contextSelection.scope === 'message' ? '消息上下文' : '专家上下文'}</div>
+                  <div className="copilot-agent-details__title truncate">{expertName}</div>
+                  {expertMeta && <div className="mt-0.5 truncate text-[10px] text-[var(--text-muted)]">{expertMeta}</div>}
+                  <div className="mt-1 truncate text-[11px] text-[var(--text-muted)]">
+                    {contextSelection.scope === 'message' && selectedContextMessage
+                      ? `来源消息 · ${formatShanghaiTime(selectedContextMessage.createdAt)}`
+                      : `会话 · ${workbench.title}`}
                   </div>
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-1.5">
-                {contextSelection.scope === 'message' && <button type="button" onClick={() => jumpToMessage(contextSelection.messageId)} title="回到来源消息" aria-label="回到来源消息" className="copilot-details-header-action grid h-8 w-8 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] transition-colors hover:border-[var(--brand)] hover:bg-[var(--brand-light)] hover:text-[var(--brand)]"><ArrowUp className="h-4 w-4" /></button>}
-                <button type="button" onClick={() => setContextSelection((selection) => ({ ...selection, pinned: !selection.pinned }))} title={contextSelection.pinned ? '取消固定上下文' : '固定当前上下文'} aria-label={contextSelection.pinned ? '取消固定上下文' : '固定当前上下文'} aria-pressed={contextSelection.pinned} className={cn('copilot-details-header-action grid h-8 w-8 place-items-center rounded-lg border bg-[var(--surface-1)] transition-colors', contextSelection.pinned ? 'border-[var(--brand)] bg-[var(--brand-light)] text-[var(--brand)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--brand)] hover:text-[var(--brand)]')}><Pin className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={closeContext} title="关闭会话上下文" aria-label="关闭会话上下文" className="copilot-details-header-action grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-muted)] transition-colors hover:border-[var(--danger)] hover:bg-[var(--danger-bg)] hover:text-[var(--danger)]"><X className="h-4 w-4" /></button>
+                {contextSelection.scope === 'message' && <button type="button" onClick={() => jumpToMessage(contextSelection.messageId)} title="回到来源消息" aria-label="回到来源消息" className="copilot-details-header-action grid h-8 w-8 place-items-center rounded-lg bg-[var(--surface-1)] text-[var(--text-muted)]"><ArrowUp className="h-4 w-4" /></button>}
+                <button type="button" onClick={() => setContextSelection((selection) => ({ ...selection, pinned: !selection.pinned }))} title={contextSelection.pinned ? '取消固定上下文' : '固定当前上下文'} aria-label={contextSelection.pinned ? '取消固定上下文' : '固定当前上下文'} aria-pressed={contextSelection.pinned} className={cn('copilot-details-header-action grid h-8 w-8 place-items-center rounded-lg bg-[var(--surface-1)] text-[var(--text-muted)]', contextSelection.pinned && 'is-pinned')}><Pin className="h-3.5 w-3.5" /></button>
+                <button type="button" onClick={closeContext} title="关闭会话上下文" aria-label="关闭会话上下文" className="copilot-details-header-action grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[var(--surface-1)] text-[var(--text-muted)] hover:!bg-[var(--danger-bg)] hover:!text-[var(--danger)]"><X className="h-4 w-4" /></button>
               </div>
             </div>
             <div className="copilot-agent-details__status-row mt-3 flex flex-wrap items-center gap-2">
@@ -1334,7 +1629,7 @@ export default function Copilot() {
                 <div className="copilot-agent-details__section-heading flex items-center gap-1.5"><Settings className="h-3.5 w-3.5 text-[var(--brand)]" />运行控制 <Badge tone="brand" className="ml-auto text-[9px]">管理员</Badge></div>
                 <Row label="当前模型" value={<span className="font-mono text-[11px]">{currentModel.label} · {currentModel.tier}</span>} />
                 <Row label="启用工具" value={<span className="font-mono text-[11px]">{enabledToolCount}/{availableTools.length}</span>} />
-                <label className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--text-muted)]">执行风险</span><select value={riskLevel} onChange={(event) => setRiskLevel(event.target.value as 'low' | 'medium' | 'high')} className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[11px]"><option value="low">低 · 仅可逆操作</option><option value="medium">中 · 需审批</option><option value="high">高 · 双签与回滚</option></select></label>
+                <label className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--text-muted)]">执行风险</span><select value={riskLevel} onChange={(event) => setRiskLevel(event.target.value as 'low' | 'medium' | 'high')} className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[11px]"><option value="low">低 · 仅可逆操作</option><option value="medium">中 · 需审批</option><option value="high">高 · 双重审批与回滚</option></select></label>
                 <Button size="sm" variant="secondary" className="w-full justify-center" onClick={() => setDebugOpen(true)}><Activity className="h-3.5 w-3.5" />查看调试与链路指标</Button>
               </section>
             )}
@@ -1345,14 +1640,35 @@ export default function Copilot() {
             <ContextOverview summary={contextSummary} sessionMode={sessionMode} riskLevel={riskLevel} handoffActive={handoffActive} onOpenTab={setContextTab} />
             <section className="copilot-agent-details__section border-b border-[var(--border)] px-4 py-4">
               <div className="copilot-details-card space-y-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-xs">
-                <div className="copilot-details-card__heading"><Bot className="h-3.5 w-3.5 text-[var(--brand)]" />数字员工</div>
-            <div className="flex justify-between"><span className="text-[var(--text-muted)]">分类</span><Badge tone="info">{agentMeta?.category}</Badge></div>
-            <div className="flex justify-between"><span className="text-[var(--text-muted)]">SLA</span><span className="text-[var(--success)] font-mono">{agentMeta?.sla}%</span></div>
-            <div className="flex justify-between"><span className="text-[var(--text-muted)]">错误率</span><span className="font-mono">{((agentMeta?.errorRate ?? 0) * 100).toFixed(2)}%</span></div>
-            <div className="flex justify-between"><span className="text-[var(--text-muted)]">知识库</span><span className="font-mono">{agentMeta?.knowledgeBases} 个</span></div>
-            <div className="flex justify-between"><span className="text-[var(--text-muted)]">工具</span><span className="font-mono">{agentMeta?.tools} 个</span></div>
-            <div className="flex justify-between"><span className="text-[var(--text-muted)]">语言</span><span className="font-mono text-[10px]">{agentMeta?.languages?.join(' · ')}</span></div>
-                <div className="pt-1.5 border-t border-[var(--border)] text-[10px] text-[var(--text-muted)]">{agentMeta?.description}</div>
+                <div className="copilot-details-card__heading"><BriefcaseBusiness className="h-3.5 w-3.5 text-[var(--text-muted)]" />岗位专家</div>
+                {activeEmployee ? (
+                  <>
+                    <div className="flex justify-between gap-2"><span className="text-[var(--text-muted)]">岗位</span><span className="truncate font-medium">{employeePrimaryLabel(activeEmployee)}</span></div>
+                    <div className="flex justify-between"><span className="text-[var(--text-muted)]">花名</span><span className="truncate font-medium">{activeEmployee.name}</span></div>
+                    <div className="flex justify-between"><span className="text-[var(--text-muted)]">部门</span><Badge tone="info">{activeEmployee.department}</Badge></div>
+                    <div className="flex justify-between"><span className="text-[var(--text-muted)]">版本</span><span className="font-mono">v{activeEmployee.version}</span></div>
+                    <div className="flex justify-between"><span className="text-[var(--text-muted)]">风险</span><Badge tone={activeEmployee.risk === 'high' ? 'error' : activeEmployee.risk === 'medium' ? 'warn' : 'success'}>{activeEmployee.risk === 'high' ? '高' : activeEmployee.risk === 'medium' ? '中' : '低'}</Badge></div>
+                    <div className="flex justify-between"><span className="text-[var(--text-muted)]">今日成本</span><span className="font-mono">¥{activeEmployee.runtime.costToday}</span></div>
+                    <div className="pt-1.5 border-t border-[var(--border)]">
+                      <div className="text-[10px] text-[var(--text-muted)] mb-1">已装配能力</div>
+                      <div className="flex flex-wrap gap-1">
+                        {[...activeEmployee.capabilities.skills, ...activeEmployee.capabilities.workflows, ...activeEmployee.capabilities.tools].slice(0, 6).map((item) => (
+                          <span key={item} className="rounded bg-[var(--bg)] px-1.5 py-0.5 text-[10px] text-[var(--text-secondary)]">{item}</span>
+                        ))}
+                        {![...activeEmployee.capabilities.skills, ...activeEmployee.capabilities.workflows, ...activeEmployee.capabilities.tools].length && (
+                          <span className="text-[10px] text-[var(--text-muted)]">尚未装配</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="pt-1.5 border-t border-[var(--border)] text-[10px] text-[var(--text-muted)]">{activeEmployee.description}</div>
+                    <Link to="/agents" className="mt-1 inline-flex text-[11px] font-medium text-[var(--brand)]">查看岗位配置 →</Link>
+                  </>
+                ) : (
+                  <div className="space-y-2 py-1">
+                    <p className="text-[var(--text-muted)]">当前会话尚未绑定在岗数字员工。</p>
+                    <Button size="sm" variant="secondary" onClick={openNewSessionPicker}>选择专家</Button>
+                  </div>
+                )}
               </div>
             </section>
 
@@ -1374,7 +1690,7 @@ export default function Copilot() {
               <span className="font-mono">1.2k / 200k</span>
             </div>
             <div className="h-1.5 bg-[var(--bg-hover)] rounded overflow-hidden">
-              <div className="h-full bg-gradient-to-r from-[var(--brand)] to-[var(--purple)]" style={{ width: '0.6%' }} />
+              <div className="h-full bg-slate-500" style={{ width: '0.6%' }} />
             </div>
           </div>
             </section>
@@ -1394,23 +1710,20 @@ export default function Copilot() {
               <button
                 key={i}
                 onClick={() => openCitation(c)}
-                className="copilot-evidence-item block w-full text-left rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5 transition-colors hover:border-[var(--brand)] hover:shadow-[var(--shadow-xs)]"
+                className="copilot-evidence-item block w-full text-left p-2.5"
               >
                 <div className="flex items-center gap-1.5 mb-1">
                   <span className={cn('nav-pill text-[9px]', SOURCE_COLOR[c.source])}>{c.source}</span>
-                  <span className="font-mono text-[10px] text-[var(--brand)]">[{i + 1}]</span>
+                  <span className="font-mono text-[10px] text-[var(--text-muted)]">[{i + 1}]</span>
                   <span className="font-semibold text-[11px] truncate flex-1">{c.src}</span>
                   {c.page && <span className="text-[10px] text-[var(--text-muted)]">p.{c.page}</span>}
                 </div>
                 <div className="flex items-center gap-2 text-[10px]">
                   <span className="text-[var(--text-muted)] shrink-0">置信</span>
-                  <div className="flex-1 h-1 bg-[var(--bg-hover)] rounded overflow-hidden">
-                    <div
-                      className={cn('h-full', c.score >= 0.85 ? 'bg-[var(--success)]' : c.score >= 0.7 ? 'bg-[var(--brand)]' : 'bg-[var(--warning)]')}
-                      style={{ width: `${c.score * 100}%` }}
-                    />
+                  <div className={cn('copilot-confidence-bar', c.score >= 0.85 ? 'is-high' : c.score >= 0.7 ? 'is-mid' : 'is-low')}>
+                    <span style={{ width: `${c.score * 100}%` }} />
                   </div>
-                  <span className={cn('font-mono', c.score >= 0.85 ? 'text-[var(--success)]' : c.score >= 0.7 ? 'text-[var(--brand)]' : 'text-[var(--warning)]')}>
+                  <span className={cn('font-mono', c.score >= 0.85 ? 'text-[var(--success)]' : c.score >= 0.7 ? 'text-[var(--text-secondary)]' : 'text-[var(--warning)]')}>
                     {(c.score * 100).toFixed(0)}%
                   </span>
                 </div>
@@ -1439,8 +1752,8 @@ export default function Copilot() {
               </div>
               <div className="activity-timeline">
             {[
-              { tone: 'success' as const, icon: CheckCircle2, text: '故障自愈 完成恢复', time: '14:32' },
-              { tone: 'success' as const, icon: ShieldCheck, text: '双签审批通过（王昊 + 李婷）', time: '14:28' },
+              { tone: 'success' as const, icon: CheckCircle2, text: `${expertName} 完成处置`, time: '14:32' },
+              { tone: 'success' as const, icon: ShieldCheck, text: '双重审批通过（王昊 + 李婷）', time: '14:28' },
               { tone: 'info' as const, icon: Search, text: '检索 2 个 Runbook 文档', time: '14:25' },
             ].map((a, i) => (
               <div key={i} className="activity-timeline__item">
@@ -1461,21 +1774,154 @@ export default function Copilot() {
         ) : null}
       </aside>
 
-      {closeoutOpen && currentSession && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/30 p-4" onClick={() => setCloseoutOpen(false)}>
-          <section role="dialog" aria-modal="true" aria-labelledby="closeout-title" onClick={(event) => event.stopPropagation()} className="w-full max-w-xl rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-2xl">
-            <header className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4"><div><h2 id="closeout-title" className="text-sm font-semibold">会话结案摘要</h2><p className="mt-1 text-[11px] text-[var(--text-muted)]">将当前研判、证据和待办固化为可追溯记录。</p></div><button type="button" onClick={() => setCloseoutOpen(false)} className="grid h-7 w-7 place-items-center rounded hover:bg-[var(--bg-hover)]"><X className="h-4 w-4" /></button></header>
-            <div className="space-y-3 px-5 py-4 text-xs"><div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3"><div className="font-semibold">结论</div><p className="mt-1 leading-relaxed text-[var(--text-secondary)]">已完成 {sessionSignals.executions} 项行动研判，关联 {sessionSignals.evidence} 条证据；{sessionSignals.pendingApprovals ? `仍有 ${sessionSignals.pendingApprovals} 项审批待处理。` : '当前无待审批变更。'}</p></div><div className="grid grid-cols-3 gap-2"><Mini label="行动" value={sessionSignals.executions} /><Mini label="证据" value={sessionSignals.evidence} tone="success" /><Mini label="待办" value={sessionSignals.pendingApprovals} /></div><div className="rounded-lg border border-[var(--border)] p-3"><div className="mb-1 font-semibold">任务回链</div><p className="text-[var(--text-muted)]">受控执行完成后会生成并回链任务；审批中的变更将保留在当前会话直到责任人处理。</p></div></div>
-            <footer className="flex justify-end gap-2 border-t border-[var(--border)] px-5 py-3"><Button size="sm" variant="secondary" onClick={() => setCloseoutOpen(false)}>返回会话</Button><Button size="sm" onClick={() => { setIsClosed(true); setCloseoutOpen(false); }}>确认结案</Button></footer>
-          </section>
+      <Modal
+        open={expertPickerOpen}
+        onClose={() => { setExpertPickerOpen(false); setExpertPickerQuery(''); setRebindBlockedReason(null); }}
+        title={expertPickerMode === 'rebind' ? '改绑岗位专家' : '选择在岗专家'}
+        description={expertPickerMode === 'rebind'
+          ? '将当前会话改绑到另一位在岗数字员工。存在待审批写操作时不可改绑。'
+          : '仅展示已上岗数字员工。确认后将创建新会话并绑定所选岗位专家。'}
+        size="lg"
+      >
+        <div className="space-y-3">
+          {rebindBlockedReason && (
+            <div className="rounded-lg border border-[var(--warning)]/40 bg-[var(--warning-bg)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+              <AlertTriangle className="mr-1 inline h-3.5 w-3.5 text-[var(--warning)]" />{rebindBlockedReason}
+            </div>
+          )}
+          <div className="copilot-search-field">
+            <Search className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
+            <input
+              value={expertPickerQuery}
+              onChange={(event) => setExpertPickerQuery(event.target.value)}
+              placeholder="搜索姓名、岗位或部门"
+              className="copilot-search-field__input"
+              autoFocus
+            />
+          </div>
+          <div className="max-h-[360px] space-y-2 overflow-y-auto pr-1">
+            {filteredExperts.map((employee) => {
+              const isCurrent = expertPickerMode === 'rebind' && employee.id === activeEmployeeId;
+              return (
+              <button
+                key={employee.id}
+                type="button"
+                disabled={isCurrent}
+                onClick={() => startSessionWithExpert(employee)}
+                className="copilot-expert-option"
+              >
+                <span className="copilot-expert-option__avatar">
+                  <DigitalEmployeeAvatar employee={employee} size={36} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-semibold text-[var(--text)]">{employeePrimaryLabel(employee)}</span>
+                    {isDepartmentHead(employee) && <Badge tone="info">部门负责人</Badge>}
+                    <Badge tone="success">在岗</Badge>
+                    {isCurrent && <Badge tone="neutral">当前</Badge>}
+                    <Badge tone={employee.risk === 'high' ? 'error' : employee.risk === 'medium' ? 'warn' : 'neutral'}>{employee.risk === 'high' ? '高风险' : employee.risk === 'medium' ? '中风险' : '低风险'}</Badge>
+                  </span>
+                  <span className="mt-1 block text-xs text-[var(--text-secondary)]">{employeeSecondaryLabel(employee)}</span>
+                  <span className="mt-1 block truncate text-[11px] text-[var(--text-muted)]">{employee.description}</span>
+                </span>
+                <ChevronRight className="mt-2 h-4 w-4 shrink-0 text-[var(--text-muted)]" />
+              </button>
+              );
+            })}
+            {!filteredExperts.length && (
+              <div className="copilot-expert-empty rounded-xl bg-[var(--bg-elevated)] px-4 py-8 text-center text-xs text-[var(--text-muted)]">
+                {onDutyEmployees.length === 0
+                  ? <>当前工作区暂无在岗员工。请先到 <Link to="/agents" className="font-medium text-[var(--text)] underline-offset-2 hover:underline" onClick={() => setExpertPickerOpen(false)}>数字员工</Link> 完成上岗发布。</>
+                  : '未找到匹配的在岗专家，请调整搜索词。'}
+              </div>
+            )}
+          </div>
         </div>
-      )}
+      </Modal>
 
-      {handoffOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/30 p-4" onClick={() => setHandoffOpen(false)}>
-          <section role="dialog" aria-modal="true" aria-labelledby="handoff-title" onClick={(event) => event.stopPropagation()} className="w-full max-w-md rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-2xl"><header className="flex items-center justify-between border-b border-[var(--border)] px-5 py-4"><div><h2 id="handoff-title" className="text-sm font-semibold">人工接管</h2><p className="mt-1 text-[11px] text-[var(--text-muted)]">接管后，自动写操作保持暂停，已生成的证据与审批记录不变。</p></div><button type="button" onClick={() => setHandoffOpen(false)} className="grid h-7 w-7 place-items-center rounded hover:bg-[var(--bg-hover)]"><X className="h-4 w-4" /></button></header><div className="space-y-3 px-5 py-4"><label className="block text-xs font-medium">接管人<Input value={handoffOwner} onChange={(event) => setHandoffOwner(event.target.value)} className="mt-1.5" /></label><div className="rounded-md bg-[var(--warning-bg)] px-3 py-2 text-[11px] text-[var(--text-secondary)]"><AlertTriangle className="mr-1 inline h-3.5 w-3.5 text-[var(--warning)]" />交接包含当前结论、{sessionSignals.evidence} 条证据与 {sessionSignals.pendingApprovals} 项待审批。</div></div><footer className="flex justify-end gap-2 border-t border-[var(--border)] px-5 py-3"><Button size="sm" variant="secondary" onClick={() => setHandoffOpen(false)}>取消</Button><Button size="sm" onClick={() => { setHandoffOpen(false); setHandoffActive(true); setSessionMode('investigate'); }}>确认接管</Button></footer></section>
+      <Modal
+        open={closeoutOpen && !!currentSession}
+        onClose={() => setCloseoutOpen(false)}
+        title="会话结案摘要"
+        description="将当前研判、证据和待办固化为可追溯记录。结案后会话只读。"
+        size="md"
+        footer={
+          <>
+            <Button size="sm" variant="secondary" onClick={() => setCloseoutOpen(false)}>返回会话</Button>
+            <Button
+              size="sm"
+              disabled={sessionSignals.pendingApprovals > 0}
+              onClick={() => {
+                if (!currentSession || sessionSignals.pendingApprovals > 0) return;
+                setIsClosed(true);
+                chat.syncSession({ ...currentSession, status: 'done', lifecycle: 'idle' });
+                setCloseoutOpen(false);
+              }}
+            >
+              确认结案
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3 text-xs">
+          {sessionSignals.pendingApprovals > 0 && (
+            <div className="rounded-lg border border-[var(--warning)]/40 bg-[var(--warning-bg)] px-3 py-2 text-[var(--text-secondary)]">
+              <AlertTriangle className="mr-1 inline h-3.5 w-3.5 text-[var(--warning)]" />仍有 {sessionSignals.pendingApprovals} 项待审批，请处理后再结案。
+            </div>
+          )}
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
+            <div className="font-semibold">结论</div>
+            <p className="mt-1 leading-relaxed text-[var(--text-secondary)]">
+              已完成 {sessionSignals.executions} 项行动研判，关联 {sessionSignals.evidence} 条证据；
+              {sessionSignals.pendingApprovals ? `仍有 ${sessionSignals.pendingApprovals} 项审批待处理。` : '当前无待审批变更。'}
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <Mini label="行动" value={sessionSignals.executions} />
+            <Mini label="证据" value={sessionSignals.evidence} tone="success" />
+            <Mini label="待办" value={sessionSignals.pendingApprovals} />
+          </div>
+          <div className="rounded-lg border border-[var(--border)] p-3">
+            <div className="mb-1 font-semibold">任务回链</div>
+            <p className="text-[var(--text-muted)]">受控执行完成后会生成并回链任务；审批中的变更将保留在当前会话直到责任人处理。</p>
+          </div>
         </div>
-      )}
+      </Modal>
+
+      <Modal
+        open={handoffOpen}
+        onClose={() => setHandoffOpen(false)}
+        title="人工交接"
+        description="接管后，自动写操作保持暂停，已生成的证据与审批记录不变。"
+        size="sm"
+        footer={
+          <>
+            <Button size="sm" variant="secondary" onClick={() => setHandoffOpen(false)}>取消</Button>
+            <Button
+              size="sm"
+              disabled={!handoffOwner.trim()}
+              onClick={() => {
+                setHandoffOpen(false);
+                setHandoffActive(true);
+                setSessionMode('investigate');
+              }}
+            >
+              确认交接
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <label className="block text-xs font-medium">
+            接管人
+            <Input value={handoffOwner} onChange={(event) => setHandoffOwner(event.target.value)} className="mt-1.5" placeholder="例如：李婷 · 值班负责人" />
+          </label>
+          <div className="rounded-md bg-[var(--warning-bg)] px-3 py-2 text-[11px] text-[var(--text-secondary)]">
+            <AlertTriangle className="mr-1 inline h-3.5 w-3.5 text-[var(--warning)]" />
+            交接包含当前结论、{sessionSignals.evidence} 条证据与 {sessionSignals.pendingApprovals} 项待审批。确认后将切回研判模式并暂停自动写操作。
+          </div>
+        </div>
+      </Modal>
 
       <DualSignModal
         open={!!showApproval}
@@ -1483,8 +1929,18 @@ export default function Copilot() {
           const request = currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest;
           const signer = request?.signers[showApproval.signerIndex];
           return `${signer?.name ?? '待签人'} · ${request?.action ?? '受控写操作'}`;
-        })() : '写操作 · 等保 3 双签'}
-        description="执行 CONFIG SET maxmemory 16GB + volatile-lru"
+        })() : '写操作 · 双重审批'}
+        description={showApproval && currentSession
+          ? (() => {
+            const request = currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest;
+            if (!request) return '请确认写操作范围与回滚预案后再签发。';
+            return [
+              request.resource ? `资源：${request.resource}` : null,
+              request.reason ? `原因：${request.reason}` : null,
+              '签发身份由当前登录会话校验，不接受手工填写姓名。',
+            ].filter(Boolean).join(' · ');
+          })()
+          : undefined}
         currentIdentity={currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : null}
         targetSigner={showApproval && currentSession ? currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest?.signers[showApproval.signerIndex] : undefined}
         canApprove={!!(showApproval && currentUser && currentSession && (() => {
@@ -1593,7 +2049,7 @@ export default function Copilot() {
         );
       })()}
 
-      {/* ============ 拒绝双签 ============ */}
+      {/* ============ 拒绝审批 ============ */}
       {rejectionReason.open && currentSession && (
         <div className="copilot-citation-layer fixed inset-0 z-40" onClick={() => setRejectionReason({ mid: '', idx: -1, open: false })}>
           <div className="copilot-scrim" />
@@ -1604,7 +2060,7 @@ export default function Copilot() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="text-sm font-semibold mb-3 flex items-center gap-2">
-              <X className="h-4 w-4 text-[var(--danger)]" />拒绝双签
+              <X className="h-4 w-4 text-[var(--danger)]" />拒绝审批
             </div>
             <div className="space-y-2 text-xs">
               <label className="block text-[10px] text-[var(--text-muted)]">拒绝原因（必填，写入审计）</label>
@@ -1637,25 +2093,57 @@ export default function Copilot() {
 }
 
 function labelOfCat(c: string) {
-  return { agent: 'Agent', kb: '知识', task: '任务', tool: '工具', collab: '协作' }[c] ?? c;
+  return { agent: '专家', kb: '知识', task: '任务', tool: '工具', collab: '协作' }[c] ?? c;
 }
 
-function MessageWorkCards({ message, onOpenContext }: { message: ChatMessageEx; onOpenContext: (tab: WorkbenchContextTab, messageId?: string) => void }) {
+/** 能力调用 / 依据摘要：默认一行，点开进专家上下文；明细可按需展开 */
+function MessageCapabilityTrace({
+  message,
+  onOpenContext,
+  expanded,
+  onToggle,
+}: {
+  message: ChatMessageEx;
+  onOpenContext: (tab: WorkbenchContextTab, messageId?: string) => void;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const toolCount = message.toolCalls?.length ?? 0;
+  const citeCount = message.citations?.length ?? 0;
   const taskRef = message.linkedTaskId ?? message.approvalRequest?.ticketId;
-  const cards = [
-    message.toolCalls?.length ? { key: 'tools', icon: Wrench, title: '工具执行', meta: `${message.toolCalls.length} 项 · ${message.toolCalls.filter((item) => item.status === 'success').length} 成功`, tone: 'brand' as const } : null,
-    message.approvalRequest ? { key: 'approval', icon: ShieldCheck, title: '受控审批', meta: `${message.approvalRequest.signed}/${message.approvalRequest.required} 已签 · ${message.approvalRequest.decision === 'approved' ? '已通过' : '待决'}`, tone: message.approvalRequest.decision === 'approved' ? 'success' as const : 'warn' as const } : null,
-    taskRef ? { key: 'task', icon: ListChecksIcon, title: '关联任务', meta: taskRef, tone: 'brand' as const } : null,
-  ].filter(Boolean) as { key: string; icon: typeof Wrench; title: string; meta: string; tone: 'brand' | 'success' | 'warn' }[];
-  if (!cards.length) return null;
-  return <div className="copilot-message-workcards flex max-w-[920px] flex-wrap gap-2" aria-label="消息关联工作项">{cards.map((card) => {
-    const Icon = card.icon;
-    const contextTab: WorkbenchContextTab = card.key === 'tools' ? 'audit' : card.key === 'approval' ? 'approvals' : card.key === 'evidence' ? 'evidence' : 'tasks';
-    return <button key={card.key} type="button" onClick={() => onOpenContext(contextTab, message.id)} className="copilot-message-workcard flex min-w-[188px] flex-1 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-2 text-left text-[11px] shadow-sm transition-colors hover:border-[var(--brand)] hover:bg-[var(--brand-light)]/20">
-      <span className={cn('grid h-6 w-6 place-items-center rounded', card.tone === 'success' ? 'bg-[var(--success-bg)] text-[var(--success)]' : card.tone === 'warn' ? 'bg-[var(--warning-bg)] text-[var(--warning)]' : 'bg-[var(--brand-light)] text-[var(--brand)]')}><Icon className="h-3.5 w-3.5" /></span>
-      <span className="min-w-0"><span className="block font-semibold text-[var(--text-secondary)]">{card.title}</span><span className="block truncate text-[10px] text-[var(--text-muted)]">{card.meta}</span></span>
-    </button>;
-  })}</div>;
+  const hasApproval = Boolean(message.approvalRequest);
+  if (!toolCount && !citeCount && !hasApproval && !taskRef) return null;
+  const okTools = message.toolCalls?.filter((item) => item.status === 'success').length ?? 0;
+
+  return (
+    <div className="copilot-message-workcards flex max-w-[920px] flex-wrap items-center gap-1.5" aria-label="岗位能力调用与依据">
+      {toolCount > 0 && (
+        <button type="button" onClick={() => onOpenContext('audit', message.id)} className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-[10px] text-[var(--text-secondary)] hover:border-[var(--brand)] hover:text-[var(--brand)]">
+          <Wrench className="h-3 w-3 text-[var(--brand)]" />能力调用 {toolCount} · {okTools} 成功
+        </button>
+      )}
+      {citeCount > 0 && (
+        <button type="button" onClick={() => onOpenContext('evidence', message.id)} className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-[10px] text-[var(--text-secondary)] hover:border-[var(--brand)] hover:text-[var(--brand)]">
+          <Link2 className="h-3 w-3 text-[var(--brand)]" />依据 {citeCount}
+        </button>
+      )}
+      {hasApproval && (
+        <button type="button" onClick={() => onOpenContext('approvals', message.id)} className="inline-flex items-center gap-1 rounded-md border border-[var(--warning)]/40 bg-[var(--warning-bg)] px-2 py-1 text-[10px] text-[var(--text-secondary)] hover:border-[var(--warning)]">
+          <ShieldCheck className="h-3 w-3 text-[var(--warning)]" />受控审批 {message.approvalRequest!.signed}/{message.approvalRequest!.required}
+        </button>
+      )}
+      {taskRef && (
+        <button type="button" onClick={() => onOpenContext('tasks', message.id)} className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-[10px] text-[var(--text-secondary)] hover:border-[var(--brand)]">
+          <ListChecksIcon className="h-3 w-3 text-[var(--brand)]" />任务 {taskRef}
+        </button>
+      )}
+      {(toolCount > 0 || citeCount > 0) && (
+        <button type="button" onClick={onToggle} className="text-[10px] text-[var(--text-muted)] hover:text-[var(--brand)]">
+          {expanded ? '收起明细' : '展开明细'}
+        </button>
+      )}
+    </div>
+  );
 }
 
 function RiskDecisionCard({ onOpenContext, messageId }: { onOpenContext: (tab: WorkbenchContextTab, messageId?: string) => void; messageId: string }) {
@@ -1668,7 +2156,7 @@ function MessageBubble({
   expandedReasoning, setExpandedReasoning, expandedApproval, setExpandedApproval,
   onApprove, onCitation, onRetry, onCopy, onRegenerate, onDelete, onRetryMessage, onFeedback,
   onApproveSigner, onRequestReject, onEdit,
-  hoverMsgId, setHoverMsgId, copiedId, agentName, onOpenContext, selectedContextMessageId, messageRef, currentUser,
+  hoverMsgId, setHoverMsgId, copiedId, agentName, expertRole, expert, onOpenContext, selectedContextMessageId, messageRef, currentUser,
 }: {
   m: ChatMessageEx;
   expandedThinking: Record<string, boolean>;
@@ -1688,12 +2176,14 @@ function MessageBubble({
   onDelete: (mid: string) => void;
   onRetryMessage: (mid: string) => void;
   onFeedback: (mid: string, kind: FeedbackKind) => void;
-  onApproveSigner: (mid: string, idx: number) => void;
+  onApproveSigner: (mid: string, signerIndex: number) => void;
   onRequestReject: (mid: string, idx: number) => void;
   hoverMsgId: string | null;
   setHoverMsgId: (v: string | null) => void;
   copiedId: string | null;
   agentName?: string;
+  expertRole?: string;
+  expert?: Pick<DigitalEmployee, 'id' | 'name' | 'department' | 'avatarUrl'> | { id: string; name: string; department?: string; avatarUrl?: string };
   onOpenContext: (tab: WorkbenchContextTab, messageId?: string) => void;
   selectedContextMessageId?: string;
   messageRef?: (element: HTMLDivElement | null) => void;
@@ -1703,7 +2193,8 @@ function MessageBubble({
   const isTool = m.role === 'tool';
   const isEmpty = !m.content;
   const isStreaming = m.status === 'streaming';
-  const agentDisplayName = agentName ?? '故障自愈';
+  const agentDisplayName = agentName || m.agentName || (isUser ? '王昊' : isTool ? '能力调用' : '数字员工');
+  const [traceOpen, setTraceOpen] = useState(false);
   const needsDecision = !isUser && /CVE|高危|高风险|影响资产/.test(m.content ?? '');
   const expectedPlatformRole: Record<Signer['role'], 'user' | 'admin' | 'auditor'> = { operator: 'user', approver: 'admin', auditor: 'auditor' };
   const canSign = (signer: Signer) => !!currentUser && signer.userId === currentUser.id && expectedPlatformRole[signer.role] === currentUser.role;
@@ -1723,19 +2214,23 @@ function MessageBubble({
               <Wrench className="h-3.5 w-3.5" />
             </div>
           ) : (
-            <div className="copilot-message__avatar copilot-message__avatar--assistant grid h-7 w-7 place-items-center rounded-full bg-[var(--brand-light)] text-[var(--brand)]">
-              <Bot className="h-3.5 w-3.5" />
-            </div>
+            <DigitalEmployeeAvatar
+              employee={expert ?? { id: 'expert', name: agentDisplayName }}
+              size={28}
+              className="copilot-message__avatar copilot-message__avatar--assistant"
+            />
           )}
         </div>
       )}
-      <div className={cn('copilot-message__content min-w-0 space-y-3', isUser ? 'max-w-[80%]' : 'w-full max-w-[960px]')}>
-        {/* Header row: avatar + name + role + time, compact single line */}
+      <div className={cn('copilot-message__content min-w-0 space-y-2.5', isUser ? 'max-w-[80%]' : 'w-full max-w-[960px]')}>
         <div className={cn('copilot-message__meta flex items-center gap-1.5 text-[11px]', isUser && 'justify-end')}>
           {isUser ? (
             <Avatar name="王昊" size={20} />
           ) : null}
-          <span className="font-semibold text-[var(--text)]">{m.agentName ?? (isUser ? '王昊' : isTool ? '工具调用' : '故障自愈')}</span>
+          <span className="font-semibold text-[var(--text)]">{isUser ? '王昊' : agentDisplayName}</span>
+          {!isUser && !isTool && expertRole && (
+            <span className="truncate text-[10px] text-[var(--text-muted)]">{expertRole}</span>
+          )}
           {!isUser && m.status && (
             <span className={cn('inline-flex items-center gap-1 text-[10px] text-[var(--text-muted)]', isStreaming && 'text-[var(--brand)]')}>
               {isStreaming && <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand)] animate-pulse" aria-hidden="true" />}
@@ -1744,11 +2239,18 @@ function MessageBubble({
           )}
           {!isUser && m.metrics?.ttftMs !== undefined && <details className="text-[10px] text-[var(--text-muted)]"><summary className="cursor-pointer">运行详情</summary><span className="font-mono">TTFT {m.metrics.ttftMs}ms · {m.metrics.durationMs ? `${(m.metrics.durationMs / 1000).toFixed(1)}s` : ''}{m.metrics.model ? ` · ${m.metrics.model}` : ''}</span></details>}
           <span className="text-[10px] text-[var(--text-muted)] font-mono tabular-nums" title={m.createdAt}>{formatShanghaiTime(m.createdAt)}</span>
-          {isTool && <Badge tone="warn" className="text-[9px]">工具</Badge>}
+          {((m.toolCalls?.length ?? 0) > 0 || isTool) && <Badge tone="warn" className="text-[9px]">能力调用</Badge>}
           {m.approvalRequest && <Badge tone="error" className="text-[9px]">写操作</Badge>}
         </div>
 
-        <MessageWorkCards message={m} onOpenContext={onOpenContext} />
+        {!isUser && (
+          <MessageCapabilityTrace
+            message={m}
+            onOpenContext={onOpenContext}
+            expanded={traceOpen}
+            onToggle={() => setTraceOpen((open) => !open)}
+          />
+        )}
 
         {needsDecision && <RiskDecisionCard onOpenContext={onOpenContext} messageId={m.id} />}
 
@@ -1883,10 +2385,10 @@ function MessageBubble({
           </div>
         )}
 
-        {m.toolCalls && m.toolCalls.length > 0 && (
+        {traceOpen && m.toolCalls && m.toolCalls.length > 0 && (
           <div className="copilot-message__toolcalls max-w-[920px] space-y-1.5">
             <div className="flex items-center gap-1.5 px-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-              <Wrench className="h-3 w-3 text-[var(--brand)]" />行动执行 · {m.toolCalls.length} 项
+              <Wrench className="h-3 w-3 text-[var(--brand)]" />能力调用明细 · {m.toolCalls.length} 项
             </div>
             {m.toolCalls.map((tc) => {
               const argsKey = `${m.id}-${tc.id}`;
@@ -1899,7 +2401,7 @@ function MessageBubble({
                     <Wrench className={cn('h-3 w-3', failed || denied ? 'text-[var(--danger)]' : 'text-[var(--brand)]')} />
                     <span className="font-mono font-semibold">{tc.name}</span>
                     {tc.permission === 'approval-required' && (
-                      <Badge tone="warn" className="text-[9px]"><ShieldCheck className="mr-0.5 inline h-2.5 w-2.5" />需双签</Badge>
+                      <Badge tone="warn" className="text-[9px]"><ShieldCheck className="mr-0.5 inline h-2.5 w-2.5" />需双重审批</Badge>
                     )}
                     {tc.permission === 'auto' && (
                       <Badge tone="success" className="text-[9px]"><PlugZap className="mr-0.5 inline h-2.5 w-2.5" />auto</Badge>
@@ -1960,11 +2462,11 @@ function MessageBubble({
           </div>
         )}
 
-        {m.citations && m.citations.length > 0 && (
+        {traceOpen && m.citations && m.citations.length > 0 && (
           <div className="cite-block max-w-[920px]">
             <div className="cite-block__title">
               <Link2 className="h-3 w-3 text-[var(--brand)]" />
-              证据与依据 · {m.citations.length} 项
+              装配知识依据 · {m.citations.length} 项
             </div>
             {m.citations.map((c, i) => (
               <button
@@ -1984,7 +2486,7 @@ function MessageBubble({
         {m.approvalRequest && (
           <div className="copilot-message__approval rounded-md border border-[var(--danger)]/30 bg-[var(--danger-bg)] p-3 max-w-md">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--danger)] mb-1 flex-wrap">
-              <ShieldCheck className="h-3.5 w-3.5" />受控变更 · 双签审批
+              <ShieldCheck className="h-3.5 w-3.5" />受控变更 · 双重审批
               {m.approvalRequest.reason && <Badge tone="warn" className="text-[9px] ml-1">{m.approvalRequest.reason}</Badge>}
               {m.approvalRequest.ticketId && <span className="text-[10px] font-mono text-[var(--text-muted)]">· {m.approvalRequest.ticketId}</span>}
               <span className="ml-auto text-[10px] font-mono text-[var(--text-muted)]">
@@ -2049,7 +2551,7 @@ function MessageBubble({
             )}
             {m.approvalRequest.decision === 'approved' && (
               <Badge tone="success" className="text-[10px]">
-                <CheckCircle2 className="mr-1 inline h-3 w-3" />已通过双签
+                <CheckCircle2 className="mr-1 inline h-3 w-3" />已通过双重审批
                 {m.approvalRequest.decidedAt && <span className="ml-1 font-mono">{m.approvalRequest.decidedAt.slice(11, 19)}</span>}
               </Badge>
             )}
@@ -2159,8 +2661,8 @@ function ContextDrawerPanel({ tab, messages, onCitation, focusedCitation }: { ta
   const PanelIcon = meta.icon;
   const empty = (label: string) => <div className="copilot-details-empty"><span className="copilot-details-empty__icon"><PanelIcon className="h-4 w-4" /></span><strong>暂无{label}</strong><span>当前会话还没有可展示的记录</span></div>;
 
-  if (tab === 'evidence') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4 text-[var(--brand)]" />{meta.label}</div><div>{meta.hint}</div></div>{focusedCitation && <div className="copilot-citation-focus"><div className="copilot-citation-focus__header"><span><Hash className="mr-1 inline h-3 w-3 text-[var(--brand)]" />当前引用</span><span className="font-mono text-[10px] text-[var(--text-muted)]">{focusedCitation.page ? `p.${focusedCitation.page}` : '可追溯'}</span></div><div className="mt-2 flex items-center gap-2"><span className={cn('nav-pill text-[9px]', SOURCE_COLOR[focusedCitation.source] ?? 'text-[var(--brand)] bg-[var(--brand-light)]')}>{focusedCitation.source ?? focusedCitation.src ?? '来源'}</span><span className="truncate text-xs font-semibold">{focusedCitation.docId ?? focusedCitation.src ?? focusedCitation.source ?? '关联文档'}</span></div><div className="mt-2 flex items-center gap-2 text-[10px]"><span className="text-[var(--text-muted)]">相关度</span><span className="copilot-confidence-bar"><span style={{ width: `${(focusedCitation.score ?? 0) * 100}%` }} /></span><span className="font-mono text-[var(--success)]">{((focusedCitation.score ?? 0) * 100).toFixed(0)}%</span></div><div className="copilot-citation-focus__text">{focusedCitation.text ?? '已定位到该来源。当前引用由会话检索结果生成，可继续回到中栏查看关联消息。'}</div></div>}{evidence.length ? <div className="copilot-details-list">{evidence.map((citation) => <button key={citation.id} type="button" onClick={() => onCitation(citation, citation.__messageId)} className={cn('copilot-context-item copilot-context-item--button', focusedCitation?.id === citation.id && 'is-focused')}><div className="flex min-w-0 items-center gap-2"><span className={cn('nav-pill text-[9px]', SOURCE_COLOR[citation.source] ?? 'text-[var(--brand)] bg-[var(--brand-light)]')}>{citation.source}</span><span className="truncate text-xs font-semibold">{citation.docId || citation.source}</span></div><div className="mt-2 flex items-center gap-2 text-[10px]"><span className="text-[var(--text-muted)]">置信度</span><span className="copilot-confidence-bar"><span style={{ width: `${citation.score * 100}%` }} /></span><span className="font-mono text-[var(--brand)]">{(citation.score * 100).toFixed(0)}%</span><span className="ml-auto text-[var(--text-muted)]">{citation.page ? `p.${citation.page}` : '可追溯'}</span></div></button>)}</div> : empty('证据')}</section>;
-  if (tab === 'tasks') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4 text-[var(--brand)]" />{meta.label}</div><div>{meta.hint}</div></div>{tasks.length ? <div className="copilot-details-list">{tasks.map((task) => <div key={task.id} className="copilot-context-item"><div className="flex items-start justify-between gap-2"><span className="min-w-0 truncate text-xs font-semibold">{task.title}</span><Badge tone={task.status === 'approved' ? 'success' : 'warn'}>{task.status === 'approved' ? '已通过' : '待处理'}</Badge></div><div className="mt-2 flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]"><span>任务 ID</span><span className="font-mono">{task.id}</span></div></div>)}</div> : empty('关联任务')}</section>;
+  if (tab === 'evidence') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4 text-[var(--text-muted)]" />{meta.label}</div><div>{meta.hint}</div></div>{focusedCitation && <div className="copilot-citation-focus"><div className="copilot-citation-focus__header"><span><Hash className="mr-1 inline h-3 w-3 text-[var(--text-muted)]" />当前引用</span><span className="font-mono text-[10px] text-[var(--text-muted)]">{focusedCitation.page ? `p.${focusedCitation.page}` : '可追溯'}</span></div><div className="mt-2 flex items-center gap-2"><span className={cn('nav-pill text-[9px]', SOURCE_COLOR[focusedCitation.source] ?? 'text-[var(--text-secondary)] bg-[var(--bg-elevated)]')}>{focusedCitation.source ?? focusedCitation.src ?? '来源'}</span><span className="truncate text-xs font-semibold">{focusedCitation.docId ?? focusedCitation.src ?? focusedCitation.source ?? '关联文档'}</span></div><div className="mt-2 flex items-center gap-2 text-[10px]"><span className="text-[var(--text-muted)]">相关度</span><span className="copilot-confidence-bar"><span style={{ width: `${(focusedCitation.score ?? 0) * 100}%` }} /></span><span className="font-mono text-[var(--success)]">{((focusedCitation.score ?? 0) * 100).toFixed(0)}%</span></div><div className="copilot-citation-focus__text">{focusedCitation.text ?? '已定位到该来源。当前引用由会话检索结果生成，可继续回到中栏查看关联消息。'}</div></div>}{evidence.length ? <div className="copilot-details-list">{evidence.map((citation) => <button key={citation.id} type="button" onClick={() => onCitation(citation, citation.__messageId)} className={cn('copilot-context-item copilot-context-item--button', focusedCitation?.id === citation.id && 'is-focused')}><div className="flex min-w-0 items-center gap-2"><span className={cn('nav-pill text-[9px]', SOURCE_COLOR[citation.source] ?? 'text-[var(--text-secondary)] bg-[var(--bg-elevated)]')}>{citation.source}</span><span className="truncate text-xs font-semibold">{citation.docId || citation.source}</span></div><div className="mt-2 flex items-center gap-2 text-[10px]"><span className="text-[var(--text-muted)]">置信度</span><span className="copilot-confidence-bar"><span style={{ width: `${citation.score * 100}%` }} /></span><span className="font-mono text-[var(--text-secondary)]">{(citation.score * 100).toFixed(0)}%</span><span className="ml-auto text-[var(--text-muted)]">{citation.page ? `p.${citation.page}` : '可追溯'}</span></div></button>)}</div> : empty('证据')}</section>;
+  if (tab === 'tasks') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4 text-[var(--text-muted)]" />{meta.label}</div><div>{meta.hint}</div></div>{tasks.length ? <div className="copilot-details-list">{tasks.map((task) => <div key={task.id} className="copilot-context-item"><div className="flex items-start justify-between gap-2"><span className="min-w-0 truncate text-xs font-semibold">{task.title}</span><Badge tone={task.status === 'approved' ? 'success' : 'warn'}>{task.status === 'approved' ? '已通过' : '待处理'}</Badge></div><div className="mt-2 flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]"><span>任务 ID</span><span className="font-mono">{task.id}</span></div></div>)}</div> : empty('关联任务')}</section>;
   if (tab === 'approvals') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4 text-[var(--warning)]" />{meta.label}</div><div>{meta.hint}</div></div>{approvals.length ? <div className="copilot-details-list">{approvals.map(({ id, approval }) => <div key={id} className="copilot-context-item copilot-context-item--approval"><div className="flex items-start justify-between gap-2"><span className="text-xs font-semibold">受控审批</span><Badge tone={approval.decision === 'approved' ? 'success' : approval.decision === 'rejected' ? 'error' : 'warn'}>{approval.decision === 'approved' ? '已通过' : approval.decision === 'rejected' ? '已拒绝' : '待审批'}</Badge></div><p className="mt-2 break-words text-[11px] leading-5 text-[var(--text-secondary)]">{approval.action}</p><div className="mt-2 flex items-center justify-between text-[10px] text-[var(--text-muted)]"><span>签署进度</span><span className="font-mono">{approval.signed}/{approval.required} 已签</span></div></div>)}</div> : empty('待审批事项')}</section>;
   return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4 text-[var(--info)]" />{meta.label}</div><div>{meta.hint}</div></div>{audit.length ? <div className="copilot-details-list">{audit.map((item) => <div key={item.id} className="copilot-context-item copilot-context-item--audit"><span className={cn('copilot-audit-dot', item.tone === 'error' ? 'copilot-audit-dot--error' : 'copilot-audit-dot--success')} /><div className="min-w-0"><div className="text-[11px] font-medium text-[var(--text)]">{item.text}</div><div className="mt-1 font-mono text-[10px] text-[var(--text-muted)]">{item.time.slice(11, 19)} · {item.id}</div></div></div>)}</div> : empty('审计事件')}</section>;
 }

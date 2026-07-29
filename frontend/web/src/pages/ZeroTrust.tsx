@@ -32,7 +32,37 @@ function OverviewPanel({ data, events }: { data?: Overview; events: ZeroTrustEve
 function Policies({ rows, editable, onToggle }: { rows: ZeroTrustPolicy[]; editable: boolean; onToggle: (id: string, enabled: boolean) => void }) { return <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)]"><div className="border-b border-[var(--border)] px-4 py-3"><h2 className="text-sm font-semibold">访问策略</h2><p className="mt-1 text-[11px] text-[var(--text-muted)]">策略按资源、动作、范围与条件决定允许、脱敏、审批或阻断；租户安全基线不可停用。</p></div><div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-xs"><thead className="bg-[var(--bg-elevated)] text-[var(--text-muted)]"><tr><th className="px-4 py-2.5">策略</th><th className="px-4 py-2.5">资源 / 动作</th><th className="px-4 py-2.5">条件</th><th className="px-4 py-2.5">处置</th><th className="px-4 py-2.5">版本</th><th className="px-4 py-2.5">状态</th></tr></thead><tbody>{rows.map((row) => { const [label, tone] = decisionMeta[row.decision]; return <tr key={row.id} className="border-t border-[var(--border)]"><td className="px-4 py-3 font-medium">{row.name}{row.baseline && <Badge tone="brand" className="ml-2 text-[9px]">安全基线</Badge>}<div className="mt-1 text-[10px] text-[var(--text-muted)]">{row.scope}</div></td><td className="px-4 py-3">{row.resource} / {row.action}</td><td className="px-4 py-3 text-[var(--text-secondary)]">{row.condition}</td><td className="px-4 py-3"><Badge tone={tone as any}>{label}</Badge></td><td className="px-4 py-3 font-mono">v{row.version}</td><td className="px-4 py-3">{editable && !row.baseline ? <button type="button" onClick={() => onToggle(row.id, !row.enabled)} className={cn('rounded px-2 py-1 text-[10px]', row.enabled ? 'bg-[var(--success-bg)] text-[var(--success)]' : 'bg-[var(--bg-elevated)] text-[var(--text-muted)]')}>{row.enabled ? '启用' : '停用'}</button> : <Badge tone={row.enabled ? 'success' : 'neutral'}>{row.enabled ? '启用' : '停用'}</Badge>}</td></tr>; })}</tbody></table></div></section>; }
 function Authorizations({ rows, editable, onRevoke }: { rows: TemporaryAuthorization[]; editable: boolean; onRevoke: (id: string) => void }) { return <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)]"><div className="border-b border-[var(--border)] px-4 py-3"><h2 className="text-sm font-semibold">临时授权</h2><p className="mt-1 text-[11px] text-[var(--text-muted)]">仅对明确工作区、资源与动作生效，到期自动失效并保留审计记录。</p></div><div className="divide-y divide-[var(--border)]">{rows.map((row) => <div key={row.id} className="flex flex-wrap items-center gap-3 px-4 py-3"><div className="min-w-[150px] flex-1"><strong className="text-xs">{row.subjectName}</strong><p className="mt-1 text-[10px] text-[var(--text-muted)]">{row.workspaceId} · {row.resource}:{row.action} · {row.reason}</p></div><span className="text-[11px] text-[var(--text-secondary)]">至 {new Date(row.expiresAt).toLocaleString('zh-CN')}</span><Badge tone={row.status === 'active' ? 'warn' : 'neutral'}>{row.status === 'active' ? '生效中' : row.status === 'revoked' ? '已回收' : '已到期'}</Badge>{editable && row.status === 'active' && <Button size="sm" variant="secondary" onClick={() => onRevoke(row.id)}>回收</Button>}</div>)}</div></section>; }
 function Events({ rows }: { rows: ZeroTrustEvent[] }) { return <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)]"><div className="border-b border-[var(--border)] px-4 py-3"><h2 className="text-sm font-semibold">策略命中记录</h2></div><div className="divide-y divide-[var(--border)]">{rows.map((event) => <EventRow key={event.id} event={event} detail />)}</div></section>; }
-function EventRow({ event, detail = false }: { event: ZeroTrustEvent; detail?: boolean }) { const [label, tone] = decisionMeta[event.decision]; return <div className="flex flex-wrap items-center gap-3 px-4 py-3"><span className={cn('h-2 w-2 rounded-full', event.decision === 'deny' ? 'bg-[var(--danger)]' : event.decision === 'approval_required' ? 'bg-[var(--warning)]' : 'bg-[var(--success)]')} /><div className="min-w-[200px] flex-1"><div className="text-xs font-medium">{event.reason}</div><div className="mt-1 text-[10px] text-[var(--text-muted)]">{event.actor} · {event.workspaceId} · {event.resource}:{event.action}{detail ? ` · ${event.classification}` : ''}</div></div><Badge tone={tone as any}>{label}</Badge><span className="font-mono text-[10px] text-[var(--text-muted)]">{event.correlationId}</span></div>; }
+function explainZeroTrustEvent(event: ZeroTrustEvent) {
+  const next =
+    event.decision === 'deny' ? '请调整请求范围或申请临时授权后重试'
+      : event.decision === 'approval_required' ? '提交双重审批，通过后再继续'
+        : event.decision === 'mask' ? '继续使用脱敏结果；如需明文请走授权流程'
+          : '可继续，注意保留审计关联 ID';
+  const impact =
+    event.decision === 'deny' ? '操作已被阻断，未产生写副作用'
+      : event.decision === 'approval_required' ? '操作暂停在审批门禁，待批准后执行'
+        : event.decision === 'mask' ? '返回内容已脱敏，敏感字段不可见'
+          : '策略允许本次访问';
+  return { impact, next };
+}
+
+function EventRow({ event, detail = false }: { event: ZeroTrustEvent; detail?: boolean }) {
+  const [label, tone] = decisionMeta[event.decision];
+  const explained = explainZeroTrustEvent(event);
+  return (
+    <div className="flex flex-wrap items-start gap-3 px-4 py-3">
+      <span className={cn('mt-1.5 h-2 w-2 rounded-full', event.decision === 'deny' ? 'bg-[var(--danger)]' : event.decision === 'approval_required' ? 'bg-[var(--warning)]' : 'bg-[var(--success)]')} />
+      <div className="min-w-[220px] flex-1">
+        <div className="text-xs font-medium">{event.reason}</div>
+        <div className="mt-1 text-[11px] text-[var(--text-secondary)]">{explained.impact}</div>
+        <div className="mt-1 text-[11px] text-[var(--brand)]">下一步：{explained.next}</div>
+        <div className="mt-1 text-[10px] text-[var(--text-muted)]">{event.actor} · {event.workspaceId} · {event.resource}:{event.action}{detail ? ` · ${event.classification}` : ''}</div>
+      </div>
+      <Badge tone={tone as any}>{label}</Badge>
+      <span className="font-mono text-[10px] text-[var(--text-muted)]">{event.correlationId}</span>
+    </div>
+  );
+}
 function AuthorizationDialog({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState(''); const [reason, setReason] = useState(''); const [workspaceId, setWorkspaceId] = useState('w2'); const [environment, setEnvironment] = useState<'sandbox' | 'staging'>('staging'); const [hours, setHours] = useState('8');
   const create = useApiMutation<TemporaryAuthorization, Partial<TemporaryAuthorization>>('/api/zero-trust/authorizations', { onSuccess: () => { toast.success('临时授权已生效并写入审计'); onClose(); }, onError: (error: any) => toast.error(error?.message ?? '授权失败') });
