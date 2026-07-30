@@ -407,6 +407,13 @@ export interface DigitalEmployee {
   };
   templateId?: ID;
   templateVersion?: string;
+  /** 最近一次运行处置（暂停/隔离/恢复）审计摘要 */
+  opsControl?: {
+    lastAction: 'paused' | 'quarantined' | 'resumed';
+    reason?: string;
+    actor?: string;
+    at?: ISODate;
+  };
   updatedAt: ISODate;
 }
 
@@ -491,6 +498,8 @@ export interface WorkflowNode {
   label: string;
   status?: 'idle' | 'running' | 'success' | 'failed';
   durationMs?: number;
+  position?: { x: number; y: number };
+  description?: string;
 }
 
 export interface WorkflowEdge {

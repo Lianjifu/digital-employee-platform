@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { capabilityAssemblyCompleteness, releaseOnboardingCompleteness, roleSetupCompleteness, type CapabilityAssemblyEmployee, type ReleaseOnboardingEmployee, type RoleSetupEmployee } from '@/lib/digital-employees';
+import { capabilityAssemblyCompleteness, operationsHealth, OPERATIONS_HANDOFF_THRESHOLD, releaseOnboardingCompleteness, roleSetupCompleteness, type CapabilityAssemblyEmployee, type OperationsEmployee, type ReleaseOnboardingEmployee, type RoleSetupEmployee } from '@/lib/digital-employees';
 
 /** Mirrors gateLabel / terminology rules from DigitalEmployees for regression. */
 function gateLabel(employee: {
@@ -99,6 +99,11 @@ describe('digital employees catalog copy', () => {
       '已上岗',
       '双重审批上岗',
       '质量与上岗门禁',
+      '需处置异常',
+      '交接偏高',
+      '运行稳定',
+      '在岗专家',
+      '暂停 / 隔离',
     ];
     for (const phrase of phrases) {
       for (const pattern of forbidden) {
@@ -252,5 +257,49 @@ describe('releaseOnboardingCompleteness', () => {
     expect(result.configReady).toBe(false);
     expect(result.stage).toBe('pending_eval');
     expect(result.missing).toEqual(expect.arrayContaining(['岗位负责人', '模型路由']));
+  });
+});
+
+function baseOperationsEmployee(overrides: Partial<OperationsEmployee> = {}): OperationsEmployee {
+  return {
+    lifecycle: 'active',
+    escalationOwner: '值班经理',
+    owner: '王昊',
+    environment: 'production',
+    risk: 'medium',
+    runtime: { calls24h: 100, successRate: 0.99, p95Ms: 400, costToday: 12, handoffs24h: 2, anomalies: 0 },
+    release: { status: 'released' },
+    ...overrides,
+  };
+}
+
+describe('operationsHealth', () => {
+  it('marks stable active employees', () => {
+    const result = operationsHealth(baseOperationsEmployee());
+    expect(result.stage).toBe('stable');
+    expect(result.label).toBe('运行稳定');
+    expect(result.attention).toBe(false);
+  });
+
+  it('prioritizes anomalies over high handoff', () => {
+    const result = operationsHealth(baseOperationsEmployee({
+      runtime: { calls24h: 100, successRate: 0.9, p95Ms: 2400, costToday: 12, handoffs24h: OPERATIONS_HANDOFF_THRESHOLD + 1, anomalies: 2 },
+    }));
+    expect(result.stage).toBe('needs_attention');
+    expect(result.signals.some((item) => item.key === 'success_rate')).toBe(true);
+    expect(result.signals.some((item) => item.key === 'handoff')).toBe(true);
+  });
+
+  it('flags high handoff when no anomalies', () => {
+    const result = operationsHealth(baseOperationsEmployee({
+      runtime: { calls24h: 80, successRate: 0.98, p95Ms: 500, costToday: 8, handoffs24h: OPERATIONS_HANDOFF_THRESHOLD, anomalies: 0 },
+    }));
+    expect(result.stage).toBe('high_handoff');
+    expect(result.label).toBe('交接偏高');
+  });
+
+  it('marks paused and quarantined stages', () => {
+    expect(operationsHealth(baseOperationsEmployee({ lifecycle: 'paused', opsControl: { lastAction: 'paused', reason: '值班复核' } })).label).toBe('已暂停');
+    expect(operationsHealth(baseOperationsEmployee({ lifecycle: 'quarantined' })).stage).toBe('quarantined');
   });
 });

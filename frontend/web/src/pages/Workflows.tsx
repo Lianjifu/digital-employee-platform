@@ -4,6 +4,7 @@
  * 页面结构：页面头部、一级功能导航、单一主画布与按需抽屉。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import ReactFlow, {
   Background,
   Controls,
@@ -71,7 +72,24 @@ type WorkflowValidation = {
   checks: Record<string, 'passed' | 'review' | 'failed'>;
   warnings: string[];
 };
-type WorkflowRun = { id: string; time: string; trigger: string; status: string; duration: number; steps: number; who: string; error?: string };
+type WorkflowRunRecord = {
+  id: string;
+  workflowId?: string;
+  time: string;
+  trigger: string;
+  status: 'success' | 'failed' | 'running' | string;
+  duration: number;
+  steps: number;
+  who: string;
+  error?: string;
+  revisionId?: string;
+  correlationId?: string;
+  environment?: 'sandbox' | 'staging' | 'production' | string;
+  evidenceMode?: 'recorded' | 'synthetic';
+  nodeSteps?: Array<{ id: string; kind?: string; label: string; status?: 'pending' | 'success' | 'failed' | 'skipped' | string }>;
+  attempt?: number;
+  parentRunId?: string;
+};
 
 /* ============ 节点元数据 ============ */
 const NODE_ICONS: Record<WorkflowNodeKind, any> = {
@@ -85,9 +103,9 @@ const NODE_ICONS: Record<WorkflowNodeKind, any> = {
 const NODE_LABELS: Record<WorkflowNodeKind, string> = {
   trigger: 'Webhook 触发', schedule: '定时调度', event: '告警事件',
   retrieve: '知识检索', transform: '数据转换',
-  decision: 'Agent 决策', condition: '条件判断', approval: '人工审批', policy: '风险策略',
+  decision: '数字员工研判', condition: '条件判断', approval: '人工审批', policy: '风险策略',
   branch: '条件分支', parallel: '并行编排',
-  execute: 'Skill 执行', http: 'HTTP / API', mcp: 'MCP 工具', task: '创建任务',
+  execute: '执行受控动作', http: 'HTTP / API', mcp: 'MCP 工具', task: '创建任务',
   retry: '重试策略', compensate: '补偿回滚', audit: '审计留痕', notify: '结果通知',
 };
 const NODE_COLORS: Record<WorkflowNodeKind, string> = {
@@ -103,7 +121,7 @@ const NODE_DESCS: Record<WorkflowNodeKind, string> = {
   retrieve: '查询知识库、运行手册与历史证据', transform: '映射、清洗并标准化上下文数据',
   decision: '由数字员工分析上下文并生成处置决策', condition: '基于表达式判断后续路径', approval: '按审批人、超时与签名规则复核', policy: '校验风险等级、权限和变更策略',
   branch: '按条件选择唯一处置路径', parallel: '并发执行多个独立步骤并汇聚',
-  execute: '调用已纳管 Skill 完成处置动作', http: '调用企业内部或第三方 API', mcp: '调用受控 MCP 工具', task: '创建人工处置任务并回传结果',
+  execute: '调用已纳管 Skill 完成受控处置动作', http: '调用企业内部或第三方 API', mcp: '调用受控 MCP 工具', task: '创建人工处置任务并回传结果',
   retry: '按退避策略自动重试可恢复失败', compensate: '执行补偿动作或回滚变更', audit: '写入可追溯的审计证据', notify: '通过飞书、企微、短信等通知结果',
 };
 
@@ -113,7 +131,7 @@ type NodeRisk = 'standard' | 'review' | 'sensitive';
 const NODE_LIBRARY_GROUPS: Array<{ id: NodeLibraryCategory; label: string; desc: string; kinds: WorkflowNodeKind[] }> = [
   { id: 'trigger', label: '触发与输入', desc: '定义数字员工何时开始工作', kinds: ['trigger', 'schedule', 'event'] },
   { id: 'context', label: '上下文与数据', desc: '补齐处置所需的证据与变量', kinds: ['retrieve', 'transform'] },
-  { id: 'decision', label: '智能决策', desc: '由规则或 Agent 决定处置路径', kinds: ['decision', 'condition', 'branch', 'parallel'] },
+  { id: 'decision', label: '智能决策', desc: '由规则或数字员工研判决定处置路径', kinds: ['decision', 'condition', 'branch', 'parallel'] },
   { id: 'action', label: '执行与协同', desc: '调用受控能力或派发人工工作', kinds: ['execute', 'http', 'mcp', 'task'] },
   { id: 'governance', label: '人工与治理', desc: '在关键动作前实施权限和审批控制', kinds: ['policy', 'approval', 'audit'] },
   { id: 'reliability', label: '可靠性与收尾', desc: '处理失败、补偿并通知相关人员', kinds: ['retry', 'compensate', 'notify'] },
@@ -123,7 +141,7 @@ const NODE_LIBRARY_META: Record<WorkflowNodeKind, { category: NodeLibraryCategor
   trigger: { category: 'trigger', risk: 'standard' }, schedule: { category: 'trigger', risk: 'standard' }, event: { category: 'trigger', risk: 'standard' },
   retrieve: { category: 'context', risk: 'standard' }, transform: { category: 'context', risk: 'standard' },
   decision: { category: 'decision', risk: 'review', badge: 'AI' }, condition: { category: 'decision', risk: 'standard' }, branch: { category: 'decision', risk: 'standard' }, parallel: { category: 'decision', risk: 'standard' },
-  execute: { category: 'action', risk: 'sensitive', badge: '外部写入' }, http: { category: 'action', risk: 'sensitive', badge: '外部调用' }, mcp: { category: 'action', risk: 'sensitive', badge: '受控工具' }, task: { category: 'action', risk: 'review', badge: '人工协同' },
+  execute: { category: 'action', risk: 'sensitive', badge: '已纳管 Skill' }, http: { category: 'action', risk: 'sensitive', badge: '外部调用' }, mcp: { category: 'action', risk: 'sensitive', badge: '受控工具' }, task: { category: 'action', risk: 'review', badge: '人工协同' },
   policy: { category: 'governance', risk: 'review', badge: '策略' }, approval: { category: 'governance', risk: 'review', badge: '需审批' }, audit: { category: 'governance', risk: 'standard' },
   retry: { category: 'reliability', risk: 'review', badge: '失败处理' }, compensate: { category: 'reliability', risk: 'sensitive', badge: '回滚' }, notify: { category: 'reliability', risk: 'standard' },
 };
@@ -144,14 +162,14 @@ function recommendedNodeKinds(sourceKind?: WorkflowNodeKind): WorkflowNodeKind[]
 /* ============ 初始工作流数据（mock） ============ */
 const INITIAL_NODES: Node[] = [
   { id: 'n1', type: 'custom', position: { x: 60, y: 80 }, data: { kind: 'trigger', label: 'Webhook 触发' } },
-  { id: 'n2', type: 'custom', position: { x: 280, y: 80 }, data: { kind: 'retrieve', label: 'Milvus 检索' } },
-  { id: 'n3', type: 'custom', position: { x: 500, y: 80 }, data: { kind: 'decision', label: 'Agent 决策' } },
-  { id: 'n4', type: 'custom', position: { x: 720, y: 80 }, data: { kind: 'approval', label: '等保 3 双签' } },
+  { id: 'n2', type: 'custom', position: { x: 280, y: 80 }, data: { kind: 'retrieve', label: '知识检索' } },
+  { id: 'n3', type: 'custom', position: { x: 500, y: 80 }, data: { kind: 'decision', label: '数字员工研判' } },
+  { id: 'n4', type: 'custom', position: { x: 720, y: 80 }, data: { kind: 'approval', label: '双重审批' } },
   { id: 'n5', type: 'custom', position: { x: 940, y: 40 }, data: { kind: 'branch', label: '分支：成功路径' } },
   { id: 'n6', type: 'custom', position: { x: 940, y: 160 }, data: { kind: 'branch', label: '分支：回滚路径' } },
-  { id: 'n7', type: 'custom', position: { x: 1180, y: 40 }, data: { kind: 'execute', label: 'Skill 执行恢复' } },
+  { id: 'n7', type: 'custom', position: { x: 1180, y: 40 }, data: { kind: 'execute', label: '执行受控恢复' } },
   { id: 'n8', type: 'custom', position: { x: 1180, y: 160 }, data: { kind: 'execute', label: '回滚 + 告警' } },
-  { id: 'n9', type: 'custom', position: { x: 1420, y: 100 }, data: { kind: 'audit', label: 'SignedLog 写入' } },
+  { id: 'n9', type: 'custom', position: { x: 1420, y: 100 }, data: { kind: 'audit', label: '审计留痕' } },
   { id: 'n10', type: 'custom', position: { x: 1660, y: 100 }, data: { kind: 'notify', label: '飞书 / 企微通知' } },
 ];
 const INITIAL_EDGES: Edge[] = [
@@ -167,7 +185,71 @@ const INITIAL_EDGES: Edge[] = [
   { id: 'e9-10', source: 'n9', target: 'n10' },
 ];
 
-const EXECUTING_NODE_ID = 'n4';
+/* ============ 服务端草稿 → React Flow ============ */
+function draftToFlow(draft: { nodes?: any[]; edges?: any[] } | null | undefined): { nodes: Node[]; edges: Edge[] } {
+  const rawNodes = draft?.nodes ?? [];
+  const rawEdges = draft?.edges ?? [];
+  if (!rawNodes.length) {
+    return {
+      nodes: INITIAL_NODES.map((node) => ({ ...node, data: { ...node.data }, position: { ...node.position } })),
+      edges: INITIAL_EDGES.map((edge) => ({ ...edge })),
+    };
+  }
+  const nodes: Node[] = rawNodes.map((n: any, i: number) => {
+    if (n?.type === 'custom' && n.position && n.data) {
+      return { id: n.id, type: 'custom', position: n.position, data: { ...n.data } };
+    }
+    const kind = (n.kind ?? n.data?.kind ?? 'task') as WorkflowNodeKind;
+    const position = n.position ?? { x: 60 + (i % 6) * 220, y: 80 + Math.floor(i / 6) * 120 };
+    return {
+      id: n.id,
+      type: 'custom',
+      position,
+      data: {
+        kind,
+        label: n.label ?? n.data?.label ?? NODE_LABELS[kind] ?? kind,
+        desc: n.description ?? n.data?.desc,
+        note: n.data?.note,
+        disabled: n.data?.disabled,
+      },
+    };
+  });
+  const edges: Edge[] = rawEdges.map((e: any) => ({ id: e.id, source: e.source, target: e.target }));
+  return { nodes, edges };
+}
+
+type StructureIssue = { code: string; message: string; severity: 'failed' | 'review' };
+
+function evaluateWorkflowStructure(flowNodes: Node[], flowEdges: Edge[]): StructureIssue[] {
+  const kinds = flowNodes.map((node) => node.data?.kind as WorkflowNodeKind).filter(Boolean);
+  const hasWrite = kinds.some((kind) => ['execute', 'http', 'mcp'].includes(kind));
+  const hasTrigger = kinds.some((kind) => ['trigger', 'schedule', 'event'].includes(kind));
+  const hasApproval = kinds.includes('approval');
+  const hasAudit = kinds.includes('audit');
+  const hasRollback = kinds.includes('compensate') || flowNodes.some((node) => /回滚|补偿/.test(String(node.data?.label ?? '')));
+  const issues: StructureIssue[] = [];
+  if (!hasTrigger) issues.push({ code: 'trigger', message: '缺少触发节点（Webhook / 定时 / 事件）', severity: 'failed' });
+  if (hasWrite && !hasApproval) issues.push({ code: 'approval', message: '存在外部写入节点，但缺少双重审批节点', severity: 'failed' });
+  if (hasWrite && !hasAudit) issues.push({ code: 'audit', message: '存在外部写入节点，但缺少审计留痕节点', severity: 'failed' });
+  if (hasWrite && !hasRollback) issues.push({ code: 'compensate', message: '存在外部写入节点，但缺少补偿回滚路径', severity: 'failed' });
+  if (hasWrite && !kinds.includes('policy')) issues.push({ code: 'policy', message: '建议在外部写入前串联风险策略节点', severity: 'review' });
+  const disconnected = flowNodes.filter((node) => flowNodes.length > 1 && !flowEdges.some((edge) => edge.source === node.id || edge.target === node.id));
+  if (disconnected.length) issues.push({ code: 'connections', message: `存在 ${disconnected.length} 个未连线节点`, severity: 'failed' });
+  return issues;
+}
+
+function structureIssueForNode(issues: StructureIssue[], kind?: WorkflowNodeKind) {
+  if (!kind) return null;
+  if (['execute', 'http', 'mcp'].includes(kind)) return issues.find((item) => ['approval', 'audit', 'compensate', 'policy'].includes(item.code)) ?? null;
+  if (kind === 'approval') return issues.find((item) => item.code === 'approval') ?? null;
+  if (kind === 'audit') return issues.find((item) => item.code === 'audit') ?? null;
+  if (kind === 'compensate') return issues.find((item) => item.code === 'compensate') ?? null;
+  if (kind === 'policy') return issues.find((item) => item.code === 'policy') ?? null;
+  return null;
+}
+
+
+
 
 const NODE_DEBUG: Record<string, { input: string; output: string; log: string[] }> = {
   n1: {
@@ -178,19 +260,19 @@ const NODE_DEBUG: Record<string, { input: string; output: string; log: string[] 
   n2: {
     input: '{ "query": "redis maxmemory-policy", "topK": 8 }',
     output: '{ "hits": [ { "score": 0.91, "doc": "sop/redis-tuning.md" }, { "score": 0.84, "doc": "runbook/oom.md" } ] }',
-    log: ['[14:27:57] Milvus 检索（topK=8）', '[14:27:58] 命中 2 篇：sop/redis-tuning.md · runbook/oom.md'],
+    log: ['[14:27:57] 知识检索（topK=8）', '[14:27:58] 命中 2 篇：sop/redis-tuning.md · runbook/oom.md'],
   },
   n3: {
     input: '{ "context": [...], "tools": ["skill_redis_tune", "mcp_k8s"] }',
     output: '{ "decision": "WRITE", "action": "CONFIG SET", "confidence": 0.92 }',
-    log: ['[14:28:00] LangGraph 编排：进入决策节点', '[14:28:01] 工具调用：skill_redis_tune.predict()', '[14:28:01] 决策：WRITE（置信度 0.92）'],
+    log: ['[14:28:00] 进入数字员工研判节点', '[14:28:01] 工具调用：skill_redis_tune.predict()', '[14:28:01] 决策：WRITE（置信度 0.92）'],
   },
   n4: {
     input: '{ "action": "CONFIG SET", "target": "prod-redis-01", "params": { "maxmemory": "16GB", "policy": "volatile-lru" } }',
     output: '{ "status": "pending_approval", "approvers_required": 2, "deadline": "2026-07-13T15:30:00Z" }',
     log: [
       '[14:28:01] 决策节点推送写操作请求',
-      '[14:28:02] 检查等保 3 双签策略 → 需要 2 人签发',
+      '[14:28:02] 检查双重审批策略 → 需要 2 人签发',
       '[14:28:03] 通知 王昊（Admin） + 李婷（SRE）',
       '[14:28:35] 王昊 已签发（第一签）',
       '[14:29:12] 等待 李婷 签发...',
@@ -199,7 +281,7 @@ const NODE_DEBUG: Record<string, { input: string; output: string; log: string[] 
   n5: {
     input: '{ "branch": "success", "nextNode": "n7" }',
     output: '{ "branch_result": "success" }',
-    log: ['[14:30:02] 分支判定：通过（等保 3 双签完成）'],
+    log: ['[14:30:02] 分支判定：通过（双重审批完成）'],
   },
   n6: {
     input: '{ "branch": "rollback", "nextNode": "n8" }',
@@ -217,9 +299,9 @@ const NODE_DEBUG: Record<string, { input: string; output: string; log: string[] 
     log: ['[14:30:15] 触发回滚：mcp_k8s.rollback', '[14:30:18] 回滚完成（revisions=1）', '[14:30:19] 触发告警：P2 故障'],
   },
   n9: {
-    input: '{ "traceId": "tr-7a3f2c91", "decision": "WRITE", "appliedBy": "redis-recovery-agent" }',
+    input: '{ "traceId": "tr-7a3f2c91", "decision": "WRITE", "appliedBy": "受控恢复流程" }',
     output: '{ "signed": true, "hash": "0x8f2c…a917" }',
-    log: ['[14:30:20] SignedLog 写入（SHA-256 哈希链）'],
+    log: ['[14:30:20] 审计留痕写入（SHA-256 哈希链）'],
   },
   n10: {
     input: '{ "channels": ["feishu", "wecom"], "template": "redis-oom-resolved" }',
@@ -232,16 +314,14 @@ const NODE_DEBUG: Record<string, { input: string; output: string; log: string[] 
 function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
   const Icon = NODE_ICONS[data.kind as WorkflowNodeKind];
   const color = NODE_COLORS[data.kind as WorkflowNodeKind];
-  const isExecuting = data.id === EXECUTING_NODE_ID;
   return (
     <div
       className={cn(
         'workflow-node relative rounded-md border-2 bg-[var(--surface-1)] px-3 py-2 min-w-[140px] text-center shadow-sm transition-all',
         selected && 'ring-2 ring-[var(--brand)]',
         data.disabled && 'opacity-50 grayscale',
-        isExecuting && 'animate-pulse',
       )}
-      style={{ borderColor: color, boxShadow: isExecuting ? `0 0 0 4px ${color}33` : undefined }}
+      style={{ borderColor: color }}
       title={data.note || undefined}
     >
       {/* 输入 handle（左侧） */}
@@ -267,9 +347,6 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
           <span className="workflow-node__note text-[9px] text-amber-700 dark:text-amber-300 truncate max-w-[110px]">{data.note}</span>
         </div>
       )}
-      {isExecuting && (
-        <span className="absolute -top-1.5 -right-1.5 grid h-3.5 w-3.5 place-items-center rounded-full bg-[var(--brand)] text-[9px] font-bold text-white">●</span>
-      )}
     </div>
   );
 }
@@ -277,30 +354,293 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
 const nodeTypes = { custom: CustomNode };
 
 /* ============ Mock 模板 ============ */
-const TEMPLATES = [
-  { id: 't1', name: '故障自愈', version: 'v2.4', category: 'system', description: 'Redis/K8s 故障自动定位、受控处置、补偿回滚与证据留存', nodes: 10, installs: 1284, rating: 4.9, owner: 'SRE 平台组', verifiedAt: '2026-07-16', risk: 'L3', dependencies: ['redis-cli', 'kubernetes-mcp'], health: '需授权', successRate: '98.6%', sequence: ['event', 'retrieve', 'decision', 'policy', 'approval', 'execute', 'compensate', 'audit', 'notify'] as WorkflowNodeKind[] },
-  { id: 't2', name: '灰度发布', version: 'v1.8', category: 'system', description: '金丝雀发布、指标验证、审批门禁与异常自动补偿', nodes: 8, installs: 962, rating: 4.8, owner: '交付工程组', verifiedAt: '2026-07-14', risk: 'L3', dependencies: ['release-skill', 'prometheus-mcp'], health: '健康', successRate: '97.9%', sequence: ['event', 'policy', 'approval', 'parallel', 'condition', 'execute', 'compensate', 'audit', 'notify'] as WorkflowNodeKind[] },
-  { id: 't3', name: 'CVE 漏洞修复', version: 'v3.1', category: 'security', description: 'CVE 情报、影响面评估、人工复核、灰度修复与审计', nodes: 12, installs: 743, rating: 4.7, owner: '安全运营组', verifiedAt: '2026-07-12', risk: 'L3', dependencies: ['cve-kb', 'patch-skill'], health: '健康', successRate: '96.8%', sequence: ['event', 'retrieve', 'decision', 'policy', 'approval', 'task', 'execute', 'compensate', 'audit', 'notify'] as WorkflowNodeKind[] },
-  { id: 't4', name: '容量预测', version: 'v1.6', category: 'ai', description: '历史趋势研判、扩容建议、人工确认与结果通知', nodes: 7, installs: 612, rating: 4.6, owner: '容量运营组', verifiedAt: '2026-07-10', risk: 'L2', dependencies: ['capacity-agent'], health: '健康', successRate: '95.4%', sequence: ['schedule', 'retrieve', 'decision', 'policy', 'task', 'audit', 'notify'] as WorkflowNodeKind[] },
-  { id: 't5', name: '报告生成', version: 'v2.2', category: 'business', description: '数据汇总、LLM 摘要、人工校对与多渠道分发', nodes: 6, installs: 1502, rating: 4.9, owner: '运营效能组', verifiedAt: '2026-07-17', risk: 'L1', dependencies: ['report-agent'], health: '健康', successRate: '99.2%', sequence: ['schedule', 'retrieve', 'decision', 'transform', 'audit', 'notify'] as WorkflowNodeKind[] },
-  { id: 't6', name: '工单分诊', version: 'v2.0', category: 'business', description: '工单分类、SLA 路由、人工接管与关闭通知', nodes: 9, installs: 884, rating: 4.7, owner: '服务运营组', verifiedAt: '2026-07-15', risk: 'L2', dependencies: ['ticket-mcp'], health: '健康', successRate: '98.1%', sequence: ['event', 'transform', 'decision', 'condition', 'task', 'retry', 'audit', 'notify'] as WorkflowNodeKind[] },
+/* ============ 工作流模板资产（与 /api/workflow-templates 字段对齐） ============ */
+type TemplateHealth = '健康' | '需授权';
+type WorkflowTemplateAsset = {
+  id: string;
+  name: string;
+  version: string;
+  category: 'business' | 'system' | 'security' | 'ai';
+  description: string;
+  nodes: number;
+  installs: number;
+  rating: number;
+  owner: string;
+  verifiedAt: string;
+  risk: 'L1' | 'L2' | 'L3';
+  dependencies: string[];
+  dependencyStatus: Array<{ name: string; status: 'ready' | 'unauthorized'; reason?: string }>;
+  health: TemplateHealth;
+  successRate: string;
+  sequence: WorkflowNodeKind[];
+  blockers: string[];
+  variables: Array<{ key: string; label: string; required: boolean }>;
+  permissions: Array<{ action: string; gate: string }>;
+  changelog: Array<{ version: string; date: string; note: string }>;
+  recentRuns: Array<{ id: string; time: string; status: 'success' | 'failed'; note: string }>;
+};
+
+type DraftGate = {
+  blocked: boolean;
+  reasons: string[];
+  templateId: string;
+  templateName: string;
+  templateVersion: string;
+  owner: string;
+};
+
+function categoryLabel(category: WorkflowTemplateAsset['category'] | string) {
+  if (category === 'business') return '业务自动化';
+  if (category === 'system') return '系统运维';
+  if (category === 'security') return '安全响应';
+  return '研判与分析';
+}
+
+function isTemplateReusable(template: WorkflowTemplateAsset) {
+  return template.health === '健康' && template.blockers.length === 0 && template.dependencyStatus.every((item) => item.status === 'ready');
+}
+
+function needsTemplateReview(template: WorkflowTemplateAsset) {
+  return !isTemplateReusable(template);
+}
+
+function deriveTemplateBlockers(template: Pick<WorkflowTemplateAsset, 'health' | 'dependencyStatus' | 'blockers'>) {
+  if (template.blockers?.length) return template.blockers;
+  return (template.dependencyStatus ?? [])
+    .filter((item) => item.status === 'unauthorized')
+    .map((item) => item.reason ?? `${item.name}：当前工作区未授权`);
+}
+
+const TEMPLATES: WorkflowTemplateAsset[] = [
+  {
+    id: 'tpl1',
+    name: 'cache-oom 受控恢复',
+    version: 'v2.4',
+    category: 'system',
+    description: 'Redis 缓存 OOM 受控恢复 + 切换 LRU 策略；写操作需双重审批与补偿回滚',
+    nodes: 10,
+    installs: 124,
+    rating: 4.8,
+    owner: 'SRE 平台组',
+    verifiedAt: '2026-07-16',
+    risk: 'L3',
+    dependencies: ['redis-cli', 'kubernetes-mcp'],
+    dependencyStatus: [
+      { name: 'redis-cli', status: 'ready' },
+      { name: 'kubernetes-mcp', status: 'unauthorized', reason: 'kubernetes-mcp：当前工作区未授权生产写权限' },
+    ],
+    health: '需授权',
+    successRate: '98.6%',
+    sequence: ['event', 'retrieve', 'decision', 'policy', 'approval', 'execute', 'compensate', 'audit', 'notify'],
+    blockers: ['kubernetes-mcp：当前工作区未授权生产写权限'],
+    variables: [
+      { key: 'cluster', label: '目标集群', required: true },
+      { key: 'maxmemory', label: '扩容上限', required: true },
+      { key: 'approver_group', label: '双重审批组', required: true },
+    ],
+    permissions: [
+      { action: 'CONFIG SET', gate: '双重审批 + 生产写权限' },
+      { action: '回滚补偿', gate: '审计留痕必选' },
+    ],
+    changelog: [
+      { version: 'v2.4', date: '2026-07-16', note: '补齐补偿分支与依赖授权检查' },
+      { version: 'v2.3', date: '2026-06-28', note: '审批超时默认改为 300s' },
+    ],
+    recentRuns: [
+      { id: 'r-tpl1-01', time: '07-16 14:28', status: 'success', note: '验证集通过' },
+      { id: 'r-tpl1-02', time: '07-15 11:02', status: 'failed', note: '依赖未授权阻断' },
+    ],
+  },
+  {
+    id: 'tpl2',
+    name: 'CVE 自动修复',
+    version: 'v3.1',
+    category: 'security',
+    description: 'CVE 扫描 → 资产匹配 → 人工复核 → 工单与受控修复',
+    nodes: 10,
+    installs: 88,
+    rating: 4.6,
+    owner: '安全运营组',
+    verifiedAt: '2026-07-12',
+    risk: 'L3',
+    dependencies: ['cve-kb', 'patch-skill'],
+    dependencyStatus: [
+      { name: 'cve-kb', status: 'ready' },
+      { name: 'patch-skill', status: 'ready' },
+    ],
+    health: '健康',
+    successRate: '96.8%',
+    sequence: ['event', 'retrieve', 'decision', 'policy', 'approval', 'task', 'execute', 'compensate', 'audit', 'notify'],
+    blockers: [],
+    variables: [
+      { key: 'cve_id', label: 'CVE 编号', required: true },
+      { key: 'asset_scope', label: '影响资产范围', required: true },
+    ],
+    permissions: [
+      { action: '创建修复工单', gate: '人工复核' },
+      { action: '执行补丁', gate: '双重审批' },
+    ],
+    changelog: [
+      { version: 'v3.1', date: '2026-07-12', note: '增加影响面评估节点' },
+      { version: 'v3.0', date: '2026-06-01', note: '统一审计留痕字段' },
+    ],
+    recentRuns: [
+      { id: 'r-tpl2-01', time: '07-12 09:40', status: 'success', note: '验证集通过' },
+    ],
+  },
+  {
+    id: 'tpl3',
+    name: '合规审计报告',
+    version: 'v2.2',
+    category: 'business',
+    description: '等保核查项自动汇总 + 报告生成与分发',
+    nodes: 7,
+    installs: 56,
+    rating: 4.7,
+    owner: '合规运营组',
+    verifiedAt: '2026-07-17',
+    risk: 'L1',
+    dependencies: ['compliance-kb'],
+    dependencyStatus: [{ name: 'compliance-kb', status: 'ready' }],
+    health: '健康',
+    successRate: '99.2%',
+    sequence: ['schedule', 'retrieve', 'decision', 'transform', 'audit', 'notify'],
+    blockers: [],
+    variables: [{ key: 'report_period', label: '报告周期', required: true }],
+    permissions: [{ action: '导出报告', gate: '审计留痕' }],
+    changelog: [{ version: 'v2.2', date: '2026-07-17', note: '补充分发渠道校验' }],
+    recentRuns: [{ id: 'r-tpl3-01', time: '07-17 08:10', status: 'success', note: '验证集通过' }],
+  },
+  {
+    id: 'tpl4',
+    name: '变更灰度发布',
+    version: 'v1.8',
+    category: 'system',
+    description: '蓝绿/金丝雀发布 + 指标门禁与异常自动补偿',
+    nodes: 9,
+    installs: 142,
+    rating: 4.9,
+    owner: '交付工程组',
+    verifiedAt: '2026-07-14',
+    risk: 'L3',
+    dependencies: ['release-skill', 'prometheus-mcp'],
+    dependencyStatus: [
+      { name: 'release-skill', status: 'ready' },
+      { name: 'prometheus-mcp', status: 'ready' },
+    ],
+    health: '健康',
+    successRate: '97.9%',
+    sequence: ['event', 'policy', 'approval', 'parallel', 'condition', 'execute', 'compensate', 'audit', 'notify'],
+    blockers: [],
+    variables: [
+      { key: 'service', label: '发布服务', required: true },
+      { key: 'canary_percent', label: '灰度比例', required: true },
+    ],
+    permissions: [
+      { action: '生产发布', gate: '双重审批' },
+      { action: '自动回滚', gate: '补偿节点必选' },
+    ],
+    changelog: [{ version: 'v1.8', date: '2026-07-14', note: '指标门禁阈值可配置' }],
+    recentRuns: [{ id: 'r-tpl4-01', time: '07-14 16:22', status: 'success', note: '验证集通过' }],
+  },
+  {
+    id: 'tpl5',
+    name: '告警降噪',
+    version: 'v1.6',
+    category: 'security',
+    description: 'SIEM 重复告警合并 + 静默策略与人工接管',
+    nodes: 4,
+    installs: 78,
+    rating: 4.5,
+    owner: '安全运营组',
+    verifiedAt: '2026-07-15',
+    risk: 'L2',
+    dependencies: ['siem-connector'],
+    dependencyStatus: [{ name: 'siem-connector', status: 'ready' }],
+    health: '健康',
+    successRate: '98.1%',
+    sequence: ['event', 'transform', 'decision', 'notify'],
+    blockers: [],
+    variables: [{ key: 'silence_window', label: '静默窗口', required: false }],
+    permissions: [{ action: '写入静默规则', gate: '策略校验' }],
+    changelog: [{ version: 'v1.6', date: '2026-07-15', note: '合并规则支持标签匹配' }],
+    recentRuns: [{ id: 'r-tpl5-01', time: '07-15 10:05', status: 'success', note: '验证集通过' }],
+  },
+  {
+    id: 'tpl6',
+    name: '容量预测',
+    version: 'v2.0',
+    category: 'ai',
+    description: '历史趋势研判、扩容建议、人工确认与结果通知',
+    nodes: 7,
+    installs: 42,
+    rating: 4.4,
+    owner: '容量运营组',
+    verifiedAt: '2026-07-10',
+    risk: 'L2',
+    dependencies: ['capacity-forecast-skill'],
+    dependencyStatus: [{ name: 'capacity-forecast-skill', status: 'ready' }],
+    health: '健康',
+    successRate: '95.4%',
+    sequence: ['schedule', 'retrieve', 'decision', 'policy', 'task', 'audit', 'notify'],
+    blockers: [],
+    variables: [
+      { key: 'metric', label: '容量指标', required: true },
+      { key: 'horizon_days', label: '预测窗口（天）', required: true },
+    ],
+    permissions: [{ action: '创建扩容建议工单', gate: '人工确认' }],
+    changelog: [{ version: 'v2.0', date: '2026-07-10', note: '研判节点改用企业默认模型路由' }],
+    recentRuns: [{ id: 'r-tpl6-01', time: '07-10 18:30', status: 'success', note: '验证集通过' }],
+  },
 ];
 
-/* ============ Mock 历史 ============ */
-const RUNS = [
-  { id: 'r1', time: '14:30:21', trigger: 'Redis OOM 告警', status: 'success', duration: 42, who: 'redis-recovery-agent', steps: 10, error: '' },
-  { id: 'r2', time: '13:18:09', trigger: 'K8s 灰度发布', status: 'success', duration: 156, who: 'gray-release-agent', steps: 8, error: '' },
-  { id: 'r3', time: '12:45:33', trigger: 'CVE-2025-31324', status: 'failed', duration: 88, who: 'cve-repair-agent', steps: 4, error: '等保 3 双签超时（300s）' },
-  { id: 'r4', time: '11:02:48', trigger: '容量预测日报', status: 'success', duration: 24, who: 'capacity-agent', steps: 7, error: '' },
-  { id: 'r5', time: '09:30:11', trigger: '周报告生成', status: 'success', duration: 38, who: 'report-agent', steps: 6, error: '' },
-];
+function normalizeTemplateAsset(raw: Partial<WorkflowTemplateAsset> & { id: string; name: string }): WorkflowTemplateAsset {
+  const fallback = TEMPLATES.find((item) => item.id === raw.id || item.name === raw.name);
+  const dependencyStatus = raw.dependencyStatus?.length
+    ? raw.dependencyStatus
+    : (raw.dependencies ?? fallback?.dependencies ?? []).map((name) => ({
+        name,
+        status: (raw.health ?? fallback?.health) === '需授权' && name.includes('kubernetes') ? 'unauthorized' as const : 'ready' as const,
+        reason: (raw.health ?? fallback?.health) === '需授权' && name.includes('kubernetes') ? `${name}：当前工作区未授权生产写权限` : undefined,
+      }));
+  const health = (raw.health ?? fallback?.health ?? '健康') as TemplateHealth;
+  const blockers = deriveTemplateBlockers({
+    health,
+    dependencyStatus,
+    blockers: raw.blockers ?? fallback?.blockers ?? [],
+  });
+  return {
+    id: raw.id,
+    name: raw.name,
+    version: raw.version ?? fallback?.version ?? 'v1.0',
+    category: (raw.category as WorkflowTemplateAsset['category']) ?? fallback?.category ?? 'business',
+    description: raw.description ?? fallback?.description ?? '',
+    nodes: raw.nodes ?? fallback?.nodes ?? (raw.sequence?.length ?? 0),
+    installs: raw.installs ?? fallback?.installs ?? 0,
+    rating: raw.rating ?? fallback?.rating ?? 0,
+    owner: raw.owner ?? fallback?.owner ?? '未指定维护团队',
+    verifiedAt: raw.verifiedAt ?? fallback?.verifiedAt ?? '—',
+    risk: (raw.risk as WorkflowTemplateAsset['risk']) ?? fallback?.risk ?? 'L2',
+    dependencies: raw.dependencies ?? fallback?.dependencies ?? dependencyStatus.map((item) => item.name),
+    dependencyStatus,
+    health,
+    successRate: raw.successRate ?? fallback?.successRate ?? '—',
+    sequence: (raw.sequence as WorkflowNodeKind[]) ?? fallback?.sequence ?? ['event', 'decision', 'audit', 'notify'],
+    blockers,
+    variables: raw.variables ?? fallback?.variables ?? [],
+    permissions: raw.permissions ?? fallback?.permissions ?? [],
+    changelog: raw.changelog ?? fallback?.changelog ?? [],
+    recentRuns: raw.recentRuns ?? fallback?.recentRuns ?? [],
+  };
+}
+
 
 /* ============ 版本快照（mock 历史版本） ============ */
 const VERSIONS = [
   { id: 'v4', label: 'v4 · 当前', time: '刚刚', desc: '新增分支：回滚路径', active: true },
   { id: 'v3', label: 'v3', time: '15 分钟前', desc: '调整审计节点位置' },
   { id: 'v2', label: 'v2', time: '1 小时前', desc: '加入 Webhook 触发器' },
-  { id: 'v1', label: 'v1', time: '昨天 18:42', desc: '初始版本 · 故障自愈' },
+  { id: 'v1', label: 'v1', time: '昨天 18:42', desc: '初始版本 · 受控恢复作业' },
 ];
 
 type Snapshot = { nodes: Node[]; edges: Edge[] };
@@ -313,7 +653,7 @@ function cloneSnapshot(snapshot: Snapshot): Snapshot {
   };
 }
 
-function templateSnapshot(template: typeof TEMPLATES[number]): Snapshot {
+function templateSnapshot(template: WorkflowTemplateAsset): Snapshot {
   const sequence = template.sequence;
   const nodes = sequence.map((kind, index) => ({
     id: `n${index + 1}`,
@@ -330,6 +670,7 @@ function templateSnapshot(template: typeof TEMPLATES[number]): Snapshot {
 /* ============ 顶层组件 ============ */
 export default function Workflows() {
   const { t } = useT();
+  const navigate = useNavigate();
   const canWrite = useAuthStore((state) => state.hasPermission('workflow.write'));
   const canExecute = useAuthStore((state) => state.hasPermission('workflow.execute'));
   const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
@@ -344,7 +685,7 @@ export default function Workflows() {
   const [edges, setEdges] = useState<Edge[]>(INITIAL_EDGES);
 
   // 选中 / 右键菜单
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>('n4');
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; nodeId: string } | null>(null);
   const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [deleteConfirmNodeId, setDeleteConfirmNodeId] = useState<string | null>(null);
@@ -366,19 +707,25 @@ export default function Workflows() {
   })));
 
   // 模板预览
-  const [previewTemplate, setPreviewTemplate] = useState<typeof TEMPLATES[number] | null>(null);
+  const [previewTemplate, setPreviewTemplate] = useState<WorkflowTemplateAsset | null>(null);
 
   // AI 工作流生成：结果始终先进入预览，不覆盖当前画布
   const [aiGenerateOpen, setAiGenerateOpen] = useState(false);
   const [generationStep, setGenerationStep] = useState<'input' | 'preview'>('input');
   const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
-  const [generationPrompt, setGenerationPrompt] = useState('当 Redis 触发 OOM 告警时自动处理，并通知负责人');
+  const [generationPrompt, setGenerationPrompt] = useState('当生产 Redis 触发 OOM 告警时，由数字员工研判处置路径，经双重审批后执行受控恢复，写入审计并通知值班负责人');
   const [generationConstraints, setGenerationConstraints] = useState<GenerationVars['constraints']>({ riskLevel: 'L2', requireApproval: true, requireAudit: true, requireRollback: true });
   const [generationModel, setGenerationModel] = useState('企业默认模型');
   const { data: generationHistory = [] } = useApiQuery<GenerationResult[]>(['workflow-generations'], '/api/workflows/generations');
-  const { data: templateAssets = [] } = useApiQuery<typeof TEMPLATES>(['workflow-templates'], '/api/workflow-templates');
+  const { data: templateAssets = [] } = useApiQuery<Array<Partial<WorkflowTemplateAsset> & { id: string; name: string }>>(['workflow-templates'], '/api/workflow-templates');
+  const { data: workflowDraft } = useApiQuery<Workflow>(['workflow-draft', currentWorkspaceId], '/api/workflows/wf1');
+  const workflowId = workflowDraft?.id ?? 'wf1';
+  const { data: remoteVersions = [] } = useApiQuery<Array<{ id: string; label: string; time: string; desc: string }>>(['workflow-versions', currentWorkspaceId], '/api/workflows/wf1/versions');
+  const draftHydratedRef = useRef(false);
+  const [draftGate, setDraftGate] = useState<DraftGate | null>(null);
   const [preflightOpen, setPreflightOpen] = useState(false);
   const [preflightResult, setPreflightResult] = useState<WorkflowValidation | null>(null);
+  const [preflightVersion, setPreflightVersion] = useState<string | null>(null);
   const [nodeLibraryOpen, setNodeLibraryOpen] = useState(false);
 
   // Toast
@@ -392,9 +739,9 @@ export default function Workflows() {
     onSuccess: (result) => {
       setGenerationResult(result);
       setGenerationStep('preview');
-      showToast('已生成工作流草稿，请完成校验后应用', 'success');
+      showToast('已生成可编辑草稿，请专家复核后再应用', 'success');
     },
-    onError: () => showToast('生成失败，请调整描述后重试', 'error'),
+    onError: () => showToast('生成失败，请调整处置目标后重试', 'error'),
   });
   const discardGenerationApi = useApiMutation<GenerationResult, { id: string }>((vars) => `/api/workflows/generations/${vars.id}/discard`, {
     onSuccess: () => showToast('已放弃本次生成结果', 'info'),
@@ -403,13 +750,30 @@ export default function Workflows() {
     onError: () => showToast('生成草稿与审计未提交，当前画布未变更', 'error'),
   });
   const validateWorkflowApi = useApiMutation<WorkflowValidation, { revisionId?: string; nodes: unknown[]; edges: unknown[] }>('/api/workflows/wf1/validate', {
-    onSuccess: (result) => { setPreflightResult(result); setPreflightOpen(true); },
+    onSuccess: (result) => {
+      setPreflightResult(result);
+      setPreflightVersion(activeVersion);
+      setPreflightOpen(true);
+    },
     onError: () => showToast('运行前校验失败，请稍后重试', 'error'),
   });
-  const runWorkflowApi = useApiMutation<WorkflowRun, Record<string, unknown>>('/api/workflows/wf1/run', {
-    onSuccess: (run) => { setPreflightOpen(false); showToast(`已创建执行记录 ${run.id}`, 'success'); },
-    onError: () => showToast('工作流执行请求失败', 'error'),
-  });
+  const [focusRunId, setFocusRunId] = useState<string | null>(null);
+  const { data: workflowRuns = [] } = useApiQuery<WorkflowRunRecord[]>(['workflow-runs'], '/api/workflow-runs');
+  const runWorkflowApi = useApiMutation<WorkflowRunRecord, Record<string, unknown>>(
+    (vars) => `/api/workflows/${String((vars as { workflowId?: string }).workflowId ?? workflowId)}/run`,
+    {
+      onSuccess: (run) => {
+        setPreflightOpen(false);
+        setFocusRunId(run.id);
+        setTab('history');
+        showToast(`已创建沙箱运行记录 ${run.id}`, 'success');
+      },
+      onError: (err) => {
+        const message = err instanceof Error ? err.message : '工作流执行请求失败';
+        showToast(message.replace(/^E_[A-Z_]+:\s*/, ''), 'error');
+      },
+    },
+  );
   const saveWorkflowApi = useApiMutation<Workflow, { nodes: unknown[]; edges: unknown[]; version: string }>('/api/workflows/wf1/draft', {
     onError: () => showToast('服务端保存失败，本地草稿仍已保留', 'error'),
   });
@@ -422,13 +786,44 @@ export default function Workflows() {
     onError: () => showToast('发布申请提交失败，请稍后重试', 'error'),
   });
   const { data: workflowSkills = [], refetch: refetchWorkflowSkills } = useApiQuery<WorkflowSkill[]>(['workflow-skills'], '/api/workflow-skills');
-  const publishAsSkillApi = useApiMutation<WorkflowSkill, { version: string; name: string; description: string }>('/api/workflows/wf1/publish-as-skill', {
-    onSuccess: (skill) => { showToast(`已发布流程技能「${skill.name}」`, 'success'); refetchWorkflowSkills(); },
-    onError: () => showToast('发布技能失败，请确认流程版本已校验', 'error'),
-  });
+  type PublishSkillVars = {
+    workflowId: string;
+    version: string;
+    name: string;
+    description: string;
+    riskLevel: WorkflowSkill['riskLevel'];
+    validationPassed: boolean;
+    draftBlocked: boolean;
+  };
+  const publishAsSkillApi = useApiMutation<WorkflowSkill, PublishSkillVars>(
+    (vars) => `/api/workflows/${vars.workflowId}/publish-as-skill`,
+    {
+      onSuccess: (skill) => {
+        refetchWorkflowSkills();
+        if (skill.status === 'published') {
+          showToast(`已发布流程技能「${skill.name}」`, 'success');
+        } else {
+          showToast(`高风险技能「${skill.name}」已提交为草稿，待管理员治理发布后方可装配`, 'info');
+        }
+      },
+      onError: (err) => {
+        const message = err instanceof Error ? err.message : '发布技能失败，请确认流程版本已校验';
+        showToast(message.replace(/^E_[A-Z_]+:\s*/, ''), 'error');
+      },
+    },
+  );
   const [skillName, setSkillName] = useState('生产故障处置流程技能');
   const [skillDesc, setSkillDesc] = useState('由工作流程发布的标准作业能力，可供数字员工在能力装配中引用。');
+  const [skillSourceVersion, setSkillSourceVersion] = useState('v4');
+  const [skillRiskLevel, setSkillRiskLevel] = useState<WorkflowSkill['riskLevel']>('mid');
+  useEffect(() => {
+    if (tab === 'publishSkill') setSkillSourceVersion(activeVersion);
+  }, [tab, activeVersion]);
   const requestProductionRelease = () => {
+    if (draftGate?.blocked) {
+      showToast(`模板依赖未就绪，无法发布：${draftGate.reasons[0] ?? '请先完成授权'}`, 'error');
+      return;
+    }
     if (isAdmin) publishWorkflowApi.mutate({ version: activeVersion });
     else releaseRequestApi.mutate({ resourceType: 'workflow', resourceName: `工作流 ${activeVersion}`, risk: 'medium' });
   };
@@ -439,6 +834,36 @@ export default function Workflows() {
 
   // 撤销/重做栈
   const historyRef = useRef<{ stack: Snapshot[]; idx: number }>({ stack: [{ nodes: INITIAL_NODES, edges: INITIAL_EDGES }], idx: 0 });
+  useEffect(() => {
+    if (!workflowDraft || draftHydratedRef.current) return;
+    draftHydratedRef.current = true;
+    const flow = draftToFlow(workflowDraft);
+    const snapshot = cloneSnapshot(flow);
+    setNodes(snapshot.nodes);
+    setEdges(snapshot.edges);
+    historyRef.current = { stack: [snapshot], idx: 0 };
+    setVersions((prev) => {
+      const merged = remoteVersions.length
+        ? remoteVersions.map((version) => {
+            const local = prev.find((item) => item.id === version.id);
+            return {
+              id: version.id,
+              label: version.label,
+              time: version.time,
+              desc: version.desc,
+              nodes: local?.nodes?.length ? local.nodes : snapshot.nodes,
+              edges: local?.edges?.length ? local.edges : snapshot.edges,
+            };
+          })
+        : prev;
+      return merged.map((item) => (
+        item.id === 'v4' || item.id === (remoteVersions[0]?.id ?? 'v4')
+          ? { ...item, nodes: snapshot.nodes, edges: snapshot.edges, desc: item.desc || '服务端草稿', time: item.time || '刚刚' }
+          : item
+      ));
+    });
+    setSelectedNodeId(null);
+  }, [workflowDraft, remoteVersions]);
   const pushHistory = useCallback((next: Snapshot) => {
     const h = historyRef.current;
     h.stack = h.stack.slice(0, h.idx + 1);
@@ -503,7 +928,10 @@ export default function Workflows() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedNodeId, contextMenu, versionMenuOpen, previewTemplate, undo, redo]);
 
-  const availableTemplates = templateAssets.length > 0 ? templateAssets : TEMPLATES;
+  const availableTemplates = useMemo(
+    () => (templateAssets.length > 0 ? templateAssets.map((item) => normalizeTemplateAsset(item)) : TEMPLATES),
+    [templateAssets],
+  );
   const filteredTemplates = availableTemplates.filter((t) => filterGroup === 'all' || t.category === filterGroup);
   const filteredLibrary = NODE_LIB.filter((k) =>
     !librarySearchQ || NODE_LABELS[k].includes(librarySearchQ) || NODE_DESCS[k].toLowerCase().includes(librarySearchQ.toLowerCase()),
@@ -515,7 +943,7 @@ export default function Workflows() {
     [nodes, selectedNodeId],
   );
 
-  // ReactFlow 节点（增加 selected 标记 + 当前执行高亮动画）
+  // ReactFlow 节点（增加 selected 标记）
   const rfNodes = useMemo<Node[]>(
     () => nodes.map((n) => ({
       ...n,
@@ -528,9 +956,8 @@ export default function Workflows() {
     () => edges.map((e) => ({
       ...e,
       type: 'smoothstep',
-      animated: e.target === EXECUTING_NODE_ID,
-      markerEnd: { type: MarkerType.ArrowClosed, color: e.target === EXECUTING_NODE_ID ? '#3b82f6' : '#94a3b8' },
-      style: { stroke: e.target === EXECUTING_NODE_ID ? '#3b82f6' : '#94a3b8', strokeWidth: e.target === EXECUTING_NODE_ID ? 2 : 1.2 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: '#94a3b8' },
+      style: { stroke: '#94a3b8', strokeWidth: 1.2 },
     })),
     [edges],
   );
@@ -631,6 +1058,17 @@ export default function Workflows() {
     });
   }, [canWrite, edges, pushHistory, showToast]);
 
+  const patchNodeData = useCallback((id: string, patch: Record<string, unknown>) => {
+    if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
+    setNodes((prev) => {
+      const next = prev.map((n) => (n.id === id ? { ...n, data: { ...n.data, ...patch } } : n));
+      pushHistory({ nodes: next, edges });
+      return next;
+    });
+  }, [canWrite, edges, pushHistory, showToast]);
+
+  const structureIssues = useMemo(() => evaluateWorkflowStructure(nodes, edges), [nodes, edges]);
+
   const disableNode = useCallback((id: string) => {
     if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
     setNodes((prev) => {
@@ -661,7 +1099,8 @@ export default function Workflows() {
     setNodes(snapshot.nodes);
     setEdges(snapshot.edges);
     pushHistory(snapshot);
-    setSelectedNodeId('n4');
+    setSelectedNodeId(null);
+    setDraftGate(null);
     showToast('画布已重置为初始状态（本地草稿）', 'success');
   }, [canWrite, showToast, pushHistory]);
 
@@ -681,7 +1120,7 @@ export default function Workflows() {
       edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
       version: id,
     });
-    showToast(`已保存 ${version?.label ?? id}（本地演示草稿）`, 'success');
+    showToast(`已保存 ${version?.label ?? id}（工作流草稿）`, 'success');
   }, [activeVersion, canWrite, edges, nodes, saveWorkflowApi, showToast, versions]);
 
   const loadSnapshot = useCallback((snapshot: Snapshot, versionId: string) => {
@@ -695,18 +1134,24 @@ export default function Workflows() {
 
   const runWorkflow = useCallback(() => {
     if (!canExecute) { showToast('当前账号没有工作流执行权限', 'error'); return; }
+    if (draftGate?.blocked) {
+      showToast(`模板依赖未授权，禁止试运行：${draftGate.reasons[0] ?? '请先完成依赖授权'}`, 'error');
+      return;
+    }
     if (!nodes.length) { showToast('画布为空，无法运行工作流', 'error'); return; }
-    if (!nodes.some((node) => ['trigger', 'schedule', 'event'].includes(node.data?.kind))) { showToast('工作流缺少触发节点，无法运行', 'error'); return; }
-    const disconnected = nodes.filter((node) => nodes.length > 1 && !edges.some((edge) => edge.source === node.id || edge.target === node.id));
-    if (disconnected.length) { showToast(`存在 ${disconnected.length} 个未连线节点，请先完成流程连接`, 'error'); return; }
-    validateWorkflowApi.mutate({ revisionId: activeVersion.startsWith('rev_') ? activeVersion : undefined, nodes: nodes.map((node) => ({ id: node.id, kind: node.data?.kind, label: node.data?.label, data: node.data })), edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })) });
-  }, [canExecute, edges, nodes, showToast, validateWorkflowApi]);
+    const issues = evaluateWorkflowStructure(nodes, edges);
+    const blocking = issues.filter((item) => item.severity === 'failed');
+    if (blocking.length) {
+      showToast(blocking[0].message, 'error');
+      return;
+    }
+    validateWorkflowApi.mutate({ revisionId: activeVersion.startsWith('rev_') || activeVersion.startsWith('tpl_') ? activeVersion : undefined, nodes: nodes.map((node) => ({ id: node.id, kind: node.data?.kind, label: node.data?.label, data: node.data })), edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })) });
+  }, [activeVersion, canExecute, draftGate, edges, nodes, showToast, validateWorkflowApi]);
 
   const openAIGenerator = useCallback(() => {
-    setGenerationStep('input');
-    setGenerationResult(null);
-    setAiGenerateOpen(true);
-  }, []);
+    if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
+    navigate('/workflows/orchestration');
+  }, [canWrite, navigate, showToast]);
   const submitGeneration = useCallback(() => {
     if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
     if (generationPrompt.trim().length < 8) { showToast('请至少描述 8 个字符的业务目标', 'error'); return; }
@@ -716,7 +1161,7 @@ export default function Workflows() {
     if (!canWrite || !generationResult) return;
     const activeSnapshot = versions.find((version) => version.id === activeVersion);
     const hasUnsavedChanges = !activeSnapshot || JSON.stringify({ nodes, edges }) !== JSON.stringify({ nodes: activeSnapshot.nodes, edges: activeSnapshot.edges });
-    if (hasUnsavedChanges && !window.confirm('当前画布存在未保存修改。AI 流程将另存为新的草稿版本，是否继续？')) return;
+    if (hasUnsavedChanges && !window.confirm('当前画布存在未保存修改。AI 辅助编排将另存为新的隔离草稿，是否继续？')) return;
     const applied = await applyGenerationApi.mutateAsync({ id: generationResult.id });
     if (!applied.revisionId) { showToast('服务端未返回草稿版本，未应用生成结果', 'error'); return; }
     const snapshot: Snapshot = {
@@ -725,14 +1170,14 @@ export default function Workflows() {
     };
     setNodes(snapshot.nodes);
     setEdges(snapshot.edges);
-    setVersions((previous) => previous.some((version) => version.id === applied.revisionId) ? previous : [{ id: applied.revisionId!, label: `${applied.revisionId} · AI 草稿`, time: '刚刚', desc: `AI 生成 · ${applied.promptDigest ?? applied.id}`, nodes: cloneSnapshot(snapshot).nodes, edges: cloneSnapshot(snapshot).edges }, ...previous]);
+    setVersions((previous) => previous.some((version) => version.id === applied.revisionId) ? previous : [{ id: applied.revisionId!, label: `${applied.revisionId} · AI 草稿`, time: '刚刚', desc: `AI 辅助编排 · ${applied.promptDigest ?? applied.id}`, nodes: cloneSnapshot(snapshot).nodes, edges: cloneSnapshot(snapshot).edges }, ...previous]);
     setActiveVersion(applied.revisionId);
     pushHistory(snapshot);
     setSelectedNodeId(snapshot.nodes[0]?.id ?? null);
     setTab('canvas');
     setSidePanel('properties');
     setAiGenerateOpen(false);
-    showToast(`已创建隔离草稿 ${applied.revisionId}，请完成配置与校验后试运行`, 'success');
+    showToast(`已创建隔离草稿 ${applied.revisionId}，专家复核后可发布为流程技能供数字员工装配`, 'success');
   }, [activeVersion, applyGenerationApi, canWrite, edges, generationResult, nodes, pushHistory, showToast, versions]);
   const discardGeneration = useCallback(() => {
     if (generationResult) discardGenerationApi.mutate({ id: generationResult.id });
@@ -740,22 +1185,45 @@ export default function Workflows() {
     setGenerationResult(null);
     setGenerationStep('input');
   }, [discardGenerationApi, generationResult]);
-  const createTemplateDraft = useCallback((template: typeof TEMPLATES[number]) => {
+  const createTemplateDraft = useCallback((template: WorkflowTemplateAsset) => {
     if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
-    const snapshot = templateSnapshot(template);
+    const asset = normalizeTemplateAsset(template);
+    const snapshot = templateSnapshot(asset);
     const currentSnapshot = versions.find((version) => version.id === activeVersion);
     const hasUnsavedChanges = !currentSnapshot || JSON.stringify({ nodes, edges }) !== JSON.stringify({ nodes: currentSnapshot.nodes, edges: currentSnapshot.edges });
     if (hasUnsavedChanges && !window.confirm('当前画布存在未保存修改。模板将创建为新的隔离草稿，是否继续？')) return;
-    const revisionId = `tpl_${template.id}_${Date.now().toString(36)}`;
+    const revisionId = `tpl_${asset.id}_${Date.now().toString(36)}`;
+    const reasons = deriveTemplateBlockers(asset);
+    const blocked = !isTemplateReusable(asset);
     setNodes(snapshot.nodes);
     setEdges(snapshot.edges);
-    setVersions((previous) => [{ id: revisionId, label: `${template.version} · 模板草稿`, time: '刚刚', desc: `基于「${template.name}」· ${template.owner}`, nodes: cloneSnapshot(snapshot).nodes, edges: cloneSnapshot(snapshot).edges }, ...previous]);
+    setVersions((previous) => [{
+      id: revisionId,
+      label: `${asset.version} · 模板草稿`,
+      time: '刚刚',
+      desc: `来源模板 ${asset.id} · ${asset.name} · ${asset.owner}`,
+      nodes: cloneSnapshot(snapshot).nodes,
+      edges: cloneSnapshot(snapshot).edges,
+    }, ...previous]);
     setActiveVersion(revisionId);
     pushHistory(snapshot);
     setSelectedNodeId(snapshot.nodes[0]?.id ?? null);
+    setDraftGate({
+      blocked,
+      reasons: reasons.length ? reasons : (blocked ? ['存在未满足的依赖或治理条件'] : []),
+      templateId: asset.id,
+      templateName: asset.name,
+      templateVersion: asset.version,
+      owner: asset.owner,
+    });
     setTab('canvas');
     setSidePanel('properties');
-    showToast(`已基于「${template.name}」创建隔离草稿`, 'success');
+    showToast(
+      blocked
+        ? `已基于「${asset.name}」创建隔离草稿（依赖未授权，试运行与发布已禁用）`
+        : `已基于「${asset.name}」创建隔离草稿`,
+      blocked ? 'info' : 'success',
+    );
   }, [activeVersion, canWrite, edges, nodes, pushHistory, showToast, versions]);
   const exportWorkflow = useCallback(() => {
     const data = {
@@ -870,6 +1338,67 @@ export default function Workflows() {
     if (!activeSnapshot) return true;
     return JSON.stringify({ nodes, edges }) !== JSON.stringify({ nodes: activeSnapshot.nodes, edges: activeSnapshot.edges });
   }, [activeSnapshot, edges, nodes]);
+  useEffect(() => {
+    if (!isDirty) return;
+    setPreflightResult(null);
+    setPreflightVersion(null);
+  }, [isDirty]);
+  useEffect(() => {
+    setPreflightResult(null);
+    setPreflightVersion(null);
+  }, [activeVersion]);
+  const skillValidationReady = Boolean(
+    preflightResult?.passed
+    && preflightVersion === skillSourceVersion
+    && skillSourceVersion === activeVersion
+    && !isDirty,
+  );
+  const canPublishSkill = Boolean(
+    canWrite
+    && skillName.trim()
+    && !isDirty
+    && !draftGate?.blocked
+    && skillValidationReady,
+  );
+  const skillGateSteps = useMemo(() => {
+    const versionAligned = skillSourceVersion === activeVersion;
+    const validated = Boolean(preflightResult?.passed && preflightVersion === skillSourceVersion);
+    return [
+      {
+        key: 'draft',
+        title: '画布草稿已保存',
+        detail: isDirty ? '存在未保存修改，请先保存' : '当前版本与画布一致且无脏数据',
+        ok: !isDirty,
+      },
+      {
+        key: 'version',
+        title: '来源版本已加载到画布',
+        detail: versionAligned ? `${skillSourceVersion} 已是画布当前版本` : `请先在版本管理加载 ${skillSourceVersion}`,
+        ok: versionAligned,
+      },
+      {
+        key: 'validate',
+        title: '运行前校验已通过',
+        detail: validated ? `校验通过 · ${skillSourceVersion}` : '请对本版本执行并通过运行前校验',
+        ok: validated,
+      },
+      {
+        key: 'deps',
+        title: '模板依赖就绪',
+        detail: draftGate?.blocked ? (draftGate.reasons[0] ?? '依赖未授权') : '无阻断依赖，可进入发布',
+        ok: !draftGate?.blocked,
+      },
+    ] as const;
+  }, [activeVersion, draftGate, isDirty, preflightResult?.passed, preflightVersion, skillSourceVersion]);
+  const skillGateHint = isDirty
+    ? '请先保存画布草稿后再发布技能'
+    : draftGate?.blocked
+      ? '来源模板依赖未授权，完成授权前不可发布技能'
+      : !skillValidationReady
+        ? '发布前须对画布当前版本完成并通过运行前校验'
+        : null;
+  const publishedSkillCount = workflowSkills.filter((skill) => skill.status === 'published').length;
+  const draftSkillCount = workflowSkills.filter((skill) => skill.status === 'draft').length;
 
   return (
     <div className="workflow-page flex h-full min-w-0 flex-col gap-3 overflow-hidden bg-[var(--bg-elevated)] p-3 md:p-4 lg:p-5">
@@ -883,7 +1412,7 @@ export default function Workflows() {
               </span>
               <div className="leading-tight">
                 <h2 className="text-sm font-semibold tracking-[-0.01em] text-[var(--text)]">工作流编排</h2>
-                <p className="mt-1 text-xs font-normal text-[var(--text-muted)]">搭建、治理并运行企业级自动化流程</p>
+                <p className="mt-1 text-xs font-normal text-[var(--text-muted)]">搭建、治理并运行企业级自动化流程；完成后发布为流程技能，供数字员工装配</p>
               </div>
             </div>
             {tab === 'canvas' ? (
@@ -895,87 +1424,18 @@ export default function Workflows() {
                 </span>
                 {isDirty && <Badge tone="warn" className="shrink-0 text-[9px]">草稿未保存</Badge>}
               </>
+            ) : tab === 'publishSkill' ? (
+              <span className="truncate text-[10px] text-[var(--text-muted)]">
+                流程技能 · 已发布 {publishedSkillCount} · 待治理 {draftSkillCount}
+              </span>
+            ) : tab === 'history' ? (
+              <span className="truncate text-[10px] text-[var(--text-muted)]">
+                运行记录 · {workflowRuns.length} 条
+              </span>
             ) : (
               <span className="truncate text-[10px] text-[var(--text-muted)]">
-                {tab === 'templates' ? `模板库 · ${TEMPLATES.length} 套` : `执行历史 · ${RUNS.length} 条`}
+                {tab === 'templates' ? `模板库 · ${TEMPLATES.length} 套` : tab === 'versions' ? `版本 · ${versions.length}` : '工作流'}
               </span>
-            )}
-          </div>
-          <div className="hidden">
-            <button
-              onClick={() => setVersionMenuOpen(!versionMenuOpen)}
-              className="flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[11px] hover:border-[var(--brand)]"
-            >
-              <HistoryIcon className="h-3 w-3 text-[var(--text-muted)]" />
-              <span className="text-[11px] font-medium text-[var(--text-secondary)]">工作流版本管理</span>
-              <span className="font-mono font-semibold">{versions.find((v) => v.id === activeVersion)?.label ?? activeVersion}</span>
-              <ChevronRight className="h-3 w-3 rotate-90 text-[var(--text-muted)]" />
-            </button>
-            {versionMenuOpen && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setVersionMenuOpen(false)} />
-                <div className="absolute right-0 top-full z-50 mt-1 max-w-[calc(100vw-24px)] min-w-[260px] rounded-md border border-[var(--border)] bg-[var(--surface-1)] py-1 shadow-xl">
-                  <div className="border-b border-[var(--border)] px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
-                    工作流版本管理 · 共 {versions.length} 版
-                  </div>
-                  {versions.map((v) => (
-                    <button
-                      key={v.id}
-                      onClick={() => {
-                        if (v.id === activeVersion) { setVersionMenuOpen(false); return; }
-                        loadSnapshot(v, v.id);
-                        setVersionMenuOpen(false);
-                        showToast(`已加载 ${v.label}（本地快照）`, 'info');
-                      }}
-                      className={cn(
-                        'flex w-full items-start gap-2 px-3 py-2 text-left hover:bg-[var(--bg-hover)]',
-                        v.id === activeVersion && 'bg-[var(--brand-light)]',
-                      )}
-                    >
-                      <span className="mt-0.5 shrink-0 font-mono text-[11px] font-semibold text-[var(--brand)]">{v.label}</span>
-                      <div className="min-w-0 flex-1">
-                        <div className="text-[10px] text-[var(--text-muted)]">{v.time}</div>
-                        <div className="truncate text-[11px] text-[var(--text-secondary)]">{v.desc}</div>
-                      </div>
-                      {v.id === activeVersion && <Badge tone="success" className="shrink-0 text-[9px]">当前</Badge>}
-                    </button>
-                  ))}
-                  <div className="flex gap-1 border-t border-[var(--border)] px-3 py-1.5">
-                    <Button size="sm" variant="outline" className="flex-1" onClick={() => {
-                      if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
-                      const current = versions.find((v) => v.id === activeVersion);
-                      if (current) loadSnapshot(current, current.id);
-                      setVersionMenuOpen(false);
-                      showToast(`已回滚到 ${current?.label ?? activeVersion}（本地快照）`, 'info');
-                    }} disabled={!canWrite}>
-                      <RotateCcw className="h-3 w-3" />回滚当前
-                    </Button>
-                    <Button size="sm" variant="secondary" className="flex-1" onClick={() => {
-                      if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
-                      const nextId = `v${versions.length + 1}`;
-                      setVersions((prev) => [...prev.map((v) => ({ ...v })), {
-                        id: nextId,
-                        label: `${nextId} · 草稿`,
-                        time: '刚刚',
-                        desc: '从当前画布另存的本地快照',
-                        nodes: cloneSnapshot({ nodes, edges }).nodes,
-                        edges: cloneSnapshot({ nodes, edges }).edges,
-                      }]);
-                      setActiveVersion(nextId);
-                      setVersionMenuOpen(false);
-                      showToast(`已另存为 ${nextId}（本地快照）`, 'success');
-                    }} disabled={!canWrite}>
-                      <Save className="h-3 w-3" />另存
-                    </Button>
-                    <Button size="sm" variant="outline" className="flex-1" onClick={() => setVersionDiffOpen(true)}>
-                      <GitCompare className="h-3 w-3" />差异
-                    </Button>
-                    <Button size="sm" variant="primary" className="flex-1" onClick={requestProductionRelease} loading={publishWorkflowApi.isPending || releaseRequestApi.isPending} disabled={!canWrite || isDirty}>
-                      {isAdmin ? '发布' : '提交发布申请'}
-                    </Button>
-                  </div>
-                </div>
-              </>
             )}
           </div>
         </div>
@@ -1048,6 +1508,8 @@ export default function Workflows() {
             updateNodeLabel={updateNodeLabel}
             updateNodeDescription={updateNodeDescription}
             updateNodeNote={updateNodeNote}
+            patchNodeData={patchNodeData}
+            structureIssues={structureIssues}
             showToast={showToast}
             onConnect={onConnect}
             deleteEdge={deleteEdge}
@@ -1075,6 +1537,7 @@ export default function Workflows() {
             publishLabel={isAdmin ? '发布' : '提交发布申请'}
             publishing={publishWorkflowApi.isPending || releaseRequestApi.isPending}
             isDirty={isDirty}
+            draftGate={draftGate}
           />
         )}
 
@@ -1090,34 +1553,219 @@ export default function Workflows() {
         )}
 
         {tab === 'history' && (
-          <HistoryView showToast={showToast} />
+          <HistoryView
+            showToast={showToast}
+            workflowId={workflowId}
+            canExecute={canExecute}
+            focusRunId={focusRunId}
+            onFocusConsumed={() => setFocusRunId(null)}
+          />
         )}
 
         {tab === 'publishSkill' && (
-          <div className="h-full overflow-y-auto p-5 space-y-4">
-            <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-5">
-              <h2 className="text-sm font-semibold">发布技能</h2>
-              <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">将已校验的流程版本发布为「流程技能」，写入技能中心供数字员工装配。未发布流程不可在专家协作中直接调用。</p>
-              <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                <label className="grid gap-1.5 text-xs font-medium">技能名称<input value={skillName} onChange={(e) => setSkillName(e.target.value)} className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-xs outline-none focus:border-[var(--brand)]" /></label>
-                <label className="grid gap-1.5 text-xs font-medium">来源版本<select value={activeVersion} onChange={(e) => setActiveVersion(e.target.value)} className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-xs outline-none focus:border-[var(--brand)]">{versions.map((v) => <option key={v.id} value={v.id}>{v.label}</option>)}</select></label>
-                <label className="grid gap-1.5 text-xs font-medium sm:col-span-2">说明<textarea value={skillDesc} onChange={(e) => setSkillDesc(e.target.value)} rows={3} className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2 text-xs outline-none focus:border-[var(--brand)]" /></label>
+          <div className="wf-publish">
+            <header className="wf-publish__hero">
+              <div className="wf-publish__hero-main">
+                <div className="wf-publish__eyebrow"><Sparkles className="h-3.5 w-3.5" />流程能力沉淀</div>
+                <h2 className="wf-publish__title">发布为流程技能</h2>
+                <p className="wf-publish__lead">
+                  将已通过运行前校验的流程版本写入技能中心，供数字员工在能力装配中引用。
+                  「调用需审批」指执行时双重审批，与本页发布门禁不同。
+                </p>
               </div>
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <Button size="sm" disabled={!canWrite || !skillName.trim() || isDirty} loading={publishAsSkillApi.isPending} onClick={() => publishAsSkillApi.mutate({ version: activeVersion, name: skillName.trim(), description: skillDesc.trim() })}><Sparkles className="h-3.5 w-3.5" />发布为流程技能</Button>
-                {isDirty && <span className="text-[11px] text-[var(--warning)]">请先保存画布草稿后再发布技能</span>}
-                <Button size="sm" variant="ghost" onClick={() => setTab('canvas')}>返回流程编排</Button>
+              <div className="wf-publish__hero-meta">
+                <span className="wf-publish__meta-chip">来源流程 <code>{workflowId}</code></span>
+                <span className="wf-publish__meta-chip">画布版本 <code>{activeVersion}</code></span>
+                <Button size="sm" variant="ghost" onClick={() => setTab('canvas')}>返回编排</Button>
+                <Button size="sm" variant="secondary" onClick={() => navigate('/skills?tab=workflowSkills')}>技能中心</Button>
               </div>
-            </section>
-            <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)]">
-              <div className="border-b border-[var(--border)] px-5 py-4"><h3 className="text-sm font-semibold">本工作区已发布的流程技能</h3><p className="mt-1 text-xs text-[var(--text-muted)]">可在技能中心「流程技能」查看，并在数字员工能力装配中引用。</p></div>
-              <div className="divide-y divide-[var(--border)]">
-                {workflowSkills.length ? workflowSkills.map((skill) => (
-                  <div key={skill.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-                    <div className="min-w-0"><div className="text-sm font-medium">{skill.name}</div><div className="mt-1 text-[11px] text-[var(--text-muted)]">来源流程 {skill.sourceWorkflowId} · 版本 {skill.sourceVersionId} · {skill.description}</div></div>
-                    <div className="flex items-center gap-2"><Badge tone={skill.status === 'published' ? 'success' : 'neutral'}>{skill.status === 'published' ? '已发布' : skill.status}</Badge><Badge tone={skill.riskLevel === 'high' ? 'error' : skill.riskLevel === 'mid' ? 'warn' : 'success'}>{skill.riskLevel === 'high' ? '高风险' : skill.riskLevel === 'mid' ? '中风险' : '低风险'}</Badge></div>
+            </header>
+
+            <div className="wf-publish__grid">
+              <section className="wf-publish__panel" aria-labelledby="wf-publish-form-title">
+                <div className="wf-publish__panel-head">
+                  <div>
+                    <h3 id="wf-publish-form-title">发布配置</h3>
+                    <p>填写技能标识与风险策略。同流程同版本再次发布会更新既有记录。</p>
                   </div>
-                )) : <div className="px-5 py-10 text-center text-xs text-[var(--text-muted)]">尚未发布流程技能</div>}
+                  <Badge tone={canPublishSkill ? 'success' : 'warn'}>{canPublishSkill ? '可发布' : '待满足门禁'}</Badge>
+                </div>
+                <div className="wf-publish__panel-body">
+                  <div className="wf-publish__fields">
+                    <label className="wf-publish__field">
+                      <span>技能名称</span>
+                      <input value={skillName} onChange={(e) => setSkillName(e.target.value)} placeholder="例如：生产故障处置流程技能" />
+                    </label>
+                    <label className="wf-publish__field">
+                      <span>来源版本</span>
+                      <select value={skillSourceVersion} onChange={(e) => setSkillSourceVersion(e.target.value)}>
+                        {versions.map((v) => (
+                          <option key={v.id} value={v.id}>{v.label}{v.id === activeVersion ? '（画布当前）' : ''}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="wf-publish__field">
+                      <span>风险等级</span>
+                      <select
+                        value={skillRiskLevel}
+                        onChange={(e) => setSkillRiskLevel(e.target.value as WorkflowSkill['riskLevel'])}
+                      >
+                        <option value="low">低 · 调用可不强制审批</option>
+                        <option value="mid">中 · 调用需审批</option>
+                        <option value="high">高 · 非管理员先落草稿</option>
+                      </select>
+                    </label>
+                    <label className="wf-publish__field wf-publish__field--full">
+                      <span>说明</span>
+                      <textarea value={skillDesc} onChange={(e) => setSkillDesc(e.target.value)} rows={3} placeholder="描述适用场景、审批边界与回滚能力" />
+                    </label>
+                  </div>
+
+                  <div className="wf-publish__actions">
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={!canExecute || isDirty || !!draftGate?.blocked || skillSourceVersion !== activeVersion}
+                      loading={validateWorkflowApi.isPending}
+                      onClick={() => {
+                        if (skillSourceVersion !== activeVersion) {
+                          showToast('请先加载所选版本到画布后再校验', 'error');
+                          return;
+                        }
+                        runWorkflow();
+                      }}
+                    >
+                      <ShieldCheck className="h-3.5 w-3.5" />运行前校验
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={!canPublishSkill}
+                      loading={publishAsSkillApi.isPending}
+                      onClick={() => {
+                        if (draftGate?.blocked) { showToast(`模板依赖未授权，禁止发布技能：${draftGate.reasons[0]}`, 'error'); return; }
+                        if (!skillValidationReady) { showToast('请先对当前画布版本完成运行前校验', 'error'); return; }
+                        publishAsSkillApi.mutate({
+                          workflowId,
+                          version: skillSourceVersion,
+                          name: skillName.trim(),
+                          description: skillDesc.trim(),
+                          riskLevel: skillRiskLevel,
+                          validationPassed: true,
+                          draftBlocked: Boolean(draftGate?.blocked),
+                        });
+                      }}
+                    >
+                      <Sparkles className="h-3.5 w-3.5" />发布为流程技能
+                    </Button>
+                    {skillSourceVersion !== activeVersion && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => {
+                          const version = versions.find((item) => item.id === skillSourceVersion);
+                          if (!version) return;
+                          loadSnapshot(version, version.id);
+                          showToast(`已加载 ${version.label} 到画布`, 'info');
+                        }}
+                      >
+                        加载所选版本
+                      </Button>
+                    )}
+                    {isDirty && canWrite && (
+                      <Button size="sm" variant="ghost" onClick={saveCanvas}>
+                        <Save className="h-3.5 w-3.5" />保存草稿
+                      </Button>
+                    )}
+                    {skillGateHint && <p className="wf-publish__actions-note">{skillGateHint}</p>}
+                  </div>
+                </div>
+              </section>
+
+              <aside className="wf-publish__panel" aria-labelledby="wf-publish-gate-title">
+                <div className="wf-publish__panel-head">
+                  <div>
+                    <h3 id="wf-publish-gate-title">发布门禁</h3>
+                    <p>四项全部通过后才可写入技能中心。</p>
+                  </div>
+                  <Badge tone={skillGateSteps.every((step) => step.ok) ? 'success' : 'neutral'}>
+                    {skillGateSteps.filter((step) => step.ok).length}/{skillGateSteps.length}
+                  </Badge>
+                </div>
+                <div className="wf-publish__panel-body">
+                  <div className="wf-publish__gate-list">
+                    {skillGateSteps.map((step, index) => (
+                      <div key={step.key} className={cn('wf-publish__gate', step.ok ? 'is-ok' : 'is-bad')}>
+                        <span className="wf-publish__gate-index" aria-hidden="true">
+                          {step.ok ? <CheckCircle2 className="h-3.5 w-3.5" /> : index + 1}
+                        </span>
+                        <div className="wf-publish__gate-copy">
+                          <strong>{step.title}</strong>
+                          <span>{step.detail}</span>
+                        </div>
+                        <Badge tone={step.ok ? 'success' : 'warn'}>{step.ok ? '通过' : '待处理'}</Badge>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="wf-publish__preview" aria-label="发布预览">
+                    <div className="wf-publish__preview-label">发布预览</div>
+                    <div className="wf-publish__preview-name">{skillName.trim() || '未命名流程技能'}</div>
+                    <p className="wf-publish__preview-desc">{skillDesc.trim() || '尚未填写说明'}</p>
+                    <div className="wf-publish__preview-tags">
+                      <Badge tone="neutral">{workflowId} @ {skillSourceVersion}</Badge>
+                      <Badge tone={skillRiskLevel === 'high' ? 'error' : skillRiskLevel === 'mid' ? 'warn' : 'success'}>
+                        {skillRiskLevel === 'high' ? '高风险' : skillRiskLevel === 'mid' ? '中风险' : '低风险'}
+                      </Badge>
+                      {skillRiskLevel !== 'low' && <Badge tone="warn">调用需审批</Badge>}
+                      {skillRiskLevel === 'high' && !isAdmin && <Badge tone="warn">将落草稿</Badge>}
+                    </div>
+                  </div>
+                </div>
+              </aside>
+            </div>
+
+            <section className="wf-publish__panel" aria-labelledby="wf-publish-list-title">
+              <div className="wf-publish__list-head">
+                <div>
+                  <h3 id="wf-publish-list-title" className="text-[13px] font-semibold text-[var(--text)]">本工作区流程技能</h3>
+                  <p className="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">
+                    已发布 {publishedSkillCount} · 待治理 {draftSkillCount}。装配仅接受已发布项。
+                  </p>
+                </div>
+                <Button size="sm" variant="ghost" onClick={() => navigate('/skills?tab=workflowSkills')}>
+                  在技能中心查看 <ChevronRight className="h-3.5 w-3.5" />
+                </Button>
+              </div>
+              <div>
+                {workflowSkills.length ? workflowSkills.map((skill) => (
+                  <article key={skill.id} className="wf-publish__skill-row">
+                    <div className="min-w-0">
+                      <div className="wf-publish__skill-title">
+                        <GitBranch className="h-3.5 w-3.5 shrink-0 text-[var(--brand)]" />
+                        <span className="truncate">{skill.name}</span>
+                      </div>
+                      <p className="wf-publish__skill-meta">
+                        <code>{skill.sourceWorkflowId}@{skill.sourceVersionId}</code>
+                        {skill.description ? ` · ${skill.description}` : ''}
+                      </p>
+                    </div>
+                    <div className="wf-publish__skill-tags">
+                      <Badge tone={skill.status === 'published' ? 'success' : skill.status === 'draft' ? 'warn' : 'neutral'}>
+                        {skill.status === 'published' ? '已发布' : skill.status === 'draft' ? '待治理发布' : skill.status}
+                      </Badge>
+                      <Badge tone={skill.riskLevel === 'high' ? 'error' : skill.riskLevel === 'mid' ? 'warn' : 'success'}>
+                        {skill.riskLevel === 'high' ? '高风险' : skill.riskLevel === 'mid' ? '中风险' : '低风险'}
+                      </Badge>
+                      {skill.approvalRequired && <Badge tone="warn">调用需审批</Badge>}
+                    </div>
+                  </article>
+                )) : (
+                  <div className="wf-publish__empty">
+                    <Sparkles className="mb-1 h-6 w-6 opacity-35" />
+                    <strong>尚未发布流程技能</strong>
+                    <span>完成门禁后，发布结果会出现在此处</span>
+                  </div>
+                )}
               </div>
             </section>
           </div>
@@ -1135,7 +1783,8 @@ export default function Workflows() {
             ))}
             <div className="flex gap-2 pt-2">
               <Button size="sm" variant="secondary" onClick={() => setVersionDiffOpen(true)}><GitCompare className="h-3.5 w-3.5" />查看差异</Button>
-              <Button size="sm" onClick={requestProductionRelease} loading={publishWorkflowApi.isPending || releaseRequestApi.isPending} disabled={!canWrite || isDirty}>{isAdmin ? '发布版本' : '提交发布申请'}</Button>
+              <Button size="sm" onClick={requestProductionRelease} loading={publishWorkflowApi.isPending || releaseRequestApi.isPending} disabled={!canWrite || isDirty || !!draftGate?.blocked}>{isAdmin ? '发布版本' : '提交发布申请'}</Button>
+              {draftGate?.blocked && <span className="text-[11px] text-[var(--warning)]">模板依赖未授权，禁止发布</span>}
             </div>
           </div>
         )}
@@ -1156,11 +1805,28 @@ export default function Workflows() {
         onClose={() => setPreflightOpen(false)}
         width={520}
         title="运行前检查"
-        description="确认结构、权限和风险后，才会创建执行记录。"
+        description="确认结构、权限和风险后，才会写入运行记录（含节点快照）。"
         footer={(
           <div className="flex w-full items-center justify-between gap-2">
-            <span className="text-[11px] text-[var(--text-muted)]">执行后仍可在执行历史中追踪</span>
-            <div className="flex gap-2"><Button variant="ghost" onClick={() => setPreflightOpen(false)}>取消</Button><Button variant="primary" onClick={() => runWorkflowApi.mutate({ workflowId: 'wf1', version: activeVersion })} loading={runWorkflowApi.isPending} disabled={!preflightResult?.passed}>{runWorkflowApi.isPending ? '创建中…' : '确认运行'}</Button></div>
+            <span className="text-[11px] text-[var(--text-muted)]">创建后可在「运行记录」中查看节点快照与回放</span>
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => setPreflightOpen(false)}>取消</Button>
+              <Button
+                variant="primary"
+                onClick={() => runWorkflowApi.mutate({
+                  workflowId,
+                  version: activeVersion,
+                  mode: 'sandbox',
+                  trigger: workflowDraft?.name ?? '画布沙箱试运行',
+                  nodes: nodes.map((node) => ({ id: node.id, kind: node.data?.kind, label: node.data?.label, data: node.data })),
+                  edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
+                })}
+                loading={runWorkflowApi.isPending}
+                disabled={!preflightResult?.passed || !canExecute}
+              >
+                {runWorkflowApi.isPending ? '创建中…' : '确认沙箱试运行'}
+              </Button>
+            </div>
           </div>
         )}
       >
@@ -1278,6 +1944,18 @@ export default function Workflows() {
   );
 }
 
+const AI_PROMPT_EXAMPLES = [
+  { label: 'Redis OOM 受控恢复', prompt: '当生产 Redis 触发 OOM 告警时，由数字员工研判处置路径，经双重审批后执行受控恢复，写入审计并通知值班负责人' },
+  { label: '证书到期巡检', prompt: '每周巡检即将过期的 TLS 证书，数字员工研判优先级后创建处置工单，经双重审批后通知值班并写入审计' },
+  { label: '高危变更复核', prompt: '当变更窗口外出现高危配置变更时，数字员工研判影响面，阻断自动执行，通知专家复核并保留审计留痕' },
+] as const;
+
+function dependencyTypeLabel(type: GenerationResult['dependencies'][number]['type']) {
+  if (type === 'agent') return '数字员工';
+  if (type === 'mcp') return 'MCP';
+  return '工具';
+}
+
 function WorkflowAIGeneratorDrawer({
   open, step, result, history, prompt, setPrompt, constraints, setConstraints, model, setModel,
   loading, onGenerate, onApply, onDiscard, onRegenerate, onSelectHistory, onClose,
@@ -1306,23 +1984,43 @@ function WorkflowAIGeneratorDrawer({
       open={open}
       onClose={onClose}
       width={640}
-      title="AI 生成工作流"
-      description="将自然语言需求转换为可编辑草稿，生成结果不会自动执行或发布。"
+      title="AI 辅助编排"
+      description="协助专家将自然语言处置需求转为可编辑草稿；需专家复核后才可应用，不会自动执行、发布或覆盖线上流程。"
       footer={step === 'input' ? (
         <div className="flex w-full items-center justify-between gap-2">
-          <span className="text-[11px] text-[var(--text-muted)]">需人工确认结构、权限与风险</span>
+          <span className="text-[11px] text-[var(--text-muted)]">需专家确认结构、权限与风险</span>
           <div className="flex gap-2"><Button variant="ghost" onClick={onClose} disabled={loading}>取消</Button><Button variant="primary" onClick={onGenerate} loading={loading}>{loading ? '生成中…' : '生成草稿'}</Button></div>
         </div>
       ) : (
-        <div className="flex w-full justify-end gap-2"><Button variant="ghost" onClick={onDiscard}>放弃</Button><Button variant="outline" onClick={onRegenerate}>重新生成</Button><Button variant="primary" onClick={onApply} disabled={!result || !['generated', 'review_required'].includes(result.status)}>创建隔离草稿</Button></div>
+        <div className="flex w-full items-center justify-between gap-2">
+          <span className="text-[11px] text-[var(--text-muted)]">应用后进入隔离草稿，仍需配置与发布审批</span>
+          <div className="flex gap-2"><Button variant="ghost" onClick={onDiscard}>放弃</Button><Button variant="outline" onClick={onRegenerate}>重新生成</Button><Button variant="primary" onClick={onApply} disabled={!result || !['generated', 'review_required'].includes(result.status)}>创建隔离草稿</Button></div>
+        </div>
       )}
     >
       {step === 'input' ? (
         <div className="space-y-5">
           <div>
             <label className="mb-1.5 block text-xs font-semibold text-[var(--text)]">业务目标</label>
-            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} placeholder="例如：当生产 Redis 触发 OOM 告警时，检索 Runbook，经过双签后执行恢复，并写入审计和通知负责人" className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2.5 text-sm leading-6 text-[var(--text)] outline-none transition-[border-color,box-shadow] duration-200 focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]" />
-            <div className="mt-1 flex justify-between text-[10px] text-[var(--text-muted)]"><span>描述触发条件、处置动作、审批和通知</span><span>{prompt.length}/1000</span></div>
+            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} placeholder="例如：当生产 Redis 触发 OOM 告警时，由数字员工研判处置路径，经双重审批后执行受控恢复，写入审计并通知值班" className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2.5 text-sm leading-6 text-[var(--text)] outline-none transition-[border-color,box-shadow] duration-200 focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]" />
+            <div className="mt-1 flex justify-between text-[10px] text-[var(--text-muted)]"><span>描述触发、研判、双重审批、受控动作、审计与通知</span><span>{prompt.length}/1000</span></div>
+            <div className="mt-2.5 flex flex-wrap gap-1.5">
+              {AI_PROMPT_EXAMPLES.map((example) => (
+                <button
+                  key={example.label}
+                  type="button"
+                  onClick={() => setPrompt(example.prompt)}
+                  className={cn(
+                    'rounded-md border px-2.5 py-1 text-[11px] transition-colors',
+                    prompt === example.prompt
+                      ? 'border-[var(--brand)] bg-[var(--brand-light)] text-[var(--brand)]'
+                      : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--brand)]/40 hover:bg-[var(--bg-hover)] hover:text-[var(--text-secondary)]',
+                  )}
+                >
+                  {example.label}
+                </button>
+              ))}
+            </div>
           </div>
           <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4">
             <div className="mb-3 text-xs font-semibold text-[var(--text)]">生成约束</div>
@@ -1331,20 +2029,41 @@ function WorkflowAIGeneratorDrawer({
               <label className="text-xs text-[var(--text-secondary)]">生成模型<select value={model} onChange={(e) => setModel(e.target.value)} className="mt-1 h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs text-[var(--text)] outline-none transition-[border-color,box-shadow] duration-200 focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]"><option>企业默认模型</option><option>Qwen-Enterprise</option></select></label>
             </div>
             <div className="mt-4 grid gap-2 sm:grid-cols-3">
-              {([['requireApproval', '优先需要审批'], ['requireRollback', '支持回滚']] as const).map(([key, label]) => <button key={key} type="button" onClick={() => toggle(key)} className={cn('flex items-center gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors', constraints[key] ? 'border-[var(--brand)] bg-[var(--brand-light)] text-[var(--brand)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}><span className={cn('grid h-4 w-4 place-items-center rounded border text-[10px]', constraints[key] ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-[var(--border)]')}>{constraints[key] ? '✓' : ''}</span>{label}</button>)}
+              {([['requireApproval', '需要双重审批'], ['requireRollback', '支持回滚']] as const).map(([key, label]) => <button key={key} type="button" onClick={() => toggle(key)} className={cn('flex items-center gap-2 rounded-md border px-3 py-2 text-left text-xs transition-colors', constraints[key] ? 'border-[var(--brand)] bg-[var(--brand-light)] text-[var(--brand)]' : 'border-[var(--border)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}><span className={cn('grid h-4 w-4 place-items-center rounded border text-[10px]', constraints[key] ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-[var(--border)]')}>{constraints[key] ? '✓' : ''}</span>{label}</button>)}
               <div className="flex items-center gap-2 rounded-md border border-[var(--success)]/30 bg-[var(--success-bg)] px-3 py-2 text-xs text-[var(--success)]"><ShieldCheck className="h-4 w-4" />审计留痕（策略强制）</div>
             </div>
           </div>
-          {history.length > 0 && <div><div className="mb-2 flex items-center justify-between"><span className="text-xs font-semibold text-[var(--text)]">最近生成</span><span className="text-[10px] text-[var(--text-muted)]">仅保留本地演示记录</span></div><div className="space-y-1.5">{history.slice(0, 3).map((item) => <button key={item.id} type="button" onClick={() => onSelectHistory(item)} className="flex w-full items-center justify-between rounded-md border border-[var(--border)] px-3 py-2 text-left hover:bg-[var(--bg-hover)]"><span className="truncate pr-3 text-xs text-[var(--text-secondary)]">{item.prompt}</span><Badge tone={item.qualityScore >= 85 ? 'success' : 'warn'} className="shrink-0 text-[10px]">{item.qualityScore} 分</Badge></button>)}</div></div>}
+          {history.length > 0 && <div><div className="mb-2 flex items-center justify-between"><span className="text-xs font-semibold text-[var(--text)]">最近生成</span><span className="text-[10px] text-[var(--text-muted)]">本工作区生成记录</span></div><div className="space-y-1.5">{history.slice(0, 3).map((item) => <button key={item.id} type="button" onClick={() => onSelectHistory(item)} className="flex w-full items-center justify-between rounded-md border border-[var(--border)] px-3 py-2 text-left hover:bg-[var(--bg-hover)]"><span className="truncate pr-3 text-xs text-[var(--text-secondary)]">{item.prompt}</span><Badge tone={item.qualityScore >= 85 ? 'success' : 'warn'} className="shrink-0 text-[10px]">{item.qualityScore} 分</Badge></button>)}</div></div>}
         </div>
       ) : result ? (
         <div className="space-y-4">
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="flex items-start justify-between gap-3"><div><div className="text-sm font-semibold text-[var(--text)]">生成草稿预览</div><div className="mt-1 text-xs leading-5 text-[var(--text-muted)]">{result.prompt}</div></div><div className="text-right"><div className="text-2xl font-semibold text-[var(--brand)]">{result.qualityScore}</div><div className="text-[10px] text-[var(--text-muted)]">质量评分</div></div></div><div className="mt-4 grid grid-cols-3 gap-2 text-center"><div className="rounded-md bg-[var(--bg-elevated)] px-2 py-2"><div className="text-base font-semibold">{result.workflow.nodes.length}</div><div className="text-[10px] text-[var(--text-muted)]">节点</div></div><div className="rounded-md bg-[var(--bg-elevated)] px-2 py-2"><div className="text-base font-semibold">{result.workflow.edges.length}</div><div className="text-[10px] text-[var(--text-muted)]">连线</div></div><div className="rounded-md bg-[var(--bg-elevated)] px-2 py-2"><div className="text-base font-semibold">{result.dependencies.length}</div><div className="text-[10px] text-[var(--text-muted)]">依赖</div></div></div></div>
-          <div className="grid gap-2 sm:grid-cols-3">{([['structure', '结构校验'], ['dependencies', '依赖检查'], ['risk', '风险扫描']] as const).map(([key, label]) => <div key={key} className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-[11px] text-[var(--text-muted)]">{label}</div><div className={cn('mt-1 text-xs font-semibold', result.checks[key] === 'passed' ? 'text-[var(--success)]' : 'text-[var(--warning)]')}>{result.checks[key] === 'passed' ? '通过' : '需要复核'}</div></div>)}</div>
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="mb-3 text-xs font-semibold text-[var(--text)]">工具与 MCP 依赖</div><div className="space-y-2">{result.dependencies.map((dep) => <div key={`${dep.type}-${dep.name}`} className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--text-secondary)]">{dep.name}<span className="ml-2 text-[10px] text-[var(--text-muted)]">{dep.type.toUpperCase()}</span></span><Badge tone={dep.status === 'available' ? 'success' : 'warn'} className="text-[10px]">{dep.status === 'available' ? '可用' : '缺失权限'}</Badge></div>)}</div></div>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-[var(--text)]">辅助编排草稿预览</div>
+                <div className="mt-1 text-xs leading-5 text-[var(--text-muted)]">{result.prompt}</div>
+                <div className="mt-2 flex flex-wrap gap-2 text-[10px] text-[var(--text-muted)]">
+                  <span>模型 · {result.model}</span>
+                  {result.policyVersion && <span>策略 · {result.policyVersion}</span>}
+                  {result.requiresReview && <span className="text-[var(--warning)]">需专家复核</span>}
+                </div>
+              </div>
+              <div className="text-right">
+                <div className="text-2xl font-semibold text-[var(--brand)]">{result.qualityScore}</div>
+                <div className="text-[10px] text-[var(--text-muted)]">质量评分</div>
+              </div>
+            </div>
+            <div className="mt-4 grid grid-cols-3 gap-2 text-center">
+              <div className="rounded-md bg-[var(--bg-elevated)] px-2 py-2"><div className="text-base font-semibold">{result.workflow.nodes.length}</div><div className="text-[10px] text-[var(--text-muted)]">节点</div></div>
+              <div className="rounded-md bg-[var(--bg-elevated)] px-2 py-2"><div className="text-base font-semibold">{result.workflow.edges.length}</div><div className="text-[10px] text-[var(--text-muted)]">连线</div></div>
+              <div className="rounded-md bg-[var(--bg-elevated)] px-2 py-2"><div className="text-base font-semibold">{result.dependencies.length}</div><div className="text-[10px] text-[var(--text-muted)]">依赖</div></div>
+            </div>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-3">{([['structure', '结构校验'], ['dependencies', '依赖检查'], ['risk', '风险扫描']] as const).map(([key, label]) => <div key={key} className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-[11px] text-[var(--text-muted)]">{label}</div><div className={cn('mt-1 text-xs font-semibold', result.checks[key] === 'passed' ? 'text-[var(--success)]' : 'text-[var(--warning)]')}>{result.checks[key] === 'passed' ? '通过' : '需要专家复核'}</div></div>)}</div>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="mb-3 text-xs font-semibold text-[var(--text)]">工具、MCP 与数字员工依赖</div><div className="space-y-2">{result.dependencies.map((dep) => <div key={`${dep.type}-${dep.name}`} className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--text-secondary)]">{dep.name}<span className="ml-2 text-[10px] text-[var(--text-muted)]">{dependencyTypeLabel(dep.type)}</span></span><Badge tone={dep.status === 'available' ? 'success' : 'warn'} className="text-[10px]">{dep.status === 'available' ? '可用' : '缺失权限'}</Badge></div>)}</div></div>
           {result.risks.length > 0 && <div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] p-4"><div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[var(--warning)]"><AlertTriangle className="h-3.5 w-3.5" />风险与权限提示</div>{result.risks.map((risk) => <div key={risk.node} className="text-xs leading-5 text-[var(--text-secondary)]">{risk.level} · {risk.text}</div>)}</div>}
-          {result.warnings.length > 0 && <div><div className="mb-2 text-xs font-semibold text-[var(--text)]">生成建议</div><ul className="space-y-1 text-xs leading-5 text-[var(--text-muted)]">{result.warnings.map((warning) => <li key={warning}>• {warning}</li>)}</ul></div>}
-          <div className="flex items-center gap-2 rounded-md bg-[var(--info-bg)] px-3 py-2 text-[11px] text-[var(--info)]"><ShieldCheck className="h-3.5 w-3.5 shrink-0" />应用后仍需人工配置节点、保存版本并通过发布审批。</div>
+          {result.warnings.length > 0 && <div><div className="mb-2 text-xs font-semibold text-[var(--text)]">专家复核建议</div><ul className="space-y-1 text-xs leading-5 text-[var(--text-muted)]">{result.warnings.map((warning) => <li key={warning}>• {warning}</li>)}</ul></div>}
+          <div className="flex items-center gap-2 rounded-md bg-[var(--info-bg)] px-3 py-2 text-[11px] text-[var(--info)]"><ShieldCheck className="h-3.5 w-3.5 shrink-0" />应用隔离草稿 → 专家配置与校验 → 发布流程技能 → 数字员工能力装配。</div>
         </div>
       ) : null}
     </Drawer>
@@ -1391,6 +2110,8 @@ function CanvasView(props: {
   updateNodeLabel: (id: string, label: string) => void;
   updateNodeDescription: (id: string, desc: string) => void;
   updateNodeNote: (id: string, note: string) => void;
+  patchNodeData: (id: string, patch: Record<string, unknown>) => void;
+  structureIssues: StructureIssue[];
   showToast: (msg: string, tone?: 'success' | 'error' | 'info') => void;
   onConnect: (c: Connection) => void;
   deleteEdge: (id: string) => void;
@@ -1418,6 +2139,7 @@ function CanvasView(props: {
   publishLabel: string;
   publishing: boolean;
   isDirty: boolean;
+  draftGate: DraftGate | null;
 }) {
   const {
     wrapperRef, rfNodes, rfEdges, onNodeClick, onNodeContextMenu, onNodesChange,
@@ -1426,9 +2148,10 @@ function CanvasView(props: {
     filteredLibrary, setDraggedKind,
     selectedNode, selectedNodeId, nodes, webhookEnabled, setWebhookEnabled,
     saveCanvas, saving, runWorkflow, resetCanvas, clearCanvas,
-    addNode, deleteNode, duplicateNode, disableNode, updateNodeLabel, updateNodeDescription, updateNodeNote, showToast,
+    addNode, deleteNode, duplicateNode, disableNode, updateNodeLabel, updateNodeDescription, updateNodeNote, patchNodeData, structureIssues, showToast,
     onConnect, deleteEdge, undo, redo, canUndo, canRedo, exportWorkflow, reactFlowRef, canWrite, canExecute, openAIGenerator, nodeLibraryOpen, setNodeLibraryOpen, validating,
     versionMenuOpen, setVersionMenuOpen, versions, activeVersion, loadSnapshot, setVersions, setActiveVersion, setVersionDiffOpen, publishVersion, publishLabel, publishing, isDirty,
+    draftGate,
   } = props;
 
   const [mobilePanelOpen, setMobilePanelOpen] = useState<SidePanelKey | null>(null);
@@ -1447,7 +2170,9 @@ function CanvasView(props: {
   const handleNodeClick: NodeMouseHandler = useCallback((event, node) => {
     onNodeClick(event, node);
     setNodeInspectorTab('config');
-    setMobilePanelOpen('properties');
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches) {
+      setMobilePanelOpen('properties');
+    }
   }, [onNodeClick]);
 
   const actionToolbar = (
@@ -1464,7 +2189,7 @@ function CanvasView(props: {
           <Box className="h-3.5 w-3.5" />{nodeLibraryOpen ? '收起节点库' : '节点库'}
         </Button>
         <Button size="sm" variant="ghost" className="rounded-lg px-2.5 text-[var(--brand)] hover:bg-[var(--brand-light)] hover:text-[var(--brand)]" onClick={openAIGenerator} disabled={!canWrite}>
-          <Sparkles className="h-3.5 w-3.5" />AI 生成
+          <Sparkles className="h-3.5 w-3.5" />AI 辅助
         </Button>
       </div>
 
@@ -1473,7 +2198,7 @@ function CanvasView(props: {
         <Button size="sm" variant={isDirty ? 'primary' : 'secondary'} className="rounded-lg px-3.5" onClick={saveCanvas} loading={saving} disabled={!canWrite || saving || !isDirty}>
           <Save className="h-3.5 w-3.5" />{isDirty ? '保存草稿' : '已保存'}
         </Button>
-        <Button size="sm" variant="secondary" className="rounded-lg px-3.5" onClick={runWorkflow} disabled={!canExecute || validating || isDirty} loading={validating} title={isDirty ? '请先保存草稿后再运行试验' : undefined}>
+        <Button size="sm" variant="secondary" className="rounded-lg px-3.5" onClick={runWorkflow} disabled={!canExecute || validating || isDirty || !!draftGate?.blocked} loading={validating} title={draftGate?.blocked ? `依赖未授权：${draftGate.reasons[0]}` : isDirty ? '请先保存草稿后再运行试验' : undefined}>
           <Play className="h-3.5 w-3.5" />运行试验
         </Button>
         <div className="relative">
@@ -1487,64 +2212,28 @@ function CanvasView(props: {
   return (
     <div className="flex h-full min-h-0 min-w-0 flex-col">
       {actionToolbar}
-      <Drawer open={versionMenuOpen} onClose={() => setVersionMenuOpen(false)} width={520} title="工作流版本管理" description={`当前版本 ${activeVersion} · 版本切换仅影响画布草稿`} footer={<div className="flex w-full gap-2"><Button size="sm" variant="outline" className="flex-1" onClick={() => setVersionDiffOpen(true)}>查看差异</Button><Button size="sm" variant="primary" className="flex-1" onClick={publishVersion} loading={publishing} disabled={!canWrite || isDirty}>{publishLabel}</Button></div>}>
+      <div className="shrink-0 border-b border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-[11px] leading-5 text-[var(--text-muted)] md:px-5">
+        本页用于编排受控处置流程草稿。完成后请到「发布技能」发布为流程技能，供数字员工能力装配；本页不直接发起专家协作上岗。
+        {structureIssues.filter((item) => item.severity === 'failed').length > 0 && (
+          <span className="ml-2 text-[var(--warning)]">结构门禁：{structureIssues.filter((item) => item.severity === 'failed').map((item) => item.message).join('；')}</span>
+        )}
+      </div>
+      <Drawer open={versionMenuOpen} onClose={() => setVersionMenuOpen(false)} width={520} title="工作流版本管理" description={`当前版本 ${activeVersion} · 版本切换仅影响画布草稿`} footer={<div className="flex w-full gap-2"><Button size="sm" variant="outline" className="flex-1" onClick={() => setVersionDiffOpen(true)}>查看差异</Button><Button size="sm" variant="primary" className="flex-1" onClick={publishVersion} loading={publishing} disabled={!canWrite || isDirty || !!draftGate?.blocked}>{publishLabel}</Button></div>}>
         <div className="space-y-2">{versions.map((version) => <button key={version.id} type="button" onClick={() => { loadSnapshot(version, version.id); setVersionMenuOpen(false); showToast(`已加载 ${version.label}（本地快照）`, 'info'); }} className={cn('flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left transition-colors hover:bg-[var(--bg-hover)]', version.id === activeVersion ? 'border-[var(--brand)] bg-[var(--brand-light)]' : 'border-[var(--border)] bg-[var(--surface-1)]')}><span className="font-mono text-sm font-semibold text-[var(--brand)]">{version.label}</span><span className="min-w-0 flex-1"><span className="block text-[11px] text-[var(--text-muted)]">{version.time}</span><span className="block truncate text-xs text-[var(--text-secondary)]">{version.desc}</span></span>{version.id === activeVersion && <Badge tone="success">当前</Badge>}</button>)}</div>
         <div className="mt-4 grid grid-cols-2 gap-2"><Button size="sm" variant="outline" onClick={() => { const current = versions.find((version) => version.id === activeVersion); if (current) loadSnapshot(current, current.id); setVersionMenuOpen(false); showToast('已回滚到当前版本', 'info'); }} disabled={!canWrite}><RotateCcw className="h-3 w-3" />回滚当前</Button><Button size="sm" variant="secondary" onClick={() => { const nextId = `v${versions.length + 1}`; setVersions((prev) => [...prev, { id: nextId, label: `${nextId} · 草稿`, time: '刚刚', desc: '从当前画布另存的本地快照', nodes: cloneSnapshot({ nodes: props.nodes as Node[], edges: props.rfEdges }).nodes, edges: cloneSnapshot({ nodes: props.nodes as Node[], edges: props.rfEdges }).edges }]); setActiveVersion(nextId); setVersionMenuOpen(false); showToast(`已另存为 ${nextId}`, 'success'); }} disabled={!canWrite}><Save className="h-3 w-3" />另存版本</Button></div>
+        {draftGate?.blocked && <div className="mt-3 rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--warning)]">来源模板「{draftGate.templateName}」存在未授权依赖，完成授权前不可发布。</div>}
       </Drawer>
-      {/* —— 左侧：节点库 —— */}
-      <div className="hidden">
-        <div className="border-b border-[var(--border)] p-3">
-          <div className="flex items-center gap-1.5 text-xs font-semibold mb-2">
-            <Box className="h-3.5 w-3.5" />
-            节点库
-            <span className="ml-auto text-[10px] text-[var(--text-muted)] font-mono">{filteredLibrary.length}</span>
-          </div>
-          <div className="relative">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-[var(--text-muted)]" />
-            <input
-              value={librarySearchQ}
-              onChange={(e) => setLibrarySearchQ(e.target.value)}
-              placeholder="搜索节点"
-              className="h-7 w-full rounded-md border border-[var(--border)] bg-[var(--surface-1)] pl-7 pr-2 text-[11px] outline-none focus:border-[var(--brand)]"
-            />
-          </div>
-        </div>
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {filteredLibrary.map((kind) => {
-            const Icon = NODE_ICONS[kind];
-            const color = NODE_COLORS[kind];
-            return (
-              <div
-                key={kind}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData('application/wf-node', kind);
-                  setDraggedKind(kind);
-                }}
-                onDragEnd={() => setDraggedKind(null)}
-                onClick={() => addNode(kind)}
-                className="group flex cursor-grab items-start gap-2 rounded-md border border-[var(--border)] bg-[var(--bg)] p-2 transition-all hover:border-[var(--brand)] hover:shadow-sm active:cursor-grabbing"
-              >
-                <div
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-md"
-                  style={{ backgroundColor: `${color}1a`, color }}
-                >
-                  <Icon className="h-3.5 w-3.5" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-[11px] font-semibold leading-tight">{NODE_LABELS[kind]}</div>
-                  <div className="mt-0.5 text-[9px] text-[var(--text-muted)] truncate">{NODE_DESCS[kind]}</div>
-                </div>
-                <Plus className="h-3 w-3 opacity-0 group-hover:opacity-100 text-[var(--brand)]" />
-              </div>
-            );
-          })}
-        </div>
-        <div className="border-t border-[var(--border)] p-2 text-[10px] text-[var(--text-muted)] flex items-center gap-1.5">
-          <GripVertical className="h-3 w-3" />拖拽到画布添加 / 单击添加
-        </div>
-      </div>
 
+      {draftGate && (
+        <div className={cn('mx-3 mt-2 rounded-lg border px-3 py-2 text-[11px] leading-5 md:mx-5', draftGate.blocked ? 'border-[var(--warning)]/30 bg-[var(--warning-bg)] text-[var(--warning)]' : 'border-[var(--info)]/25 bg-[var(--info-bg)] text-[var(--info)]')}>
+          <span className="font-semibold">来源模板</span>
+          <span className="mx-1.5 font-mono">{draftGate.templateId}</span>
+          {draftGate.templateName} · {draftGate.templateVersion} · {draftGate.owner}
+          {draftGate.blocked ? ` · 阻断：${draftGate.reasons.join('；')}（可配置草稿，禁止试运行与发布）` : ' · 依赖就绪，可校验后试运行'}
+        </div>
+      )}
+
+      <div className="relative flex min-h-0 min-w-0 flex-1">
       {/* —— 中间：DAG 画布 + Webhook + 操作按钮 —— */}
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--surface-2)]">
         <Drawer
@@ -1586,8 +2275,8 @@ function CanvasView(props: {
                   </button>
                 ))}
               </div>
-              {nodeInspectorTab === 'overview' && <NodeOverview selectedNode={selectedNode} />}
-              {nodeInspectorTab === 'config' && <PropertiesPanel selectedNode={selectedNode} updateNodeLabel={updateNodeLabel} updateNodeDescription={updateNodeDescription} updateNodeNote={updateNodeNote} showToast={showToast} />}
+              {nodeInspectorTab === 'overview' && <NodeOverview selectedNode={selectedNode} structureIssues={structureIssues} />}
+              {nodeInspectorTab === 'config' && <PropertiesPanel selectedNode={selectedNode} updateNodeLabel={updateNodeLabel} updateNodeDescription={updateNodeDescription} updateNodeNote={updateNodeNote} patchNodeData={patchNodeData} structureIssues={structureIssues} showToast={showToast} />}
               {nodeInspectorTab === 'debug' && <DebugPanel selectedNode={selectedNode} selectedNodeId={selectedNodeId} deleteNode={deleteNode} duplicateNode={duplicateNode} disableNode={disableNode} showToast={showToast} />}
             </div>
           )}
@@ -1734,10 +2423,13 @@ function CanvasView(props: {
             </div>
           )}
 
-          {/* 画布运行观察 */}
+          {/* 画布草稿状态 */}
           <div className="absolute bottom-3 left-3 flex items-center gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg)]/95 px-2.5 py-1.5 text-[10px] text-[var(--text-muted)] shadow-[0_2px_8px_rgba(15,23,42,0.06)] backdrop-blur">
-            <span className="h-1.5 w-1.5 rounded-full bg-[var(--success)] animate-pulse" />
-            <span>运行观察</span><span className="h-3 w-px bg-[var(--border)]" /><span className="font-mono font-semibold text-[var(--text-secondary)]">n4 双签审批</span><span className="text-[var(--success)]">执行中</span>
+            <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand)]" />
+            <span>编排草稿</span>
+            <span className="h-3 w-px bg-[var(--border)]" />
+            <span className="font-mono font-semibold text-[var(--text-secondary)]">{selectedNode ? (selectedNode.data?.label || selectedNode.id) : '未选中节点'}</span>
+            <span className="text-[var(--text-muted)]">{isDirty ? '待保存' : '已同步'}</span>
           </div>
 
           {/* 快捷键提示 */}
@@ -1747,51 +2439,42 @@ function CanvasView(props: {
         </div>
       </div>
 
-      {/* —— 右侧：Tab（节点库信息 / 调试 / 属性） —— */}
-      <div className="hidden">
-        <div className="flex items-center border-b border-[var(--border)]">
-          {([
-            { k: 'library' as SidePanelKey, label: '信息', icon: FileText },
-            { k: 'debug' as SidePanelKey, label: '调试', icon: Bug },
-            { k: 'properties' as SidePanelKey, label: '属性', icon: Settings },
-          ]).map((v) => (
-            <button
-              key={v.k}
-              onClick={() => setSidePanel(v.k)}
-              className={cn(
-                'flex flex-1 items-center justify-center gap-1.5 border-b-2 px-2 py-2 text-[11px] transition-colors',
-                sidePanel === v.k
-                  ? 'border-[var(--brand)] text-[var(--brand)] font-semibold'
-                  : 'border-transparent text-[var(--text-muted)] hover:text-[var(--text)]',
-              )}
-            >
-              <v.icon className="h-3.5 w-3.5" />{v.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-2.5">
-          {sidePanel === 'library' && <InfoPanel nodes={nodes} />}
-          {sidePanel === 'debug' && (
-            <DebugPanel
-              selectedNode={selectedNode}
-              selectedNodeId={selectedNodeId}
-              deleteNode={deleteNode}
-              duplicateNode={duplicateNode}
-              disableNode={disableNode}
-              showToast={showToast}
-            />
-          )}
-          {sidePanel === 'properties' && (
-            <PropertiesPanel
-              selectedNode={selectedNode}
-              updateNodeLabel={updateNodeLabel}
-              updateNodeDescription={updateNodeDescription}
-              updateNodeNote={updateNodeNote}
-              showToast={showToast}
-            />
-          )}
-        </div>
+      {/* —— 右侧：大屏节点检查器 —— */}
+      {selectedNode ? (
+        <aside className="hidden w-[340px] shrink-0 flex-col border-l border-[var(--border)] bg-[var(--surface-1)] lg:flex">
+          <div className="flex items-start justify-between gap-2 border-b border-[var(--border)] px-3 py-2.5">
+            <div className="min-w-0">
+              <div className="truncate text-xs font-semibold text-[var(--text)]">{selectedNode.data?.label || NODE_LABELS[selectedNode.data?.kind as WorkflowNodeKind]}</div>
+              <div className="mt-0.5 font-mono text-[10px] text-[var(--text-muted)]">{selectedNode.id} · 节点检查器</div>
+            </div>
+          </div>
+          <div className="flex gap-1 border-b border-[var(--border)] bg-[var(--bg-elevated)] p-1.5">
+            {[
+              { key: 'overview' as const, label: '概览', icon: FileText },
+              { key: 'config' as const, label: '配置', icon: Settings },
+              { key: 'debug' as const, label: '调试', icon: Bug },
+            ].map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={() => setNodeInspectorTab(item.key)}
+                className={cn('flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-[11px] transition-colors', nodeInspectorTab === item.key ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}
+              >
+                <item.icon className="h-3.5 w-3.5" />{item.label}
+              </button>
+            ))}
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto p-3">
+            {nodeInspectorTab === 'overview' && <NodeOverview selectedNode={selectedNode} structureIssues={structureIssues} />}
+            {nodeInspectorTab === 'config' && <PropertiesPanel selectedNode={selectedNode} updateNodeLabel={updateNodeLabel} updateNodeDescription={updateNodeDescription} updateNodeNote={updateNodeNote} patchNodeData={patchNodeData} structureIssues={structureIssues} showToast={showToast} />}
+            {nodeInspectorTab === 'debug' && <DebugPanel selectedNode={selectedNode} selectedNodeId={selectedNodeId} deleteNode={deleteNode} duplicateNode={duplicateNode} disableNode={disableNode} showToast={showToast} />}
+          </div>
+        </aside>
+      ) : (
+        <aside className="hidden w-[280px] shrink-0 flex-col border-l border-[var(--border)] bg-[var(--surface-1)] p-4 text-center text-[11px] text-[var(--text-muted)] lg:flex">
+          <InfoPanel nodes={nodes} edgeCount={rfEdges.length} />
+        </aside>
+      )}
       </div>
     </div>
   );
@@ -1800,26 +2483,22 @@ function CanvasView(props: {
 /* =============================================================
  *  信息面板（节点列表 + 当前 DAG 状态）
  * ============================================================= */
-function InfoPanel({ nodes }: { nodes: Node[] }) {
+function InfoPanel({ nodes, edgeCount }: { nodes: Node[]; edgeCount?: number }) {
   return (
     <div className="space-y-4">
       <section>
         <div className="mb-2 flex items-center justify-between">
           <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">画布概览</div>
-          <Badge tone="success" className="text-[9px]">运行中</Badge>
+          <Badge tone="neutral" className="text-[9px]">草稿</Badge>
         </div>
-        <div className="grid grid-cols-3 divide-x divide-[var(--border)] rounded-md border border-[var(--border)] bg-[var(--surface-2)]">
+        <div className="grid grid-cols-2 divide-x divide-[var(--border)] rounded-md border border-[var(--border)] bg-[var(--surface-2)]">
           <div className="px-2 py-2 text-center">
             <div className="font-mono text-lg font-bold text-[var(--brand)]">{nodes.length}</div>
             <div className="text-[9px] text-[var(--text-muted)]">节点</div>
           </div>
           <div className="px-2 py-2 text-center">
-            <div className="font-mono text-lg font-bold text-[var(--text)]">10</div>
+            <div className="font-mono text-lg font-bold text-[var(--text)]">{edgeCount ?? '—'}</div>
             <div className="text-[9px] text-[var(--text-muted)]">连线</div>
-          </div>
-          <div className="px-2 py-2 text-center">
-            <div className="font-mono text-lg font-bold text-[var(--success)]">100%</div>
-            <div className="text-[9px] text-[var(--text-muted)]">成功率</div>
           </div>
         </div>
       </section>
@@ -1834,43 +2513,19 @@ function InfoPanel({ nodes }: { nodes: Node[] }) {
             const kind = n.data?.kind as WorkflowNodeKind;
             const Icon = NODE_ICONS[kind];
             const color = NODE_COLORS[kind];
-            const isExecuting = n.id === EXECUTING_NODE_ID;
             return (
               <div
                 key={n.id}
-                className={cn(
-                  'flex h-11 items-center gap-2 px-2.5 text-[11px] transition-colors',
-                  isExecuting && 'bg-[var(--brand-light)]',
-                )}
+                className="flex h-11 items-center gap-2 px-2.5 text-[11px] transition-colors"
               >
                 <span className="w-4 shrink-0 text-right font-mono text-[10px] text-[var(--text-muted)]">{i + 1}</span>
                 <span className="grid h-6 w-6 shrink-0 place-items-center rounded" style={{ backgroundColor: `${color}1a` }}>
                   <Icon className="h-3.5 w-3.5" style={{ color }} />
                 </span>
                 <span className="min-w-0 flex-1 truncate font-semibold">{n.data?.label || NODE_LABELS[kind]}</span>
-                {isExecuting && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--brand)] animate-pulse" />}
               </div>
             );
           })}
-        </div>
-      </section>
-
-      <section>
-        <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">运行统计</div>
-        <div className="grid grid-cols-2 gap-1.5">
-          {[
-            { label: '触发', value: '124', icon: Zap, color: 'text-[var(--brand)]' },
-            { label: '成功率', value: '100%', icon: ShieldCheck, color: 'text-[var(--success)]' },
-            { label: '平均完成', value: '38s', icon: Play, color: 'text-[var(--brand)]' },
-          ].map((s) => (
-            <div key={s.label} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 py-2">
-              <div>
-                <div className="text-[9px] text-[var(--text-muted)]">{s.label}</div>
-                <div className={cn('mt-0.5 font-mono text-sm font-bold', s.color)}>{s.value}</div>
-              </div>
-              <s.icon className={cn('h-3.5 w-3.5', s.color)} />
-            </div>
-          ))}
         </div>
       </section>
     </div>
@@ -1880,12 +2535,13 @@ function InfoPanel({ nodes }: { nodes: Node[] }) {
 /* =============================================================
  *  节点检查器概览
  * ============================================================= */
-function NodeOverview({ selectedNode }: { selectedNode: Node }) {
+function NodeOverview({ selectedNode, structureIssues = [] }: { selectedNode: Node; structureIssues?: StructureIssue[] }) {
   const kind = selectedNode.data?.kind as WorkflowNodeKind;
   const Icon = NODE_ICONS[kind];
   const color = NODE_COLORS[kind];
   const debugInfo = NODE_DEBUG[selectedNode.id];
-  const isExecuting = selectedNode.id === EXECUTING_NODE_ID;
+  const relatedIssue = structureIssueForNode(structureIssues, kind);
+  const failedIssues = structureIssues.filter((item) => item.severity === 'failed');
 
   return (
     <div className="space-y-3">
@@ -1895,24 +2551,31 @@ function NodeOverview({ selectedNode }: { selectedNode: Node }) {
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="rounded px-1.5 py-0.5 font-mono text-[10px]" style={{ backgroundColor: `${color}1a`, color }}>{kind}</span>
-              {isExecuting && <Badge tone="brand" className="text-[9px]"><span className="mr-1 h-1.5 w-1.5 rounded-full bg-current animate-pulse" />运行中</Badge>}
+              <Badge tone="neutral" className="text-[9px]">编排节点</Badge>
               {selectedNode.data?.disabled && <Badge tone="neutral" className="text-[9px]">已禁用</Badge>}
+              {relatedIssue && <Badge tone={relatedIssue.severity === 'failed' ? 'error' : 'warn'} className="text-[9px]">{relatedIssue.severity === 'failed' ? '门禁阻断' : '建议复核'}</Badge>}
             </div>
             <div className="mt-1 text-sm font-semibold text-[var(--text)]">{selectedNode.data?.label || NODE_LABELS[kind]}</div>
             <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-muted)]">{selectedNode.data?.desc || NODE_DESCS[kind]}</p>
           </div>
         </div>
       </section>
+      {failedIssues.length > 0 && (
+        <section className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] p-2.5 text-[11px]">
+          <div className="mb-1 flex items-center gap-1 font-semibold text-[var(--warning)]"><AlertTriangle className="h-3.5 w-3.5" />流程结构门禁</div>
+          <ul className="space-y-1 text-[var(--text-secondary)]">{failedIssues.map((item) => <li key={item.code}>• {item.message}</li>)}</ul>
+        </section>
+      )}
       <section className="grid grid-cols-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)] text-[11px]">
         <div className="border-b border-r border-[var(--border)] p-2.5"><div className="text-[10px] text-[var(--text-muted)]">节点 ID</div><div className="mt-0.5 font-mono text-[var(--text-secondary)]">{selectedNode.id}</div></div>
-        <div className="border-b border-[var(--border)] p-2.5"><div className="text-[10px] text-[var(--text-muted)]">运行状态</div><div className={cn('mt-0.5 font-medium', selectedNode.data?.disabled ? 'text-[var(--text-muted)]' : isExecuting ? 'text-[var(--brand)]' : 'text-[var(--success)]')}>{selectedNode.data?.disabled ? '已跳过' : isExecuting ? '执行中' : '已就绪'}</div></div>
+        <div className="border-b border-[var(--border)] p-2.5"><div className="text-[10px] text-[var(--text-muted)]">节点状态</div><div className={cn('mt-0.5 font-medium', selectedNode.data?.disabled ? 'text-[var(--text-muted)]' : 'text-[var(--text-secondary)]')}>{selectedNode.data?.disabled ? '已跳过' : '可配置'}</div></div>
         <div className="border-r border-[var(--border)] p-2.5"><div className="text-[10px] text-[var(--text-muted)]">画布坐标</div><div className="mt-0.5 font-mono text-[var(--text-secondary)]">{Math.round(selectedNode.position.x)}, {Math.round(selectedNode.position.y)}</div></div>
-        <div className="p-2.5"><div className="text-[10px] text-[var(--text-muted)]">最近运行</div><div className="mt-0.5 font-mono text-[var(--text-secondary)]">{debugInfo ? debugInfo.log.at(-1)?.slice(1, 9) ?? '—' : '暂无记录'}</div></div>
+        <div className="p-2.5"><div className="text-[10px] text-[var(--text-muted)]">样例日志</div><div className="mt-0.5 font-mono text-[var(--text-secondary)]">{debugInfo ? debugInfo.log.at(-1)?.slice(1, 9) ?? '—' : '暂无记录'}</div></div>
       </section>
       {selectedNode.data?.note && <section className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] p-2.5 text-[11px]"><div className="mb-1 flex items-center gap-1 font-semibold text-[var(--warning)]"><MessageSquare className="h-3.5 w-3.5" />运行批注</div><p className="leading-relaxed text-[var(--text-secondary)]">{selectedNode.data.note}</p></section>}
       <section className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3">
         <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">配置提示</div>
-        <p className="text-[11px] leading-relaxed text-[var(--text-secondary)]">{kind === 'approval' ? '请设置审批组、签名人数和审批超时；任何写操作均应保留回滚分支。' : ['execute', 'http', 'mcp'].includes(kind) ? '请确认调用目标、凭据权限、参数与重试策略；高风险动作建议先串联风险策略或双签审批。' : kind === 'policy' ? '请配置风险等级、允许动作与越权处理方式；策略命中结果会写入运行审计。' : ['retry', 'compensate'].includes(kind) ? '请明确可重试错误、退避次数或补偿动作，避免失败后重复写入或产生不可逆变更。' : ['branch', 'condition', 'parallel'].includes(kind) ? '请配置判断表达式、出口与汇聚规则，确保默认路径和异常路径都可以追溯。' : '在“配置”页更新节点名称、描述与运行批注；变更后需点击应用修改。'}</p>
+        <p className="text-[11px] leading-relaxed text-[var(--text-secondary)]">{kind === 'approval' ? '请设置审批组、签名人数和审批超时；任何写操作均应保留回滚分支。' : ['execute', 'http', 'mcp'].includes(kind) ? '请确认调用目标、凭据权限、参数与重试策略；高风险动作建议先串联风险策略或双重审批。' : kind === 'policy' ? '请配置风险等级、允许动作与越权处理方式；策略命中结果会写入运行审计。' : ['retry', 'compensate'].includes(kind) ? '请明确可重试错误、退避次数或补偿动作，避免失败后重复写入或产生不可逆变更。' : ['branch', 'condition', 'parallel'].includes(kind) ? '请配置判断表达式、出口与汇聚规则，确保默认路径和异常路径都可以追溯。' : '在“配置”页更新节点名称、描述与运行批注；变更后需点击应用修改。'}</p>
       </section>
     </div>
   );
@@ -1936,7 +2599,7 @@ function DebugPanel({
       <div className="grid h-full place-items-center text-center text-xs text-[var(--text-muted)] px-4">
         <div>
           <Bug className="mx-auto mb-2 h-8 w-8 opacity-30" />
-          点击画布上的任意节点<br />查看输入 / 输出 / 日志
+          点击画布上的任意节点<br />查看调试信息
         </div>
       </div>
     );
@@ -1951,60 +2614,57 @@ function DebugPanel({
         <div className="flex items-center gap-2">
           <span className="font-mono text-[10px] text-[var(--text-muted)]">{selectedNode.id}</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded font-mono" style={{ backgroundColor: `${NODE_COLORS[kind]}1a`, color: NODE_COLORS[kind] }}>{kind}</span>
-          {selectedNode.id === EXECUTING_NODE_ID && (
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-[var(--brand-light)] text-[var(--brand)] flex items-center gap-1">
-              <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand)] animate-pulse" />运行中
-            </span>
-          )}
         </div>
         <div className="mt-1 text-sm font-semibold">{selectedNode.data?.label || NODE_LABELS[kind]}</div>
         <div className="text-[10px] text-[var(--text-muted)] mt-0.5">{NODE_DESCS[kind]}</div>
       </div>
 
+      <div className="rounded-lg border border-[var(--info)]/25 bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]">
+        调试面板展示样例或最近一次试运行证据。当前无绑定执行记录时仅为静态样例，不产生审计事件。
+      </div>
+
       {debugInfo ? (
         <>
-          <Section title="输入">
+          <Section title="样例输入（非真实 run）">
             <pre className="text-[10px] font-mono overflow-x-auto whitespace-pre-wrap break-all text-[var(--text-secondary)]">{debugInfo.input}</pre>
           </Section>
-          <Section title="输出">
+          <Section title="样例输出（非真实 run）">
             <pre className="text-[10px] font-mono overflow-x-auto whitespace-pre-wrap break-all text-[var(--success)]">{debugInfo.output}</pre>
           </Section>
-          <Section title="执行日志">
+          <Section title="样例日志">
             <div className="space-y-0.5 font-mono text-[10px]">
               {debugInfo.log.map((line, i) => (
                 <div key={i} className="text-[var(--text-secondary)]">{line}</div>
               ))}
             </div>
           </Section>
-
-          {/* 失败回放 / 重跑 */}
-          <Section title="回放控制">
+          <Section title="本地模拟">
+            <p className="mb-2 text-[10px] leading-4 text-[var(--text-muted)]">以下操作仅用于界面演示，不会创建执行记录或审计留痕。真实回放请到「运行记录」。</p>
             <div className="flex gap-1.5">
-              <Button size="sm" variant="secondary" className="flex-1" onClick={() => showToast(`已重新执行节点 ${selectedNodeId}，输出已记录`, 'success')}>
-                <RotateCcw className="h-3 w-3" />重跑
+              <Button size="sm" variant="secondary" className="flex-1" onClick={() => showToast(`已在本地模拟重跑节点 ${selectedNodeId}（无审计）`, 'info')}>
+                <RotateCcw className="h-3 w-3" />模拟重跑
               </Button>
-              <Button size="sm" variant="secondary" className="flex-1" onClick={() => showToast(`已从节点 ${selectedNodeId} 继续执行`, 'info')}>
-                <Eye className="h-3 w-3" />续跑
+              <Button size="sm" variant="secondary" className="flex-1" onClick={() => showToast(`已在本地模拟从节点 ${selectedNodeId} 续跑（无审计）`, 'info')}>
+                <Eye className="h-3 w-3" />模拟续跑
               </Button>
             </div>
           </Section>
         </>
       ) : (
         <div className="rounded-md border border-dashed border-[var(--border)] p-4 text-center text-[11px] text-[var(--text-muted)]">
-          该节点无调试数据
+          暂无执行记录。完成保存并通过结构门禁后，使用「运行试验」生成可追溯证据。
         </div>
       )}
 
-      {/* 节点操作 */}
       <Section title="节点操作">
         <div className="grid grid-cols-2 gap-1.5">
           <Button size="sm" variant="secondary" onClick={() => duplicateNode(selectedNode.id)}>
             <Copy className="h-3 w-3" />复制
           </Button>
           <Button size="sm" variant="secondary" onClick={() => disableNode(selectedNode.id)}>
-            <Pause className="h-3 w-3" />{selectedNode.data?.disabled ? '启用' : '禁用'}
+            {selectedNode.data?.disabled ? '启用' : '禁用'}
           </Button>
-          <Button size="sm" variant="danger" className="col-span-2" onClick={() => deleteNode(selectedNode.id)}>
+          <Button size="sm" variant="secondary" className="col-span-2 text-[var(--danger)]" onClick={() => deleteNode(selectedNode.id)}>
             <Trash2 className="h-3 w-3" />删除节点
           </Button>
         </div>
@@ -2017,17 +2677,28 @@ function DebugPanel({
  *  属性面板（编辑节点 label / 描述 / 配置）
  * ============================================================= */
 function PropertiesPanel({
-  selectedNode, updateNodeLabel, updateNodeDescription, updateNodeNote, showToast,
+  selectedNode, patchNodeData, structureIssues = [], showToast,
 }: {
   selectedNode: Node | null;
-  updateNodeLabel: (id: string, label: string) => void;
-  updateNodeDescription: (id: string, desc: string) => void;
-  updateNodeNote: (id: string, note: string) => void;
+  updateNodeLabel?: (id: string, label: string) => void;
+  updateNodeDescription?: (id: string, desc: string) => void;
+  updateNodeNote?: (id: string, note: string) => void;
+  patchNodeData: (id: string, patch: Record<string, unknown>) => void;
+  structureIssues?: StructureIssue[];
   showToast: (msg: string, tone?: 'success' | 'error' | 'info') => void;
 }) {
+  const config = (selectedNode?.data?.config ?? {}) as Record<string, any>;
   const [label, setLabel] = useState(selectedNode?.data?.label ?? '');
   const [desc, setDesc] = useState(selectedNode?.data?.desc ?? '');
   const [note, setNote] = useState(selectedNode?.data?.note ?? '');
+  const [approverGroup, setApproverGroup] = useState(config.approverGroup ?? 'SRE 值班双人组');
+  const [approverCount, setApproverCount] = useState(String(config.approverCount ?? 2));
+  const [approvalTimeout, setApprovalTimeout] = useState(String(config.approvalTimeoutSec ?? 300));
+  const [execTarget, setExecTarget] = useState(config.execTarget ?? 'skill_redis_tune');
+  const [credentialRef, setCredentialRef] = useState(config.credentialRef ?? 'vault://workflow/prod-write');
+  const [retryCount, setRetryCount] = useState(String(config.retryCount ?? 1));
+  const [riskLevel, setRiskLevel] = useState(config.riskLevel ?? 'L2');
+  const [denyAction, setDenyAction] = useState(config.denyAction ?? 'block');
   const [knowledgePackageId, setKnowledgePackageId] = useState('');
   const [noResultPolicy, setNoResultPolicy] = useState<'clarify' | 'handoff' | 'block'>('block');
   const { data: knowledgePackages = [] } = useApiQuery<KnowledgePackage[]>(['workflow-properties', 'knowledge-packages'], '/api/knowledge/packages');
@@ -2035,9 +2706,18 @@ function PropertiesPanel({
   const bindKnowledgeMutation = useApiMutation<any, { packageId: string; consumerType: 'workflow'; consumerId: string; consumerName: string; environment: 'production'; profileId: string; noResultPolicy: 'clarify' | 'handoff' | 'block' }>('/api/knowledge/bindings', { onSuccess: (binding) => showToast(`已绑定 ${binding.packageName} ${binding.packageVersion}`, 'success') });
 
   useEffect(() => {
+    const nextConfig = (selectedNode?.data?.config ?? {}) as Record<string, any>;
     setLabel(selectedNode?.data?.label ?? '');
     setDesc(selectedNode?.data?.desc ?? '');
     setNote(selectedNode?.data?.note ?? '');
+    setApproverGroup(nextConfig.approverGroup ?? 'SRE 值班双人组');
+    setApproverCount(String(nextConfig.approverCount ?? 2));
+    setApprovalTimeout(String(nextConfig.approvalTimeoutSec ?? 300));
+    setExecTarget(nextConfig.execTarget ?? (selectedNode?.data?.kind === 'http' ? 'https://api.internal/ops' : selectedNode?.data?.kind === 'mcp' ? 'kubernetes-mcp' : 'skill_redis_tune'));
+    setCredentialRef(nextConfig.credentialRef ?? 'vault://workflow/prod-write');
+    setRetryCount(String(nextConfig.retryCount ?? 1));
+    setRiskLevel(nextConfig.riskLevel ?? 'L2');
+    setDenyAction(nextConfig.denyAction ?? 'block');
     setKnowledgePackageId('');
   }, [selectedNode?.id]);
 
@@ -2057,11 +2737,25 @@ function PropertiesPanel({
   const color = NODE_COLORS[kind];
   const nodeMeta = NODE_LIBRARY_META[kind];
   const requiresReview = nodeMeta.risk === 'review' || nodeMeta.risk === 'sensitive';
+  const relatedIssue = structureIssueForNode(structureIssues, kind);
 
   const apply = () => {
-    updateNodeLabel(selectedNode.id, label);
-    updateNodeDescription(selectedNode.id, desc);
-    updateNodeNote(selectedNode.id, note);
+    const nextConfig: Record<string, unknown> = { ...(selectedNode.data?.config ?? {}) };
+    if (kind === 'approval') {
+      nextConfig.approverGroup = approverGroup.trim();
+      nextConfig.approverCount = Number(approverCount) || 2;
+      nextConfig.approvalTimeoutSec = Number(approvalTimeout) || 300;
+    }
+    if (['execute', 'http', 'mcp'].includes(kind)) {
+      nextConfig.execTarget = execTarget.trim();
+      nextConfig.credentialRef = credentialRef.trim();
+      nextConfig.retryCount = Number(retryCount) || 0;
+    }
+    if (kind === 'policy') {
+      nextConfig.riskLevel = riskLevel;
+      nextConfig.denyAction = denyAction;
+    }
+    patchNodeData(selectedNode.id, { label, desc, note, config: nextConfig });
     showToast(`节点 ${selectedNode.id} 属性已更新`, 'success');
   };
 
@@ -2069,10 +2763,7 @@ function PropertiesPanel({
     <div className="space-y-4">
       <section className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
         <div className="flex items-center gap-2">
-          <div
-            className="grid h-10 w-10 place-items-center rounded-xl"
-            style={{ backgroundColor: `${color}1a`, color }}
-          >
+          <div className="grid h-10 w-10 place-items-center rounded-xl" style={{ backgroundColor: `${color}1a`, color }}>
             <Icon className="h-5 w-5" />
           </div>
           <div className="min-w-0 flex-1">
@@ -2083,9 +2774,37 @@ function PropertiesPanel({
         <p className="mt-3 text-[11px] leading-5 text-[var(--text-muted)]">{selectedNode.data?.desc || NODE_DESCS[kind]}</p>
       </section>
 
+      {relatedIssue && <section className={cn('rounded-xl border p-3 text-[11px]', relatedIssue.severity === 'failed' ? 'border-[var(--warning)]/30 bg-[var(--warning-bg)]' : 'border-[var(--info)]/25 bg-[var(--info-bg)]')}><div className={cn('flex items-center gap-1.5 font-semibold', relatedIssue.severity === 'failed' ? 'text-[var(--warning)]' : 'text-[var(--info)]')}><AlertTriangle className="h-3.5 w-3.5" />结构门禁提示</div><p className="mt-1.5 leading-5 text-[var(--text-secondary)]">{relatedIssue.message}</p></section>}
+
       {requiresReview && <section className={cn('rounded-xl border p-3 text-[11px]', nodeMeta.risk === 'sensitive' ? 'border-[var(--warning)]/30 bg-[var(--warning-bg)]' : 'border-[var(--info)]/25 bg-[var(--info-bg)]')}><div className={cn('flex items-center gap-1.5 font-semibold', nodeMeta.risk === 'sensitive' ? 'text-[var(--warning)]' : 'text-[var(--info)]')}><ShieldCheck className="h-3.5 w-3.5" />{nodeMeta.risk === 'sensitive' ? '受控执行节点' : '需要治理复核'}</div><p className="mt-1.5 leading-5 text-[var(--text-secondary)]">{nodeMeta.risk === 'sensitive' ? '请确认目标系统、调用权限与补偿策略；运行前应串联审批或风险策略。' : '请确认策略、审批人或失败路径配置，变更将写入工作流审计。'}</p></section>}
 
       {kind === 'retrieve' && <section className="space-y-3 rounded-xl border border-[var(--brand)]/25 bg-[var(--brand-light)]/35 p-4"><div><div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--text)]"><Database className="h-3.5 w-3.5 text-[var(--brand)]" />知识包引用</div><p className="mt-1 text-[10px] leading-4 text-[var(--text-muted)]">仅可引用知识库中心已发布的版本；运行记录将保留证据与版本。</p></div><Field label="已发布知识包"><select value={knowledgePackageId} onChange={(event) => setKnowledgePackageId(event.target.value)} className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px]"><option value="">请选择知识包</option>{knowledgePackages.filter((item) => item.status === 'published' && item.currentVersion.status === 'published').map((item) => <option key={item.id} value={item.id}>{item.name} · {item.currentVersion.version}</option>)}</select></Field><Field label="无结果策略"><select value={noResultPolicy} onChange={(event) => setNoResultPolicy(event.target.value as typeof noResultPolicy)} className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px]"><option value="block">阻断后续执行</option><option value="handoff">转人工接管</option><option value="clarify">请求补充信息</option></select></Field><Button size="sm" className="w-full" disabled={!knowledgePackageId || bindKnowledgeMutation.isPending} onClick={() => { const profile = retrievalProfiles.find((item) => item.packageId === knowledgePackageId); if (!profile) { showToast('该知识包尚未配置检索策略', 'error'); return; } bindKnowledgeMutation.mutate({ packageId: knowledgePackageId, consumerType: 'workflow', consumerId: 'wf1', consumerName: `工作流节点 ${selectedNode.id}`, environment: 'production', profileId: profile.id, noResultPolicy }); }}><ShieldCheck className="h-3.5 w-3.5" />{bindKnowledgeMutation.isPending ? '绑定中…' : '绑定并锁定当前版本'}</Button></section>}
+
+      {kind === 'approval' && (
+        <section className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+          <div className="text-xs font-semibold text-[var(--text)]">双重审批配置</div>
+          <Field label="审批组"><input value={approverGroup} onChange={(e) => setApproverGroup(e.target.value)} className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] outline-none focus:border-[var(--brand)]" /></Field>
+          <Field label="所需签发人数"><input type="number" min={1} max={5} value={approverCount} onChange={(e) => setApproverCount(e.target.value)} className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] outline-none focus:border-[var(--brand)]" /></Field>
+          <Field label="超时（秒）"><input type="number" min={60} value={approvalTimeout} onChange={(e) => setApprovalTimeout(e.target.value)} className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] outline-none focus:border-[var(--brand)]" /></Field>
+        </section>
+      )}
+
+      {['execute', 'http', 'mcp'].includes(kind) && (
+        <section className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+          <div className="text-xs font-semibold text-[var(--text)]">{kind === 'execute' ? '已纳管 Skill 调用' : kind === 'http' ? 'HTTP 调用' : '受控 MCP 调用'}</div>
+          <Field label={kind === 'http' ? 'API 端点' : kind === 'mcp' ? 'MCP 工具' : 'Skill 标识'}><input value={execTarget} onChange={(e) => setExecTarget(e.target.value)} className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] outline-none focus:border-[var(--brand)]" /></Field>
+          <Field label="凭据引用"><input value={credentialRef} onChange={(e) => setCredentialRef(e.target.value)} className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] outline-none focus:border-[var(--brand)]" /></Field>
+          <Field label="失败重试次数"><input type="number" min={0} max={5} value={retryCount} onChange={(e) => setRetryCount(e.target.value)} className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px] outline-none focus:border-[var(--brand)]" /></Field>
+        </section>
+      )}
+
+      {kind === 'policy' && (
+        <section className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+          <div className="text-xs font-semibold text-[var(--text)]">风险策略</div>
+          <Field label="风险等级"><select value={riskLevel} onChange={(e) => setRiskLevel(e.target.value)} className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px]"><option value="L1">L1</option><option value="L2">L2</option><option value="L3">L3</option></select></Field>
+          <Field label="越权处理"><select value={denyAction} onChange={(e) => setDenyAction(e.target.value)} className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 text-[12px]"><option value="block">阻断</option><option value="handoff">转人工</option><option value="escalate">升级审批</option></select></Field>
+        </section>
+      )}
 
       <section className="space-y-3 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
       <div className="text-xs font-semibold text-[var(--text)]">基础配置</div>
@@ -2120,7 +2839,7 @@ function PropertiesPanel({
           value={note}
           onChange={(e) => setNote(e.target.value)}
           rows={2}
-          placeholder="如：高峰期需手确认、双签必须 5 分钟内…"
+          placeholder="如：高峰期需人工确认、双重审批须在 5 分钟内…"
           className="w-full resize-none rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2 text-[12px] outline-none transition-[border-color,box-shadow] focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]"
         />
         <div className="mt-1 text-[9px] text-[var(--text-muted)] flex items-center gap-1">
@@ -2152,11 +2871,7 @@ function PropertiesPanel({
       </Field>
       </section>
 
-      <div className="sticky bottom-0 -mx-1 border-t border-[var(--border)] bg-[var(--surface-1)] px-1 pt-3">
-      <Button className="w-full rounded-lg" onClick={apply}>
-        <Save className="h-3.5 w-3.5" />应用修改
-      </Button>
-      </div>
+      <Button size="sm" className="w-full" onClick={apply}><Save className="h-3.5 w-3.5" />应用修改</Button>
     </div>
   );
 }
@@ -2189,17 +2904,17 @@ function TemplatesView({
 }: {
   filterGroup: 'all' | 'business' | 'system' | 'security' | 'ai';
   setFilterGroup: (k: 'all' | 'business' | 'system' | 'security' | 'ai') => void;
-  filteredTemplates: typeof TEMPLATES;
+  filteredTemplates: WorkflowTemplateAsset[];
   showToast: (msg: string, tone?: 'success' | 'error' | 'info') => void;
-  onPreview: (t: typeof TEMPLATES[number]) => void;
-  onUseTemplate: (t: typeof TEMPLATES[number]) => void;
+  onPreview: (t: WorkflowTemplateAsset) => void;
+  onUseTemplate: (t: WorkflowTemplateAsset) => void;
 }) {
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState<'all' | 'healthy' | 'review'>('all');
   const [page, setPage] = useState(1);
   const visibleTemplates = filteredTemplates.filter((template) => {
     const matchesQuery = !query.trim() || `${template.name} ${template.description} ${template.owner} ${template.dependencies.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase());
-    const matchesScope = scope === 'all' || (scope === 'healthy' ? template.health === '健康' : template.risk !== 'L1' || template.health !== '健康');
+    const matchesScope = scope === 'all' || (scope === 'healthy' ? isTemplateReusable(template) : needsTemplateReview(template));
     return matchesQuery && matchesScope;
   });
   const pageSize = 8;
@@ -2214,20 +2929,22 @@ function TemplatesView({
   return (
     <div className="workflow-template-page h-full overflow-y-auto bg-[var(--bg-elevated)] p-6">
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="max-w-3xl">
           <h2 className="text-base font-semibold flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-[var(--brand)]" />工作流模版库
           </h2>
-          <p className="mt-1 text-xs text-[var(--text-muted)]">{filteredTemplates.length} 套受治理模板 · 按业务 / 系统 / 安全 / AI 分组</p>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">
+            {filteredTemplates.length} 套受治理处置流程资产 · 创建隔离草稿后经校验发布为流程技能，供数字员工能力装配与专家协同引用。模板本身不可直接上岗调用。
+          </p>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5">
           <span className="mr-1 text-xs font-semibold leading-5 text-[var(--text-muted)]">分组</span>
           {([
             { k: 'all' as const, label: '全部' },
             { k: 'business' as const, label: '业务' },
             { k: 'system' as const, label: '系统' },
             { k: 'security' as const, label: '安全' },
-            { k: 'ai' as const, label: 'AI' },
+            { k: 'ai' as const, label: '研判分析' },
           ]).map((g) => (
             <button
               key={g.k}
@@ -2248,12 +2965,12 @@ function TemplatesView({
       <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3">
         <div className="relative min-w-[220px] flex-1"><Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模板、维护团队或依赖" className="h-8 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] pl-8 pr-3 text-xs outline-none focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]" /></div>
         <div className="flex items-center gap-1 rounded-lg bg-[var(--bg-elevated)] p-1" role="group" aria-label="模板健康度">
-          {([['all', '全部资产'], ['healthy', '可直接复用'], ['review', '需复核']] as const).map(([key, label]) => <button key={key} type="button" onClick={() => setScope(key)} className={cn('rounded-md px-2.5 py-1 text-xs leading-5 font-medium transition-colors', scope === key ? 'bg-[var(--surface-1)] text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>{label}</button>)}
+          {([['all', '全部资产'], ['healthy', '可直接复用'], ['review', '需授权/复核']] as const).map(([key, label]) => <button key={key} type="button" onClick={() => setScope(key)} className={cn('rounded-md px-2.5 py-1 text-xs leading-5 font-medium transition-colors', scope === key ? 'bg-[var(--surface-1)] text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>{label}</button>)}
         </div>
         <span className="text-xs leading-5 text-[var(--text-muted)]">{visibleTemplates.length} 个可发现模板</span>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {pagedTemplates.map((t) => {
           const categoryStyle = t.category === 'business'
             ? 'bg-[var(--info-bg)] text-[var(--info)]'
@@ -2261,13 +2978,13 @@ function TemplatesView({
               ? 'bg-[var(--success-bg)] text-[var(--success)]'
               : t.category === 'security'
                 ? 'bg-[var(--danger-bg)] text-[var(--danger)]'
-                : 'bg-[var(--purple-bg)] text-[var(--purple)]';
-          const categoryName = t.category === 'business' ? '业务自动化' : t.category === 'system' ? '系统运维' : t.category === 'security' ? '安全响应' : '智能分析';
+                : 'bg-[var(--brand-light)] text-[var(--brand)]';
+          const reusable = isTemplateReusable(t);
 
           return (
             <article
               key={t.id}
-              className="workflow-template-card group flex min-h-[292px] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-all duration-200 hover:-translate-y-1 hover:border-[var(--border-strong)] hover:shadow-[0_14px_30px_rgba(15,23,42,0.10)]"
+              className="workflow-template-card group flex min-h-[320px] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-all duration-200 hover:-translate-y-1 hover:border-[var(--border-strong)] hover:shadow-[0_14px_30px_rgba(15,23,42,0.10)]"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex min-w-0 items-start gap-3">
@@ -2279,13 +2996,20 @@ function TemplatesView({
                       <h3 className="truncate text-sm font-semibold tracking-[-0.01em] text-[var(--text)]">{t.name}</h3>
                       <span className="rounded-md bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--text-muted)]">{t.version}</span>
                     </div>
-                    <div className="mt-1 text-[11px] text-[var(--text-muted)]">{categoryName} · {t.owner}</div>
+                    <div className="mt-1 text-[11px] text-[var(--text-muted)]">{categoryLabel(t.category)} · {t.owner}</div>
                   </div>
                 </div>
-                <Badge tone={t.health === '健康' ? 'success' : 'warn'} className="shrink-0 text-[10px]">{t.health}</Badge>
+                <Badge tone={reusable ? 'success' : 'warn'} className="shrink-0 text-[10px]">{t.health}</Badge>
               </div>
 
               <p className="mt-4 min-h-[34px] text-[12px] leading-[18px] text-[var(--text-secondary)] line-clamp-2">{t.description}</p>
+
+              {!reusable && t.blockers.length > 0 && (
+                <div className="mt-3 rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] px-2.5 py-2 text-[10px] leading-4 text-[var(--warning)]">
+                  <span className="font-semibold">阻断：</span>{t.blockers[0]}
+                  {t.blockers.length > 1 ? ` 等 ${t.blockers.length} 项` : ''}
+                </div>
+              )}
 
               <div className="mt-4 rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5">
                 <div className="mb-2 flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)]"><span>流程能力</span><span>{t.nodes} 个节点</span></div>
@@ -2306,7 +3030,9 @@ function TemplatesView({
               <div className="mt-4 flex items-center gap-3 border-t border-[var(--border)] pt-3">
                 <div className="min-w-0 flex-1"><div className="text-[11px] text-[var(--text-muted)]">验证成功率</div><div className="mt-0.5 font-mono text-sm font-semibold text-[var(--text)]">{t.successRate}</div></div>
                 <div className="h-7 w-px bg-[var(--border)]" />
-                <div className="min-w-0 flex-1"><div className="text-[11px] text-[var(--text-muted)]">治理等级</div><div className="mt-0.5 flex items-center gap-1.5"><Badge tone={t.risk === 'L3' ? 'warn' : t.risk === 'L2' ? 'info' : 'success'} className="text-[10px]">{t.risk} 风险</Badge><span className="truncate text-[11px] text-[var(--text-muted)]">{t.dependencies.length} 依赖</span></div></div>
+                <div className="min-w-0 flex-1"><div className="text-[11px] text-[var(--text-muted)]">最近验证</div><div className="mt-0.5 font-mono text-[11px] font-semibold text-[var(--text)]">{t.verifiedAt}</div></div>
+                <div className="h-7 w-px bg-[var(--border)]" />
+                <div className="min-w-0 flex-1"><div className="text-[11px] text-[var(--text-muted)]">治理</div><div className="mt-0.5 flex items-center gap-1"><Badge tone={t.risk === 'L3' ? 'warn' : t.risk === 'L2' ? 'info' : 'success'} className="text-[10px]">{t.risk}</Badge></div></div>
               </div>
 
               <div className="mt-auto flex items-center justify-between gap-2 pt-4">
@@ -2314,7 +3040,7 @@ function TemplatesView({
                   <Eye className="h-3.5 w-3.5" />查看架构
                 </button>
                 <Button size="sm" className="rounded-lg px-3" onClick={() => onUseTemplate(t)}>
-                  创建草稿<ArrowRight className="h-3.5 w-3.5" />
+                  创建隔离草稿<ArrowRight className="h-3.5 w-3.5" />
                 </Button>
               </div>
             </article>
@@ -2333,10 +3059,10 @@ function TemplatesView({
 function TemplatePreviewModal({
   template, onClose, showToast, onUseTemplate,
 }: {
-  template: typeof TEMPLATES[number] | null;
+  template: WorkflowTemplateAsset | null;
   onClose: () => void;
   showToast: (msg: string, tone?: 'success' | 'error' | 'info') => void;
-  onUseTemplate: (template: typeof TEMPLATES[number]) => void;
+  onUseTemplate: (template: WorkflowTemplateAsset) => void;
 }) {
   if (!template) return null;
   return <TemplatePreviewModalInner template={template} onClose={onClose} showToast={showToast} onUseTemplate={onUseTemplate} />;
@@ -2345,13 +3071,12 @@ function TemplatePreviewModal({
 function TemplatePreviewModalInner({
   template, onClose, showToast, onUseTemplate,
 }: {
-  template: typeof TEMPLATES[number];
+  template: WorkflowTemplateAsset;
   onClose: () => void;
   showToast: (msg: string, tone?: 'success' | 'error' | 'info') => void;
-  onUseTemplate: (template: typeof TEMPLATES[number]) => void;
+  onUseTemplate: (template: WorkflowTemplateAsset) => void;
 }) {
   const [zoom, setZoom] = useState(0.7);
-
   const previewSeq = template.sequence;
   const categoryStyle = template.category === 'business'
     ? 'bg-[var(--info-bg)] text-[var(--info)]'
@@ -2359,9 +3084,11 @@ function TemplatePreviewModalInner({
       ? 'bg-[var(--success-bg)] text-[var(--success)]'
       : template.category === 'security'
         ? 'bg-[var(--danger-bg)] text-[var(--danger)]'
-        : 'bg-[var(--purple-bg)] text-[var(--purple)]';
-  const categoryName = template.category === 'business' ? '业务自动化' : template.category === 'system' ? '系统运维' : template.category === 'security' ? '安全响应' : '智能分析';
+        : 'bg-[var(--brand-light)] text-[var(--brand)]';
+  const categoryName = categoryLabel(template.category);
   const governanceChecks = template.risk === 'L3' ? 4 : template.risk === 'L2' ? 3 : 2;
+  const reusable = isTemplateReusable(template);
+  const mid = Math.ceil(previewSeq.length / 2);
 
   return (
     <div className="fixed inset-0 z-50 grid place-items-center bg-black/50" onClick={onClose}>
@@ -2369,61 +3096,259 @@ function TemplatePreviewModalInner({
         role="dialog"
         aria-modal="true"
         aria-labelledby="template-preview-title"
-        className="flex h-[min(800px,calc(100%-32px))] w-[min(1240px,calc(100%-32px))] flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg)] shadow-2xl"
+        className="flex h-[min(860px,calc(100%-32px))] w-[min(1240px,calc(100%-32px))] flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg)] shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <header className="flex flex-wrap items-center justify-between gap-4 border-b border-[var(--border)] bg-[var(--surface-1)] px-6 py-4">
           <div className="flex min-w-0 items-start gap-3">
             <div className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl ring-1 ring-inset ring-black/[0.03]', categoryStyle)}><Sparkles className="h-4 w-4" /></div>
-            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 id="template-preview-title" className="truncate text-base font-semibold tracking-[-0.01em] text-[var(--text)]">{template.name}</h2><span className="rounded-md bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--text-muted)]">{template.version}</span><Badge tone={template.health === '健康' ? 'success' : 'warn'} className="text-[9px]">{template.health}</Badge></div><p className="mt-1 text-xs text-[var(--text-muted)]">{categoryName} · {template.description}</p></div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 id="template-preview-title" className="truncate text-base font-semibold tracking-[-0.01em] text-[var(--text)]">{template.name}</h2>
+                <span className="rounded-md bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--text-muted)]">{template.version}</span>
+                <Badge tone={reusable ? 'success' : 'warn'} className="text-[9px]">{template.health}</Badge>
+                <span className="font-mono text-[10px] text-[var(--text-muted)]">{template.id}</span>
+              </div>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">{categoryName} · {template.description}</p>
+            </div>
           </div>
           <button type="button" onClick={onClose} aria-label="关闭模板预览" className="grid h-8 w-8 place-items-center rounded-lg text-[var(--text-muted)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"><X className="h-4 w-4" /></button>
         </header>
 
         <main className="min-h-0 flex-1 overflow-y-auto bg-[var(--bg-elevated)]">
           <div className="mx-auto w-full max-w-[1180px] space-y-5 p-6">
-            <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4 shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-              <div><div className="text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">模板概览</div><div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--text-secondary)]"><span>{template.nodes} 个编排节点</span><span className="hidden h-3 w-px bg-[var(--border)] sm:block" /><span>{governanceChecks} 项治理检查</span><span className="hidden h-3 w-px bg-[var(--border)] sm:block" /><span>维护团队：{template.owner}</span></div></div>
-              <div className="flex items-center gap-2"><Badge tone={template.risk === 'L3' ? 'warn' : template.risk === 'L2' ? 'info' : 'success'} className="text-[9px]">{template.risk} 风险</Badge><span className="text-[11px] text-[var(--text-muted)]">最近验证 {template.verifiedAt}</span></div>
+            <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] px-5 py-4">
+              <div>
+                <div className="text-[10px] font-medium uppercase tracking-[0.08em] text-[var(--text-muted)]">模板概览</div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--text-secondary)]">
+                  <span>{template.nodes} 个编排节点</span>
+                  <span className="hidden h-3 w-px bg-[var(--border)] sm:block" />
+                  <span>{governanceChecks} 项治理检查</span>
+                  <span className="hidden h-3 w-px bg-[var(--border)] sm:block" />
+                  <span>维护团队：{template.owner}</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Badge tone={template.risk === 'L3' ? 'warn' : template.risk === 'L2' ? 'info' : 'success'} className="text-[9px]">{template.risk} 风险</Badge>
+                <span className="text-[11px] text-[var(--text-muted)]">最近验证 {template.verifiedAt}</span>
+              </div>
             </section>
 
-            <section className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3.5"><div><h3 className="text-sm font-semibold text-[var(--text)]">流程结构</h3><p className="mt-0.5 text-[11px] text-[var(--text-muted)]">只读预览，展示从触发、决策到执行与治理的完整路径</p></div><div className="flex items-center gap-1"><button type="button" className="grid h-7 w-7 place-items-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]" onClick={() => setZoom((z) => Math.max(0.5, z - 0.1))} aria-label="缩小流程预览">−</button><span className="w-10 text-center font-mono text-[10px] text-[var(--text-muted)]">{Math.round(zoom * 100)}%</span><button type="button" className="grid h-7 w-7 place-items-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]" onClick={() => setZoom((z) => Math.min(1.2, z + 0.1))} aria-label="放大流程预览">+</button></div></div>
-              <div className="overflow-x-auto bg-[var(--bg-elevated)] p-5"><div className="flex min-h-[220px] min-w-max items-center rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface-1)] px-6 py-5"><div className="flex items-center gap-3" style={{ transform: `scale(${zoom})`, transformOrigin: 'left center' }}>{previewSeq.map((kind, index) => { const Icon = NODE_ICONS[kind]; const color = NODE_COLORS[kind]; const isGovernance = ['policy', 'approval', 'audit', 'compensate'].includes(kind); return <div key={`${kind}-${index}`} className="flex items-center gap-3"><div className="w-[132px] rounded-xl border bg-[var(--surface-1)] px-3 py-3 text-center shadow-[0_1px_2px_rgba(15,23,42,0.05)]" style={{ borderColor: color }}><div className="mb-2 flex items-center justify-between"><span className="font-mono text-[9px] text-[var(--text-muted)]">{String(index + 1).padStart(2, '0')}</span>{isGovernance && <ShieldCheck className="h-3.5 w-3.5" style={{ color }} />}</div><Icon className="mx-auto h-4 w-4" style={{ color }} /><div className="mt-1.5 text-[9px] font-medium uppercase tracking-wide text-[var(--text-muted)]">{kind}</div><div className="mt-0.5 text-xs font-semibold text-[var(--text)]">{NODE_LABELS[kind]}</div></div>{index < previewSeq.length - 1 && <ChevronRight className="h-4 w-4 shrink-0 text-[var(--border-strong)]" />}</div>; })}</div></div></div>
+            {!reusable && (
+              <section className="rounded-xl border border-[var(--warning)]/30 bg-[var(--warning-bg)] px-5 py-4">
+                <div className="flex items-center gap-2 text-xs font-semibold text-[var(--warning)]"><AlertTriangle className="h-4 w-4" />创建后可配置，但试运行与发布将被阻断</div>
+                <ul className="mt-2 space-y-1 text-[11px] leading-5 text-[var(--text-secondary)]">
+                  {template.blockers.map((item) => <li key={item}>• {item}</li>)}
+                </ul>
+              </section>
+            )}
+
+            <section className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)]">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-5 py-3.5">
+                <div>
+                  <h3 className="text-sm font-semibold text-[var(--text)]">流程结构</h3>
+                  <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">只读预览：触发 → 研判/策略 → 双重审批 → 执行/补偿 → 审计留痕</p>
+                </div>
+                <div className="flex items-center gap-1">
+                  <button type="button" className="grid h-7 w-7 place-items-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]" onClick={() => setZoom((z) => Math.max(0.5, z - 0.1))} aria-label="缩小流程预览">−</button>
+                  <span className="w-10 text-center font-mono text-[10px] text-[var(--text-muted)]">{Math.round(zoom * 100)}%</span>
+                  <button type="button" className="grid h-7 w-7 place-items-center rounded-md text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]" onClick={() => setZoom((z) => Math.min(1.2, z + 0.1))} aria-label="放大流程预览">+</button>
+                </div>
+              </div>
+              <div className="overflow-x-auto bg-[var(--bg-elevated)] p-5">
+                <div className="flex min-h-[220px] min-w-max flex-col justify-center gap-4 rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface-1)] px-6 py-5">
+                  <div className="flex items-center gap-3" style={{ transform: `scale(${zoom})`, transformOrigin: 'left center' }}>
+                    {previewSeq.slice(0, mid).map((kind, index) => {
+                      const Icon = NODE_ICONS[kind];
+                      const color = NODE_COLORS[kind];
+                      const isGovernance = ['policy', 'approval', 'audit', 'compensate'].includes(kind);
+                      return (
+                        <div key={`a-${kind}-${index}`} className="flex items-center gap-3">
+                          <div className="w-[132px] rounded-xl border bg-[var(--surface-1)] px-3 py-3 text-center" style={{ borderColor: color }}>
+                            <div className="mb-2 flex items-center justify-between">
+                              <span className="font-mono text-[9px] text-[var(--text-muted)]">{String(index + 1).padStart(2, '0')}</span>
+                              {isGovernance && <ShieldCheck className="h-3.5 w-3.5" style={{ color }} />}
+                            </div>
+                            <Icon className="mx-auto h-4 w-4" style={{ color }} />
+                            <div className="mt-1.5 text-[9px] font-medium uppercase tracking-wide text-[var(--text-muted)]">{kind}</div>
+                            <div className="mt-0.5 text-xs font-semibold text-[var(--text)]">{NODE_LABELS[kind]}</div>
+                          </div>
+                          {index < mid - 1 && <ChevronRight className="h-4 w-4 shrink-0 text-[var(--border-strong)]" />}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {previewSeq.length > mid && (
+                    <div className="flex items-center gap-3 pl-8" style={{ transform: `scale(${zoom})`, transformOrigin: 'left center' }}>
+                      <span className="text-[10px] font-medium text-[var(--text-muted)]">续</span>
+                      {previewSeq.slice(mid).map((kind, index) => {
+                        const Icon = NODE_ICONS[kind];
+                        const color = NODE_COLORS[kind];
+                        const isGovernance = ['policy', 'approval', 'audit', 'compensate'].includes(kind);
+                        return (
+                          <div key={`b-${kind}-${index}`} className="flex items-center gap-3">
+                            <div className="w-[132px] rounded-xl border bg-[var(--surface-1)] px-3 py-3 text-center" style={{ borderColor: color }}>
+                              <div className="mb-2 flex items-center justify-between">
+                                <span className="font-mono text-[9px] text-[var(--text-muted)]">{String(mid + index + 1).padStart(2, '0')}</span>
+                                {isGovernance && <ShieldCheck className="h-3.5 w-3.5" style={{ color }} />}
+                              </div>
+                              <Icon className="mx-auto h-4 w-4" style={{ color }} />
+                              <div className="mt-1.5 text-[9px] font-medium uppercase tracking-wide text-[var(--text-muted)]">{kind}</div>
+                              <div className="mt-0.5 text-xs font-semibold text-[var(--text)]">{NODE_LABELS[kind]}</div>
+                            </div>
+                            {index < previewSeq.length - mid - 1 && <ChevronRight className="h-4 w-4 shrink-0 text-[var(--border-strong)]" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
             </section>
 
-            <section className="grid gap-3 lg:grid-cols-3"><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="flex items-center gap-2 text-xs font-semibold text-[var(--text)]"><CheckCircle2 className="h-4 w-4 text-[var(--success)]" />验证与维护</div><div className="mt-3 text-sm font-semibold text-[var(--text)]">{template.successRate}</div><p className="mt-0.5 text-[11px] text-[var(--text-muted)]">最近验证成功率 · {template.verifiedAt}</p><p className="mt-3 border-t border-[var(--border)] pt-3 text-[11px] text-[var(--text-secondary)]">由 {template.owner} 维护</p></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="flex items-center justify-between gap-2"><div className="flex items-center gap-2 text-xs font-semibold text-[var(--text)]"><Box className="h-4 w-4 text-[var(--info)]" />依赖就绪度</div><Badge tone={template.health === '健康' ? 'success' : 'warn'} className="text-[9px]">{template.health}</Badge></div><div className="mt-3 space-y-2">{template.dependencies.map((dependency) => <div key={dependency} className="flex items-center gap-2 text-[11px] text-[var(--text-secondary)]"><CheckCircle2 className={cn('h-3.5 w-3.5', template.health === '健康' ? 'text-[var(--success)]' : 'text-[var(--warning)]')} />{dependency}</div>)}</div></div><div className={cn('rounded-xl border p-4', template.risk === 'L3' ? 'border-[var(--warning)]/30 bg-[var(--warning-bg)]' : 'border-[var(--info)]/25 bg-[var(--info-bg)]')}><div className={cn('flex items-center gap-2 text-xs font-semibold', template.risk === 'L3' ? 'text-[var(--warning)]' : 'text-[var(--info)]')}><ShieldCheck className="h-4 w-4" />{template.risk} 治理门禁</div><p className="mt-2 text-[11px] leading-5 text-[var(--text-secondary)]">创建后将生成隔离草稿；外部执行前需完成依赖授权、审批、审计与补偿校验。</p></div></section>
+            <section className="grid gap-3 lg:grid-cols-3">
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+                <div className="flex items-center gap-2 text-xs font-semibold text-[var(--text)]"><CheckCircle2 className="h-4 w-4 text-[var(--success)]" />验证与维护</div>
+                <div className="mt-3 text-sm font-semibold text-[var(--text)]">{template.successRate}</div>
+                <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">最近验证成功率 · {template.verifiedAt}</p>
+                <p className="mt-3 border-t border-[var(--border)] pt-3 text-[11px] text-[var(--text-secondary)]">由 {template.owner} 维护</p>
+                {template.changelog[0] && <p className="mt-2 text-[10px] text-[var(--text-muted)]">变更：{template.changelog[0].version} · {template.changelog[0].note}</p>}
+              </div>
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-[var(--text)]"><Box className="h-4 w-4 text-[var(--info)]" />依赖就绪度</div>
+                  <Badge tone={reusable ? 'success' : 'warn'} className="text-[9px]">{template.health}</Badge>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {template.dependencyStatus.map((dependency) => (
+                    <div key={dependency.name} className="flex items-start gap-2 text-[11px] text-[var(--text-secondary)]">
+                      {dependency.status === 'ready'
+                        ? <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--success)]" />
+                        : <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[var(--warning)]" />}
+                      <span>{dependency.name}{dependency.status === 'unauthorized' ? ` · ${dependency.reason ?? '未授权'}` : ' · 已就绪'}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className={cn('rounded-xl border p-4', template.risk === 'L3' ? 'border-[var(--warning)]/30 bg-[var(--warning-bg)]' : 'border-[var(--info)]/25 bg-[var(--info-bg)]')}>
+                <div className={cn('flex items-center gap-2 text-xs font-semibold', template.risk === 'L3' ? 'text-[var(--warning)]' : 'text-[var(--info)]')}><ShieldCheck className="h-4 w-4" />{template.risk} 治理门禁</div>
+                <p className="mt-2 text-[11px] leading-5 text-[var(--text-secondary)]">创建隔离草稿后进入编排；外部执行前需完成依赖授权、双重审批、审计留痕与补偿校验。未发布流程技能不可被数字员工调用。</p>
+              </div>
+            </section>
+
+            <section className="grid gap-3 lg:grid-cols-3">
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+                <div className="mb-2 text-xs font-semibold text-[var(--text)]">变量映射</div>
+                <div className="space-y-1.5">
+                  {template.variables.length ? template.variables.map((item) => (
+                    <div key={item.key} className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="font-mono text-[var(--text-secondary)]">{item.key}</span>
+                      <span className="text-[var(--text-muted)]">{item.label}{item.required ? ' · 必填' : ''}</span>
+                    </div>
+                  )) : <div className="text-[11px] text-[var(--text-muted)]">无额外变量</div>}
+                </div>
+              </div>
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+                <div className="mb-2 text-xs font-semibold text-[var(--text)]">权限门禁</div>
+                <div className="space-y-1.5">
+                  {template.permissions.length ? template.permissions.map((item) => (
+                    <div key={item.action} className="text-[11px] text-[var(--text-secondary)]">
+                      <span className="font-medium text-[var(--text)]">{item.action}</span>
+                      <span className="text-[var(--text-muted)]"> · {item.gate}</span>
+                    </div>
+                  )) : <div className="text-[11px] text-[var(--text-muted)]">无额外权限项</div>}
+                </div>
+              </div>
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4">
+                <div className="mb-2 text-xs font-semibold text-[var(--text)]">最近验证运行</div>
+                <div className="space-y-1.5">
+                  {template.recentRuns.length ? template.recentRuns.map((run) => (
+                    <div key={run.id} className="flex items-center justify-between gap-2 text-[11px]">
+                      <span className="font-mono text-[var(--text-muted)]">{run.id}</span>
+                      <Badge tone={run.status === 'success' ? 'success' : 'error'} className="text-[9px]">{run.status === 'success' ? '通过' : '失败'}</Badge>
+                    </div>
+                  )) : <div className="text-[11px] text-[var(--text-muted)]">暂无验证记录</div>}
+                </div>
+              </div>
+            </section>
           </div>
         </main>
 
-        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] bg-[var(--surface-1)] px-6 py-3.5"><div className="text-[11px] text-[var(--text-muted)]">创建后将另存为草稿，不影响当前工作流</div><div className="flex items-center gap-2"><Button size="sm" variant="ghost" onClick={onClose}>取消</Button><Button size="sm" onClick={() => { onUseTemplate(template); onClose(); }}><Download className="h-3.5 w-3.5" />创建隔离草稿</Button></div></footer>
+        <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] bg-[var(--surface-1)] px-6 py-3.5">
+          <div className="text-[11px] text-[var(--text-muted)]">
+            {reusable
+              ? '创建后将另存为隔离草稿，不影响当前工作流；可继续校验与试运行。'
+              : '可创建隔离草稿用于配置，但依赖未授权前禁止试运行与发布。'}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="ghost" onClick={onClose}>取消</Button>
+            <Button size="sm" onClick={() => { onUseTemplate(template); onClose(); }}><Download className="h-3.5 w-3.5" />创建隔离草稿</Button>
+          </div>
+        </footer>
       </section>
     </div>
   );
 }
 
-/* =============================================================
- *  执行历史（含时序图 + 单步回放控制）
- * ============================================================= */
-function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' | 'error' | 'info') => void }) {
-  const { data: runsFromApi = [], refetch } = useApiQuery<typeof RUNS>(['workflow-runs'], '/api/workflow-runs');
-  const runs = runsFromApi.length > 0 ? runsFromApi : RUNS;
-  const [selectedRunId, setSelectedRunId] = useState<string>('r1');
+function HistoryView({
+  showToast,
+  workflowId,
+  canExecute,
+  focusRunId,
+  onFocusConsumed,
+}: {
+  showToast: (msg: string, tone?: 'success' | 'error' | 'info') => void;
+  workflowId: string;
+  canExecute: boolean;
+  focusRunId?: string | null;
+  onFocusConsumed?: () => void;
+}) {
+  const { data: runs = [], refetch, isLoading } = useApiQuery<WorkflowRunRecord[]>(['workflow-runs'], '/api/workflow-runs');
+  const [selectedRunId, setSelectedRunId] = useState<string>('');
   const [step, setStep] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [mobileReplayOpen, setMobileReplayOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'success' | 'failed' | 'running'>('all');
   const [page, setPage] = useState(1);
-  const retryRunApi = useApiMutation<any, { id: string }>((vars) => `/api/workflows/wf1/runs/${vars.id}/retry`, {
-    onSuccess: () => { showToast('已创建重试尝试，运行状态已刷新', 'success'); refetch(); },
-    onError: () => showToast('重试请求失败，请检查权限或运行状态', 'error'),
-  });
+  const retryRunApi = useApiMutation<WorkflowRunRecord, { id: string; workflowId: string }>(
+    (vars) => `/api/workflows/${vars.workflowId}/runs/${vars.id}/retry`,
+    {
+      onSuccess: (run) => {
+        showToast(`已创建重试尝试 ${run.id}`, 'success');
+        setSelectedRunId(run.id);
+        refetch();
+      },
+      onError: (err) => {
+        const message = err instanceof Error ? err.message : '重试请求失败，请检查权限或运行状态';
+        showToast(message.replace(/^E_[A-Z_]+:\s*/, ''), 'error');
+      },
+    },
+  );
+
+  useEffect(() => {
+    if (focusRunId) {
+      setSelectedRunId(focusRunId);
+      onFocusConsumed?.();
+      return;
+    }
+    if (!selectedRunId && runs[0]) setSelectedRunId(runs[0].id);
+  }, [focusRunId, onFocusConsumed, runs, selectedRunId]);
 
   const selectedRun = runs.find((r) => r.id === selectedRunId) ?? runs[0];
-  const totalSteps = selectedRun.steps;
-  const stepNames = ['事件触发', '上下文检索', 'Agent 决策', '人工审批', '条件分支', '受控执行', '补偿回滚', '审计留痕', '结果通知', '结束'];
-  const visibleRuns = runs.filter((run) => (statusFilter === 'all' || run.status === statusFilter) && (!query.trim() || `${run.id} ${run.trigger} ${run.who}`.toLowerCase().includes(query.trim().toLowerCase())));
+  const replaySteps = selectedRun?.nodeSteps?.length
+    ? selectedRun.nodeSteps
+    : Array.from({ length: selectedRun?.steps ?? 0 }, (_, index) => ({
+        id: `synthetic-${index + 1}`,
+        label: `步骤 ${index + 1}`,
+        status: 'pending' as const,
+      }));
+  const hasRecordedEvidence = selectedRun?.evidenceMode === 'recorded' && Boolean(selectedRun.nodeSteps?.length);
+  const totalSteps = replaySteps.length;
+  const visibleRuns = runs.filter((run) => (
+    (statusFilter === 'all' || run.status === statusFilter)
+    && (!query.trim() || `${run.id} ${run.trigger} ${run.who} ${run.revisionId ?? ''} ${run.correlationId ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()))
+  ));
   const pageSize = 10;
   const pageCount = Math.max(1, Math.ceil(visibleRuns.length / pageSize));
   const currentPage = Math.min(page, pageCount);
@@ -2431,7 +3356,6 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
   const firstItem = visibleRuns.length === 0 ? 0 : (currentPage - 1) * pageSize + 1;
   const lastItem = Math.min(currentPage * pageSize, visibleRuns.length);
 
-  // 自动播放
   useEffect(() => {
     if (!playing) return;
     const timer = setInterval(() => {
@@ -2443,7 +3367,6 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
     return () => clearInterval(timer);
   }, [playing, totalSteps]);
 
-  // 切换 run 时重置
   useEffect(() => {
     setStep(0);
     setPlaying(false);
@@ -2453,105 +3376,77 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
     setPage(1);
   }, [query, statusFilter]);
 
-  return (
-    <div className="h-full overflow-hidden bg-[var(--bg-elevated)]">
-      {/* 左侧：历史列表 */}
-      <div className="overflow-y-auto p-6">
-        <div className="mb-4">
-          <h2 className="text-base font-semibold flex items-center gap-2">
-            <Clock className="h-4 w-4 text-[var(--text-muted)]" />执行历史
-          </h2>
-          <p className="text-xs text-[var(--text-muted)] mt-0.5">{runs.length} 次运行记录 · 点击查看执行证据与单步回放</p>
-        </div>
-        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="relative min-w-[220px] flex-1"><Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索运行 ID、触发源或执行人" className="h-8 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] pl-8 pr-3 text-xs leading-5 outline-none focus:border-[var(--brand)]" /></div><div className="flex rounded-lg bg-[var(--bg-elevated)] p-1" role="group" aria-label="运行状态">{([['all', '全部'], ['success', '成功'], ['failed', '失败'], ['running', '运行中']] as const).map(([key, label]) => <button key={key} type="button" onClick={() => setStatusFilter(key)} className={cn('rounded-md px-2.5 py-1 text-xs font-medium leading-5 transition-colors', statusFilter === key ? 'bg-[var(--surface-1)] text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>{label}</button>)}</div><span className="text-xs leading-5 text-[var(--text-muted)]">{visibleRuns.length} 条结果</span></div>
-        {visibleRuns.length > 0 ? (
-          <>
-            <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-              {pagedRuns.map((r, rowIndex) => {
-                const reachedStages = r.status === 'success' ? 5 : Math.max(1, Math.min(4, Math.ceil((r.steps / stepNames.length) * 5)));
-                return (
-                  <article
-                    key={r.id}
-                    onClick={() => { setSelectedRunId(r.id); setMobileReplayOpen(true); }}
-                    className={cn(
-                      'group cursor-pointer px-4 py-4 transition-colors',
-                      rowIndex > 0 && 'border-t border-[var(--border)]',
-                      selectedRunId === r.id ? 'bg-[var(--brand-light)]/55' : 'hover:bg-[var(--bg-elevated)]',
-                    )}
-                  >
-                    <div className="grid items-center gap-4 xl:grid-cols-[minmax(260px,1.4fr)_minmax(170px,0.8fr)_minmax(150px,0.65fr)_auto]">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', r.status === 'success' ? 'bg-[var(--success)]' : r.status === 'failed' ? 'bg-[var(--danger)]' : 'animate-pulse bg-[var(--info)]')} />
-                        <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-semibold text-[var(--text)]">{r.trigger}</span><Badge tone={r.status === 'success' ? 'success' : r.status === 'failed' ? 'error' : 'info'} className="text-[9px]">{r.status === 'success' ? '已完成' : r.status === 'failed' ? '执行失败' : '运行中'}</Badge></div><div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-[var(--text-muted)]"><span className="font-mono">{r.id}</span><span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" /><span>{r.time}</span><span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" /><span>{r.who}</span></div></div>
-                      </div>
-                      <div className="hidden xl:block"><div className="mb-1.5 flex items-center justify-between text-[9px] font-medium text-[var(--text-muted)]"><span>执行阶段</span><span>{r.steps} 步</span></div><div className="flex gap-1" aria-label={`执行阶段：${reachedStages} / 5`}>
-                        {Array.from({ length: 5 }).map((_, index) => { const failedStage = r.status === 'failed' && index === reachedStages - 1; const completed = r.status === 'success' || index < reachedStages - (r.status === 'failed' ? 1 : 0); return <span key={index} className={cn('h-1.5 flex-1 rounded-full', failedStage ? 'bg-[var(--danger)]' : completed ? 'bg-[var(--success)]' : 'bg-[var(--border)]')} />; })}
-                      </div></div>
-                      <div className="flex items-center gap-5 text-[10px] text-[var(--text-muted)]"><div><div>耗时</div><div className="mt-0.5 font-mono text-xs font-semibold text-[var(--text)]">{r.status === 'running' ? '处理中' : `${r.duration}s`}</div></div><div><div>步骤</div><div className="mt-0.5 font-mono text-xs font-semibold text-[var(--text)]">{r.steps}</div></div></div>
-                      <div className="flex shrink-0 items-center gap-1.5"><Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); setSelectedRunId(r.id); setMobileReplayOpen(true); }}><Eye className="h-3 w-3" />查看</Button>{r.status === 'failed' && <Button size="sm" variant="secondary" className="rounded-lg" onClick={(e) => { e.stopPropagation(); retryRunApi.mutate({ id: r.id }); }} loading={retryRunApi.isPending}><RotateCcw className="h-3 w-3" />重跑</Button>}</div>
-                    </div>
-                    {r.error && <div className="ml-5 mt-3 flex items-start gap-2 rounded-lg bg-[var(--danger-bg)] px-3 py-2 text-[11px] text-[var(--danger)] xl:ml-0"><AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span><span className="font-semibold">异常：</span>{r.error}</span></div>}
-                  </article>
-                );
-              })}
-            </div>
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-[11px] text-[var(--text-muted)]"><span>显示第 {firstItem}–{lastItem} 条，共 {visibleRuns.length} 条运行记录</span><nav className="flex items-center gap-1" aria-label="执行历史分页"><button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="上一页"><ChevronLeft className="h-3.5 w-3.5" /></button>{Array.from({ length: pageCount }, (_, index) => index + 1).map((item) => <button key={item} type="button" onClick={() => setPage(item)} aria-current={item === currentPage ? 'page' : undefined} className={cn('grid h-7 min-w-7 place-items-center rounded-md px-1.5 text-[11px] font-medium transition-colors', item === currentPage ? 'bg-[var(--brand)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}>{item}</button>)}<button type="button" disabled={currentPage === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="下一页"><ChevronRight className="h-3.5 w-3.5" /></button></nav></div>
-          </>
-        ) : <div className="grid min-h-48 place-items-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface-1)] text-sm text-[var(--text-muted)]">没有符合当前筛选条件的运行记录。</div>}
-      </div>
+  const openRun = (id: string, mobile = false) => {
+    setSelectedRunId(id);
+    if (mobile || (typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches)) {
+      setMobileReplayOpen(true);
+    }
+  };
 
-      {/* 右侧：单步回放控制台 */}
-      <div className="hidden">
+  const renderReplayBody = () => {
+    if (!selectedRun) {
+      return <div className="grid flex-1 place-items-center p-6 text-xs text-[var(--text-muted)]">请选择一条运行记录</div>;
+    }
+    return (
+      <>
         <div className="border-b border-[var(--border)] px-4 py-3">
-          <div className="text-[10px] uppercase tracking-wider text-[var(--text-muted)] font-semibold mb-1">单步回放</div>
+          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">运行回放</div>
           <div className="text-sm font-semibold">{selectedRun.trigger}</div>
-          <div className="text-[11px] text-[var(--text-muted)] mt-0.5">
+          <div className="mt-0.5 text-[11px] text-[var(--text-muted)]">
             {selectedRun.time} · {selectedRun.who}
+            {selectedRun.revisionId ? ` · ${selectedRun.revisionId}` : ''}
+            {selectedRun.attempt && selectedRun.attempt > 1 ? ` · 第 ${selectedRun.attempt} 次尝试` : ''}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Badge tone={selectedRun.status === 'success' ? 'success' : selectedRun.status === 'failed' ? 'error' : 'info'}>
+              {selectedRun.status === 'success' ? '已完成' : selectedRun.status === 'failed' ? '执行失败' : '运行中'}
+            </Badge>
+            {selectedRun.environment && <Badge tone="neutral">{selectedRun.environment}</Badge>}
+            <Badge tone={hasRecordedEvidence ? 'success' : 'warn'}>
+              {hasRecordedEvidence ? '节点快照证据' : '仅有汇总（无逐步证据）'}
+            </Badge>
           </div>
         </div>
 
-        {/* 进度条 + 步骤高亮 */}
-        <div className="px-4 py-3 border-b border-[var(--border)]">
-          <div className="flex gap-0.5 h-3 rounded overflow-hidden bg-[var(--bg-hover)] mb-2">
-            {Array.from({ length: totalSteps }).map((_, i) => {
+        {!hasRecordedEvidence && (
+          <div className="border-b border-[var(--warning)]/30 bg-[var(--warning-bg)] px-4 py-2 text-[11px] leading-5 text-[var(--warning)]">
+            该记录未保存节点快照。下方回放仅按步骤数占位，不能作为审计逐步证据。
+          </div>
+        )}
+
+        <div className="border-b border-[var(--border)] px-4 py-3">
+          <div className="mb-2 flex h-3 overflow-hidden rounded bg-[var(--bg-hover)]">
+            {replaySteps.map((item, i) => {
               const isCompleted = i < step;
               const isCurrent = i === step;
-              const isFailed = selectedRun.status === 'failed' && i === selectedRun.steps - 1;
+              const isFailed = item.status === 'failed' || (selectedRun.status === 'failed' && i === Math.min(totalSteps - 1, (selectedRun.nodeSteps?.findIndex((s) => s.status === 'failed') ?? totalSteps - 1)));
               return (
                 <div
-                  key={i}
+                  key={item.id}
                   className={cn(
                     'flex-1 transition-all',
-                    isFailed ? 'bg-[var(--danger)]' :
-                    isCurrent ? 'bg-[var(--brand)] animate-pulse' :
-                    isCompleted ? 'bg-[var(--success)]' : 'bg-[var(--bg-hover)]',
+                    isFailed && i <= step ? 'bg-[var(--danger)]' : isCurrent ? 'bg-[var(--brand)] animate-pulse' : isCompleted ? 'bg-[var(--success)]' : 'bg-[var(--bg-hover)]',
                   )}
                 />
               );
             })}
           </div>
-          <div className="flex justify-between text-[9px] text-[var(--text-muted)] font-mono">
-            <span>触发</span>
-            <span>决策</span>
-            <span>执行</span>
-            <span>审计</span>
-            <span>通知</span>
+          <div className="text-center text-[11px]">
+            当前步骤: <span className="font-mono font-semibold text-[var(--brand)]">{Math.min(step, totalSteps)} / {totalSteps}</span>
           </div>
-          <div className="mt-2 text-center text-[11px]">
-            当前步骤: <span className="font-mono font-semibold text-[var(--brand)]">{step} / {totalSteps}</span>
-          </div>
+          {selectedRun.correlationId && (
+            <div className="mt-2 truncate font-mono text-[10px] text-[var(--text-muted)]">correlation: {selectedRun.correlationId}</div>
+          )}
         </div>
 
-        {/* 步骤详情 */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2">
-          {Array.from({ length: totalSteps }).map((_, i) => {
+        <div className="flex-1 space-y-2 overflow-y-auto p-4">
+          {replaySteps.map((item, i) => {
             const isDone = i < step;
             const isCurrent = i === step;
-            const stepName = stepNames[i] ?? `步骤 ${i + 1}`;
-            const isFailedStep = selectedRun.status === 'failed' && i === selectedRun.steps - 1;
+            const isFailedStep = item.status === 'failed' || (selectedRun.status === 'failed' && !hasRecordedEvidence && i === totalSteps - 1);
             return (
               <div
-                key={i}
+                key={item.id}
                 className={cn(
                   'rounded-md border p-2 transition-all',
                   isCurrent && 'border-[var(--brand)] bg-[var(--brand-light)] ring-2 ring-[var(--brand)]/20',
@@ -2560,131 +3455,187 @@ function HistoryView({ showToast }: { showToast: (msg: string, tone?: 'success' 
                   !isDone && !isCurrent && 'border-[var(--border)] opacity-50',
                 )}
               >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
                     <span className={cn(
-                      'grid h-5 w-5 place-items-center rounded-full text-[9px] font-bold',
+                      'grid h-5 w-5 shrink-0 place-items-center rounded-full text-[9px] font-bold',
                       isDone && !isFailedStep && 'bg-[var(--success)] text-white',
                       isFailedStep && 'bg-[var(--danger)] text-white',
                       isCurrent && 'bg-[var(--brand)] text-white',
                       !isDone && !isCurrent && 'bg-[var(--bg-hover)] text-[var(--text-muted)]',
                     )}>
-                      {isDone ? <CheckCircle2 className="h-3 w-3" /> : i + 1}
+                      {isDone && !isFailedStep ? <CheckCircle2 className="h-3 w-3" /> : i + 1}
                     </span>
-                    <span className="text-[11px] font-semibold">{stepName}</span>
+                    <span className="truncate text-[11px] font-semibold">{item.label}</span>
                   </div>
+                  {item.kind && <span className="shrink-0 font-mono text-[9px] text-[var(--text-muted)]">{item.kind}</span>}
                   {isFailedStep && <Badge tone="error" className="text-[9px]">失败</Badge>}
                 </div>
-                {isCurrent && (
-                  <div className="mt-1.5 text-[10px] text-[var(--text-muted)] pl-7">
-                    {i === 3 ? '正在等待第 2 人签发…' : '执行中'}
-                  </div>
-                )}
               </div>
             );
           })}
+          {selectedRun.error && (
+            <div className="rounded-lg border border-[var(--danger)]/30 bg-[var(--danger-bg)] px-3 py-2 text-[11px] text-[var(--danger)]">
+              <span className="font-semibold">异常：</span>{selectedRun.error}
+            </div>
+          )}
         </div>
 
-        {/* 控制按钮 */}
         <div className="border-t border-[var(--border)] p-3">
           <div className="grid grid-cols-5 gap-1">
-            <button
-              onClick={() => { setStep(0); setPlaying(false); }}
-              className="grid h-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)]"
-              title="回到开始"
-            >
-              <SkipBack className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => setStep((s) => Math.max(0, s - 1))}
-              disabled={step === 0}
-              className="grid h-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)] disabled:opacity-30 disabled:cursor-not-allowed"
-              title="上一步"
-            >
-              <StepBack className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => setPlaying(!playing)}
-              disabled={step >= totalSteps}
-              className="grid h-9 place-items-center rounded-md bg-[var(--brand)] text-white hover:bg-[var(--brand-hover)] disabled:opacity-30 disabled:cursor-not-allowed"
-              title={playing ? '暂停' : '播放'}
-            >
-              {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-            </button>
-            <button
-              onClick={() => setStep((s) => Math.min(totalSteps, s + 1))}
-              disabled={step >= totalSteps}
-              className="grid h-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)] disabled:opacity-30 disabled:cursor-not-allowed"
-              title="下一步"
-            >
-              <StepForward className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => { setStep(totalSteps); setPlaying(false); }}
-              className="grid h-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)]"
-              title="跳到结束"
-            >
-              <SkipForward className="h-3.5 w-3.5" />
-            </button>
+            <button type="button" aria-label="回到开始" onClick={() => { setStep(0); setPlaying(false); }} className="grid h-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)]"><SkipBack className="h-3.5 w-3.5" /></button>
+            <button type="button" aria-label="上一步" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0} className="grid h-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)] disabled:cursor-not-allowed disabled:opacity-30"><StepBack className="h-3.5 w-3.5" /></button>
+            <button type="button" aria-label={playing ? '暂停' : '播放'} onClick={() => setPlaying(!playing)} disabled={step >= totalSteps || totalSteps === 0} className="grid h-9 place-items-center rounded-md bg-[var(--brand)] text-white hover:bg-[var(--brand-hover)] disabled:cursor-not-allowed disabled:opacity-30">{playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}</button>
+            <button type="button" aria-label="下一步" onClick={() => setStep((s) => Math.min(totalSteps, s + 1))} disabled={step >= totalSteps} className="grid h-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)] disabled:cursor-not-allowed disabled:opacity-30"><StepForward className="h-3.5 w-3.5" /></button>
+            <button type="button" aria-label="跳到结束" onClick={() => { setStep(totalSteps); setPlaying(false); }} className="grid h-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)]"><SkipForward className="h-3.5 w-3.5" /></button>
           </div>
-          <div className="mt-2 text-center text-[10px] text-[var(--text-muted)] font-mono">
-            ← → 单步播放 / 自动播放 800ms/步
-          </div>
+          <div className="mt-2 text-center font-mono text-[10px] text-[var(--text-muted)]">单步 / 自动播放 800ms · {hasRecordedEvidence ? '基于节点快照' : '占位回放'}</div>
         </div>
+      </>
+    );
+  };
+
+  return (
+    <div className="flex h-full overflow-hidden bg-[var(--bg-elevated)]">
+      <div className="min-w-0 flex-1 overflow-y-auto p-6">
+        <div className="mb-4">
+          <h2 className="flex items-center gap-2 text-base font-semibold">
+            <Clock className="h-4 w-4 text-[var(--text-muted)]" />运行记录
+          </h2>
+          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
+            {isLoading ? '加载中…' : `${runs.length} 次运行`} · 仅「节点快照证据」可用于逐步回放核对
+          </p>
+        </div>
+        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3">
+          <div className="relative min-w-[220px] flex-1">
+            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索运行 ID、触发源、执行人或 correlation" className="h-8 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] pl-8 pr-3 text-xs leading-5 outline-none focus:border-[var(--brand)]" />
+          </div>
+          <div className="flex rounded-lg bg-[var(--bg-elevated)] p-1" role="group" aria-label="运行状态">
+            {([['all', '全部'], ['success', '成功'], ['failed', '失败'], ['running', '运行中']] as const).map(([key, label]) => (
+              <button key={key} type="button" onClick={() => setStatusFilter(key)} className={cn('rounded-md px-2.5 py-1 text-xs font-medium leading-5 transition-colors', statusFilter === key ? 'bg-[var(--surface-1)] text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>{label}</button>
+            ))}
+          </div>
+          <span className="text-xs leading-5 text-[var(--text-muted)]">{visibleRuns.length} 条结果</span>
+        </div>
+
+        {visibleRuns.length > 0 ? (
+          <>
+            <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
+              {pagedRuns.map((r, rowIndex) => {
+                const recorded = r.evidenceMode === 'recorded' && Boolean(r.nodeSteps?.length);
+                const reachedStages = r.status === 'success' ? 5 : Math.max(1, Math.min(4, Math.ceil((r.steps / Math.max(r.steps, 5)) * 5)));
+                return (
+                  <div
+                    key={r.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => openRun(r.id)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        openRun(r.id);
+                      }
+                    }}
+                    className={cn(
+                      'group cursor-pointer px-4 py-4 text-left transition-colors',
+                      rowIndex > 0 && 'border-t border-[var(--border)]',
+                      selectedRunId === r.id ? 'bg-[var(--brand-light)]/55' : 'hover:bg-[var(--bg-elevated)]',
+                    )}
+                  >
+                    <div className="grid items-center gap-4 xl:grid-cols-[minmax(260px,1.4fr)_minmax(170px,0.8fr)_minmax(150px,0.65fr)_auto]">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', r.status === 'success' ? 'bg-[var(--success)]' : r.status === 'failed' ? 'bg-[var(--danger)]' : 'animate-pulse bg-[var(--info)]')} />
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="truncate text-sm font-semibold text-[var(--text)]">{r.trigger}</span>
+                            <Badge tone={r.status === 'success' ? 'success' : r.status === 'failed' ? 'error' : 'info'} className="text-[9px]">{r.status === 'success' ? '已完成' : r.status === 'failed' ? '执行失败' : '运行中'}</Badge>
+                            <Badge tone={recorded ? 'success' : 'warn'} className="text-[9px]">{recorded ? '有快照' : '仅汇总'}</Badge>
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-[var(--text-muted)]">
+                            <span className="font-mono">{r.id}</span>
+                            {r.revisionId && <><span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" /><span className="font-mono">{r.revisionId}</span></>}
+                            <span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" /><span>{r.time}</span>
+                            <span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" /><span>{r.who}</span>
+                            {r.environment && <><span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" /><span>{r.environment}</span></>}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="hidden xl:block">
+                        <div className="mb-1.5 flex items-center justify-between text-[9px] font-medium text-[var(--text-muted)]"><span>执行阶段</span><span>{r.steps} 步</span></div>
+                        <div className="flex gap-1" aria-label={`执行阶段：${reachedStages} / 5`}>
+                          {Array.from({ length: 5 }).map((_, index) => {
+                            const failedStage = r.status === 'failed' && index === reachedStages - 1;
+                            const completed = r.status === 'success' || index < reachedStages - (r.status === 'failed' ? 1 : 0);
+                            return <span key={index} className={cn('h-1.5 flex-1 rounded-full', failedStage ? 'bg-[var(--danger)]' : completed ? 'bg-[var(--success)]' : 'bg-[var(--border)]')} />;
+                          })}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-5 text-[10px] text-[var(--text-muted)]">
+                        <div><div>耗时</div><div className="mt-0.5 font-mono text-xs font-semibold text-[var(--text)]">{r.status === 'running' ? '处理中' : `${r.duration}s`}</div></div>
+                        <div><div>步骤</div><div className="mt-0.5 font-mono text-xs font-semibold text-[var(--text)]">{r.steps}</div></div>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); openRun(r.id, true); }}><Eye className="h-3 w-3" />查看</Button>
+                        {r.status === 'failed' && (
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="rounded-lg"
+                            disabled={!canExecute}
+                            title={canExecute ? undefined : '缺少 workflow.execute 权限'}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              retryRunApi.mutate({ id: r.id, workflowId: r.workflowId ?? workflowId });
+                            }}
+                            loading={retryRunApi.isPending}
+                          >
+                            <RotateCcw className="h-3 w-3" />重跑
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    {r.error && (
+                      <div className="ml-5 mt-3 flex items-start gap-2 rounded-lg bg-[var(--danger-bg)] px-3 py-2 text-[11px] text-[var(--danger)] xl:ml-0">
+                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span><span className="font-semibold">异常：</span>{r.error}</span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-[11px] text-[var(--text-muted)]">
+              <span>显示第 {firstItem}–{lastItem} 条，共 {visibleRuns.length} 条运行记录</span>
+              <nav className="flex items-center gap-1" aria-label="运行记录分页">
+                <button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="上一页"><ChevronLeft className="h-3.5 w-3.5" /></button>
+                {Array.from({ length: pageCount }, (_, index) => index + 1).map((item) => (
+                  <button key={item} type="button" onClick={() => setPage(item)} aria-current={item === currentPage ? 'page' : undefined} className={cn('grid h-7 min-w-7 place-items-center rounded-md px-1.5 text-[11px] font-medium transition-colors', item === currentPage ? 'bg-[var(--brand)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}>{item}</button>
+                ))}
+                <button type="button" disabled={currentPage === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="下一页"><ChevronRight className="h-3.5 w-3.5" /></button>
+              </nav>
+            </div>
+          </>
+        ) : (
+          <div className="grid min-h-48 place-items-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface-1)] text-sm text-[var(--text-muted)]">
+            {isLoading ? '正在加载运行记录…' : '没有符合当前筛选条件的运行记录。'}
+          </div>
+        )}
+      </div>
+
+      <div className="hidden w-[380px] shrink-0 flex-col border-l border-[var(--border)] bg-[var(--surface-1)] lg:flex">
+        {renderReplayBody()}
       </div>
 
       <Drawer
         open={mobileReplayOpen}
         onClose={() => setMobileReplayOpen(false)}
-        title="单步回放"
-        description={`${selectedRun.trigger} · ${selectedRun.time} · ${selectedRun.who}`}
+        title="运行回放"
+        description={selectedRun ? `${selectedRun.trigger} · ${selectedRun.time} · ${selectedRun.who}` : '未选择运行'}
         width={520}
       >
-        <div className="space-y-3 p-4">
-          <div className="grid grid-cols-2 gap-2 text-xs"><div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3"><div className="text-[10px] text-[var(--text-muted)]">运行结果</div><div className="mt-1"><Badge tone={selectedRun.status === 'success' ? 'success' : selectedRun.status === 'failed' ? 'error' : 'info'}>{selectedRun.status === 'success' ? '成功' : selectedRun.status === 'failed' ? '失败' : '运行中'}</Badge></div></div><div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3"><div className="text-[10px] text-[var(--text-muted)]">执行证据</div><div className="mt-1 font-mono text-[11px] text-[var(--text-secondary)]">run:{selectedRun.id}</div></div></div>
-          {selectedRun.error && <div className="rounded-lg border border-[var(--danger)]/30 bg-[var(--danger-bg)] p-3 text-xs text-[var(--danger)]"><div className="flex items-center gap-1.5 font-semibold"><AlertTriangle className="h-3.5 w-3.5" />失败原因</div><div className="mt-1">{selectedRun.error}</div></div>}
-          <div className="flex gap-0.5 h-3 rounded overflow-hidden bg-[var(--bg-hover)]">
-            {Array.from({ length: totalSteps }).map((_, i) => (
-              <div
-                key={i}
-                className={cn(
-                  'flex-1 transition-all',
-                  selectedRun.status === 'failed' && i === selectedRun.steps - 1
-                    ? 'bg-[var(--danger)]'
-                    : i === step
-                      ? 'bg-[var(--brand)] animate-pulse'
-                      : i < step
-                        ? 'bg-[var(--success)]'
-                        : 'bg-[var(--bg-hover)]',
-                )}
-              />
-            ))}
-          </div>
-          <div className="text-center text-xs">
-            当前步骤: <span className="font-mono font-semibold text-[var(--brand)]">{step} / {totalSteps}</span>
-          </div>
-          <div className="space-y-2">
-            {stepNames.slice(0, totalSteps).map((name, i) => (
-              <div
-                key={name}
-                className={cn(
-                  'rounded-md border p-2 text-xs',
-                  i === step && 'border-[var(--brand)] bg-[var(--brand-light)]',
-                  i < step && 'border-[var(--success)]/30 bg-[var(--success-bg)]',
-                  i > step && 'border-[var(--border)] opacity-50',
-                )}
-              >
-                <span className="mr-2 font-mono text-[var(--text-muted)]">{i + 1}.</span>{name}
-              </div>
-            ))}
-          </div>
-          <div className="grid grid-cols-5 gap-1 border-t border-[var(--border)] pt-3">
-            <button onClick={() => { setStep(0); setPlaying(false); }} className="grid h-9 place-items-center rounded-md border border-[var(--border)]" title="回到开始"><SkipBack className="h-3.5 w-3.5" /></button>
-            <button onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0} className="grid h-9 place-items-center rounded-md border border-[var(--border)] disabled:opacity-30" title="上一步"><StepBack className="h-3.5 w-3.5" /></button>
-            <button onClick={() => setPlaying(!playing)} disabled={step >= totalSteps} className="grid h-9 place-items-center rounded-md bg-[var(--brand)] text-white disabled:opacity-30" title={playing ? '暂停' : '播放'}>{playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}</button>
-            <button onClick={() => setStep((s) => Math.min(totalSteps, s + 1))} disabled={step >= totalSteps} className="grid h-9 place-items-center rounded-md border border-[var(--border)] disabled:opacity-30" title="下一步"><StepForward className="h-3.5 w-3.5" /></button>
-            <button onClick={() => { setStep(totalSteps); setPlaying(false); }} className="grid h-9 place-items-center rounded-md border border-[var(--border)]" title="跳到结束"><SkipForward className="h-3.5 w-3.5" /></button>
-          </div>
+        <div className="flex min-h-[60vh] flex-col">
+          {renderReplayBody()}
         </div>
       </Drawer>
     </div>

@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import type { Skill, SkillAuditEvent, SkillImpactReport, SkillInstallPreflight, SkillPermission, SkillGovernancePolicy, SkillLifecycleStatus, SkillIntegration, SkillRuntimeHealth, SkillGovernanceIncident, SkillGovernanceEvent, WorkflowSkill } from '@de/web-types';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Modal, Drawer, ConfirmDialog, EmptyState, Sparkline } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
 import { useT } from '@/i18n';
@@ -86,10 +86,31 @@ const DEP_GRAPH = [
 
 type ModalKind = 'importSkill' | 'configureMcp' | 'configureTool' | 'uninstall' | 'upgrade' | null;
 
+type SkillCenterTab = 'workspace' | 'store' | 'atomic' | 'workflowSkills' | 'integration' | 'governance';
+
 export default function Skills() {
   const { t } = useT();
   const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
-  const [tab, setTab] = useState<'workspace' | 'store' | 'atomic' | 'workflowSkills' | 'integration' | 'governance'>('workspace');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const initialTab = (searchParams.get('tab') as SkillCenterTab | null);
+  const [tab, setTab] = useState<SkillCenterTab>(
+    initialTab && ['workspace', 'store', 'atomic', 'workflowSkills', 'integration', 'governance'].includes(initialTab)
+      ? initialTab
+      : 'workspace',
+  );
+  useEffect(() => {
+    const next = searchParams.get('tab') as SkillCenterTab | null;
+    if (next && ['workspace', 'store', 'atomic', 'workflowSkills', 'integration', 'governance'].includes(next) && next !== tab) {
+      setTab(next);
+    }
+  }, [searchParams, tab]);
+  const selectTab = (next: SkillCenterTab) => {
+    setTab(next);
+    const params = new URLSearchParams(searchParams);
+    if (next === 'workspace') params.delete('tab');
+    else params.set('tab', next);
+    setSearchParams(params, { replace: true });
+  };
   const [typeFilters, setTypeFilters] = useState<Record<'workspace' | 'store' | 'integration' | 'governance', 'all' | Skill['kind']>>({ workspace: 'all', store: 'all', integration: 'all', governance: 'all' });
   const [lifecycleFilter, setLifecycleFilter] = useState<'all' | SkillLifecycleStatus>('all');
   const [viewMode, setViewMode] = useState<'list' | 'cards'>('list');
@@ -122,7 +143,20 @@ export default function Skills() {
   const { data: apiCatalog = [] } = useApiQuery<Skill[]>(['skills', 'catalog'], '/api/skills/catalog');
   const { data: availableAgents = [] } = useApiQuery<Array<{ id: string; name: string; status: string }>>(['agents', 'skill-binding'], '/api/agents');
   const { data: availableWorkflows = [] } = useApiQuery<Array<{ id: string; name: string; version: string }>>(['workflows', 'skill-binding'], '/api/workflows');
-  const { data: workflowSkills = [] } = useApiQuery<WorkflowSkill[]>(['workflow-skills'], '/api/workflow-skills');
+  const { data: workflowSkills = [], refetch: refetchWorkflowSkills } = useApiQuery<WorkflowSkill[]>(['workflow-skills'], '/api/workflow-skills');
+  const promoteWorkflowSkillApi = useApiMutation<WorkflowSkill, { id: string }>(
+    (vars) => `/api/workflow-skills/${vars.id}/publish`,
+    {
+      onSuccess: (skill) => {
+        refetchWorkflowSkills();
+        setOperationNotice(`已治理发布流程技能「${skill.name}」`);
+      },
+      onError: (err) => {
+        const message = err instanceof Error ? err.message : '治理发布失败';
+        setOperationNotice(message.replace(/^E_[A-Z_]+:\s*/, ''));
+      },
+    },
+  );
 
   // 列表以 API 数据为准；页面仅保留性能展示的补充字段，避免业务事实分叉。
   useEffect(() => {
@@ -357,7 +391,7 @@ export default function Skills() {
           <div className="mb-3 text-xs text-[var(--text-muted)]">{tabSummary}</div>
           <Tabs
             value={tab}
-            onChange={(k) => setTab(k as any)}
+            onChange={(k) => selectTab(k as SkillCenterTab)}
             items={[
               { key: 'workspace', label: <>{t('module.skills.tabs.installed')} <Badge tone="brand" className="ml-1">{installed.length}</Badge></> },
               { key: 'store', label: <>{t('module.skills.tabs.catalog')} <Badge tone="neutral" className="ml-1">{(apiCatalog.length || STORE_LIST.length)}</Badge></> },
@@ -372,7 +406,7 @@ export default function Skills() {
           {tab === 'workflowSkills' ? (
             <section className="space-y-3">
               <div className="rounded-xl border border-[var(--brand)]/25 bg-[var(--brand-light)]/35 px-4 py-3 text-xs leading-5 text-[var(--text-secondary)]">
-                流程技能来自「工作流程 → 发布技能」。此处只读展示已发布产物；装配请进入数字员工「能力装配」。
+                流程技能来自「工作流程 → 发布技能」。仅<strong className="font-medium text-[var(--text)]">已发布</strong>项可装配；「调用需审批」指执行时双重审批。高风险草稿需管理员治理发布。
                 <div className="mt-2 flex gap-2">
                   <Link to="/workflows" className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--brand)]">前往工作流程</Link>
                   <Link to="/agents" className="rounded-md border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1 text-[11px] font-medium text-[var(--brand)]">数字员工装配</Link>
@@ -383,8 +417,23 @@ export default function Skills() {
                 <div className="divide-y divide-[var(--border)]">
                   {workflowSkills.length ? workflowSkills.map((skill) => (
                     <div key={skill.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                      <div className="min-w-0"><div className="flex items-center gap-2"><GitBranch className="h-3.5 w-3.5 text-[var(--brand)]" /><span className="text-sm font-medium">{skill.name}</span></div><p className="mt-1 text-[11px] text-[var(--text-muted)]">{skill.description}</p><p className="mt-1 font-mono text-[10px] text-[var(--text-muted)]">{skill.sourceWorkflowId} @ {skill.sourceVersionId}</p></div>
-                      <div className="flex items-center gap-2"><Badge tone={skill.status === 'published' ? 'success' : 'neutral'}>{skill.status === 'published' ? '已发布' : skill.status}</Badge>{skill.approvalRequired && <Badge tone="warn">需审批</Badge>}{skill.rollbackSupported && <Badge tone="info">可回滚</Badge>}</div>
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2"><GitBranch className="h-3.5 w-3.5 text-[var(--brand)]" /><span className="text-sm font-medium">{skill.name}</span></div>
+                        <p className="mt-1 text-[11px] text-[var(--text-muted)]">{skill.description}</p>
+                        <p className="mt-1 font-mono text-[10px] text-[var(--text-muted)]">{skill.sourceWorkflowId} @ {skill.sourceVersionId}</p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge tone={skill.status === 'published' ? 'success' : skill.status === 'draft' ? 'warn' : 'neutral'}>
+                          {skill.status === 'published' ? '已发布' : skill.status === 'draft' ? '待治理发布' : skill.status}
+                        </Badge>
+                        {skill.approvalRequired && <Badge tone="warn">调用需审批</Badge>}
+                        {skill.rollbackSupported && <Badge tone="info">可回滚</Badge>}
+                        {isAdmin && skill.status === 'draft' && (
+                          <Button size="sm" variant="secondary" loading={promoteWorkflowSkillApi.isPending} onClick={() => promoteWorkflowSkillApi.mutate({ id: skill.id })}>
+                            治理发布
+                          </Button>
+                        )}
+                      </div>
                     </div>
                   )) : <EmptyState icon={GitBranch} title="暂无流程技能" description="在工作流程完成编排校验后，通过「发布技能」写入此处。" />}
                 </div>

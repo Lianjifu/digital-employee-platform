@@ -823,11 +823,23 @@ function applyDigitalEmployeeConfiguration(employee: DigitalEmployee, input: Dig
 }
 
 function digitalEmployeeEvidence(employee: DigitalEmployee) {
-  return [
+  const events = [
     { id: `${employee.id}-e1`, time: employee.updatedAt, actor: employee.owner, action: '更新员工配置', target: `${employee.role} · ${employee.name} · v${employee.version}`, result: 'success' },
     { id: `${employee.id}-e2`, time: employee.evaluation.lastRunAt ?? employee.updatedAt, actor: '评测服务', action: '执行质量评测', target: `评分 ${employee.evaluation.score ?? '待执行'}`, result: employee.evaluation.status === 'failed' ? 'failed' : 'success' },
     { id: `${employee.id}-e3`, time: employee.release.releasedAt ?? employee.updatedAt, actor: employee.release.approver ?? employee.owner, action: employee.release.status === 'released' ? '批准上岗' : '更新上岗状态', target: employee.environment, result: employee.release.status === 'released' ? 'success' : 'pending' },
   ];
+  if (employee.opsControl?.at) {
+    const actionLabel = employee.opsControl.lastAction === 'paused' ? '暂停运行' : employee.opsControl.lastAction === 'quarantined' ? '隔离运行' : '恢复运行';
+    events.unshift({
+      id: `${employee.id}-ops`,
+      time: employee.opsControl.at,
+      actor: employee.opsControl.actor ?? employee.owner,
+      action: actionLabel,
+      target: employee.opsControl.reason ? `${employee.role} · ${employee.name} · ${employee.opsControl.reason}` : `${employee.role} · ${employee.name}`,
+      result: 'success',
+    });
+  }
+  return events;
 }
 
 // ============ P6 工作流扩展数据 ============
@@ -843,20 +855,99 @@ export interface WorkflowTemplate {
 }
 
 export const mockWorkflowTemplates: WorkflowTemplate[] = [
-  { id: 'tpl1', name: 'cache-oom 故障自愈', description: 'Redis 缓存 OOM 自动扩容 + 切换 LRU 策略', category: 'system', nodes: 8, installs: 124, rating: 4.8 },
-  { id: 'tpl2', name: 'CVE 自动修复', description: 'CVE 扫描 → 资产匹配 → 工单创建', category: 'security', nodes: 6, installs: 88, rating: 4.6 },
-  { id: 'tpl3', name: '合规审计报告', description: '等保 3 94 项自动核查 + 报告生成', category: 'business', nodes: 7, installs: 56, rating: 4.7 },
-  { id: 'tpl4', name: '变更灰度发布', description: '蓝绿发布 + 自动回滚', category: 'business', nodes: 5, installs: 142, rating: 4.9 },
-  { id: 'tpl5', name: '告警降噪', description: 'SIEM 重复告警合并 + 静默', category: 'ai', nodes: 4, installs: 78, rating: 4.5 },
-  { id: 'tpl6', name: '容量预测', description: '历史趋势分析 + 提前扩容建议', category: 'ai', nodes: 6, installs: 42, rating: 4.4 },
+  { id: 'tpl1', name: 'cache-oom 受控恢复', description: 'Redis 缓存 OOM 受控恢复 + 切换 LRU 策略；写操作需双重审批与补偿回滚', category: 'system', nodes: 10, installs: 124, rating: 4.8 },
+  { id: 'tpl2', name: 'CVE 自动修复', description: 'CVE 扫描 → 资产匹配 → 人工复核 → 工单与受控修复', category: 'security', nodes: 10, installs: 88, rating: 4.6 },
+  { id: 'tpl3', name: '合规审计报告', description: '等保核查项自动汇总 + 报告生成与分发', category: 'business', nodes: 7, installs: 56, rating: 4.7 },
+  { id: 'tpl4', name: '变更灰度发布', description: '蓝绿/金丝雀发布 + 指标门禁与异常自动补偿', category: 'system', nodes: 9, installs: 142, rating: 4.9 },
+  { id: 'tpl5', name: '告警降噪', description: 'SIEM 重复告警合并 + 静默策略与人工接管', category: 'security', nodes: 4, installs: 78, rating: 4.5 },
+  { id: 'tpl6', name: '容量预测', description: '历史趋势研判、扩容建议、人工确认与结果通知', category: 'ai', nodes: 7, installs: 42, rating: 4.4 },
 ];
 
-export const mockWorkflowRuns = [
-  { id: 'r1', time: '14:28', trigger: 'cache-oom', status: 'success', duration: 38, steps: 6, who: '王昊' },
-  { id: 'r2', time: '13:42', trigger: 'cache-oom', status: 'success', duration: 36, steps: 6, who: '李婷' },
-  { id: 'r3', time: '11:18', trigger: 'cache-oom', status: 'failed', duration: 52, steps: 4, who: '王昊', error: '双签审批超时' },
-  { id: 'r4', time: '09:54', trigger: 'change-deploy', status: 'success', duration: 124, steps: 8, who: '孙博' },
-  { id: 'r5', time: '08:30', trigger: 'cve-scan', status: 'success', duration: 78, steps: 6, who: '张睿' },
+export type WorkflowRunRecord = {
+  id: string;
+  workflowId: string;
+  workspaceId?: string;
+  time: string;
+  trigger: string;
+  status: 'success' | 'failed' | 'running';
+  duration: number;
+  steps: number;
+  who: string;
+  error?: string;
+  revisionId?: string;
+  correlationId?: string;
+  environment?: 'sandbox' | 'staging' | 'production';
+  /** recorded=节点快照来自该次运行；synthetic=仅有汇总、无逐步证据 */
+  evidenceMode: 'recorded' | 'synthetic';
+  nodeSteps?: Array<{ id: string; kind?: string; label: string; status?: 'pending' | 'success' | 'failed' | 'skipped' }>;
+  attempt?: number;
+  parentRunId?: string;
+};
+
+function buildRunNodeSteps(nodes: any[] | undefined, opts?: { failedAt?: number; status?: WorkflowRunRecord['status'] }): WorkflowRunRecord['nodeSteps'] {
+  const list = (nodes ?? []).map((node: any, index: number) => ({
+    id: String(node.id ?? `n${index + 1}`),
+    kind: node.kind ?? node.data?.kind,
+    label: String(node.label ?? node.data?.label ?? `步骤 ${index + 1}`),
+    status: 'pending' as const,
+  }));
+  if (!list.length) return list;
+  const status = opts?.status ?? 'success';
+  const failedAt = opts?.failedAt;
+  return list.map((step, index) => {
+    if (status === 'running') {
+      return { ...step, status: index === 0 ? 'success' : 'pending' };
+    }
+    if (status === 'failed') {
+      const cut = failedAt ?? Math.max(0, list.length - 1);
+      if (index < cut) return { ...step, status: 'success' };
+      if (index === cut) return { ...step, status: 'failed' };
+      return { ...step, status: 'skipped' };
+    }
+    return { ...step, status: 'success' };
+  });
+}
+
+export const mockWorkflowRuns: WorkflowRunRecord[] = [
+  {
+    id: 'r1', workflowId: 'wf1', time: '14:28', trigger: 'Redis OOM 告警', status: 'success', duration: 38, steps: 10, who: '王昊',
+    revisionId: 'v4', correlationId: 'corr_run_r1', environment: 'sandbox', evidenceMode: 'recorded',
+    nodeSteps: buildRunNodeSteps([
+      { id: 'n1', kind: 'trigger', label: 'Webhook 触发' }, { id: 'n2', kind: 'retrieve', label: '知识检索' },
+      { id: 'n3', kind: 'decision', label: '数字员工研判' }, { id: 'n4', kind: 'approval', label: '双重审批' },
+      { id: 'n5', kind: 'branch', label: '分支：成功路径' }, { id: 'n6', kind: 'branch', label: '分支：回滚路径' },
+      { id: 'n7', kind: 'execute', label: '执行受控恢复' }, { id: 'n8', kind: 'execute', label: '回滚 + 告警' },
+      { id: 'n9', kind: 'audit', label: '审计留痕' }, { id: 'n10', kind: 'notify', label: '飞书 / 企微通知' },
+    ], { status: 'success' }),
+  },
+  {
+    id: 'r2', workflowId: 'wf1', time: '13:42', trigger: 'Redis OOM 告警', status: 'success', duration: 36, steps: 10, who: '李婷',
+    revisionId: 'v4', correlationId: 'corr_run_r2', environment: 'sandbox', evidenceMode: 'recorded',
+    nodeSteps: buildRunNodeSteps([
+      { id: 'n1', kind: 'trigger', label: 'Webhook 触发' }, { id: 'n2', kind: 'retrieve', label: '知识检索' },
+      { id: 'n3', kind: 'decision', label: '数字员工研判' }, { id: 'n4', kind: 'approval', label: '双重审批' },
+      { id: 'n5', kind: 'branch', label: '分支：成功路径' }, { id: 'n6', kind: 'branch', label: '分支：回滚路径' },
+      { id: 'n7', kind: 'execute', label: '执行受控恢复' }, { id: 'n8', kind: 'execute', label: '回滚 + 告警' },
+      { id: 'n9', kind: 'audit', label: '审计留痕' }, { id: 'n10', kind: 'notify', label: '飞书 / 企微通知' },
+    ], { status: 'success' }),
+  },
+  {
+    id: 'r3', workflowId: 'wf1', time: '11:18', trigger: 'Redis OOM 告警', status: 'failed', duration: 52, steps: 4, who: '王昊',
+    error: '双重审批超时（300s）', revisionId: 'v3', correlationId: 'corr_run_r3', environment: 'sandbox', evidenceMode: 'recorded',
+    nodeSteps: buildRunNodeSteps([
+      { id: 'n1', kind: 'trigger', label: 'Webhook 触发' }, { id: 'n2', kind: 'retrieve', label: '知识检索' },
+      { id: 'n3', kind: 'decision', label: '数字员工研判' }, { id: 'n4', kind: 'approval', label: '双重审批' },
+      { id: 'n5', kind: 'branch', label: '条件分支' }, { id: 'n6', kind: 'execute', label: '执行受控恢复' },
+    ], { status: 'failed', failedAt: 3 }),
+  },
+  {
+    id: 'r4', workflowId: 'wf1', time: '09:54', trigger: 'K8s 灰度发布', status: 'success', duration: 124, steps: 8, who: '孙博',
+    revisionId: 'v2', correlationId: 'corr_run_r4', environment: 'staging', evidenceMode: 'synthetic',
+  },
+  {
+    id: 'r5', workflowId: 'wf1', time: '08:30', trigger: 'CVE 扫描处置', status: 'success', duration: 78, steps: 6, who: '张睿',
+    revisionId: 'v2', correlationId: 'corr_run_r5', environment: 'staging', evidenceMode: 'synthetic',
+  },
 ];
 
 export const mockWorkflowKpi = {
@@ -869,29 +960,34 @@ export const mockWorkflowKpi = {
 
 export const mockWorkflow: Workflow = {
   id: 'wf1',
-  name: 'cache-oom 故障自愈',
+  name: 'cache-oom 受控恢复',
   status: 'active',
   triggerCount: 124,
   successRate: 1.0,
   avgDurationSec: 38,
   nodes: [
-    { id: 'n1', kind: 'trigger', label: '触发器', status: 'success', durationMs: 12 },
-    { id: 'n2', kind: 'retrieve', label: '知识检索', status: 'success', durationMs: 320 },
-    { id: 'n3', kind: 'decision', label: 'Agent 决策', status: 'success', durationMs: 880 },
-    { id: 'n4', kind: 'approval', label: '双签审批', status: 'success', durationMs: 4500 },
-    { id: 'n5', kind: 'branch', label: '条件分支', status: 'success', durationMs: 4 },
-    { id: 'n6', kind: 'execute', label: '执行恢复', status: 'success', durationMs: 21000 },
-    { id: 'n7', kind: 'audit', label: '审计日志', status: 'success', durationMs: 60 },
-    { id: 'n8', kind: 'notify', label: '通知收尾', status: 'success', durationMs: 180 },
+    { id: 'n1', kind: 'trigger', label: 'Webhook 触发', position: { x: 60, y: 80 }, status: 'success', durationMs: 12 },
+    { id: 'n2', kind: 'retrieve', label: '知识检索', position: { x: 280, y: 80 }, status: 'success', durationMs: 320 },
+    { id: 'n3', kind: 'decision', label: '数字员工研判', position: { x: 500, y: 80 }, status: 'success', durationMs: 880 },
+    { id: 'n4', kind: 'approval', label: '双重审批', position: { x: 720, y: 80 }, status: 'success', durationMs: 4500 },
+    { id: 'n5', kind: 'branch', label: '分支：成功路径', position: { x: 940, y: 40 }, status: 'success', durationMs: 4 },
+    { id: 'n6', kind: 'branch', label: '分支：回滚路径', position: { x: 940, y: 160 }, status: 'success', durationMs: 4 },
+    { id: 'n7', kind: 'execute', label: '执行受控恢复', position: { x: 1180, y: 40 }, status: 'success', durationMs: 21000 },
+    { id: 'n8', kind: 'execute', label: '回滚 + 告警', position: { x: 1180, y: 160 }, status: 'success', durationMs: 18000 },
+    { id: 'n9', kind: 'audit', label: '审计留痕', position: { x: 1420, y: 100 }, status: 'success', durationMs: 60 },
+    { id: 'n10', kind: 'notify', label: '飞书 / 企微通知', position: { x: 1660, y: 100 }, status: 'success', durationMs: 180 },
   ],
   edges: [
-    { id: 'e1', source: 'n1', target: 'n2' },
-    { id: 'e2', source: 'n2', target: 'n3' },
-    { id: 'e3', source: 'n3', target: 'n4' },
-    { id: 'e4', source: 'n4', target: 'n5' },
-    { id: 'e5', source: 'n5', target: 'n6' },
-    { id: 'e6', source: 'n6', target: 'n7' },
-    { id: 'e7', source: 'n7', target: 'n8' },
+    { id: 'e1-2', source: 'n1', target: 'n2' },
+    { id: 'e2-3', source: 'n2', target: 'n3' },
+    { id: 'e3-4', source: 'n3', target: 'n4' },
+    { id: 'e4-5', source: 'n4', target: 'n5' },
+    { id: 'e4-6', source: 'n4', target: 'n6' },
+    { id: 'e5-7', source: 'n5', target: 'n7' },
+    { id: 'e6-8', source: 'n6', target: 'n8' },
+    { id: 'e7-9', source: 'n7', target: 'n9' },
+    { id: 'e8-9', source: 'n8', target: 'n9' },
+    { id: 'e9-10', source: 'n9', target: 'n10' },
   ],
 };
 
@@ -958,10 +1054,10 @@ function buildGeneratedWorkflow(prompt: string) {
   const nodes = [
     { id: 'g1', kind: isScheduled ? 'schedule' : 'event', label: isScheduled ? '定时巡检触发' : '告警事件触发', position: { x: 80, y: 120 }, description: isScheduled ? '按计划发起数字员工巡检' : '接收告警或业务事件' },
     { id: 'g2', kind: 'retrieve', label: '检索运行手册', position: { x: 300, y: 120 }, description: '查询知识库与历史处置证据' },
-    { id: 'g3', kind: 'decision', label: 'Agent 研判', position: { x: 520, y: 120 }, description: '结合上下文判断处置路径' },
+    { id: 'g3', kind: 'decision', label: '数字员工研判', position: { x: 520, y: 120 }, description: '结合上下文判断处置路径' },
     { id: 'g4', kind: 'policy', label: '风险策略校验', position: { x: 740, y: 120 }, description: '校验权限、风险等级与变更策略' },
-    ...(hasExternalWrite ? [{ id: 'g5', kind: 'approval', label: '人工审批', position: { x: 960, y: 120 }, description: '高风险动作需人工复核' }] : []),
-    { id: 'g6', kind: createsTask ? 'task' : hasExternalWrite ? 'execute' : 'notify', label: createsTask ? '创建处置工单' : hasExternalWrite ? '执行受控动作' : '通知负责人', position: { x: hasExternalWrite ? 1180 : 960, y: 120 }, description: createsTask ? '派发人工处置任务并回传结果' : hasExternalWrite ? '调用已授权的 Skill 或 MCP 工具' : '发送处置结论通知' },
+    ...(hasExternalWrite ? [{ id: 'g5', kind: 'approval', label: '双重审批', position: { x: 960, y: 120 }, description: '高风险动作需专家双重审批' }] : []),
+    { id: 'g6', kind: createsTask ? 'task' : hasExternalWrite ? 'execute' : 'notify', label: createsTask ? '创建处置工单' : hasExternalWrite ? '执行受控动作' : '通知负责人', position: { x: hasExternalWrite ? 1180 : 960, y: 120 }, description: createsTask ? '派发专家处置任务并回传结果' : hasExternalWrite ? '调用已授权的 Skill 或 MCP 工具' : '发送处置结论通知' },
     ...(hasExternalWrite ? [{ id: 'g7', kind: 'compensate', label: '补偿回滚', position: { x: 1400, y: 120 }, description: '执行失败时回滚可逆变更' }] : []),
     { id: 'g8', kind: 'audit', label: '审计留痕', position: { x: hasExternalWrite ? 1620 : 1180, y: 120 }, description: '写入处置证据、策略与版本信息' },
     { id: 'g9', kind: 'notify', label: '结果通知', position: { x: hasExternalWrite ? 1840 : 1400, y: 120 }, description: '通知负责人和关联任务' },
@@ -971,15 +1067,15 @@ function buildGeneratedWorkflow(prompt: string) {
 
 export const mockWorkflowGenerations: WorkflowGenerationRecord[] = [
   {
-    id: 'gen_demo_001', prompt: '当 Redis 触发 OOM 告警时自动处理并通知负责人', promptDigest: 'sha256:demo', status: 'review_required', model: '企业默认模型', workspaceId: 'prod-ops', tenantId: 'tenant-prod-ops', ownerId: 'current-user', policyVersion: 'workflow-policy-v3', expiresAt: '2026-07-25T09:20:00Z', createdAt: '2026-07-18T09:20:00Z',
+    id: 'gen_demo_001', prompt: '当生产 Redis 触发 OOM 告警时，由数字员工研判处置路径，经双重审批后执行受控恢复，写入审计并通知值班负责人', promptDigest: 'sha256:demo', status: 'review_required', model: '企业默认模型', workspaceId: 'prod-ops', tenantId: 'tenant-prod-ops', ownerId: 'current-user', policyVersion: 'workflow-policy-v3', expiresAt: '2026-07-25T09:20:00Z', createdAt: '2026-07-18T09:20:00Z',
     workflow: { nodes: [
       { id: 'g1', kind: 'trigger', label: 'Redis OOM 告警', position: { x: 80, y: 120 }, description: '接收告警事件' },
-      { id: 'g2', kind: 'retrieve', label: '检索故障 Runbook', position: { x: 300, y: 120 }, description: '查询处置规范' },
-      { id: 'g3', kind: 'decision', label: 'Agent 研判', position: { x: 520, y: 120 }, description: '判断是否需要扩容' },
-      { id: 'g4', kind: 'approval', label: '双签审批', position: { x: 740, y: 120 }, description: '生产写操作需审批' },
-      { id: 'g5', kind: 'execute', label: '执行 Redis 恢复', position: { x: 960, y: 120 }, description: '调用 kubectl / redis-cli' },
+      { id: 'g2', kind: 'retrieve', label: '检索处置 Runbook', position: { x: 300, y: 120 }, description: '查询处置规范' },
+      { id: 'g3', kind: 'decision', label: '数字员工研判', position: { x: 520, y: 120 }, description: '判断是否需要扩容' },
+      { id: 'g4', kind: 'approval', label: '双重审批', position: { x: 740, y: 120 }, description: '生产写操作需专家双重审批' },
+      { id: 'g5', kind: 'execute', label: '执行受控恢复', position: { x: 960, y: 120 }, description: '调用已授权的 kubectl / redis-cli' },
       { id: 'g6', kind: 'audit', label: '写入审计记录', position: { x: 1180, y: 120 }, description: '记录完整证据链' },
-      { id: 'g7', kind: 'notify', label: '通知负责人', position: { x: 1400, y: 120 }, description: '发送飞书通知' },
+      { id: 'g7', kind: 'notify', label: '通知值班负责人', position: { x: 1400, y: 120 }, description: '发送协同通知' },
     ], edges: [
       { id: 'ge1', source: 'g1', target: 'g2' }, { id: 'ge2', source: 'g2', target: 'g3' }, { id: 'ge3', source: 'g3', target: 'g4' },
       { id: 'ge4', source: 'g4', target: 'g5' }, { id: 'ge5', source: 'g5', target: 'g6' }, { id: 'ge6', source: 'g6', target: 'g7' },
@@ -987,12 +1083,315 @@ export const mockWorkflowGenerations: WorkflowGenerationRecord[] = [
     checks: { structure: 'passed', dependencies: 'review', risk: 'review' },
     dependencies: [
       { type: 'tool', name: 'redis-cli', status: 'available' }, { type: 'mcp', name: 'kubernetes-mcp', status: 'missing', reason: '当前工作区未授权 kubectl 写权限' },
-      { type: 'agent', name: '故障自愈', status: 'available' },
+      { type: 'agent', name: '受控恢复数字员工', status: 'available' },
     ],
-    risks: [{ level: 'L2', node: '执行 Redis 恢复', text: '将对生产 Redis 执行写操作，需双签审批与回滚策略', requiresApproval: true }],
-    warnings: ['执行恢复节点需要 kubernetes-mcp 写权限', '请在保存前补充回滚分支'], qualityScore: 86, requiresReview: true,
+    risks: [{ level: 'L2', node: '执行受控恢复', text: '将对生产 Redis 执行写操作，需双重审批与回滚策略', requiresApproval: true }],
+    warnings: ['执行受控恢复节点需要 kubernetes-mcp 写权限', '请专家在保存前补充回滚分支'], qualityScore: 86, requiresReview: true,
   },
 ];
+
+export type OrchestrationDocSection = {
+  id: string;
+  heading: string;
+  level: number;
+  excerpt: string;
+};
+
+export type OrchestrationSessionDocument = {
+  id: string;
+  fileName: string;
+  title: string;
+  content: string;
+  contentHash: string;
+  charCount: number;
+  summary: string;
+  headings: string[];
+  sections: OrchestrationDocSection[];
+  source: 'upload' | 'knowledge';
+  knowledgeDocId?: string;
+  depositedKnowledgeDocId?: string;
+  createdAt: string;
+};
+
+export type OrchestrationSessionMessage = {
+  id: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  createdAt: string;
+  kind?: 'chat' | 'clarify' | 'generate' | 'patch' | 'retrieve' | 'template';
+  status?: 'streaming' | 'completed';
+  streamChunks?: string[];
+  modelInvocation?: {
+    provider: string;
+    model: string;
+    mode: 'orchestration';
+    latencyMs: number;
+    promptDigest: string;
+    toolsUsed?: Array<{ name: string; input: string; output: string }>;
+  };
+};
+
+export type OrchestrationWorkflowNode = {
+  id: string;
+  kind: string;
+  label: string;
+  position: { x: number; y: number };
+  description?: string;
+  sourceRef?: { documentId: string; heading: string; excerpt?: string };
+};
+
+export type OrchestrationCandidate = {
+  id: string;
+  version: number;
+  label: string;
+  createdAt: string;
+  sourceMessageId?: string;
+  workflow: { nodes: OrchestrationWorkflowNode[]; edges: Array<{ id: string; source: string; target: string }> };
+  checks: WorkflowGenerationRecord['checks'];
+  dependencies: WorkflowGenerationRecord['dependencies'];
+  risks: WorkflowGenerationRecord['risks'];
+  warnings: string[];
+  qualityScore: number;
+  requiresReview: boolean;
+  changeSummary: string[];
+};
+
+export type OrchestrationTemplateCandidate = {
+  id: string;
+  sessionId: string;
+  candidateId: string;
+  name: string;
+  description: string;
+  status: 'pending_approval' | 'approved' | 'rejected';
+  requestedBy: string;
+  requestedAt: string;
+  workspaceId: string;
+  sequence: string[];
+};
+
+export type OrchestrationSession = {
+  id: string;
+  title: string;
+  status: 'drafting' | 'ready' | 'applied' | 'discarded' | 'expired';
+  workspaceId: string;
+  tenantId: string;
+  ownerId: string;
+  model: string;
+  policyVersion: string;
+  constraints: { riskLevel: 'L1' | 'L2' | 'L3'; requireApproval: boolean; requireAudit: boolean; requireRollback: boolean };
+  goal: string;
+  documents: OrchestrationSessionDocument[];
+  messages: OrchestrationSessionMessage[];
+  candidates: OrchestrationCandidate[];
+  activeCandidateId?: string;
+  appliedRevisionId?: string;
+  templateCandidate?: OrchestrationTemplateCandidate;
+  lastRetrieve?: { query: string; hits: Array<{ docId: string; title: string; excerpt: string; score: number }>; at: string };
+  clarificationSkipped: boolean;
+  expiresAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export const mockOrchestrationSessions: OrchestrationSession[] = [];
+export const mockOrchestrationTemplateCandidates: OrchestrationTemplateCandidate[] = [];
+
+function parseMarkdownDocument(fileName: string, content: string, source: 'upload' | 'knowledge' = 'upload', knowledgeDocId?: string): Omit<OrchestrationSessionDocument, 'id' | 'createdAt'> {
+  const safe = content.slice(0, 80_000);
+  const headingMatches = Array.from(safe.matchAll(/^(#{1,3})\s+(.+)$/gm));
+  const headings = headingMatches.map((match) => match[2].trim()).slice(0, 12);
+  const sections: OrchestrationDocSection[] = headingMatches.slice(0, 12).map((match, index) => {
+    const start = match.index ?? 0;
+    const next = headingMatches[index + 1]?.index ?? Math.min(safe.length, start + 420);
+    const body = safe.slice(start, next).replace(/^#.+$/m, '').replace(/\s+/g, ' ').trim().slice(0, 180);
+    return {
+      id: `sec_${index + 1}`,
+      heading: match[2].trim(),
+      level: match[1].length,
+      excerpt: body || '（该章节暂无正文摘要）',
+    };
+  });
+  const title = headings[0] || fileName.replace(/\.md$/i, '') || '未命名文档';
+  const summary = safe
+    .replace(/^#.+$/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 220);
+  return {
+    fileName,
+    title,
+    content: safe,
+    contentHash: generationDigest(safe),
+    charCount: safe.length,
+    summary: summary || '文档已解析，可与业务目标一并提交模型编排。',
+    headings,
+    sections,
+    source,
+    knowledgeDocId,
+  };
+}
+
+function rebuildCandidateEdges(nodes: OrchestrationWorkflowNode[]) {
+  return nodes.slice(1).map((node, index) => ({ id: `ge${index + 1}`, source: nodes[index].id, target: node.id }));
+}
+
+function attachSourceRefs(nodes: OrchestrationWorkflowNode[], documents: OrchestrationSessionDocument[]) {
+  if (!documents.length) return nodes;
+  const sections = documents.flatMap((doc) => doc.sections.map((section) => ({ documentId: doc.id, ...section })));
+  return nodes.map((node, index) => {
+    const section = sections[index % Math.max(sections.length, 1)];
+    if (!section) return node;
+    return {
+      ...node,
+      sourceRef: { documentId: section.documentId, heading: section.heading, excerpt: section.excerpt },
+      description: node.description ? `${node.description}（依据 § ${section.heading}）` : `依据文档章节 § ${section.heading}`,
+    };
+  });
+}
+
+function buildOrchestrationCandidate(session: OrchestrationSession, sourceMessageId?: string): OrchestrationCandidate {
+  const docContext = session.documents.map((doc) => `${doc.title}\n${doc.summary}\n${doc.sections.map((section) => section.heading).join(' ')}`).join('\n');
+  const retrieveContext = session.lastRetrieve?.hits.map((hit) => hit.excerpt).join('\n') ?? '';
+  const prompt = [session.goal, docContext, retrieveContext, ...session.messages.filter((item) => item.role === 'user').map((item) => item.content)].filter(Boolean).join('\n');
+  const generated = buildGeneratedWorkflow(prompt || '告警触发后由数字员工研判并通知值班');
+  let nodes: OrchestrationWorkflowNode[] = generated.nodes.map((node) => ({ ...node }));
+  const hasExternalWrite = nodes.some((node) => ['execute', 'http', 'mcp'].includes(node.kind));
+  if (session.constraints.requireApproval && hasExternalWrite && !nodes.some((node) => node.kind === 'approval')) {
+    nodes.splice(Math.max(nodes.length - 3, 1), 0, { id: `g_appr_${nodes.length}`, kind: 'approval', label: '双重审批', position: { x: 900, y: 120 }, description: '高风险动作需专家双重审批' });
+  }
+  if (session.constraints.requireRollback && hasExternalWrite && !nodes.some((node) => node.kind === 'compensate')) {
+    const executeIndex = nodes.findIndex((node) => node.kind === 'execute');
+    nodes.splice(executeIndex >= 0 ? executeIndex + 1 : nodes.length - 1, 0, { id: `g_rb_${nodes.length}`, kind: 'compensate', label: '补偿回滚', position: { x: 1100, y: 120 }, description: '执行失败时回滚可逆变更' });
+  }
+  nodes = attachSourceRefs(nodes, session.documents);
+  const edges = rebuildCandidateEdges(nodes);
+  const dependencies = hasExternalWrite
+    ? [{ type: 'tool' as const, name: '受控执行 Skill', status: 'available' as const }, { type: 'mcp' as const, name: 'kubernetes-mcp', status: 'missing' as const, reason: '当前工作区未授权写权限' }, { type: 'agent' as const, name: '受控恢复数字员工', status: 'available' as const }]
+    : [{ type: 'agent' as const, name: '数字员工编排器', status: 'available' as const }];
+  const previous = session.candidates[0];
+  const version = (previous?.version ?? 0) + 1;
+  const changeSummary = previous
+    ? [
+        `相对 ${previous.label}：节点 ${previous.workflow.nodes.length} → ${nodes.length}`,
+        session.constraints.requireApproval ? '已按约束保留双重审批门禁' : '用户关闭双重审批偏好（写操作仍可能被结构门禁拦截）',
+        session.documents.length ? `已引用 ${session.documents.length} 份文档依据（含章节引用）` : '未附带文档，仅依据对话目标',
+        session.lastRetrieve ? `已使用 Runbook 检索 ${session.lastRetrieve.hits.length} 条` : '未调用 Runbook 检索工具',
+      ]
+    : [
+        '已由企业模型路由生成首版草稿示例',
+        session.clarificationSkipped ? '用户选择跳过澄清，直接出示例' : '可在对话中继续补充修正',
+        '节点已挂载 Markdown 章节引用（如有）',
+        '应用后进入隔离草稿，不会自动执行或发布',
+      ];
+  return {
+    id: mockId('cand'),
+    version,
+    label: `示例 v${version}`,
+    createdAt: new Date().toISOString(),
+    sourceMessageId,
+    workflow: { nodes, edges },
+    checks: { structure: 'passed', dependencies: dependencies.some((item) => item.status === 'missing') ? 'review' : 'passed', risk: hasExternalWrite ? 'review' : 'passed' },
+    dependencies,
+    risks: hasExternalWrite ? [{ level: session.constraints.riskLevel === 'L3' ? 'L3' : 'L2', node: '执行受控动作', text: '外部写入操作必须通过策略、双重审批、回滚和权限检查', requiresApproval: true }] : [],
+    warnings: [
+      '草稿示例需专家复核后才可应用为隔离草稿',
+      '审计留痕由工作区策略强制开启',
+      ...(hasExternalWrite ? ['执行节点需匹配工作区权限后才能试运行'] : []),
+    ],
+    qualityScore: hasExternalWrite ? 84 : 91,
+    requiresReview: true,
+    changeSummary,
+  };
+}
+
+function chunkAssistantText(text: string) {
+  const parts: string[] = [];
+  const size = Math.max(12, Math.ceil(text.length / 5));
+  for (let index = 0; index < text.length; index += size) parts.push(text.slice(index, index + size));
+  return parts.length ? parts : [text];
+}
+
+function invokeOrchestrationModel(session: OrchestrationSession, userContent: string, mode: 'chat' | 'clarify' | 'generate' | 'retrieve') {
+  const started = Date.now();
+  const promptDigest = generationDigest(`${session.model}:${userContent}:${session.documents.map((doc) => doc.contentHash).join(',')}:${session.lastRetrieve?.query ?? ''}`);
+  const latencyMs = 180 + (userContent.length % 120);
+  const toolsUsed: Array<{ name: string; input: string; output: string }> = [];
+  if (mode === 'retrieve' || (mode === 'generate' && /redis|oom|runbook|告警|证书/i.test(`${session.goal}${userContent}`))) {
+    toolsUsed.push({
+      name: 'knowledge.retrieve_runbook',
+      input: userContent || session.goal,
+      output: session.lastRetrieve?.hits.map((hit) => `${hit.title}: ${hit.excerpt}`).join(' | ') || '暂无检索命中，将仅依据会话目标生成',
+    });
+  }
+  const invocation = {
+    provider: 'enterprise-model-router',
+    model: session.model,
+    mode: 'orchestration' as const,
+    latencyMs,
+    promptDigest,
+    toolsUsed: toolsUsed.length ? toolsUsed : undefined,
+  };
+  if (mode === 'clarify') {
+    const gaps: string[] = [];
+    if (!/审批|双重/.test(`${session.goal}${userContent}`)) gaps.push('写操作是否需要双重审批？');
+    if (!/回滚|补偿/.test(`${session.goal}${userContent}`)) gaps.push('失败时如何回滚或补偿？');
+    if (!/通知|值班|负责人/.test(`${session.goal}${userContent}`)) gaps.push('结果通知给谁？');
+    const content = gaps.length
+      ? `我可以根据文档与目标直接出示例。若你愿意补充，可先回答：\n${gaps.map((item, index) => `${index + 1}. ${item}`).join('\n')}\n\n也可跳过澄清，点击「一键生成示例」。`
+      : '关键信息已较完整。可继续补充细节，或直接「一键生成示例」。';
+    return { content, invocation, streamChunks: chunkAssistantText(content), elapsed: Date.now() - started };
+  }
+  if (mode === 'retrieve') {
+    const content = session.lastRetrieve?.hits.length
+      ? `已通过模型路由调用 Runbook 检索，命中 ${session.lastRetrieve.hits.length} 条：\n${session.lastRetrieve.hits.map((hit, index) => `${index + 1}. ${hit.title}（${hit.score.toFixed(2)}）`).join('\n')}\n可继续一键生成示例。`
+      : '已调用 Runbook 检索，暂无高相关命中；仍可依据业务目标生成示例。';
+    return { content, invocation, streamChunks: chunkAssistantText(content), elapsed: Date.now() - started };
+  }
+  if (mode === 'generate') {
+    const content = `已通过「${session.model}」生成可编辑草稿示例${toolsUsed.length ? '（含 Runbook 检索工具）' : ''}。请在右侧核对节点、章节引用与风险；可切换历史示例、结构化微调，或创建隔离草稿。生成结果不会自动执行、发布或覆盖线上流程。`;
+    return { content, invocation, streamChunks: chunkAssistantText(content), elapsed: Date.now() - started };
+  }
+  const content = '已记录你的补充。可继续说明差异，或点击「一键生成示例 / 按对话更新示例」让模型基于最新上下文重算草稿。';
+  return { content, invocation, streamChunks: chunkAssistantText(content), elapsed: Date.now() - started };
+}
+
+function patchOrchestrationCandidate(candidate: OrchestrationCandidate, patch: { removeNodeId?: string; rename?: { nodeId: string; label: string }; move?: { nodeId: string; direction: 'up' | 'down' } }) {
+  const nodes = candidate.workflow.nodes.map((node) => ({ ...node }));
+  const summary: string[] = [];
+  if (patch.removeNodeId) {
+    const index = nodes.findIndex((node) => node.id === patch.removeNodeId);
+    if (index < 0) throw new Error('节点不存在');
+    if (['approval', 'audit'].includes(nodes[index].kind)) throw new Error('双重审批与审计节点不可直接删除，请通过约束或画布配置调整');
+    const [removed] = nodes.splice(index, 1);
+    summary.push(`已删除节点「${removed.label}」`);
+  }
+  if (patch.rename) {
+    const node = nodes.find((item) => item.id === patch.rename!.nodeId);
+    if (!node) throw new Error('节点不存在');
+    const nextLabel = patch.rename.label.trim().slice(0, 40);
+    if (!nextLabel) throw new Error('节点名称不能为空');
+    summary.push(`已将「${node.label}」重命名为「${nextLabel}」`);
+    node.label = nextLabel;
+  }
+  if (patch.move) {
+    const index = nodes.findIndex((node) => node.id === patch.move!.nodeId);
+    if (index < 0) throw new Error('节点不存在');
+    const target = patch.move.direction === 'up' ? index - 1 : index + 1;
+    if (target < 0 || target >= nodes.length) throw new Error('已到边界，无法继续调整顺序');
+    const [item] = nodes.splice(index, 1);
+    nodes.splice(target, 0, item);
+    summary.push(`已${patch.move.direction === 'up' ? '上移' : '下移'}节点「${item.label}」`);
+  }
+  if (!summary.length) throw new Error('未提供有效的结构化调整');
+  const version = candidate.version; // patch creates new candidate with bumped version outside
+  return {
+    nodes,
+    edges: rebuildCandidateEdges(nodes),
+    summary,
+    version,
+  };
+}
+
   // ============ P7 知识扩展数据 ============
 
 export const mockKbList = [
@@ -2491,9 +2890,11 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     if (action === 'lifecycle' && method === 'POST') {
       const target = body.lifecycle as DigitalEmployee['lifecycle'];
       if (!['draft', 'testing', 'active', 'paused', 'quarantined'].includes(target)) throw new Error('E_DIGITAL_EMPLOYEE_LIFECYCLE_INVALID');
+      const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
       if (target === 'active') {
         if (employee.release.status === 'released' && (employee.lifecycle === 'paused' || employee.lifecycle === 'quarantined')) {
-          // 已上岗后的恢复运行
+          if (!body.confirmed) throw new Error('E_DIGITAL_EMPLOYEE_RESUME_CONFIRM_REQUIRED: 恢复运行前请确认异常已处置并保留证据');
+          employee.opsControl = { lastAction: 'resumed', reason: reason || '确认异常已处置并保留证据', actor: identity.name, at: new Date().toISOString() };
         } else if (employee.release.status === 'pending_approval') {
           requireAdministrator('确认双重审批上岗');
           if (employee.release.requestedById && employee.release.requestedById === identity.id) {
@@ -2513,6 +2914,11 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       }
       if ((target === 'paused' || target === 'quarantined') && employee.lifecycle !== 'active' && employee.lifecycle !== 'paused') {
         throw new Error('E_DIGITAL_EMPLOYEE_LIFECYCLE_INVALID: 仅在岗或已暂停员工可进入暂停/隔离');
+      }
+      if (target === 'paused' || target === 'quarantined') {
+        requireAdministrator(target === 'paused' ? '暂停数字员工' : '隔离数字员工');
+        if (!reason) throw new Error('E_DIGITAL_EMPLOYEE_OPS_REASON_REQUIRED: 暂停/隔离须填写处置原因');
+        employee.opsControl = { lastAction: target, reason, actor: identity.name, at: new Date().toISOString() };
       }
       if (target === 'quarantined') requireAdministrator('隔离数字员工');
       employee.lifecycle = target;
@@ -2540,9 +2946,63 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/workflow-skills' && method === 'GET') return mockWorkflowSkills;
   const publishAsSkill = path.match(/^\/api\/workflows\/([^/]+)\/publish-as-skill$/);
   if (publishAsSkill && method === 'POST') {
-    const body = (opts.body ?? {}) as { version?: string; name?: string; description?: string };
-    const workflowSkill: WorkflowSkill = { id: mockId('workflow_skill'), sourceWorkflowId: publishAsSkill[1], sourceVersionId: body.version ?? 'v1', name: body.name?.trim() || '未命名工作流技能', description: body.description?.trim() || '由受控工作流发布的可复用能力', riskLevel: 'mid', approvalRequired: true, rollbackSupported: true, status: 'published' };
-    mockWorkflowSkills.unshift(workflowSkill); appendControlPlaneAudit('skill', '发布工作流技能', workflowSkill.name); return workflowSkill;
+    if (identity && !(identity.permissions.includes('workflow.write') || identity.permissions.includes('skill.write'))) {
+      throw new Error('E_WORKFLOW_WRITE_FORBIDDEN: 缺少发布流程技能权限');
+    }
+    const workflowId = publishAsSkill[1];
+    if (!workflowId?.trim()) throw new Error('E_WORKFLOW_REQUIRED: 必须指定来源工作流');
+    const body = (opts.body ?? {}) as {
+      version?: string;
+      name?: string;
+      description?: string;
+      riskLevel?: WorkflowSkill['riskLevel'];
+      validationPassed?: boolean;
+      draftBlocked?: boolean;
+    };
+    if (body.draftBlocked) throw new Error('E_TEMPLATE_DEPENDENCY: 来源模板依赖未授权，禁止发布技能');
+    if (!body.validationPassed) throw new Error('E_VALIDATION_REQUIRED: 请先完成运行前校验并通过后再发布技能');
+    const version = body.version?.trim();
+    if (!version) throw new Error('E_VERSION_REQUIRED: 必须指定来源流程版本');
+    const name = body.name?.trim();
+    if (!name) throw new Error('E_NAME_REQUIRED: 技能名称不能为空');
+    const riskLevel: WorkflowSkill['riskLevel'] = body.riskLevel === 'low' || body.riskLevel === 'high' ? body.riskLevel : 'mid';
+    // 中/高风险：调用时需审批；高风险且非管理员：先落草稿，待治理发布后再装配
+    const approvalRequired = riskLevel !== 'low';
+    const status: WorkflowSkill['status'] = riskLevel === 'high' && identity?.role === 'user' ? 'draft' : 'published';
+    const existing = mockWorkflowSkills.find((item) => item.sourceWorkflowId === workflowId && item.sourceVersionId === version);
+    if (existing) {
+      existing.name = name;
+      existing.description = body.description?.trim() || existing.description;
+      existing.riskLevel = riskLevel;
+      existing.approvalRequired = approvalRequired;
+      existing.rollbackSupported = true;
+      existing.status = status;
+      appendControlPlaneAudit('skill', '更新工作流技能', `${existing.name} · ${workflowId}@${version}`);
+      return existing;
+    }
+    const workflowSkill: WorkflowSkill = {
+      id: mockId('workflow_skill'),
+      sourceWorkflowId: workflowId,
+      sourceVersionId: version,
+      name,
+      description: body.description?.trim() || '由受控工作流发布的可复用能力',
+      riskLevel,
+      approvalRequired,
+      rollbackSupported: true,
+      status,
+    };
+    mockWorkflowSkills.unshift(workflowSkill);
+    appendControlPlaneAudit('skill', status === 'published' ? '发布工作流技能' : '提交工作流技能草稿', workflowSkill.name);
+    return workflowSkill;
+  }
+  const promoteWorkflowSkill = path.match(/^\/api\/workflow-skills\/([^/]+)\/publish$/);
+  if (promoteWorkflowSkill && method === 'POST') {
+    requireAdministrator('发布流程技能草稿');
+    const skill = mockWorkflowSkills.find((item) => item.id === promoteWorkflowSkill[1]);
+    if (!skill) throw new Error('E_WORKFLOW_SKILL_NOT_FOUND: 流程技能不存在');
+    skill.status = 'published';
+    appendControlPlaneAudit('skill', '治理发布工作流技能', skill.name);
+    return skill;
   }
   if (path === '/api/agents' && method === 'GET') return mockAgents.filter((agent) => inCurrentWorkspace(agent)).filter(canReadScopedResource);
   if (path === '/api/agents/imports' && method === 'GET') return mockAgentImports;
@@ -2672,21 +3132,450 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 工作流
   if (path === '/api/workflows') return [{ ...mockWorkflow, workspaceId: currentWorkspaceId, ownerId: 'u1', environment: 'production', lifecycleStatus: mockWorkflow.status, classification: 'internal', createdBy: 'u1', updatedAt: '2026-07-19T12:00:00.000Z' }];
-  if (path === '/api/workflow-templates') return mockWorkflowTemplates.map((template, index) => ({
-    ...template,
-    version: ['v2.4', 'v3.1', 'v2.2', 'v1.8', 'v1.6', 'v2.0'][index],
-    owner: ['SRE 平台组', '安全运营组', '合规运营组', '交付工程组', '安全运营组', '容量运营组'][index],
-    verifiedAt: ['2026-07-16', '2026-07-12', '2026-07-17', '2026-07-14', '2026-07-15', '2026-07-10'][index],
-    risk: ['L3', 'L3', 'L1', 'L3', 'L2', 'L2'][index],
-    dependencies: index === 0 ? ['redis-cli', 'kubernetes-mcp'] : index === 1 ? ['cve-kb', 'patch-skill'] : ['受控连接器'],
-    health: index === 0 ? '需授权' : '健康',
-    successRate: ['98.6%', '96.8%', '99.2%', '97.9%', '98.1%', '95.4%'][index],
-    sequence: index === 0 ? ['event', 'retrieve', 'decision', 'policy', 'approval', 'execute', 'compensate', 'audit', 'notify'] : index === 1 ? ['event', 'retrieve', 'decision', 'policy', 'approval', 'task', 'execute', 'compensate', 'audit', 'notify'] : ['schedule', 'retrieve', 'decision', 'policy', 'task', 'audit', 'notify'],
-  }));
+  if (path === '/api/workflow-templates') return mockWorkflowTemplates.map((template, index) => {
+    const catalog = [
+      {
+        version: 'v2.4', owner: 'SRE 平台组', verifiedAt: '2026-07-16', risk: 'L3', health: '需授权', successRate: '98.6%',
+        dependencies: ['redis-cli', 'kubernetes-mcp'],
+        dependencyStatus: [
+          { name: 'redis-cli', status: 'ready' },
+          { name: 'kubernetes-mcp', status: 'unauthorized', reason: 'kubernetes-mcp：当前工作区未授权生产写权限' },
+        ],
+        blockers: ['kubernetes-mcp：当前工作区未授权生产写权限'],
+        sequence: ['event', 'retrieve', 'decision', 'policy', 'approval', 'execute', 'compensate', 'audit', 'notify'],
+        variables: [{ key: 'cluster', label: '目标集群', required: true }, { key: 'approver_group', label: '双重审批组', required: true }],
+        permissions: [{ action: 'CONFIG SET', gate: '双重审批 + 生产写权限' }],
+        changelog: [{ version: 'v2.4', date: '2026-07-16', note: '补齐补偿分支与依赖授权检查' }],
+        recentRuns: [{ id: 'r-tpl1-01', time: '07-16 14:28', status: 'success', note: '验证集通过' }],
+      },
+      {
+        version: 'v3.1', owner: '安全运营组', verifiedAt: '2026-07-12', risk: 'L3', health: '健康', successRate: '96.8%',
+        dependencies: ['cve-kb', 'patch-skill'],
+        dependencyStatus: [{ name: 'cve-kb', status: 'ready' }, { name: 'patch-skill', status: 'ready' }],
+        blockers: [],
+        sequence: ['event', 'retrieve', 'decision', 'policy', 'approval', 'task', 'execute', 'compensate', 'audit', 'notify'],
+        variables: [{ key: 'cve_id', label: 'CVE 编号', required: true }],
+        permissions: [{ action: '执行补丁', gate: '双重审批' }],
+        changelog: [{ version: 'v3.1', date: '2026-07-12', note: '增加影响面评估节点' }],
+        recentRuns: [{ id: 'r-tpl2-01', time: '07-12 09:40', status: 'success', note: '验证集通过' }],
+      },
+      {
+        version: 'v2.2', owner: '合规运营组', verifiedAt: '2026-07-17', risk: 'L1', health: '健康', successRate: '99.2%',
+        dependencies: ['compliance-kb'],
+        dependencyStatus: [{ name: 'compliance-kb', status: 'ready' }],
+        blockers: [],
+        sequence: ['schedule', 'retrieve', 'decision', 'transform', 'audit', 'notify'],
+        variables: [{ key: 'report_period', label: '报告周期', required: true }],
+        permissions: [{ action: '导出报告', gate: '审计留痕' }],
+        changelog: [{ version: 'v2.2', date: '2026-07-17', note: '补充分发渠道校验' }],
+        recentRuns: [{ id: 'r-tpl3-01', time: '07-17 08:10', status: 'success', note: '验证集通过' }],
+      },
+      {
+        version: 'v1.8', owner: '交付工程组', verifiedAt: '2026-07-14', risk: 'L3', health: '健康', successRate: '97.9%',
+        dependencies: ['release-skill', 'prometheus-mcp'],
+        dependencyStatus: [{ name: 'release-skill', status: 'ready' }, { name: 'prometheus-mcp', status: 'ready' }],
+        blockers: [],
+        sequence: ['event', 'policy', 'approval', 'parallel', 'condition', 'execute', 'compensate', 'audit', 'notify'],
+        variables: [{ key: 'service', label: '发布服务', required: true }],
+        permissions: [{ action: '生产发布', gate: '双重审批' }],
+        changelog: [{ version: 'v1.8', date: '2026-07-14', note: '指标门禁阈值可配置' }],
+        recentRuns: [{ id: 'r-tpl4-01', time: '07-14 16:22', status: 'success', note: '验证集通过' }],
+      },
+      {
+        version: 'v1.6', owner: '安全运营组', verifiedAt: '2026-07-15', risk: 'L2', health: '健康', successRate: '98.1%',
+        dependencies: ['siem-connector'],
+        dependencyStatus: [{ name: 'siem-connector', status: 'ready' }],
+        blockers: [],
+        sequence: ['event', 'transform', 'decision', 'notify'],
+        variables: [{ key: 'silence_window', label: '静默窗口', required: false }],
+        permissions: [{ action: '写入静默规则', gate: '策略校验' }],
+        changelog: [{ version: 'v1.6', date: '2026-07-15', note: '合并规则支持标签匹配' }],
+        recentRuns: [{ id: 'r-tpl5-01', time: '07-15 10:05', status: 'success', note: '验证集通过' }],
+      },
+      {
+        version: 'v2.0', owner: '容量运营组', verifiedAt: '2026-07-10', risk: 'L2', health: '健康', successRate: '95.4%',
+        dependencies: ['capacity-forecast-skill'],
+        dependencyStatus: [{ name: 'capacity-forecast-skill', status: 'ready' }],
+        blockers: [],
+        sequence: ['schedule', 'retrieve', 'decision', 'policy', 'task', 'audit', 'notify'],
+        variables: [{ key: 'metric', label: '容量指标', required: true }],
+        permissions: [{ action: '创建扩容建议工单', gate: '人工确认' }],
+        changelog: [{ version: 'v2.0', date: '2026-07-10', note: '研判节点改用企业默认模型路由' }],
+        recentRuns: [{ id: 'r-tpl6-01', time: '07-10 18:30', status: 'success', note: '验证集通过' }],
+      },
+    ][index] ?? {
+      version: 'v1.0', owner: '平台组', verifiedAt: '2026-07-01', risk: 'L2', health: '健康', successRate: '95%',
+      dependencies: ['受控连接器'], dependencyStatus: [{ name: '受控连接器', status: 'ready' }], blockers: [],
+      sequence: ['schedule', 'retrieve', 'decision', 'policy', 'task', 'audit', 'notify'],
+      variables: [], permissions: [], changelog: [], recentRuns: [],
+    };
+    return { ...template, ...catalog };
+  });
   if (path === '/api/workflow-runs') return workflowControl.runs;
   if (path === '/api/workflow-kpi') return mockWorkflowKpi;
   if (path === '/api/workflows/generations' && method === 'GET') {
     return mockWorkflowGenerations.filter((item) => item.tenantId === 'tenant-acme' && item.workspaceId === currentWorkspaceId && item.ownerId === 'u1' && item.status !== 'expired');
+  }
+  if (path === '/api/workflows/orchestration-sessions' && method === 'GET') {
+    const ownerId = identity?.id ?? 'u1';
+    return mockOrchestrationSessions
+      .filter((item) => item.tenantId === (identity?.tenantId ?? 'tenant-acme') && item.workspaceId === currentWorkspaceId && item.ownerId === ownerId)
+      .map((item) => ({ ...item, documents: item.documents.map((doc) => ({ ...doc, content: undefined })) }));
+  }
+  if (path === '/api/workflows/orchestration-sessions' && method === 'POST') {
+    const body = (opts.body ?? {}) as Record<string, any>;
+    if (body.workspaceId && body.workspaceId !== currentWorkspaceId) throw new Error('E_WORKSPACE_SCOPE: 当前账号无权在该工作区创建编排会话');
+    if (!ALLOWED_GENERATION_MODELS.has(String(body.model ?? '企业默认模型'))) throw new Error('当前工作区不允许使用该生成模型');
+    const now = new Date().toISOString();
+    const ownerId = identity?.id ?? 'u1';
+    const session: OrchestrationSession = {
+      id: mockId('orch'),
+      title: String(body.title ?? '未命名编排会话').trim() || '未命名编排会话',
+      status: 'drafting',
+      workspaceId: currentWorkspaceId,
+      tenantId: identity?.tenantId ?? 'tenant-acme',
+      ownerId,
+      model: String(body.model ?? '企业默认模型'),
+      policyVersion: 'workflow-policy-v3',
+      constraints: {
+        riskLevel: body.constraints?.riskLevel ?? 'L2',
+        requireApproval: body.constraints?.requireApproval !== false,
+        requireAudit: true,
+        requireRollback: body.constraints?.requireRollback !== false,
+      },
+      goal: String(body.goal ?? '').trim(),
+      documents: [],
+      messages: [{
+        id: mockId('omsg'),
+        role: 'system',
+        content: '这是专家辅助编排会话：可上传 Markdown、补充描述，并随时一键生成草稿示例。澄清完全可选；结果不会自动执行、发布或覆盖线上流程。',
+        createdAt: now,
+        kind: 'chat',
+      }],
+      candidates: [],
+      clarificationSkipped: false,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+      createdAt: now,
+      updatedAt: now,
+    };
+    mockOrchestrationSessions.unshift(session);
+    workflowAudit(workflowControl, 'WORKFLOW_ORCH_SESSION_CREATE', session.id);
+    return session;
+  }
+  const orchestrationSessionPath = path.match(/^\/api\/workflows\/orchestration-sessions\/([^/]+)(?:\/(documents|messages|generate|apply|discard|candidates))?$/);
+  if (orchestrationSessionPath) {
+    const session = mockOrchestrationSessions.find((item) => item.id === orchestrationSessionPath[1]);
+    const ownerId = identity?.id ?? 'u1';
+    if (!session || session.tenantId !== (identity?.tenantId ?? 'tenant-acme') || session.workspaceId !== currentWorkspaceId || session.ownerId !== ownerId) {
+      throw new Error('E_WORKSPACE_SCOPE: 无权访问该编排会话');
+    }
+    const action = orchestrationSessionPath[2];
+    if (!action && method === 'GET') return session;
+    if (!action && method === 'PATCH') {
+      const body = (opts.body ?? {}) as Record<string, any>;
+      if (body.goal != null) session.goal = String(body.goal).trim().slice(0, 1000);
+      if (body.title != null) session.title = String(body.title).trim() || session.title;
+      if (body.model != null) {
+        if (!ALLOWED_GENERATION_MODELS.has(String(body.model))) throw new Error('当前工作区不允许使用该生成模型');
+        session.model = String(body.model);
+      }
+      if (body.constraints) {
+        session.constraints = {
+          riskLevel: body.constraints.riskLevel ?? session.constraints.riskLevel,
+          requireApproval: body.constraints.requireApproval ?? session.constraints.requireApproval,
+          requireAudit: true,
+          requireRollback: body.constraints.requireRollback ?? session.constraints.requireRollback,
+        };
+      }
+      session.updatedAt = new Date().toISOString();
+      return session;
+    }
+    if (action === 'documents' && method === 'POST') {
+      const body = (opts.body ?? {}) as { fileName?: string; content?: string; knowledgeDocId?: string };
+      if (session.documents.length >= 3) throw new Error('单个编排会话最多引用 3 份文档');
+      if (body.knowledgeDocId) {
+        const knowledgeDoc = mockKnowledgeDocs.find((item) => item.id === body.knowledgeDocId);
+        if (!knowledgeDoc || !inCurrentWorkspace(knowledgeDoc) || !canReadScopedResource(knowledgeDoc)) {
+          throw new Error('E_WORKSPACE_SCOPE: 无权引用该知识文档');
+        }
+        if (knowledgeDoc.status !== 'ready') throw new Error('仅可引用已就绪的知识文档');
+        const detail = knowledgeDocDetail(knowledgeDoc);
+        const parsed = parseMarkdownDocument(`${knowledgeDoc.title}.md`, String(detail.content ?? `# ${knowledgeDoc.title}`), 'knowledge', knowledgeDoc.id);
+        rejectUnsafeGenerationPrompt(parsed.content);
+        const document: OrchestrationSessionDocument = { id: mockId('odoc'), createdAt: new Date().toISOString(), ...parsed };
+        session.documents.push(document);
+        session.messages.push({
+          id: mockId('omsg'),
+          role: 'assistant',
+          content: `已引用知识中心「${document.title}」（${document.sections.length} 个章节）。可继续补充目标或一键生成示例。`,
+          createdAt: new Date().toISOString(),
+          kind: 'chat',
+          status: 'completed',
+        });
+        session.updatedAt = new Date().toISOString();
+        workflowAudit(workflowControl, 'WORKFLOW_ORCH_DOC_FROM_KB', `${session.id}:${document.id}:${knowledgeDoc.id}`);
+        return { session, document };
+      }
+      const fileName = String(body.fileName ?? 'runbook.md');
+      if (!/\.md$/i.test(fileName) && !/\.markdown$/i.test(fileName)) throw new Error('仅支持 Markdown（.md）文件');
+      const content = String(body.content ?? '');
+      if (!content.trim()) throw new Error('Markdown 内容不能为空');
+      if (content.length > 80_000) throw new Error('单个 Markdown 不超过 80000 字符');
+      rejectUnsafeGenerationPrompt(content);
+      const parsed = parseMarkdownDocument(fileName, content, 'upload');
+      const document: OrchestrationSessionDocument = { id: mockId('odoc'), createdAt: new Date().toISOString(), ...parsed };
+      session.documents.push(document);
+      session.messages.push({
+        id: mockId('omsg'),
+        role: 'assistant',
+        content: `已解析「${document.title}」（${document.charCount} 字 / ${document.sections.length} 章节）。摘要：${document.summary}${document.headings.length ? `\n章节：${document.headings.slice(0, 5).join(' / ')}` : ''}\n可继续补充目标，或直接一键生成示例；也可将该文档沉淀到知识中心。`,
+        createdAt: new Date().toISOString(),
+        kind: 'chat',
+        status: 'completed',
+      });
+      session.updatedAt = new Date().toISOString();
+      workflowAudit(workflowControl, 'WORKFLOW_ORCH_DOC_UPLOAD', `${session.id}:${document.id}`);
+      return { session, document };
+    }
+    if (action === 'messages' && method === 'POST') {
+      const body = (opts.body ?? {}) as { content?: string; mode?: 'chat' | 'clarify'; stream?: boolean };
+      const content = String(body.content ?? '').trim();
+      if (!content || content.length < 2) throw new Error('请输入有效补充说明');
+      rejectUnsafeGenerationPrompt(content);
+      const mode = body.mode === 'clarify' ? 'clarify' : 'chat';
+      const userMessage: OrchestrationSessionMessage = { id: mockId('omsg'), role: 'user', content, createdAt: new Date().toISOString(), kind: mode, status: 'completed' };
+      session.messages.push(userMessage);
+      if (!session.goal) session.goal = content.slice(0, 200);
+      const modelResult = invokeOrchestrationModel(session, content, mode);
+      const assistantMessage: OrchestrationSessionMessage = {
+        id: mockId('omsg'),
+        role: 'assistant',
+        content: modelResult.content,
+        createdAt: new Date().toISOString(),
+        kind: mode,
+        status: 'completed',
+        streamChunks: modelResult.streamChunks,
+        modelInvocation: modelResult.invocation,
+      };
+      session.messages.push(assistantMessage);
+      session.updatedAt = new Date().toISOString();
+      workflowAudit(workflowControl, 'WORKFLOW_ORCH_MESSAGE', `${session.id}:${mode}`);
+      return { session, stream: { messageId: assistantMessage.id, chunks: modelResult.streamChunks, finalContent: modelResult.content } };
+    }
+    if (action === 'generate' && method === 'POST') {
+      const body = (opts.body ?? {}) as { skipClarification?: boolean; note?: string; stream?: boolean };
+      if (!session.goal && !session.documents.length && session.messages.filter((item) => item.role === 'user').length === 0) {
+        throw new Error('请先填写业务目标或上传 Markdown');
+      }
+      if (body.skipClarification) session.clarificationSkipped = true;
+      const note = String(body.note ?? '').trim();
+      if (note) {
+        rejectUnsafeGenerationPrompt(note);
+        session.messages.push({ id: mockId('omsg'), role: 'user', content: note, createdAt: new Date().toISOString(), kind: 'generate', status: 'completed' });
+        if (!session.goal) session.goal = note.slice(0, 200);
+      }
+      const modelResult = invokeOrchestrationModel(session, note || session.goal || 'generate', 'generate');
+      const assistantMessage: OrchestrationSessionMessage = {
+        id: mockId('omsg'),
+        role: 'assistant',
+        content: modelResult.content,
+        createdAt: new Date().toISOString(),
+        kind: 'generate',
+        status: 'completed',
+        streamChunks: modelResult.streamChunks,
+        modelInvocation: modelResult.invocation,
+      };
+      session.messages.push(assistantMessage);
+      const candidate = buildOrchestrationCandidate(session, assistantMessage.id);
+      session.candidates.unshift(candidate);
+      session.activeCandidateId = candidate.id;
+      session.status = 'ready';
+      session.updatedAt = new Date().toISOString();
+      workflowAudit(workflowControl, 'WORKFLOW_ORCH_GENERATE', `${session.id}:${candidate.id}:${modelResult.invocation.promptDigest}`);
+      return { session, candidate, stream: { messageId: assistantMessage.id, chunks: modelResult.streamChunks, finalContent: modelResult.content } };
+    }
+    if (action === 'apply' && method === 'POST') {
+      const body = (opts.body ?? {}) as { candidateId?: string };
+      if (session.status === 'applied' || session.status === 'discarded' || session.status === 'expired') throw new Error('该编排会话不可再次应用');
+      if (new Date(session.expiresAt).getTime() < Date.now()) { session.status = 'expired'; throw new Error('编排会话已过期，请新建会话'); }
+      const candidate = session.candidates.find((item) => item.id === (body.candidateId ?? session.activeCandidateId));
+      if (!candidate) throw new Error('请先生成草稿示例');
+      const revisionId = `rev_${mockId('wf')}`;
+      workflowGenerationRevisions.set(revisionId, { id: revisionId, generationId: session.id, nodes: JSON.parse(JSON.stringify(candidate.workflow.nodes)), edges: JSON.parse(JSON.stringify(candidate.workflow.edges)), createdAt: new Date().toISOString() });
+      workflowControl.versions.unshift({ id: revisionId, label: `${revisionId} · AI 草稿`, time: '刚刚', desc: `AI 辅助编排会话 · ${session.id}` });
+      session.status = 'applied';
+      session.appliedRevisionId = revisionId;
+      session.updatedAt = new Date().toISOString();
+      workflowAudit(workflowControl, 'WORKFLOW_ORCH_APPLY', `${session.id}:${candidate.id}:${revisionId}`);
+      return { ...session, revisionId, candidate };
+    }
+    if (action === 'discard' && method === 'POST') {
+      session.status = 'discarded';
+      session.updatedAt = new Date().toISOString();
+      workflowAudit(workflowControl, 'WORKFLOW_ORCH_DISCARD', session.id);
+      return session;
+    }
+  }
+  const orchestrationCandidateAction = path.match(/^\/api\/workflows\/orchestration-sessions\/([^/]+)\/candidates\/([^/]+)\/(activate|patch)$/);
+  if (orchestrationCandidateAction && method === 'POST') {
+    const session = mockOrchestrationSessions.find((item) => item.id === orchestrationCandidateAction[1]);
+    const ownerId = identity?.id ?? 'u1';
+    if (!session || session.tenantId !== (identity?.tenantId ?? 'tenant-acme') || session.workspaceId !== currentWorkspaceId || session.ownerId !== ownerId) {
+      throw new Error('E_WORKSPACE_SCOPE: 无权访问该编排会话');
+    }
+    const candidate = session.candidates.find((item) => item.id === orchestrationCandidateAction[2]);
+    if (!candidate) throw new Error('草稿示例不存在');
+    if (orchestrationCandidateAction[3] === 'activate') {
+      session.activeCandidateId = candidate.id;
+      session.updatedAt = new Date().toISOString();
+      workflowAudit(workflowControl, 'WORKFLOW_ORCH_CANDIDATE_ACTIVATE', `${session.id}:${candidate.id}`);
+      return session;
+    }
+    const body = (opts.body ?? {}) as { removeNodeId?: string; rename?: { nodeId: string; label: string }; move?: { nodeId: string; direction: 'up' | 'down' } };
+    const patched = patchOrchestrationCandidate(candidate, body);
+    const nextVersion = (session.candidates[0]?.version ?? candidate.version) + 1;
+    const nextCandidate: OrchestrationCandidate = {
+      ...candidate,
+      id: mockId('cand'),
+      version: nextVersion,
+      label: `示例 v${nextVersion}`,
+      createdAt: new Date().toISOString(),
+      workflow: { nodes: patched.nodes, edges: patched.edges },
+      changeSummary: patched.summary,
+      qualityScore: Math.max(70, candidate.qualityScore - 1),
+    };
+    session.candidates.unshift(nextCandidate);
+    session.activeCandidateId = nextCandidate.id;
+    session.messages.push({
+      id: mockId('omsg'),
+      role: 'assistant',
+      content: `已对 ${candidate.label} 做结构化微调并生成 ${nextCandidate.label}：\n${patched.summary.map((item) => `• ${item}`).join('\n')}`,
+      createdAt: new Date().toISOString(),
+      kind: 'patch',
+      status: 'completed',
+    });
+    session.updatedAt = new Date().toISOString();
+    workflowAudit(workflowControl, 'WORKFLOW_ORCH_CANDIDATE_PATCH', `${session.id}:${candidate.id}:${nextCandidate.id}`);
+    return { session, candidate: nextCandidate };
+  }
+  const orchestrationRetrieve = path.match(/^\/api\/workflows\/orchestration-sessions\/([^/]+)\/retrieve-runbook$/);
+  if (orchestrationRetrieve && method === 'POST') {
+    const session = mockOrchestrationSessions.find((item) => item.id === orchestrationRetrieve[1]);
+    const ownerId = identity?.id ?? 'u1';
+    if (!session || session.tenantId !== (identity?.tenantId ?? 'tenant-acme') || session.workspaceId !== currentWorkspaceId || session.ownerId !== ownerId) {
+      throw new Error('E_WORKSPACE_SCOPE: 无权访问该编排会话');
+    }
+    const body = (opts.body ?? {}) as { query?: string };
+    const query = String(body.query ?? session.goal ?? '').trim() || 'Redis OOM';
+    const hits = mockKnowledgeChunks
+      .filter((chunk) => inCurrentWorkspace(chunk as any))
+      .filter((chunk) => chunk.text.includes(query.slice(0, 4)) || /redis|oom|告警|证书|灰度/i.test(query) || chunk.score >= 0.7)
+      .slice(0, 3)
+      .map((chunk) => ({
+        docId: chunk.docId,
+        title: chunk.source,
+        excerpt: chunk.text,
+        score: chunk.score,
+      }));
+    session.lastRetrieve = { query, hits, at: new Date().toISOString() };
+    const modelResult = invokeOrchestrationModel(session, query, 'retrieve');
+    const assistantMessage: OrchestrationSessionMessage = {
+      id: mockId('omsg'),
+      role: 'assistant',
+      content: modelResult.content,
+      createdAt: new Date().toISOString(),
+      kind: 'retrieve',
+      status: 'completed',
+      streamChunks: modelResult.streamChunks,
+      modelInvocation: modelResult.invocation,
+    };
+    session.messages.push(assistantMessage);
+    session.updatedAt = new Date().toISOString();
+    workflowAudit(workflowControl, 'WORKFLOW_ORCH_RETRIEVE', `${session.id}:${hits.length}`);
+    return { session, hits, stream: { messageId: assistantMessage.id, chunks: modelResult.streamChunks, finalContent: modelResult.content } };
+  }
+  const orchestrationProposeTemplate = path.match(/^\/api\/workflows\/orchestration-sessions\/([^/]+)\/propose-template$/);
+  if (orchestrationProposeTemplate && method === 'POST') {
+    const session = mockOrchestrationSessions.find((item) => item.id === orchestrationProposeTemplate[1]);
+    const ownerId = identity?.id ?? 'u1';
+    if (!session || session.tenantId !== (identity?.tenantId ?? 'tenant-acme') || session.workspaceId !== currentWorkspaceId || session.ownerId !== ownerId) {
+      throw new Error('E_WORKSPACE_SCOPE: 无权访问该编排会话');
+    }
+    const candidate = session.candidates.find((item) => item.id === session.activeCandidateId) ?? session.candidates[0];
+    if (!candidate) throw new Error('请先生成草稿示例再沉淀模版候选');
+    if (session.templateCandidate?.status === 'pending_approval') throw new Error('已有待审批的模版候选，请等待治理完成');
+    const body = (opts.body ?? {}) as { name?: string; description?: string };
+    const templateCandidate: OrchestrationTemplateCandidate = {
+      id: mockId('tplcand'),
+      sessionId: session.id,
+      candidateId: candidate.id,
+      name: String(body.name ?? session.title ?? '编排会话模版候选').trim(),
+      description: String(body.description ?? session.goal ?? candidate.changeSummary.join('；')).trim().slice(0, 240),
+      status: 'pending_approval',
+      requestedBy: identity?.name ?? '当前用户',
+      requestedAt: new Date().toISOString(),
+      workspaceId: currentWorkspaceId,
+      sequence: candidate.workflow.nodes.map((node) => node.kind),
+    };
+    mockOrchestrationTemplateCandidates.unshift(templateCandidate);
+    session.templateCandidate = templateCandidate;
+    session.messages.push({
+      id: mockId('omsg'),
+      role: 'assistant',
+      content: `已提交模版候选「${templateCandidate.name}」进入审批（pending_approval）。通过前不会进入模版库，也不会自动供数字员工装配。`,
+      createdAt: new Date().toISOString(),
+      kind: 'template',
+      status: 'completed',
+    });
+    session.updatedAt = new Date().toISOString();
+    workflowAudit(workflowControl, 'WORKFLOW_ORCH_TEMPLATE_PROPOSE', `${session.id}:${templateCandidate.id}`);
+    return { session, templateCandidate };
+  }
+  const orchestrationDocDeposit = path.match(/^\/api\/workflows\/orchestration-sessions\/([^/]+)\/documents\/([^/]+)\/deposit-knowledge$/);
+  if (orchestrationDocDeposit && method === 'POST') {
+    const session = mockOrchestrationSessions.find((item) => item.id === orchestrationDocDeposit[1]);
+    const ownerId = identity?.id ?? 'u1';
+    if (!session || session.tenantId !== (identity?.tenantId ?? 'tenant-acme') || session.workspaceId !== currentWorkspaceId || session.ownerId !== ownerId) {
+      throw new Error('E_WORKSPACE_SCOPE: 无权访问该编排会话');
+    }
+    const document = session.documents.find((item) => item.id === orchestrationDocDeposit[2]);
+    if (!document) throw new Error('文档不存在');
+    if (document.depositedKnowledgeDocId) {
+      return { document, knowledgeDocId: document.depositedKnowledgeDocId, alreadyDeposited: true };
+    }
+    const knowledgeDoc: KnowledgeDoc = {
+      id: mockId('knowledge_doc'),
+      workspaceId: currentWorkspaceId,
+      ownerId: identity?.id ?? 'u1',
+      classification: 'internal',
+      correlationId: mockId('knowledge_corr'),
+      title: document.title,
+      source: '编排会话沉淀',
+      sizeKb: Math.max(1, Math.round(document.charCount / 1024)),
+      chunks: 0,
+      citeCount: 0,
+      status: 'parsing',
+      updatedAt: new Date().toISOString(),
+    };
+    mockKnowledgeDocs.unshift(knowledgeDoc);
+    document.depositedKnowledgeDocId = knowledgeDoc.id;
+    appendKnowledgeAudit('编排会话一键沉淀知识文档', knowledgeDoc.title);
+    setTimeout(() => {
+      knowledgeDoc.status = 'ready';
+      knowledgeDoc.chunks = Math.max(8, Math.round(document.charCount / 400));
+      knowledgeDoc.updatedAt = new Date().toISOString();
+      appendKnowledgeAudit('沉淀文档解析与索引完成', knowledgeDoc.title);
+    }, 1000);
+    session.messages.push({
+      id: mockId('omsg'),
+      role: 'assistant',
+      content: `已将「${document.title}」沉淀到知识中心（进入解析队列）。沉淀不会自动绑定生产检索权限，需在知识中心完成治理后再供数字员工引用。`,
+      createdAt: new Date().toISOString(),
+      kind: 'chat',
+    });
+    session.updatedAt = new Date().toISOString();
+    workflowAudit(workflowControl, 'WORKFLOW_ORCH_KB_DEPOSIT', `${session.id}:${document.id}:${knowledgeDoc.id}`);
+    return { document, knowledgeDoc, alreadyDeposited: false };
   }
   if (path === '/api/workflows/generate' && method === 'POST') {
     const body = (opts.body ?? {}) as Record<string, any>;
@@ -2717,11 +3606,11 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       checks: { structure: 'passed', dependencies: dependencies.some((dependency) => dependency.status === 'missing') ? 'review' : 'passed', risk: hasExternalWrite ? 'review' : 'passed' },
       dependencies,
       warnings: [
-        '生成结果仅为可编辑草稿，不会自动执行或发布',
-        '审计留痕由工作区策略强制开启',
-        ...(hasExternalWrite ? ['高风险动作已自动补充审批与补偿回滚节点', '执行节点需要匹配工作区权限后才能试运行'] : []),
+        '生成结果仅为可编辑草稿，不会自动执行、发布或覆盖线上流程',
+        '审计留痕由工作区策略强制开启，需专家复核后才可应用',
+        ...(hasExternalWrite ? ['高风险动作已补充双重审批与补偿回滚节点', '执行节点需要匹配工作区权限后才能试运行'] : []),
       ],
-      risks: hasExternalWrite ? [{ level: constraints.riskLevel === 'L3' ? 'L3' : 'L2', node: '执行受控动作', text: '外部写入操作必须通过策略、审批、回滚和权限检查', requiresApproval: true }] : [],
+      risks: hasExternalWrite ? [{ level: constraints.riskLevel === 'L3' ? 'L3' : 'L2', node: '执行受控动作', text: '外部写入操作必须通过策略、双重审批、回滚和权限检查', requiresApproval: true }] : [],
     };
     mockWorkflowGenerations.unshift(generated);
     workflowAudit(workflowControl, 'WORKFLOW_GENERATE', `${generated.id}:${generated.promptDigest}`);
@@ -2739,7 +3628,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       const revisionId = `rev_${mockId('wf')}`;
       const revision = { id: revisionId, generationId: record.id, nodes: JSON.parse(JSON.stringify(record.workflow.nodes)), edges: JSON.parse(JSON.stringify(record.workflow.edges)), createdAt: new Date().toISOString() };
       workflowGenerationRevisions.set(revisionId, revision);
-      workflowControl.versions.unshift({ id: revisionId, label: `${revisionId} · AI 草稿`, time: '刚刚', desc: `AI 生成草稿 · ${record.promptDigest}` });
+      workflowControl.versions.unshift({ id: revisionId, label: `${revisionId} · AI 草稿`, time: '刚刚', desc: `AI 辅助编排 · ${record.promptDigest}` });
       record.status = 'applied';
       record.revisionId = revisionId;
       workflowAudit(workflowControl, 'WORKFLOW_GENERATION_APPLY', `${record.id}:${revisionId}`);
@@ -2765,36 +3654,75 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       const body = (opts.body ?? {}) as Record<string, any>;
       const revision = body.revisionId ? workflowGenerationRevisions.get(String(body.revisionId)) : undefined;
       if (body.revisionId && !revision) throw new Error('工作流修订版本不存在或无权访问');
-      const draft = revision ?? workflowControl.draft;
+      const draft = Array.isArray(body.nodes) && body.nodes.length
+        ? { nodes: body.nodes, edges: body.edges ?? [] }
+        : (revision ?? workflowControl.draft);
       const nodeKinds = (draft.nodes ?? []).map((node: any) => node.kind ?? node.data?.kind);
       const hasExternalWrite = nodeKinds.some((kind: string) => ['execute', 'http', 'mcp'].includes(kind));
+      const hasApproval = nodeKinds.includes('approval');
+      const hasAudit = nodeKinds.includes('audit');
+      const hasRollback = nodeKinds.includes('compensate') || (draft.nodes ?? []).some((n: any) => /回滚|补偿/.test(String(n.label ?? n.data?.label ?? '')));
       const checks = {
-        structure: draft.nodes?.length > 0 && draft.nodes.some((n: any) => ['trigger', 'schedule', 'event'].includes(n.kind)) ? 'passed' : 'failed',
+        structure: draft.nodes?.length > 0 && draft.nodes.some((n: any) => ['trigger', 'schedule', 'event'].includes(n.kind ?? n.data?.kind)) ? 'passed' : 'failed',
         connections: draft.nodes?.every((n: any) => draft.nodes.length <= 1 || draft.edges?.some((e: any) => e.source === n.id || e.target === n.id)) ? 'passed' : 'failed',
         dependencies: hasExternalWrite ? 'review' : 'passed',
         permissions: hasExternalWrite ? 'review' : 'passed',
         risk: hasExternalWrite ? 'review' : 'passed',
-        approval: !hasExternalWrite || nodeKinds.includes('approval') ? 'passed' : 'review',
-        audit: nodeKinds.includes('audit') ? 'passed' : 'review',
-        rollback: !hasExternalWrite || nodeKinds.includes('compensate') ? 'passed' : 'review',
+        approval: !hasExternalWrite || hasApproval ? 'passed' : 'failed',
+        audit: hasAudit ? 'passed' : (hasExternalWrite ? 'failed' : 'review'),
+        rollback: !hasExternalWrite || hasRollback ? 'passed' : 'failed',
       };
-      const passed = Object.values(checks).every((value) => value === 'passed');
+      const passed = Object.values(checks).every((value) => value !== 'failed');
+      const warnings = [
+        ...(!hasExternalWrite || nodeKinds.includes('policy') ? [] : ['建议在外部写入前串联风险策略节点']),
+        ...(Object.values(checks).some((value) => value === 'review') ? ['存在需复核项：依赖、权限或风险需人工确认后再生产执行'] : []),
+        ...(Object.values(checks).some((value) => value === 'failed') ? ['存在结构门禁或治理项未通过，请先补齐审批、审计或回滚路径'] : []),
+      ];
       workflowAudit(workflowControl, 'WORKFLOW_VALIDATE', workflowDetail[1], passed ? 'success' : 'failed');
-      return { passed, revisionId: revision?.id ?? body.revisionId ?? null, checks, warnings: passed ? [] : ['存在依赖、权限或治理项需要人工确认'] };
+      return { passed, revisionId: revision?.id ?? body.revisionId ?? null, checks, warnings };
     }
     if (action === 'run' && method === 'POST') {
+      if (identity && !identity.permissions.includes('workflow.execute')) {
+        throw new Error('E_WORKFLOW_EXECUTE_FORBIDDEN: 缺少工作流执行权限');
+      }
       const body = (opts.body ?? {}) as Record<string, any>;
       const revision = body.version ? workflowGenerationRevisions.get(String(body.version)) : undefined;
-      const runnableDraft = revision ?? workflowControl.draft;
+      const runnableDraft = Array.isArray(body.nodes) && body.nodes.length
+        ? { ...workflowControl.draft, nodes: body.nodes, edges: body.edges ?? [] }
+        : (revision ?? workflowControl.draft);
       const nodeKinds = (runnableDraft.nodes ?? []).map((node: any) => node.kind ?? node.data?.kind);
       const hasExternalWrite = nodeKinds.some((kind: string) => ['execute', 'http', 'mcp'].includes(kind));
-      const hasGovernance = nodeKinds.includes('policy') && nodeKinds.includes('approval') && nodeKinds.includes('audit') && nodeKinds.includes('compensate');
+      const hasRollback = nodeKinds.includes('compensate') || (runnableDraft.nodes ?? []).some((n: any) => /回滚|补偿/.test(String(n.label ?? n.data?.label ?? '')));
+      const hasFullGovernance = nodeKinds.includes('policy') && nodeKinds.includes('approval') && nodeKinds.includes('audit') && hasRollback;
+      const hasSandboxGovernance = nodeKinds.includes('approval') && nodeKinds.includes('audit') && hasRollback;
+      const sandboxTrial = body.mode !== 'production';
       if (!nodeKinds.some((kind: string) => ['trigger', 'schedule', 'event'].includes(kind))) throw new Error('工作流缺少触发节点，无法试运行');
-      if (hasExternalWrite && !hasGovernance) throw new Error('高风险动作缺少策略、审批、审计或补偿回滚，禁止试运行');
-      if (hasExternalWrite) throw new Error('外部执行节点的依赖与权限尚未完成服务端授权，禁止试运行');
-      const run = { id: mockId('run'), workspaceId: currentWorkspaceId, time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }), trigger: workflowControl.draft.name ?? '工作流', status: 'running', duration: 0, steps: runnableDraft.nodes?.length ?? 0, who: '当前用户', revisionId: revision?.id };
+      if (hasExternalWrite && !(sandboxTrial ? hasSandboxGovernance : hasFullGovernance)) {
+        throw new Error(sandboxTrial
+          ? '沙箱试运行仍需审批、审计与回滚路径'
+          : '高风险动作缺少策略、审批、审计或补偿回滚，禁止试运行');
+      }
+      if (hasExternalWrite && !sandboxTrial) throw new Error('外部执行节点的依赖与权限尚未完成服务端授权，禁止生产试运行');
+      const nodeSteps = buildRunNodeSteps(runnableDraft.nodes, { status: 'running' });
+      const run: WorkflowRunRecord = {
+        id: mockId('run'),
+        workflowId: workflowDetail[1],
+        workspaceId: currentWorkspaceId,
+        time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        trigger: String(body.trigger ?? runnableDraft.name ?? workflowControl.draft.name ?? '工作流试运行'),
+        status: 'running',
+        duration: 0,
+        steps: nodeSteps?.length ?? runnableDraft.nodes?.length ?? 0,
+        who: identity?.name ?? '当前用户',
+        revisionId: revision?.id ?? body.version ?? 'current-draft',
+        correlationId: mockId('corr_run'),
+        environment: sandboxTrial ? 'sandbox' : 'production',
+        evidenceMode: 'recorded',
+        nodeSteps,
+        attempt: 1,
+      };
       workflowControl.runs.unshift(run);
-      workflowAudit(workflowControl, 'WORKFLOW_RUN', `${workflowDetail[1]}:${revision?.id ?? 'current-draft'}`);
+      workflowAudit(workflowControl, 'WORKFLOW_RUN', `${workflowDetail[1]}:${run.revisionId}:${run.id}`);
       return run;
     }
     if (action === 'versions' && method === 'GET') return workflowControl.versions;
@@ -2811,10 +3739,44 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   }
   const workflowRunAction = path.match(/^\/api\/workflows\/([^/]+)\/runs\/([^/]+)\/(retry|resume)$/);
   if (workflowRunAction && method === 'POST') {
-    const run = workflowControl.runs.find((item) => item.id === workflowRunAction[2]);
-    if (!run) return null;
+    if (identity && !identity.permissions.includes('workflow.execute')) {
+      throw new Error('E_WORKFLOW_EXECUTE_FORBIDDEN: 缺少工作流执行权限');
+    }
+    const run = workflowControl.runs.find((item) => item.id === workflowRunAction[2]) as WorkflowRunRecord | undefined;
+    if (!run) throw new Error('E_WORKFLOW_RUN_NOT_FOUND: 运行记录不存在');
+    if (workflowRunAction[1] !== run.workflowId && run.workflowId) {
+      throw new Error('E_WORKFLOW_RUN_MISMATCH: 运行记录与工作流不匹配');
+    }
+    if (workflowRunAction[3] === 'resume' && run.status !== 'running') {
+      throw new Error('E_WORKFLOW_RUN_NOT_RESUMABLE: 仅运行中的记录可继续');
+    }
+    if (workflowRunAction[3] === 'retry') {
+      if (run.status !== 'failed') {
+        throw new Error('E_WORKFLOW_RUN_NOT_RETRYABLE: 仅失败的运行记录可重试');
+      }
+      const attempt = (run.attempt ?? 1) + 1;
+      const retryRun: WorkflowRunRecord = {
+        ...run,
+        id: mockId('run'),
+        time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+        status: 'running',
+        duration: 0,
+        error: undefined,
+        correlationId: mockId('corr_run'),
+        evidenceMode: run.nodeSteps?.length ? 'recorded' : 'synthetic',
+        nodeSteps: run.nodeSteps?.length
+          ? buildRunNodeSteps(run.nodeSteps.map((step) => ({ id: step.id, kind: step.kind, label: step.label })), { status: 'running' })
+          : undefined,
+        attempt,
+        parentRunId: run.id,
+        who: identity?.name ?? run.who,
+      };
+      workflowControl.runs.unshift(retryRun);
+      workflowAudit(workflowControl, 'WORKFLOW_RUN_RETRY', `${retryRun.id}←${run.id}`);
+      return retryRun;
+    }
     run.status = 'running';
-    workflowAudit(workflowControl, `WORKFLOW_RUN_${workflowRunAction[3].toUpperCase()}`, workflowRunAction[2]);
+    workflowAudit(workflowControl, 'WORKFLOW_RUN_RESUME', run.id);
     return run;
   }
   if (path.match(/^\/api\/workflows\/[^/]+\/runs$/) && method === 'GET') return workflowControl.runs;

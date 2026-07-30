@@ -131,6 +131,35 @@ describe('digital employee control plane', () => {
     await expect(mockHandler('/api/digital-employees/de-sre/lifecycle', { method: 'POST', headers: auditor, body: { lifecycle: 'paused' } })).rejects.toThrow('E_AUDITOR_READ_ONLY');
   });
 
+  it('requires reason to pause and confirmation to resume an active employee', async () => {
+    await expect(mockHandler('/api/digital-employees/de-sre/lifecycle', { method: 'POST', headers: admin, body: { lifecycle: 'paused' } })).rejects.toThrow('E_DIGITAL_EMPLOYEE_OPS_REASON_REQUIRED');
+
+    const paused = await mockHandler('/api/digital-employees/de-sre/lifecycle', {
+      method: 'POST',
+      headers: admin,
+      body: { lifecycle: 'paused', reason: '成功率下降，暂停待值班复核' },
+    }) as any;
+    expect(paused).toMatchObject({
+      lifecycle: 'paused',
+      opsControl: { lastAction: 'paused', reason: '成功率下降，暂停待值班复核', actor: '平台管理员' },
+    });
+
+    await expect(mockHandler('/api/digital-employees/de-sre/lifecycle', { method: 'POST', headers: admin, body: { lifecycle: 'active' } })).rejects.toThrow('E_DIGITAL_EMPLOYEE_RESUME_CONFIRM_REQUIRED');
+
+    const resumed = await mockHandler('/api/digital-employees/de-sre/lifecycle', {
+      method: 'POST',
+      headers: admin,
+      body: { lifecycle: 'active', confirmed: true, reason: '失败样本已复核' },
+    }) as any;
+    expect(resumed).toMatchObject({
+      lifecycle: 'active',
+      opsControl: { lastAction: 'resumed', reason: '失败样本已复核' },
+    });
+
+    const evidence = await mockHandler('/api/digital-employees/de-sre/evidence', { method: 'GET', headers: admin }) as Array<{ action: string }>;
+    expect(evidence.some((item) => item.action === '恢复运行')).toBe(true);
+  });
+
   it('adopts a governed template as an independent draft and synchronizes its lifecycle evidence', async () => {
     const employee = await mockHandler('/api/digital-employee-templates/det-service-desk/adopt', { method: 'POST', headers: admin }) as any;
     expect(employee).toMatchObject({ lifecycle: 'draft', templateId: 'det-service-desk', templateVersion: '2.1.0' });

@@ -39,7 +39,7 @@ describe('workflow generation domain', () => {
     }) as any;
     const applied = await mockHandler(`/api/workflows/generations/${generation.id}/apply`, { method: 'POST' }) as any;
 
-    await expect(mockHandler('/api/workflows/wf1/run', { method: 'POST', body: { version: applied.revisionId } }))
+    await expect(mockHandler('/api/workflows/wf1/run', { method: 'POST', body: { version: applied.revisionId, mode: 'production' } }))
       .rejects.toThrow('外部执行节点的依赖与权限尚未完成服务端授权');
   });
 });

@@ -322,6 +322,175 @@ export function compareReleaseOnboardingEmployees<T extends SortableEmployee & R
   return compareDigitalEmployees(left, right);
 }
 
+/** 24h 人工交接偏高阈值（与运行管理 UI 展示一致）。 */
+export const OPERATIONS_HANDOFF_THRESHOLD = 10;
+
+/** 运行管理健康判定所需字段。 */
+export type OperationsEmployee = {
+  lifecycle: string;
+  escalationOwner?: string;
+  owner?: string;
+  environment?: string;
+  risk?: string;
+  runtime: {
+    calls24h: number;
+    successRate: number;
+    p95Ms: number;
+    costToday: number;
+    handoffs24h: number;
+    anomalies: number;
+  };
+  release: { status: string };
+  opsControl?: {
+    lastAction?: string;
+    reason?: string;
+    actor?: string;
+    at?: string;
+  };
+};
+
+export type OperationsHealthStage = 'needs_attention' | 'high_handoff' | 'paused' | 'quarantined' | 'stable';
+
+export type OperationsAnomalySignal = {
+  key: string;
+  label: string;
+  detail: string;
+  severity: 'warn' | 'error' | 'info';
+};
+
+export type OperationsHealth = {
+  operable: boolean;
+  attention: boolean;
+  stage: OperationsHealthStage;
+  label: '需处置异常' | '交接偏高' | '已暂停' | '已隔离' | '运行稳定';
+  summary: string;
+  signals: OperationsAnomalySignal[];
+  missing: string[];
+};
+
+const OPERATIONS_STAGE_RANK: Record<OperationsHealthStage, number> = {
+  quarantined: 0,
+  needs_attention: 1,
+  high_handoff: 2,
+  paused: 3,
+  stable: 4,
+};
+
+/** 由运行指标推导可读异常信号（不臆造自愈动作）。 */
+export function operationsAnomalySignals(employee: OperationsEmployee): OperationsAnomalySignal[] {
+  const signals: OperationsAnomalySignal[] = [];
+  const { runtime } = employee;
+  if (runtime.successRate > 0 && runtime.successRate < 0.95) {
+    signals.push({
+      key: 'success_rate',
+      label: '调用成功率偏低',
+      detail: `近 24h 成功率 ${(runtime.successRate * 100).toFixed(1)}%，建议由 ${employee.escalationOwner || '人工接管人'} 复核失败样本。`,
+      severity: 'warn',
+    });
+  }
+  if (runtime.p95Ms >= 2000) {
+    signals.push({
+      key: 'latency',
+      label: '响应延迟偏高',
+      detail: `P95 ${runtime.p95Ms} ms，可能影响岗位服务质量。`,
+      severity: 'warn',
+    });
+  }
+  if (runtime.handoffs24h >= OPERATIONS_HANDOFF_THRESHOLD) {
+    signals.push({
+      key: 'handoff',
+      label: '人工交接偏高',
+      detail: `近 24h 交接 ${runtime.handoffs24h} 次（阈值 ≥ ${OPERATIONS_HANDOFF_THRESHOLD}），建议检查工作负载与岗位边界。`,
+      severity: 'warn',
+    });
+  }
+  if (runtime.anomalies > 0) {
+    const covered = signals.length;
+    const remaining = Math.max(0, runtime.anomalies - covered);
+    if (remaining > 0 || signals.length === 0) {
+      signals.push({
+        key: 'unclassified',
+        label: remaining > 0 ? `另有 ${remaining} 项异常信号` : `${runtime.anomalies} 项异常信号`,
+        detail: `请查看审计证据，并由 ${employee.escalationOwner || '人工接管人'} 确认是否需暂停或隔离。`,
+        severity: 'error',
+      });
+    }
+  }
+  if (employee.lifecycle === 'quarantined') {
+    signals.unshift({
+      key: 'quarantined',
+      label: '已隔离运行',
+      detail: '恢复前请确认异常已处置并保留证据。',
+      severity: 'error',
+    });
+  } else if (employee.lifecycle === 'paused') {
+    signals.unshift({
+      key: 'paused',
+      label: '已暂停运行',
+      detail: employee.opsControl?.reason
+        ? `暂停原因：${employee.opsControl.reason}`
+        : '运行已受控停止，可查看处置与审计证据。',
+      severity: 'info',
+    });
+  }
+  return signals;
+}
+
+/** 在岗运行健康：异常优先，其次交接偏高，再暂停/隔离/稳定。 */
+export function operationsHealth(employee: OperationsEmployee): OperationsHealth {
+  const operable = ['active', 'paused', 'quarantined'].includes(employee.lifecycle);
+  const signals = operationsAnomalySignals(employee);
+  const missing: string[] = [];
+
+  let stage: OperationsHealthStage;
+  if (employee.lifecycle === 'quarantined') stage = 'quarantined';
+  else if (employee.lifecycle === 'paused') stage = 'paused';
+  else if (employee.lifecycle === 'active' && employee.runtime.anomalies > 0) stage = 'needs_attention';
+  else if (employee.lifecycle === 'active' && employee.runtime.handoffs24h >= OPERATIONS_HANDOFF_THRESHOLD) stage = 'high_handoff';
+  else stage = 'stable';
+
+  const label: OperationsHealth['label'] = stage === 'quarantined'
+    ? '已隔离'
+    : stage === 'paused'
+      ? '已暂停'
+      : stage === 'needs_attention'
+        ? '需处置异常'
+        : stage === 'high_handoff'
+          ? '交接偏高'
+          : '运行稳定';
+
+  if (stage === 'needs_attention') missing.push('异常待处置');
+  if (stage === 'high_handoff') missing.push(`交接 ≥ ${OPERATIONS_HANDOFF_THRESHOLD}/24h`);
+  if (stage === 'paused') missing.push('待确认恢复');
+  if (stage === 'quarantined') missing.push('隔离中·需证据确认');
+
+  const attention = stage !== 'stable';
+  const summary = stage === 'stable'
+    ? '核心指标正常，可按需查看运行摘要。'
+    : stage === 'needs_attention'
+      ? `存在异常信号，建议由 ${employee.escalationOwner || '人工接管人'} 处置。`
+      : stage === 'high_handoff'
+        ? `人工交接高于阈值（≥ ${OPERATIONS_HANDOFF_THRESHOLD}/24h），建议检查负载与边界。`
+        : stage === 'paused'
+          ? (employee.opsControl?.reason ? `已暂停：${employee.opsControl.reason}` : '运行已暂停，恢复前请确认处置完成。')
+          : '已隔离，恢复前请确认异常已处置并保留证据。';
+
+  return { operable, attention, stage, label, summary, signals, missing };
+}
+
+/** Attention stages first, then department/head order. */
+export function compareOperationsEmployees<T extends SortableEmployee & OperationsEmployee>(left: T, right: T) {
+  const leftHealth = operationsHealth(left);
+  const rightHealth = operationsHealth(right);
+  const stageCompare = OPERATIONS_STAGE_RANK[leftHealth.stage] - OPERATIONS_STAGE_RANK[rightHealth.stage];
+  if (stageCompare !== 0) return stageCompare;
+  const anomalyCompare = right.runtime.anomalies - left.runtime.anomalies;
+  if (anomalyCompare !== 0) return anomalyCompare;
+  const handoffCompare = right.runtime.handoffs24h - left.runtime.handoffs24h;
+  if (handoffCompare !== 0) return handoffCompare;
+  return compareDigitalEmployees(left, right);
+}
+
 /** Department head / lead digital employee (one per department). */
 export function isDepartmentHead(employee: SortableEmployee) {
   if (/-(manager|head)$/.test(employee.id)) return true;

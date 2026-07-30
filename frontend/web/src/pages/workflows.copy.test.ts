@@ -1,0 +1,153 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+
+const root = dirname(fileURLToPath(import.meta.url));
+const workflowsSource = readFileSync(join(root, 'Workflows.tsx'), 'utf8');
+const orchestrationSource = readFileSync(join(root, 'WorkflowOrchestrationSession.tsx'), 'utf8');
+const mockSource = readFileSync(join(root, '../../../packages/api/src/mock.ts'), 'utf8');
+const appSource = readFileSync(join(root, '../App.tsx'), 'utf8');
+
+const forbidden = [
+  /双签/,
+  /Agent\s*决策/,
+  /SignedLog/,
+  /故障自愈/,
+  /Workforce/i,
+  /EXECUTING_NODE_ID/,
+  /本地演示草稿/,
+  /capacity-agent/,
+  /report-agent/,
+  /redis-recovery-agent/,
+];
+
+describe('workflows orchestration copy', () => {
+  it('keeps Workflows page free of deprecated brand terms and fake LIVE marker', () => {
+    for (const pattern of forbidden) {
+      expect(workflowsSource, `Workflows.tsx must not match ${pattern}`).not.toMatch(pattern);
+    }
+  });
+
+  it('uses draft-oriented status chrome instead of fake run observation', () => {
+    expect(workflowsSource).toContain('编排草稿');
+    expect(workflowsSource).toContain('draftToFlow');
+    expect(workflowsSource).not.toContain('运行观察');
+  });
+
+  it('aligns workflow mock draft terminology with platform lexicon', () => {
+    const workflowSlice = mockSource.slice(
+      mockSource.indexOf('export const mockWorkflow'),
+      mockSource.indexOf('// 工作流控制台运行态'),
+    );
+    expect(workflowSlice).toContain('cache-oom 受控恢复');
+    expect(workflowSlice).toContain('数字员工研判');
+    expect(workflowSlice).toContain('双重审批');
+    expect(workflowSlice).toContain('审计留痕');
+    expect(workflowSlice).not.toMatch(/双签|故障自愈|Agent\s*决策|SignedLog/);
+  });
+});
+
+describe('workflow template library gates', () => {
+  it('states digital-employee consumption positioning on the template page', () => {
+    expect(workflowsSource).toContain('供数字员工能力装配与专家协同引用');
+    expect(workflowsSource).toContain('创建隔离草稿');
+    expect(workflowsSource).toContain('研判分析');
+  });
+
+  it('blocks trial run and publish when template dependencies are unauthorized', () => {
+    expect(workflowsSource).toContain('draftGate');
+    expect(workflowsSource).toContain('模板依赖未授权，禁止试运行');
+    expect(workflowsSource).toContain('模板依赖未就绪，无法发布');
+    expect(workflowsSource).toContain('isTemplateReusable');
+    expect(workflowsSource).toContain('needsTemplateReview');
+  });
+
+  it('persists template provenance on isolated drafts', () => {
+    expect(workflowsSource).toContain('来源模板 ${asset.id}');
+    expect(workflowsSource).toContain('normalizeTemplateAsset');
+    expect(mockSource).toContain('dependencyStatus');
+    expect(mockSource).toContain('kubernetes-mcp：当前工作区未授权生产写权限');
+  });
+});
+
+describe('workflow AI assisted drafting', () => {
+  it('opens a dedicated full-screen orchestration session page', () => {
+    expect(appSource).toContain('/workflows/orchestration');
+    expect(appSource).toContain('/workflows/orchestration/:sessionId');
+    expect(workflowsSource).toContain("navigate('/workflows/orchestration')");
+    expect(orchestrationSource).toContain('AI 辅助编排会话');
+    expect(orchestrationSource).toContain('createInflightRef');
+    expect(orchestrationSource).toContain('重新打开');
+    expect(orchestrationSource).toContain('澄清完全可选');
+    expect(orchestrationSource).toContain('一键生成示例');
+    expect(orchestrationSource).toContain('沉淀知识中心');
+    expect(orchestrationSource).toContain('引用知识文档');
+    expect(orchestrationSource).toContain('Runbook 检索');
+    expect(orchestrationSource).toContain('沉淀模版候选');
+    expect(orchestrationSource).toContain('previewNodeTypes');
+    expect(orchestrationSource).toContain('画布预览');
+    expect(orchestrationSource).toContain('ReactFlow');
+    expect(orchestrationSource).toContain('onSplitPointerDown');
+    expect(orchestrationSource).toContain('拖动调整左右区域宽度');
+    expect(orchestrationSource).not.toContain('节点序列（可微调）');
+    expect(mockSource).toContain('enterprise-model-router');
+    expect(mockSource).toContain('knowledge.retrieve_runbook');
+    expect(mockSource).toContain('mockOrchestrationTemplateCandidates');
+    expect(orchestrationSource).toContain('画布预览仅用于示例编排');
+    expect(orchestrationSource).toContain('供数字员工装配');
+    expect(orchestrationSource).toContain('由数字员工研判处置路径，经双重审批后执行受控恢复');
+    expect(orchestrationSource).not.toContain('当 Redis 触发 OOM 告警时自动处理');
+  });
+
+  it('keeps generation mock free of autonomous-healing default prompt', () => {
+    const generationSlice = mockSource.slice(
+      mockSource.indexOf('export const mockWorkflowGenerations'),
+      mockSource.indexOf('// ============ P7 知识扩展数据'),
+    );
+    expect(generationSlice).toContain('数字员工研判处置路径');
+    expect(generationSlice).toContain('执行受控恢复');
+    expect(generationSlice).toContain('受控恢复数字员工');
+    expect(generationSlice).toContain('mockOrchestrationSessions');
+    expect(generationSlice).toContain('invokeOrchestrationModel');
+    expect(mockSource).toContain('编排会话沉淀');
+    expect(generationSlice).not.toMatch(/自动处理|故障自愈/);
+  });
+});
+
+describe('workflow canvas orchestration', () => {
+  it('states digital-employee skill publish path on canvas', () => {
+    expect(workflowsSource).toContain('供数字员工能力装配');
+    expect(workflowsSource).toContain('本页不直接发起专家协作上岗');
+    expect(workflowsSource).toContain('执行受控恢复');
+    expect(workflowsSource).toContain('执行受控动作');
+  });
+
+  it('gates publish-as-skill on validation, dirty draft, and workflow id', () => {
+    expect(workflowsSource).toContain('skillValidationReady');
+    expect(workflowsSource).toContain('validationPassed');
+    expect(workflowsSource).toContain('skillSourceVersion');
+    expect(workflowsSource).toContain('调用需审批');
+    expect(workflowsSource).toContain('/skills?tab=workflowSkills');
+    expect(workflowsSource).toContain('vars.workflowId');
+    expect(workflowsSource).toContain('publish-as-skill');
+    expect(workflowsSource).toContain('wf-publish');
+    expect(workflowsSource).toContain('skillGateSteps');
+    expect(mockSource).toContain('E_VALIDATION_REQUIRED');
+    expect(mockSource).toContain('治理发布工作流技能');
+  });
+
+  it('enforces structure gates for external write nodes', () => {
+    expect(workflowsSource).toContain('evaluateWorkflowStructure');
+    expect(workflowsSource).toContain('存在外部写入节点，但缺少双重审批节点');
+    expect(workflowsSource).toContain('结构门禁');
+  });
+
+  it('marks debug replay as local simulation without fake success audit', () => {
+    expect(workflowsSource).toContain('模拟重跑');
+    expect(workflowsSource).toContain('不会创建执行记录或审计留痕');
+    expect(workflowsSource).not.toContain('已重新执行节点');
+    expect(workflowsSource).toContain('approvalTimeoutSec');
+    expect(workflowsSource).toContain('已纳管 Skill 调用');
+  });
+});

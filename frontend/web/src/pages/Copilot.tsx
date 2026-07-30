@@ -22,7 +22,7 @@
  * 19. 调试面板（Request / Response / Agent / Tools / RAG / Reasoning / Policy / Approval / Timeline / Audit）
  * 20. 升级人工（escalate to human）
  */
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useApiQuery } from '@/services/query';
 import { Avatar, Badge, Button, Input, Row, CollapsedPanelHandle } from '@de/web-ui';
@@ -285,6 +285,78 @@ export default function Copilot() {
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const shellRef = useRef<HTMLDivElement | null>(null);
+  const [sessionsPaneW, setSessionsPaneW] = useState(() => {
+    if (typeof window === 'undefined') return 280;
+    const saved = Number(window.localStorage.getItem('copilot-sessions-w'));
+    return Number.isFinite(saved) && saved >= 200 && saved <= 420 ? saved : 280;
+  });
+  const [detailsPaneW, setDetailsPaneW] = useState(() => {
+    if (typeof window === 'undefined') return 360;
+    const saved = Number(window.localStorage.getItem('copilot-details-w'));
+    return Number.isFinite(saved) && saved >= 280 && saved <= 520 ? saved : 360;
+  });
+  const [draggingSplit, setDraggingSplit] = useState<'sessions' | 'details' | null>(null);
+
+  const persistSessionsW = useCallback((next: number) => {
+    const clamped = Math.min(420, Math.max(200, Math.round(next)));
+    setSessionsPaneW(clamped);
+    window.localStorage.setItem('copilot-sessions-w', String(clamped));
+    return clamped;
+  }, []);
+
+  const persistDetailsW = useCallback((next: number) => {
+    const clamped = Math.min(520, Math.max(280, Math.round(next)));
+    setDetailsPaneW(clamped);
+    window.localStorage.setItem('copilot-details-w', String(clamped));
+    return clamped;
+  }, []);
+
+  const onSessionsSplitPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const shell = shellRef.current;
+    if (!shell) return;
+    const rect = shell.getBoundingClientRect();
+    const styles = getComputedStyle(shell);
+    const pad = parseFloat(styles.paddingLeft) || 0;
+    setDraggingSplit('sessions');
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const onMove = (moveEvent: PointerEvent) => {
+      persistSessionsW(moveEvent.clientX - rect.left - pad);
+    };
+    const onUp = (upEvent: PointerEvent) => {
+      setDraggingSplit(null);
+      try { event.currentTarget.releasePointerCapture(upEvent.pointerId); } catch { /* ignore */ }
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }, [persistSessionsW]);
+
+  const onDetailsSplitPointerDown = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const shell = shellRef.current;
+    if (!shell) return;
+    const rect = shell.getBoundingClientRect();
+    const styles = getComputedStyle(shell);
+    const pad = parseFloat(styles.paddingRight) || 0;
+    setDraggingSplit('details');
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const onMove = (moveEvent: PointerEvent) => {
+      persistDetailsW(rect.right - pad - moveEvent.clientX);
+    };
+    const onUp = (upEvent: PointerEvent) => {
+      setDraggingSplit(null);
+      try { event.currentTarget.releasePointerCapture(upEvent.pointerId); } catch { /* ignore */ }
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  }, [persistDetailsW]);
 
   const currentModel = MODELS.find((m) => m.key === currentModelKey) ?? MODELS[0];
   const enabledToolCount = enabledTools.length;
@@ -869,7 +941,16 @@ export default function Copilot() {
   }, [moreMenuOpen]);
 
   return (
-    <div className="copilot-shell relative flex h-full min-h-0 min-w-0 bg-[var(--bg-elevated)]" data-sessions-open={sessionsOpen ? 'true' : 'false'} data-details-open={detailsOpen ? 'true' : 'false'}>
+    <div
+      ref={shellRef}
+      className={cn('copilot-shell relative h-full min-h-0 min-w-0 bg-[var(--bg-elevated)]', draggingSplit && 'is-resizing')}
+      data-sessions-open={sessionsOpen ? 'true' : 'false'}
+      data-details-open={detailsOpen ? 'true' : 'false'}
+      style={{
+        ['--copilot-sessions-w' as string]: `${sessionsPaneW}px`,
+        ['--copilot-details-w' as string]: `${detailsPaneW}px`,
+      }}
+    >
       {(sessionsOpen || detailsOpen) && (
         <button
           type="button"
@@ -881,10 +962,7 @@ export default function Copilot() {
       {/* ============ 左侧 session-list ============ */}
       <aside
         id="copilot-sessions"
-        className={cn(
-          'copilot-sessions absolute inset-y-0 left-0 z-30 flex w-[300px] max-w-[calc(100%-40px)] flex-col overflow-hidden border-r border-[var(--border)] bg-[var(--bg)] shadow-xl transition-transform duration-200',
-          sessionsOpen ? 'translate-x-0' : '-translate-x-full',
-        )}
+        className="copilot-sessions"
         aria-label="会话列表"
         data-open={sessionsOpen ? 'true' : 'false'}
       >
@@ -974,6 +1052,30 @@ export default function Copilot() {
           )}
         </div>
       </aside>
+
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="拖动调整会话列表宽度"
+        aria-valuemin={200}
+        aria-valuemax={420}
+        aria-valuenow={sessionsPaneW}
+        tabIndex={0}
+        className={cn('copilot-split copilot-split--sessions', draggingSplit === 'sessions' && 'is-dragging')}
+        onPointerDown={onSessionsSplitPointerDown}
+        onKeyDown={(event) => {
+          if (event.key === 'ArrowLeft') {
+            event.preventDefault();
+            persistSessionsW(sessionsPaneW - 12);
+          }
+          if (event.key === 'ArrowRight') {
+            event.preventDefault();
+            persistSessionsW(sessionsPaneW + 12);
+          }
+        }}
+      >
+        <span className="copilot-split__grip" aria-hidden="true" />
+      </div>
 
       {/* ============ 中间对话 ============ */}
       <section className="copilot-conversation flex min-w-0 min-h-0 flex-1 flex-col bg-[var(--bg)] overflow-hidden">
@@ -1566,13 +1668,35 @@ export default function Copilot() {
         </div>
       </section>
 
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="拖动调整专家上下文宽度"
+        aria-valuemin={280}
+        aria-valuemax={520}
+        aria-valuenow={detailsPaneW}
+        tabIndex={detailsOpen ? 0 : -1}
+        className={cn('copilot-split copilot-split--details', draggingSplit === 'details' && 'is-dragging')}
+        onPointerDown={detailsOpen ? onDetailsSplitPointerDown : undefined}
+        onKeyDown={(event) => {
+          if (!detailsOpen) return;
+          if (event.key === 'ArrowLeft') {
+            event.preventDefault();
+            persistDetailsW(detailsPaneW + 12);
+          }
+          if (event.key === 'ArrowRight') {
+            event.preventDefault();
+            persistDetailsW(detailsPaneW - 12);
+          }
+        }}
+      >
+        <span className="copilot-split__grip" aria-hidden="true" />
+      </div>
+
       {/* ============ 右侧详情 ============ */}
       <aside
         id="copilot-agent-details"
-        className={cn(
-          'copilot-agent-details absolute inset-y-0 right-0 z-30 flex w-[460px] max-w-[calc(100%-40px)] min-h-0 flex-col overflow-hidden border-l border-[var(--border)] bg-[var(--bg)] shadow-xl transition-transform duration-200 ease-out',
-          detailsOpen ? 'translate-x-0' : 'translate-x-full',
-        )}
+        className="copilot-agent-details"
         aria-label="会话上下文"
         data-open={detailsOpen ? 'true' : 'false'}
         aria-expanded={detailsOpen}

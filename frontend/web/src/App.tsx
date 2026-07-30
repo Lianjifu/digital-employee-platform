@@ -14,6 +14,7 @@ const Tasks = lazy(() => import('./pages/Tasks'));
 const Workspaces = lazy(() => import('./pages/Workspaces'));
 const DigitalEmployees = lazy(() => import('./pages/DigitalEmployees'));
 const Workflows = lazy(() => import('./pages/Workflows'));
+const WorkflowOrchestrationSession = lazy(() => import('./pages/WorkflowOrchestrationSession'));
 const Knowledge = lazy(() => import('./pages/Knowledge'));
 const Memory = lazy(() => import('./pages/Memory'));
 const Skills = lazy(() => import('./pages/Skills'));
@@ -57,6 +58,8 @@ export default function App() {
             <Route path="/agents" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><DigitalEmployees /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/digital-employees" element={<Navigate to="/agents" replace />} />
             <Route path="/workflows" element={<ProtectedRoute permission="workflow.read" roles={['user', 'admin']}><ErrorBoundary><Workflows /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/workflows/orchestration" element={<ProtectedRoute permission="workflow.read" roles={['user', 'admin']}><ErrorBoundary><WorkflowOrchestrationSession /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/workflows/orchestration/:sessionId" element={<ProtectedRoute permission="workflow.read" roles={['user', 'admin']}><ErrorBoundary><WorkflowOrchestrationSession /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/knowledge" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Knowledge /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/memory" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Memory /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/skills" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Skills /></ErrorBoundary></ProtectedRoute>} />

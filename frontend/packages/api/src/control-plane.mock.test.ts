@@ -191,10 +191,46 @@ describe('control plane mock mutations', () => {
   it('binds a version-pinned skill to a workflow and publishes a workflow skill for agent reuse', async () => {
     const binding = await mockHandler('/api/workflows/wf1/capabilities', { method: 'POST', body: { capabilityKind: 'skill', capabilityId: 's3', pinnedVersion: '1.0' } }) as any;
     expect(binding.targetType).toBe('workflow');
-    const workflowSkill = await mockHandler('/api/workflows/wf1/publish-as-skill', { method: 'POST', body: { version: 'v1', name: 'Redis 受控处置' } }) as any;
+    await expect(mockHandler('/api/workflows/wf1/publish-as-skill', { method: 'POST', body: { version: 'v1', name: 'Redis 受控处置' } })).rejects.toThrow('E_VALIDATION_REQUIRED');
+    const workflowSkill = await mockHandler('/api/workflows/wf1/publish-as-skill', {
+      method: 'POST',
+      body: { version: 'v1', name: 'Redis 受控处置', validationPassed: true, riskLevel: 'mid' },
+    }) as any;
     expect(workflowSkill.status).toBe('published');
+    expect(workflowSkill.sourceWorkflowId).toBe('wf1');
+    expect(workflowSkill.approvalRequired).toBe(true);
+    const updated = await mockHandler('/api/workflows/wf1/publish-as-skill', {
+      method: 'POST',
+      body: { version: 'v1', name: 'Redis 受控处置（修订）', description: '同版本更新', validationPassed: true, riskLevel: 'low' },
+    }) as any;
+    expect(updated.id).toBe(workflowSkill.id);
+    expect(updated.name).toBe('Redis 受控处置（修订）');
+    expect(updated.approvalRequired).toBe(false);
     const agentBinding = await mockHandler('/api/agents/a1/capabilities', { method: 'POST', body: { capabilityKind: 'workflow_skill', capabilityId: workflowSkill.id } }) as any;
     expect(agentBinding.capabilityKind).toBe('workflow_skill');
+  });
+
+  it('keeps high-risk workflow skills as draft for operators until admin promote', async () => {
+    const operator = await mockHandler('/api/auth/login', { method: 'POST', body: { email: 'sre@acme.com', password: 'demo' } }) as any;
+    const headers = { Authorization: `Bearer ${operator.token}`, 'x-workspace-id': 'w1' };
+    const draft = await mockHandler('/api/workflows/wf1/publish-as-skill', {
+      method: 'POST',
+      headers,
+      body: { version: 'v9-high', name: '高风险处置技能', validationPassed: true, riskLevel: 'high' },
+    }) as any;
+    expect(draft.status).toBe('draft');
+    await expect(mockHandler('/api/agents/a1/capabilities', {
+      method: 'POST',
+      headers,
+      body: { capabilityKind: 'workflow_skill', capabilityId: draft.id },
+    })).rejects.toThrow('尚未发布');
+    const admin = await mockHandler('/api/auth/login', { method: 'POST', body: { email: 'admin@acme.com', password: 'demo' } }) as any;
+    const published = await mockHandler(`/api/workflow-skills/${draft.id}/publish`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${admin.token}`, 'x-workspace-id': 'w1' },
+      body: {},
+    }) as any;
+    expect(published.status).toBe('published');
   });
 
   it('governs skill lifecycle, upgrade planning, and runtime safety policy', async () => {

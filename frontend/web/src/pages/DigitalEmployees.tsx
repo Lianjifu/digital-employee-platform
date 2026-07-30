@@ -9,7 +9,7 @@ import { useT } from '@/i18n';
 import type { DigitalEmployee, DigitalEmployeeBoundaryPolicy, DigitalEmployeeConfigurationVersion, DigitalEmployeeExecutionMode, DigitalEmployeeLifecycle, DigitalEmployeeResponsibility, DigitalEmployeeTemplate, DigitalEmployeeTemplateAdoption } from '@de/web-types';
 import { DigitalEmployeeAvatar } from '@/components/DigitalEmployeeAvatar';
 import { DepartmentTeamPanel } from '@/components/DepartmentTeamPanel';
-import { capabilityAssemblyCompleteness, compareCapabilityAssemblyEmployees, compareDigitalEmployees, compareReleaseOnboardingEmployees, compareRoleSetupEmployees, DIGITAL_EMPLOYEE_DEPARTMENT_ORDER, employeePrimaryLabel, employeeSecondaryLabel, isDepartmentHead, releaseOnboardingCompleteness, roleSetupCompleteness, type ReleaseOnboardingStage } from '@/lib/digital-employees';
+import { capabilityAssemblyCompleteness, compareCapabilityAssemblyEmployees, compareDigitalEmployees, compareOperationsEmployees, compareReleaseOnboardingEmployees, compareRoleSetupEmployees, DIGITAL_EMPLOYEE_DEPARTMENT_ORDER, employeePrimaryLabel, employeeSecondaryLabel, isDepartmentHead, OPERATIONS_HANDOFF_THRESHOLD, operationsHealth, releaseOnboardingCompleteness, roleSetupCompleteness, type OperationsHealthStage, type ReleaseOnboardingStage } from '@/lib/digital-employees';
 import {
   ArrowUpRight, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Clock3, Database,
   HeartPulse, Layers3, MessageSquare, Pause, Play, Plus,
@@ -29,6 +29,8 @@ const CAPABILITY_PAGE_SIZE_KEY = 'de.capabilities.pageSize';
 const CAPABILITY_DEFAULT_PAGE_SIZE = 8;
 const RELEASE_PAGE_SIZE_KEY = 'de.release.pageSize';
 const RELEASE_DEFAULT_PAGE_SIZE = 8;
+const OPERATIONS_PAGE_SIZE_KEY = 'de.operations.pageSize';
+const OPERATIONS_DEFAULT_PAGE_SIZE = 8;
 const PLAZA_PAGE_SIZE = 4;
 
 function readStoredPageSize(key: string, fallback: number) {
@@ -51,6 +53,10 @@ function readCapabilityPageSize() {
 
 function readReleasePageSize() {
   return readStoredPageSize(RELEASE_PAGE_SIZE_KEY, RELEASE_DEFAULT_PAGE_SIZE);
+}
+
+function readOperationsPageSize() {
+  return readStoredPageSize(OPERATIONS_PAGE_SIZE_KEY, OPERATIONS_DEFAULT_PAGE_SIZE);
 }
 
 const tabs: Array<{ key: ModuleTab; labelKey: string; icon: typeof BriefcaseBusiness; description: string }> = [
@@ -313,49 +319,25 @@ export default function DigitalEmployees() {
               <KpiCard label="边界待完善" value={roleSetupKpis.boundaryPending} sub="个" icon={ShieldAlert} tone={roleSetupKpis.boundaryPending ? 'warn' : 'success'} size="comfortable" />
               <KpiCard label="契约完整" value={roleSetupKpis.contractReady} sub="个" icon={CheckCircle2} tone="success" size="comfortable" />
             </section>
-            <SimpleList
+            <WorkbenchListShell
               title="岗位配置"
-              description="按未完整优先排列；点击即进入岗位授权契约配置工作台。"
-              employees={roleSetupPageItems}
-              onSelect={setSelectedId}
+              description="按未完整优先排列；行内展示档案 / 边界 / 记忆检查，点击进入岗位授权契约工作台。"
+              countLabel={`${roleSorted.length} 个岗位`}
+              pageSize={roleSetupPageSize}
+              onPageSizeChange={setRoleSetupPageSize}
+              pageSizeAriaLabel="岗位配置每页数量"
+              columns={['岗位专家', '契约检查', '状态', '操作']}
               empty="暂无需要配置的员工"
-              headerExtra={(
-                <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-                    每页
-                    <select
-                      value={roleSetupPageSize}
-                      onChange={(event) => setRoleSetupPageSize(Number(event.target.value))}
-                      className="de-employee-input h-8 rounded-lg bg-[var(--bg)] px-2 text-xs text-[var(--text-secondary)]"
-                      aria-label="岗位配置每页数量"
-                    >
-                      {CATALOG_PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size} 个</option>)}
-                    </select>
-                  </label>
-                  <span className="text-xs text-[var(--text-muted)]">{roleSorted.length} 个岗位</span>
-                </div>
-              )}
+              emptyIcon={BriefcaseBusiness}
+              itemCount={roleSetupPageItems.length}
               footer={roleSetupPageCount > 1 ? (
-                <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ boxShadow: 'inset 0 1px 0 rgba(15,23,42,0.06)' }}>
-                  <span className="text-[11px] text-[var(--text-muted)]">第 {roleSetupPageSafe} / {roleSetupPageCount} 页 · 每页 {roleSetupPageSize} 个</span>
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" variant="secondary" disabled={roleSetupPageSafe <= 1} onClick={() => setRoleSetupPage((page) => Math.max(1, page - 1))}><ChevronLeft className="h-3.5 w-3.5" />上一页</Button>
-                    <Button size="sm" variant="secondary" disabled={roleSetupPageSafe >= roleSetupPageCount} onClick={() => setRoleSetupPage((page) => Math.min(roleSetupPageCount, page + 1))}>下一页<ChevronRight className="h-3.5 w-3.5" /></Button>
-                  </div>
-                </div>
+                <WorkbenchPagination page={roleSetupPageSafe} pageCount={roleSetupPageCount} pageSize={roleSetupPageSize} onPrev={() => setRoleSetupPage((page) => Math.max(1, page - 1))} onNext={() => setRoleSetupPage((page) => Math.min(roleSetupPageCount, page + 1))} />
               ) : undefined}
-              right={(employee) => {
-                const completeness = roleSetupCompleteness(employee);
-                const tone = completeness.label === '契约完整' ? 'success' : 'warn';
-                return (
-                  <div className="text-right text-[11px] text-[var(--text-muted)]">
-                    <Badge tone={tone}>{completeness.label}</Badge>
-                    <span className="mt-1.5 block max-w-[200px] truncate">{completeness.missing.length ? `缺：${completeness.missing.slice(0, 2).join('、')}` : '可进入能力装配'}</span>
-                    <span className="mt-1 block text-[var(--brand)]">配置岗位 →</span>
-                  </div>
-                );
-              }}
-            />
+            >
+              {roleSetupPageItems.map((employee) => (
+                <RoleSetupListRow key={employee.id} employee={employee} onSelect={() => setSelectedId(employee.id)} />
+              ))}
+            </WorkbenchListShell>
           </div>
         )}
 
@@ -375,56 +357,30 @@ export default function DigitalEmployees() {
               <KpiCard label="缺执行能力" value={capabilityKpis.noAssets} sub="个" icon={ShieldAlert} tone={capabilityKpis.noAssets ? 'warn' : 'success'} size="comfortable" />
               <KpiCard label="装配完整" value={capabilityKpis.ready} sub="个" icon={CheckCircle2} tone="success" size="comfortable" />
             </section>
-            <SimpleList
+            <WorkbenchListShell
               title="能力装配"
-              description="按未完整优先排列；点击即进入受控能力引用与授权工作台。"
-              employees={capabilityPageItems}
-              onSelect={setSelectedId}
+              description="按未完整优先排列；行内展示模型 / 执行能力 / 授权检查，点击进入受控装配工作台。"
+              countLabel={`${capabilitySorted.length} 个岗位`}
+              pageSize={capabilityPageSize}
+              onPageSizeChange={setCapabilityPageSize}
+              pageSizeAriaLabel="能力装配每页数量"
+              columns={['岗位专家', '装配检查', '状态', '操作']}
               empty="暂无员工可装配"
-              headerExtra={(
-                <div className="flex items-center gap-3">
-                  <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-                    每页
-                    <select
-                      value={capabilityPageSize}
-                      onChange={(event) => setCapabilityPageSize(Number(event.target.value))}
-                      className="de-employee-input h-8 rounded-lg bg-[var(--bg)] px-2 text-xs text-[var(--text-secondary)]"
-                      aria-label="能力装配每页数量"
-                    >
-                      {CATALOG_PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size} 个</option>)}
-                    </select>
-                  </label>
-                  <span className="text-xs text-[var(--text-muted)]">{capabilitySorted.length} 个岗位</span>
-                </div>
-              )}
+              emptyIcon={Layers3}
+              itemCount={capabilityPageItems.length}
               footer={capabilityPageCount > 1 ? (
-                <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ boxShadow: 'inset 0 1px 0 rgba(15,23,42,0.06)' }}>
-                  <span className="text-[11px] text-[var(--text-muted)]">第 {capabilityPageSafe} / {capabilityPageCount} 页 · 每页 {capabilityPageSize} 个</span>
-                  <div className="flex items-center gap-2">
-                    <Button size="sm" variant="secondary" disabled={capabilityPageSafe <= 1} onClick={() => setCapabilityPage((page) => Math.max(1, page - 1))}><ChevronLeft className="h-3.5 w-3.5" />上一页</Button>
-                    <Button size="sm" variant="secondary" disabled={capabilityPageSafe >= capabilityPageCount} onClick={() => setCapabilityPage((page) => Math.min(capabilityPageCount, page + 1))}>下一页<ChevronRight className="h-3.5 w-3.5" /></Button>
-                  </div>
-                </div>
+                <WorkbenchPagination page={capabilityPageSafe} pageCount={capabilityPageCount} pageSize={capabilityPageSize} onPrev={() => setCapabilityPage((page) => Math.max(1, page - 1))} onNext={() => setCapabilityPage((page) => Math.min(capabilityPageCount, page + 1))} />
               ) : undefined}
-              right={(employee) => {
-                const completeness = capabilityAssemblyCompleteness(employee);
-                const contractReady = roleSetupCompleteness(employee).ready;
-                const tone = completeness.label === '装配完整' ? 'success' : 'warn';
-                return (
-                  <div className="text-right text-[11px] text-[var(--text-muted)]">
-                    <Badge tone={tone}>{completeness.label}</Badge>
-                    {!contractReady && <span className="mt-1.5 block text-[var(--warning)]">岗位契约未完整</span>}
-                    <span className="mt-1.5 block max-w-[200px] truncate">{completeness.missing.length ? `缺：${completeness.missing.slice(0, 2).join('、')}` : `${completeness.boundCount} 项已引用`}</span>
-                    <span className="mt-1 block text-[var(--brand)]">打开装配 →</span>
-                  </div>
-                );
-              }}
-            />
+            >
+              {capabilityPageItems.map((employee) => (
+                <CapabilityListRow key={employee.id} employee={employee} onSelect={() => setSelectedId(employee.id)} />
+              ))}
+            </WorkbenchListShell>
           </div>
         )}
 
         {tab === 'release' && <OnboardingManagementView employees={orderedEmployees} onSelect={setSelectedId} onGoToModule={setTab} />}
-        {tab === 'operations' && <OperationsView employees={orderedEmployees} onSelect={setSelectedId} />}
+        {tab === 'operations' && <OperationsView employees={orderedEmployees} onSelect={setSelectedId} onGoToModule={setTab} />}
       </div>
       <EmployeeDetailModal employee={selected} context={tab} onClose={() => setSelectedId(null)} onGoToModule={setTab} />
       <CreateEmployeeModal open={createOpen} onClose={() => setCreateOpen(false)} loading={createEmployee.isPending} onCreate={(input) => createEmployee.mutate(input)} />
@@ -695,123 +651,551 @@ function OnboardingManagementView({ employees, onSelect, onGoToModule }: { emplo
         </div>
       </div>
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiCard label="待评测" value={counts.pending_eval} sub="个" icon={ClipboardCheck} tone={counts.pending_eval ? 'neutral' : 'success'} size="comfortable" />
-        <KpiCard label="评测未通过" value={counts.eval_failed} sub="个" icon={XCircle} tone={counts.eval_failed ? 'warn' : 'success'} size="comfortable" />
-        <KpiCard label="可申请上岗" value={counts.ready_to_request} sub="个" icon={CheckCircle2} tone="success" size="comfortable" />
-        <KpiCard label="待双重审批" value={counts.pending_approval} sub="个" icon={Clock3} tone={counts.pending_approval ? 'warn' : 'success'} size="comfortable" />
+        <button type="button" className="text-left" onClick={() => setSegment('pending_eval')} aria-pressed={segment === 'pending_eval'}>
+          <KpiCard label="待评测" value={counts.pending_eval} sub="个" icon={ClipboardCheck} tone={counts.pending_eval ? 'neutral' : 'success'} size="comfortable" />
+        </button>
+        <button type="button" className="text-left" onClick={() => setSegment('eval_failed')} aria-pressed={segment === 'eval_failed'}>
+          <KpiCard label="评测未通过" value={counts.eval_failed} sub="个" icon={XCircle} tone={counts.eval_failed ? 'warn' : 'success'} size="comfortable" />
+        </button>
+        <button type="button" className="text-left" onClick={() => setSegment('ready_to_request')} aria-pressed={segment === 'ready_to_request'}>
+          <KpiCard label="可申请上岗" value={counts.ready_to_request} sub="个" icon={CheckCircle2} tone="success" size="comfortable" />
+        </button>
+        <button type="button" className="text-left" onClick={() => setSegment('pending_approval')} aria-pressed={segment === 'pending_approval'}>
+          <KpiCard label="待双重审批" value={counts.pending_approval} sub="个" icon={Clock3} tone={counts.pending_approval ? 'warn' : 'success'} size="comfortable" />
+        </button>
       </section>
-      <SimpleList
+      <WorkbenchListShell
         title="上岗发布"
-        description="按「配置完成 → 质量评测 → 上岗申请 → 双重审批生效」推进；列表按未完成阶段优先排列。"
-        employees={pageItems}
-        onSelect={onSelect}
-        empty={segment === 'all' ? '所有员工均已完成上岗' : '当前分段暂无员工'}
-        headerExtra={(
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="上岗阶段">
-              {segments.map((item) => (
-                <button
-                  type="button"
-                  key={item.key}
-                  role="tab"
-                  aria-selected={segment === item.key}
-                  onClick={() => setSegment(item.key)}
-                  className={cn('de-employee-chip shrink-0 rounded-md px-3 py-1.5 text-xs transition-colors', segment === item.key && 'is-active')}
-                >
-                  {item.label}
-                  <span className="ml-1.5 tabular-nums text-[10px] opacity-70">{counts[item.key]}</span>
-                </button>
-              ))}
-            </div>
-            <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
-              每页
-              <select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))} className="de-employee-input h-8 rounded-lg bg-[var(--bg)] px-2 text-xs text-[var(--text-secondary)]" aria-label="上岗发布每页数量">
-                {CATALOG_PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size} 个</option>)}
-              </select>
-            </label>
+        description="按「配置完成 → 质量评测 → 上岗申请 → 双重审批生效」推进；行内展示门禁检查，点击查看处置。"
+        countLabel={`${filtered.length} 个待办`}
+        pageSize={pageSize}
+        onPageSizeChange={setPageSize}
+        pageSizeAriaLabel="上岗发布每页数量"
+        columns={['岗位专家', '上岗门禁', '状态', '操作']}
+        toolbar={(
+          <div className="flex gap-1 overflow-x-auto px-4 py-2.5" style={{ boxShadow: 'var(--saas-divider)' }} role="tablist" aria-label="上岗阶段">
+            {segments.map((item) => (
+              <button
+                type="button"
+                key={item.key}
+                role="tab"
+                aria-selected={segment === item.key}
+                onClick={() => setSegment(item.key)}
+                className={cn('de-employee-chip shrink-0 rounded-md px-3 py-1.5 text-xs transition-colors', segment === item.key && 'is-active')}
+              >
+                {item.label}
+                <span className="ml-1.5 tabular-nums text-[10px] opacity-70">{counts[item.key]}</span>
+              </button>
+            ))}
           </div>
         )}
+        empty={segment === 'all' ? '所有员工均已完成上岗' : '当前分段暂无员工'}
+        emptyIcon={Route}
+        itemCount={pageItems.length}
         footer={pageCount > 1 ? (
-          <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ boxShadow: 'inset 0 1px 0 rgba(15,23,42,0.06)' }}>
-            <span className="text-[11px] text-[var(--text-muted)]">第 {pageSafe} / {pageCount} 页 · 每页 {pageSize} 个</span>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="secondary" disabled={pageSafe <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-3.5 w-3.5" />上一页</Button>
-              <Button size="sm" variant="secondary" disabled={pageSafe >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>下一页<ChevronRight className="h-3.5 w-3.5" /></Button>
-            </div>
-          </div>
+          <WorkbenchPagination page={pageSafe} pageCount={pageCount} pageSize={pageSize} onPrev={() => setPage((value) => Math.max(1, value - 1))} onNext={() => setPage((value) => Math.min(pageCount, value + 1))} />
         ) : undefined}
-        right={(employee) => {
-          const completeness = releaseOnboardingCompleteness(employee);
-          const tone = completeness.stage === 'ready_to_request' || completeness.stage === 'released'
-            ? 'success'
-            : completeness.stage === 'pending_approval' || completeness.stage === 'eval_failed'
-              ? 'warn'
-              : 'neutral';
-          return (
-            <div className="text-right text-[11px] text-[var(--text-muted)]">
-              <Badge tone={tone}>{completeness.label}</Badge>
-              <span className="mt-1.5 block max-w-[220px] truncate">
-                {completeness.missing.length ? `缺：${completeness.missing.slice(0, 2).join('、')}` : '门禁已齐，可继续处置'}
-              </span>
-              <span className="mt-1 block text-[var(--brand)]">查看门禁 →</span>
-            </div>
-          );
-        }}
-      />
+      >
+        {pageItems.map((employee) => (
+          <ReleaseListRow key={employee.id} employee={employee} onSelect={() => onSelect(employee.id)} />
+        ))}
+      </WorkbenchListShell>
     </div>
   );
 }
 
-function OperationsView({ employees, onSelect }: { employees: DigitalEmployee[]; onSelect: (id: string) => void }) {
-  const active = employees.filter((item) => item.lifecycle === 'active');
-  const anomalies = active.filter((item) => item.runtime.anomalies > 0);
-  const handoffs = active.reduce((sum, item) => sum + item.runtime.handoffs24h, 0);
+function OperationsView({ employees, onSelect, onGoToModule }: { employees: DigitalEmployee[]; onSelect: (id: string) => void; onGoToModule: (tab: ModuleTab) => void }) {
+  type OpsSegment = 'all' | OperationsHealthStage;
+  const [segment, setSegment] = useState<OpsSegment>('needs_attention');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(readOperationsPageSize);
+  const [dispose, setDispose] = useState<{ employee: DigitalEmployee; lifecycle: 'paused' | 'quarantined' | 'active' } | null>(null);
   const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
-  const transition = useApiMutation<DigitalEmployee, { id: string; lifecycle: DigitalEmployeeLifecycle }>(({ id }) => `/api/digital-employees/${id}/lifecycle`);
-  const operated = employees.filter((item) => ['active', 'paused', 'quarantined'].includes(item.lifecycle)).sort((a, b) => Number(b.lifecycle !== 'active') - Number(a.lifecycle !== 'active') || b.runtime.anomalies - a.runtime.anomalies || b.runtime.handoffs24h - a.runtime.handoffs24h || compareDigitalEmployees(a, b));
-  return <div className="space-y-3"><section className="grid gap-3 sm:grid-cols-3"><KpiCard label="在岗运行" value={active.length} sub="个" icon={HeartPulse} tone="success" /><KpiCard label="人工交接" value={handoffs} sub="次 / 24h" icon={UserRoundCheck} tone="neutral" /><KpiCard label="待处置异常" value={anomalies.length} sub="个员工" icon={ShieldAlert} tone={anomalies.length ? 'warn' : 'success'} /></section><section className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_2px_12px_rgba(15,23,42,0.05)]"><div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4"><div><h2 className="text-sm font-semibold">运行管理</h2><p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">稳定员工仅展示运行摘要；异常、频繁交接、暂停或隔离状态才需要下钻处置与证据。</p></div><span className="rounded-md bg-[var(--bg)] px-2.5 py-1 text-[11px] text-[var(--text-muted)]">{operated.length} 个运行对象</span></div><div className="grid gap-3 p-4 lg:grid-cols-2">{operated.map((employee) => <OperationsEmployeeCard key={employee.id} employee={employee} isAdmin={isAdmin} loading={transition.isPending && transition.variables?.id === employee.id} onSelect={onSelect} onTransition={(lifecycle) => { const action = lifecycle === 'paused' ? '暂停运行' : lifecycle === 'quarantined' ? '隔离运行' : '恢复运行'; if (window.confirm(`确认${action}「${employeePrimaryLabel(employee)}」？此操作将记录审计证据。`)) transition.mutate({ id: employee.id, lifecycle }); }} />)}{!operated.length && <EmptyState icon={HeartPulse} title="暂无运行对象" description="完成评测与发布审批后，员工会进入运行运营视图。" />}</div></section></div>;
-}
+  const transition = useApiMutation<DigitalEmployee, { id: string; lifecycle: DigitalEmployeeLifecycle; reason?: string; confirmed?: boolean }>(({ id }) => `/api/digital-employees/${id}/lifecycle`);
 
-function OperationsEmployeeCard({ employee, isAdmin, loading, onSelect, onTransition }: { employee: DigitalEmployee; isAdmin: boolean; loading: boolean; onSelect: (id: string) => void; onTransition: (lifecycle: DigitalEmployeeLifecycle) => void }) {
-  const navigate = useNavigate();
-  const attention = employee.runtime.anomalies > 0 || employee.runtime.handoffs24h >= 10 || employee.lifecycle === 'paused' || employee.lifecycle === 'quarantined';
-  const status = employee.lifecycle === 'paused' ? '已暂停' : employee.lifecycle === 'quarantined' ? '已隔离' : employee.runtime.anomalies ? `${employee.runtime.anomalies} 项异常` : employee.runtime.handoffs24h >= 10 ? '交接偏高' : '运行稳定';
-  const tone = employee.lifecycle === 'quarantined' ? 'error' : attention ? 'warn' : 'success';
-  const detail = employee.runtime.anomalies ? `存在异常信号，建议由 ${employee.escalationOwner} 接管处置。` : employee.lifecycle === 'paused' || employee.lifecycle === 'quarantined' ? '运行已受控停止，可查看处置与审计证据。' : employee.runtime.handoffs24h >= 10 ? '人工交接高于运营阈值，建议检查工作负载与边界策略。' : '核心指标正常，无需进入详情。';
-  return <article className={cn('rounded-xl border bg-[var(--bg)] p-4', attention ? 'border-[var(--warning)]/35' : 'border-[var(--border)]')}><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><EmployeeAvatar employee={employee} size={40} /><div className="min-w-0"><div className="flex flex-wrap items-center gap-1.5"><div className="truncate text-sm font-semibold">{employeePrimaryLabel(employee)}</div>{isDepartmentHead(employee) && <Badge tone="info">部门负责人</Badge>}</div><p className="mt-1 truncate text-xs text-[var(--text-muted)]">{employeeSecondaryLabel(employee)}</p></div></div><Badge tone={tone}>{status}</Badge></div><div className="mt-4 grid grid-cols-4 gap-2 border-t border-[var(--border)] pt-3 text-center"><Metric label="调用" value={employee.runtime.calls24h} /><Metric label="成功率" value={employee.runtime.successRate ? `${(employee.runtime.successRate * 100).toFixed(1)}%` : '—'} /><Metric label="交接" value={employee.runtime.handoffs24h} /><Metric label="成本" value={`¥${employee.runtime.costToday}`} /></div><div className="mt-3 flex min-h-8 items-center justify-between gap-2"><p className="text-[11px] leading-4 text-[var(--text-muted)]">{detail}</p><div className="flex shrink-0 gap-2">{employee.lifecycle === 'active' && <Button size="sm" onClick={() => navigate(`/copilot?employeeId=${employee.id}`)}><MessageSquare className="h-3.5 w-3.5" />发起协作</Button>}{attention && <Button size="sm" variant="secondary" onClick={() => onSelect(employee.id)}>查看处置</Button>}{isAdmin && employee.lifecycle === 'active' && <Button size="sm" variant="ghost" loading={loading} onClick={() => onTransition('paused')}>暂停</Button>}{isAdmin && employee.lifecycle === 'active' && <Button size="sm" variant="ghost" loading={loading} onClick={() => onTransition('quarantined')}>隔离</Button>}{isAdmin && (employee.lifecycle === 'paused' || employee.lifecycle === 'quarantined') && employee.release.status === 'released' && <Button size="sm" loading={loading} onClick={() => onTransition('active')}>恢复</Button>}</div></div></article>;
-}
+  const queue = useMemo(
+    () => employees.filter((item) => ['active', 'paused', 'quarantined'].includes(item.lifecycle)).sort(compareOperationsEmployees),
+    [employees],
+  );
 
-function SimpleList({ title, description, employees, onSelect, empty, right, headerExtra, footer }: { title: string; description: string; employees: DigitalEmployee[]; onSelect: (id: string) => void; empty?: string; right: (employee: DigitalEmployee) => ReactNode; headerExtra?: ReactNode; footer?: ReactNode }) {
+  const counts = useMemo(() => {
+    const next = { all: queue.length, needs_attention: 0, high_handoff: 0, paused: 0, quarantined: 0, stable: 0 };
+    for (const item of queue) next[operationsHealth(item).stage] += 1;
+    return next;
+  }, [queue]);
+
+  const segments: Array<{ key: OpsSegment; label: string }> = [
+    { key: 'all', label: '全部在岗' },
+    { key: 'needs_attention', label: '需处置异常' },
+    { key: 'high_handoff', label: '交接偏高' },
+    { key: 'paused', label: '已暂停' },
+    { key: 'quarantined', label: '已隔离' },
+    { key: 'stable', label: '运行稳定' },
+  ];
+
+  const filtered = useMemo(
+    () => (segment === 'all' ? queue : queue.filter((item) => operationsHealth(item).stage === segment)),
+    [queue, segment],
+  );
+
+  useEffect(() => { setPage(1); }, [segment, pageSize, employees]);
+  useEffect(() => { window.localStorage.setItem(OPERATIONS_PAGE_SIZE_KEY, String(pageSize)); }, [pageSize]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const pageSafe = Math.min(page, pageCount);
+  const pageItems = filtered.slice((pageSafe - 1) * pageSize, pageSafe * pageSize);
+  const controlledCount = counts.paused + counts.quarantined;
+
   return (
-    <section className="de-employee-shell rounded-xl bg-[var(--surface-1)]">
+    <div className="space-y-3">
+      <div className="de-employee-hint rounded-xl px-4 py-3 text-xs leading-5 text-[var(--text-secondary)]">
+        运行管理只做在岗健康观测与受控启停/隔离；岗位档案请到「岗位配置」，能力引用请到「能力装配」。交接偏高阈值：≥ {OPERATIONS_HANDOFF_THRESHOLD} 次 / 24h。
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button type="button" className="de-employee-btn text-[11px]" onClick={() => onGoToModule('roleSetup')}>岗位配置</button>
+          <button type="button" className="de-employee-btn text-[11px]" onClick={() => onGoToModule('capabilities')}>能力装配</button>
+        </div>
+      </div>
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <button type="button" className="text-left" onClick={() => setSegment('all')} aria-pressed={segment === 'all'}>
+          <KpiCard label="在岗运行" value={counts.stable + counts.needs_attention + counts.high_handoff} sub="个" icon={HeartPulse} tone="success" size="comfortable" />
+        </button>
+        <button type="button" className="text-left" onClick={() => setSegment('needs_attention')} aria-pressed={segment === 'needs_attention'}>
+          <KpiCard label="需处置异常" value={counts.needs_attention} sub="个" icon={ShieldAlert} tone={counts.needs_attention ? 'warn' : 'success'} size="comfortable" />
+        </button>
+        <button type="button" className="text-left" onClick={() => setSegment('high_handoff')} aria-pressed={segment === 'high_handoff'}>
+          <KpiCard label="交接偏高" value={counts.high_handoff} sub="个" icon={UserRoundCheck} tone={counts.high_handoff ? 'warn' : 'success'} size="comfortable" />
+        </button>
+        <button type="button" className="text-left" onClick={() => setSegment(counts.quarantined ? 'quarantined' : 'paused')} aria-pressed={segment === 'paused' || segment === 'quarantined'}>
+          <KpiCard label="暂停 / 隔离" value={controlledCount} sub="个" icon={Pause} tone={controlledCount ? 'warn' : 'success'} size="comfortable" />
+        </button>
+      </section>
+
+      <section className="de-employee-shell overflow-hidden rounded-xl bg-[var(--surface-1)]">
+        <div className="flex flex-wrap items-end justify-between gap-3 px-5 py-4" style={{ boxShadow: 'var(--saas-divider)' }}>
+          <div>
+            <h2 className="text-sm font-semibold">运行管理</h2>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">按「需处置 → 交接偏高 → 暂停/隔离 → 稳定」优先；行内展示运行指标，处置动作与详情分离。</p>
+          </div>
+          <div className="flex items-center gap-3">
+            <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+              每页
+              <select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))} className="de-employee-input h-8 rounded-lg bg-[var(--bg)] px-2 text-xs text-[var(--text-secondary)]" aria-label="运行管理每页数量">
+                {CATALOG_PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size} 个</option>)}
+              </select>
+            </label>
+            <span className="text-xs text-[var(--text-muted)]">{filtered.length} 个专家</span>
+          </div>
+        </div>
+
+        <div className="flex gap-1 overflow-x-auto px-4 py-2.5" style={{ boxShadow: 'var(--saas-divider)' }} role="tablist" aria-label="运行健康阶段">
+          {segments.map((item) => (
+            <button
+              type="button"
+              key={item.key}
+              role="tab"
+              aria-selected={segment === item.key}
+              onClick={() => setSegment(item.key)}
+              className={cn('de-employee-chip shrink-0 rounded-md px-3 py-1.5 text-xs transition-colors', segment === item.key && 'is-active')}
+            >
+              {item.label}
+              <span className="ml-1.5 tabular-nums text-[10px] opacity-70">{counts[item.key]}</span>
+            </button>
+          ))}
+        </div>
+
+        {pageItems.length ? (
+          <>
+            <div className="hidden border-b border-[var(--border)] bg-[var(--bg-elevated)] px-5 py-2 text-[11px] font-medium text-[var(--text-muted)] lg:grid lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1.1fr)_minmax(0,0.95fr)_auto] lg:gap-4">
+              <span>在岗专家</span>
+              <span>近 24h 运行</span>
+              <span>健康状态</span>
+              <span className="text-right">操作</span>
+            </div>
+            <div className="divide-y divide-[var(--border)]">
+              {pageItems.map((employee) => (
+                <OperationsListRow
+                  key={employee.id}
+                  employee={employee}
+                  isAdmin={isAdmin}
+                  onSelect={() => onSelect(employee.id)}
+                  onDispose={(lifecycle) => setDispose({ employee, lifecycle })}
+                />
+              ))}
+            </div>
+            {pageCount > 1 && (
+              <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ boxShadow: 'inset 0 1px 0 rgba(15,23,42,0.06)' }}>
+                <span className="text-[11px] text-[var(--text-muted)]">第 {pageSafe} / {pageCount} 页 · 每页 {pageSize} 个</span>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="secondary" disabled={pageSafe <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-3.5 w-3.5" />上一页</Button>
+                  <Button size="sm" variant="secondary" disabled={pageSafe >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>下一页<ChevronRight className="h-3.5 w-3.5" /></Button>
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <EmptyState icon={HeartPulse} title={segment === 'all' ? '完成双重审批上岗后，在岗专家会出现在此' : '当前分段暂无在岗专家'} />
+        )}
+      </section>
+
+      {dispose && (
+        <OperationsDisposeModal
+          employee={dispose.employee}
+          targetLifecycle={dispose.lifecycle}
+          loading={transition.isPending}
+          onClose={() => setDispose(null)}
+          onConfirm={(input) => {
+            transition.mutate(
+              { id: dispose.employee.id, lifecycle: dispose.lifecycle, reason: input.reason, confirmed: input.confirmed },
+              { onSuccess: () => setDispose(null) },
+            );
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function OperationsListRow({
+  employee,
+  isAdmin,
+  onSelect,
+  onDispose,
+}: {
+  employee: DigitalEmployee;
+  isAdmin: boolean;
+  onSelect: () => void;
+  onDispose: (lifecycle: 'paused' | 'quarantined' | 'active') => void;
+}) {
+  const health = operationsHealth(employee);
+  const tone = health.stage === 'stable' ? 'success' : health.stage === 'quarantined' ? 'error' : 'warn';
+  const signalHint = health.signals[0]?.label ?? (health.missing[0] ?? '指标正常');
+
+  return (
+    <article
+      className={cn(
+        'grid gap-3 px-5 py-4 transition-colors hover:bg-[var(--bg-hover)] lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1.1fr)_minmax(0,0.95fr)_auto] lg:items-center lg:gap-4',
+        health.attention && 'bg-[color-mix(in_srgb,var(--warning)_8%,transparent)]',
+      )}
+    >
+      <button type="button" onClick={onSelect} className="flex min-w-0 items-center gap-3 text-left">
+        <EmployeeAvatar employee={employee} size={40} />
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="truncate text-sm font-semibold text-[var(--text)]">{employeePrimaryLabel(employee)}</span>
+            {isDepartmentHead(employee) && <Badge tone="info">部门负责人</Badge>}
+            <Badge tone={lifecycleMeta[employee.lifecycle].tone}>{lifecycleMeta[employee.lifecycle].label}</Badge>
+          </div>
+          <p className="mt-1 truncate text-xs text-[var(--text-muted)]">{employeeSecondaryLabel(employee)}</p>
+          <p className="mt-0.5 truncate text-[11px] text-[var(--text-muted)]">接管 {employee.escalationOwner || '待指定'}</p>
+        </div>
+      </button>
+
+      <div className="grid grid-cols-4 gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-2">
+        <OperationsMetric label="调用" value={employee.runtime.calls24h} />
+        <OperationsMetric label="成功率" value={employee.runtime.successRate ? `${(employee.runtime.successRate * 100).toFixed(0)}%` : '—'} />
+        <OperationsMetric label="交接" value={employee.runtime.handoffs24h} emphasize={employee.runtime.handoffs24h >= OPERATIONS_HANDOFF_THRESHOLD} />
+        <OperationsMetric label="异常" value={employee.runtime.anomalies} emphasize={employee.runtime.anomalies > 0} />
+      </div>
+
+      <div className="min-w-0">
+        <Badge tone={tone}>{health.label}</Badge>
+        <p className="mt-1.5 line-clamp-2 text-[11px] leading-4 text-[var(--text-muted)]">{signalHint}</p>
+        <p className="mt-1 hidden text-[11px] text-[var(--text-secondary)] sm:block lg:hidden">{health.summary}</p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5 lg:justify-end">
+        <Button size="sm" variant="secondary" onClick={onSelect}>{health.attention ? '查看处置' : '运行摘要'}</Button>
+        {isAdmin && employee.lifecycle === 'active' && (
+          <>
+            <Button size="sm" variant="ghost" onClick={() => onDispose('paused')}>暂停</Button>
+            <Button size="sm" variant="ghost" onClick={() => onDispose('quarantined')}>隔离</Button>
+          </>
+        )}
+        {isAdmin && (employee.lifecycle === 'paused' || employee.lifecycle === 'quarantined') && employee.release.status === 'released' && (
+          <Button size="sm" onClick={() => onDispose('active')}>恢复</Button>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function OperationsMetric({ label, value, emphasize }: { label: string; value: string | number; emphasize?: boolean }) {
+  return (
+    <div className="min-w-0 text-center">
+      <div className="text-[10px] text-[var(--text-muted)]">{label}</div>
+      <div className={cn('mt-0.5 truncate text-xs font-semibold tabular-nums', emphasize ? 'text-[var(--warning)]' : 'text-[var(--text)]')}>{value}</div>
+    </div>
+  );
+}
+
+function OperationsDisposeModal({
+  employee,
+  targetLifecycle,
+  loading,
+  onClose,
+  onConfirm,
+}: {
+  employee: DigitalEmployee;
+  targetLifecycle: 'paused' | 'quarantined' | 'active';
+  loading: boolean;
+  onClose: () => void;
+  onConfirm: (input: { reason: string; confirmed?: boolean }) => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [confirmed, setConfirmed] = useState(false);
+  const isResume = targetLifecycle === 'active';
+  const title = targetLifecycle === 'paused' ? '暂停运行' : targetLifecycle === 'quarantined' ? '隔离运行' : '恢复运行';
+  const description = isResume
+    ? `确认恢复「${employeePrimaryLabel(employee)}」前，请确认异常已处置并保留审计证据。`
+    : `将对「${employeePrimaryLabel(employee)}」执行${title}，须填写处置原因并记入审计证据。`;
+  const canSubmit = isResume ? confirmed : reason.trim().length > 0;
+
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title={title}
+      description={description}
+      size="md"
+      footer={(
+        <>
+          <Button variant="ghost" onClick={onClose}>取消</Button>
+          <Button
+            loading={loading}
+            disabled={!canSubmit}
+            onClick={() => onConfirm({ reason: reason.trim(), confirmed: isResume ? confirmed : undefined })}
+          >
+            确认{title}
+          </Button>
+        </>
+      )}
+    >
+      <div className="grid gap-4">
+        <p className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2.5 text-xs leading-5 text-[var(--text-muted)]">
+          人工接管人 {employee.escalationOwner || '待指定'} · 岗位负责人 {employee.owner}
+          {employee.opsControl?.reason ? ` · 上次处置：${employee.opsControl.reason}` : ''}
+        </p>
+        {!isResume && (
+          <label className="grid gap-1.5 text-xs font-medium">
+            处置原因<span className="ml-1 text-[var(--danger)]">*</span>
+            <input
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder={targetLifecycle === 'quarantined' ? '例如：连续越权尝试，隔离待安全复核' : '例如：成功率下降，暂停待值班复核'}
+              className="h-9 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 text-xs font-normal outline-none focus:border-[var(--brand)]"
+            />
+          </label>
+        )}
+        {isResume && (
+          <label className="flex items-start gap-2 text-xs leading-5 text-[var(--text-secondary)]">
+            <input type="checkbox" className="mt-0.5" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} />
+            <span>已确认异常处置完成，并保留相关审计证据；恢复后仍按岗位授权契约执行人工接管与审批要求。</span>
+          </label>
+        )}
+        {isResume && (
+          <label className="grid gap-1.5 text-xs font-medium">
+            恢复说明（可选）
+            <input
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="例如：失败样本已复核，值班已签收"
+              className="h-9 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 text-xs font-normal outline-none focus:border-[var(--brand)]"
+            />
+          </label>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+function WorkbenchListShell({
+  title,
+  description,
+  countLabel,
+  pageSize,
+  onPageSizeChange,
+  pageSizeAriaLabel,
+  columns,
+  toolbar,
+  children,
+  empty,
+  emptyIcon: EmptyIcon = BriefcaseBusiness,
+  footer,
+  itemCount,
+}: {
+  title: string;
+  description: string;
+  countLabel: string;
+  pageSize: number;
+  onPageSizeChange: (size: number) => void;
+  pageSizeAriaLabel: string;
+  columns: [string, string, string, string];
+  toolbar?: ReactNode;
+  children: ReactNode;
+  empty: string;
+  emptyIcon?: typeof BriefcaseBusiness;
+  footer?: ReactNode;
+  itemCount: number;
+}) {
+  return (
+    <section className="de-employee-shell overflow-hidden rounded-xl bg-[var(--surface-1)]">
       <div className="flex flex-wrap items-end justify-between gap-3 px-5 py-4" style={{ boxShadow: 'var(--saas-divider)' }}>
         <div>
           <h2 className="text-sm font-semibold">{title}</h2>
           <p className="mt-1 text-xs text-[var(--text-muted)]">{description}</p>
         </div>
-        {headerExtra}
+        <div className="flex items-center gap-3">
+          <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+            每页
+            <select value={pageSize} onChange={(event) => onPageSizeChange(Number(event.target.value))} className="de-employee-input h-8 rounded-lg bg-[var(--bg)] px-2 text-xs text-[var(--text-secondary)]" aria-label={pageSizeAriaLabel}>
+              {CATALOG_PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size} 个</option>)}
+            </select>
+          </label>
+          <span className="text-xs text-[var(--text-muted)]">{countLabel}</span>
+        </div>
       </div>
-      {employees.length ? (
+      {toolbar}
+      {itemCount > 0 ? (
         <>
-          <div className="divide-y divide-[var(--border)]">
-            {employees.map((employee) => (
-              <button type="button" key={employee.id} onClick={() => onSelect(employee.id)} className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[var(--bg-hover)]">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{employeePrimaryLabel(employee)}</span>
-                    {isDepartmentHead(employee) && <Badge tone="info">部门负责人</Badge>}
-                    <Badge tone={lifecycleMeta[employee.lifecycle].tone}>{lifecycleMeta[employee.lifecycle].label}</Badge>
-                  </div>
-                  <div className="mt-1 text-xs text-[var(--text-muted)]">{employeeSecondaryLabel(employee)}</div>
-                </div>
-                <div className="shrink-0">{right(employee)}</div>
-              </button>
-            ))}
+          <div className="hidden border-b border-[var(--border)] bg-[var(--bg-elevated)] px-5 py-2 text-[11px] font-medium text-[var(--text-muted)] lg:grid lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1.15fr)_minmax(0,0.9fr)_auto] lg:gap-4">
+            {columns.map((column) => <span key={column} className={column === '操作' ? 'text-right' : undefined}>{column}</span>)}
           </div>
+          <div className="divide-y divide-[var(--border)]">{children}</div>
           {footer}
         </>
-      ) : <EmptyState icon={BriefcaseBusiness} title={empty ?? '暂无记录'} />}
+      ) : <EmptyState icon={EmptyIcon} title={empty} />}
     </section>
+  );
+}
+
+function WorkbenchPagination({ page, pageCount, pageSize, onPrev, onNext }: { page: number; pageCount: number; pageSize: number; onPrev: () => void; onNext: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ boxShadow: 'inset 0 1px 0 rgba(15,23,42,0.06)' }}>
+      <span className="text-[11px] text-[var(--text-muted)]">第 {page} / {pageCount} 页 · 每页 {pageSize} 个</span>
+      <div className="flex items-center gap-2">
+        <Button size="sm" variant="secondary" disabled={page <= 1} onClick={onPrev}><ChevronLeft className="h-3.5 w-3.5" />上一页</Button>
+        <Button size="sm" variant="secondary" disabled={page >= pageCount} onClick={onNext}>下一页<ChevronRight className="h-3.5 w-3.5" /></Button>
+      </div>
+    </div>
+  );
+}
+
+function WorkbenchIdentity({ employee, onSelect, metaLine }: { employee: DigitalEmployee; onSelect: () => void; metaLine?: string }) {
+  return (
+    <button type="button" onClick={onSelect} className="flex min-w-0 items-center gap-3 text-left">
+      <EmployeeAvatar employee={employee} size={40} />
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="truncate text-sm font-semibold text-[var(--text)]">{employeePrimaryLabel(employee)}</span>
+          {isDepartmentHead(employee) && <Badge tone="info">部门负责人</Badge>}
+          <Badge tone={lifecycleMeta[employee.lifecycle].tone}>{lifecycleMeta[employee.lifecycle].label}</Badge>
+        </div>
+        <p className="mt-1 truncate text-xs text-[var(--text-muted)]">{employeeSecondaryLabel(employee)}</p>
+        {metaLine && <p className="mt-0.5 truncate text-[11px] text-[var(--text-muted)]">{metaLine}</p>}
+      </div>
+    </button>
+  );
+}
+
+function WorkbenchCheckStrip({ items }: { items: Array<{ label: string; ok: boolean }> }) {
+  return (
+    <div className="flex flex-wrap gap-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg)] p-2">
+      {items.map((item) => (
+        <span
+          key={item.label}
+          className={cn(
+            'inline-flex items-center gap-1 rounded-md px-2 py-1 text-[10px] font-medium',
+            item.ok ? 'bg-[var(--success-bg)] text-[var(--success)]' : 'bg-[color-mix(in_srgb,var(--warning)_12%,transparent)] text-[var(--warning)]',
+          )}
+        >
+          {item.ok ? <CheckCircle2 className="h-3 w-3 shrink-0" /> : <XCircle className="h-3 w-3 shrink-0" />}
+          {item.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function RoleSetupListRow({ employee, onSelect }: { employee: DigitalEmployee; onSelect: () => void }) {
+  const completeness = roleSetupCompleteness(employee);
+  const tone = completeness.label === '契约完整' ? 'success' : 'warn';
+  return (
+    <article className={cn('grid gap-3 px-5 py-4 transition-colors hover:bg-[var(--bg-hover)] lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1.15fr)_minmax(0,0.9fr)_auto] lg:items-center lg:gap-4', !completeness.ready && 'bg-[color-mix(in_srgb,var(--warning)_8%,transparent)]')}>
+      <WorkbenchIdentity employee={employee} onSelect={onSelect} metaLine={`负责人 ${employee.owner || '待指定'} · 接管 ${employee.escalationOwner || '待指定'}`} />
+      <WorkbenchCheckStrip items={[
+        { label: '档案', ok: completeness.profileOk },
+        { label: '边界', ok: completeness.boundaryOk },
+        { label: '记忆', ok: completeness.memoryOk },
+      ]} />
+      <div className="min-w-0">
+        <Badge tone={tone}>{completeness.label}</Badge>
+        <p className="mt-1.5 line-clamp-2 text-[11px] leading-4 text-[var(--text-muted)]">
+          {completeness.missing.length ? `缺：${completeness.missing.slice(0, 2).join('、')}` : '可进入能力装配'}
+        </p>
+      </div>
+      <div className="flex lg:justify-end">
+        <Button size="sm" variant="secondary" onClick={onSelect}>配置岗位</Button>
+      </div>
+    </article>
+  );
+}
+
+function CapabilityListRow({ employee, onSelect }: { employee: DigitalEmployee; onSelect: () => void }) {
+  const completeness = capabilityAssemblyCompleteness(employee);
+  const contractReady = roleSetupCompleteness(employee).ready;
+  const tone = completeness.label === '装配完整' ? 'success' : 'warn';
+  return (
+    <article className={cn('grid gap-3 px-5 py-4 transition-colors hover:bg-[var(--bg-hover)] lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1.15fr)_minmax(0,0.9fr)_auto] lg:items-center lg:gap-4', !completeness.ready && 'bg-[color-mix(in_srgb,var(--warning)_8%,transparent)]')}>
+      <WorkbenchIdentity employee={employee} onSelect={onSelect} metaLine={employee.capabilities.model ? `模型 ${employee.capabilities.model}` : '尚未绑定模型路由'} />
+      <WorkbenchCheckStrip items={[
+        { label: '模型', ok: completeness.modelOk },
+        { label: '执行能力', ok: completeness.assetsOk },
+        { label: '授权', ok: completeness.modesOk },
+      ]} />
+      <div className="min-w-0">
+        <Badge tone={tone}>{completeness.label}</Badge>
+        {!contractReady && <p className="mt-1.5 text-[11px] text-[var(--warning)]">岗位契约未完整</p>}
+        <p className="mt-1.5 line-clamp-2 text-[11px] leading-4 text-[var(--text-muted)]">
+          {completeness.missing.length ? `缺：${completeness.missing.slice(0, 2).join('、')}` : `${completeness.boundCount} 项已引用`}
+        </p>
+      </div>
+      <div className="flex lg:justify-end">
+        <Button size="sm" variant="secondary" onClick={onSelect}>打开装配</Button>
+      </div>
+    </article>
+  );
+}
+
+function ReleaseListRow({ employee, onSelect }: { employee: DigitalEmployee; onSelect: () => void }) {
+  const completeness = releaseOnboardingCompleteness(employee);
+  const tone = completeness.stage === 'ready_to_request' || completeness.stage === 'released'
+    ? 'success'
+    : completeness.stage === 'pending_approval' || completeness.stage === 'eval_failed'
+      ? 'warn'
+      : 'neutral';
+  return (
+    <article className={cn('grid gap-3 px-5 py-4 transition-colors hover:bg-[var(--bg-hover)] lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1.15fr)_minmax(0,0.9fr)_auto] lg:items-center lg:gap-4', completeness.stage !== 'ready_to_request' && 'bg-[color-mix(in_srgb,var(--warning)_8%,transparent)]')}>
+      <WorkbenchIdentity
+        employee={employee}
+        onSelect={onSelect}
+        metaLine={employee.evaluation.score != null ? `评测 ${employee.evaluation.score} 分 · ${employee.evaluation.status === 'passed' ? '已通过' : employee.evaluation.status === 'failed' ? '未通过' : '进行中'}` : '尚未评测'}
+      />
+      <WorkbenchCheckStrip items={[
+        { label: '契约', ok: completeness.contractOk },
+        { label: '能力', ok: completeness.capabilityOk },
+        { label: '评测', ok: completeness.evaluationOk },
+        { label: '审批', ok: completeness.approvalOk },
+      ]} />
+      <div className="min-w-0">
+        <Badge tone={tone}>{completeness.label}</Badge>
+        <p className="mt-1.5 line-clamp-2 text-[11px] leading-4 text-[var(--text-muted)]">
+          {completeness.missing.length ? `缺：${completeness.missing.slice(0, 2).join('、')}` : '门禁已齐，可继续处置'}
+        </p>
+      </div>
+      <div className="flex lg:justify-end">
+        <Button size="sm" variant="secondary" onClick={onSelect}>查看门禁</Button>
+      </div>
+    </article>
   );
 }
 
@@ -982,6 +1366,7 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
   const isAdmin = user?.role === 'admin';
   const [message, setMessage] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [disposeLifecycle, setDisposeLifecycle] = useState<'paused' | 'quarantined' | 'active' | null>(null);
   const { data: evidence = [] } = useApiQuery<Array<{ id: string; time: string; actor: string; action: string; target: string; result: string }>>(['digital-employee', employee.id, 'evidence'], `/api/digital-employees/${employee.id}/evidence`);
   const evaluate = useApiMutation<DigitalEmployee, Record<string, never>>(() => `/api/digital-employees/${employee.id}/evaluate`, {
     onSuccess: (result) => setMessage(result.evaluation.status === 'passed' ? '评测已通过，可作为上岗门禁依据。' : '评测未通过，请按门禁缺失项补齐后复测。'),
@@ -999,7 +1384,7 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
     onSuccess: () => { setMessage('已驳回上岗申请。'); setRejectReason(''); },
     onError: (err) => setMessage(err instanceof Error ? err.message : '驳回失败'),
   });
-  const transition = useApiMutation<DigitalEmployee, { lifecycle: DigitalEmployeeLifecycle }>(() => `/api/digital-employees/${employee.id}/lifecycle`, {
+  const transition = useApiMutation<DigitalEmployee, { lifecycle: DigitalEmployeeLifecycle; reason?: string; confirmed?: boolean }>(() => `/api/digital-employees/${employee.id}/lifecycle`, {
     onSuccess: (_, input) => setMessage(input.lifecycle === 'active' ? (employee.release.status === 'pending_approval' ? '双重审批已通过，员工已上岗。' : '已恢复运行。') : input.lifecycle === 'paused' ? '已暂停员工运行。' : input.lifecycle === 'quarantined' ? '已隔离员工运行。' : '状态已更新。'),
     onError: (err) => setMessage(err instanceof Error ? err.message : '状态变更失败'),
   });
@@ -1008,6 +1393,7 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
     : { title: '运行管理详情', description: '仅展示岗位服务健康、人工交接与运行处置；不可修改岗位或能力。' };
   const selfRequested = Boolean(employee.release.requestedById && user?.id && employee.release.requestedById === user.id);
   const completeness = releaseOnboardingCompleteness(employee);
+  const health = operationsHealth(employee);
   const releaseGate = completeness.gates;
   const releaseActions = (
     <>
@@ -1038,13 +1424,14 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
   const operationsActions = (
     <>
       {employee.lifecycle === 'active' && <Button size="sm" onClick={() => navigate(`/copilot?employeeId=${employee.id}`)}><MessageSquare className="h-3.5 w-3.5" />发起协作</Button>}
-      {isAdmin && employee.lifecycle === 'active' && <Button size="sm" variant="secondary" loading={transition.isPending} onClick={() => transition.mutate({ lifecycle: 'paused' })}><Pause className="h-3.5 w-3.5" />暂停运行</Button>}
-      {isAdmin && employee.lifecycle === 'active' && <Button size="sm" variant="secondary" loading={transition.isPending} onClick={() => transition.mutate({ lifecycle: 'quarantined' })}><ShieldAlert className="h-3.5 w-3.5" />隔离</Button>}
-      {isAdmin && (employee.lifecycle === 'paused' || employee.lifecycle === 'quarantined') && employee.release.status === 'released' && <Button size="sm" loading={transition.isPending} onClick={() => transition.mutate({ lifecycle: 'active' })}><Play className="h-3.5 w-3.5" />恢复运行</Button>}
+      {isAdmin && employee.lifecycle === 'active' && <Button size="sm" variant="secondary" onClick={() => setDisposeLifecycle('paused')}><Pause className="h-3.5 w-3.5" />暂停运行</Button>}
+      {isAdmin && employee.lifecycle === 'active' && <Button size="sm" variant="secondary" onClick={() => setDisposeLifecycle('quarantined')}><ShieldAlert className="h-3.5 w-3.5" />隔离</Button>}
+      {isAdmin && (employee.lifecycle === 'paused' || employee.lifecycle === 'quarantined') && employee.release.status === 'released' && <Button size="sm" onClick={() => setDisposeLifecycle('active')}><Play className="h-3.5 w-3.5" />恢复运行</Button>}
       <Button size="sm" variant="ghost" onClick={onClose}>关闭</Button>
     </>
   );
   return (
+    <>
     <Modal open onClose={onClose} title={`${meta.title} · ${employeePrimaryLabel(employee)}`} description={`${employeeSecondaryLabel(employee)} · 岗位版本 ${employee.version} · ${meta.description}`} size="xl" footer={context === 'release' ? releaseActions : operationsActions}>
       <div className="space-y-5">
         <section className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-5 py-4">
@@ -1057,6 +1444,7 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
                   <Badge tone={lifecycleMeta[employee.lifecycle].tone}>{lifecycleMeta[employee.lifecycle].label}</Badge>
                   <Badge tone={riskMeta[employee.risk].tone}>{riskMeta[employee.risk].label}</Badge>
                   {context === 'release' && <Badge tone={completeness.stage === 'ready_to_request' ? 'success' : completeness.stage === 'pending_eval' ? 'neutral' : 'warn'}>{completeness.label}</Badge>}
+                  {context === 'operations' && <Badge tone={health.stage === 'stable' ? 'success' : health.stage === 'quarantined' ? 'error' : 'warn'}>{health.label}</Badge>}
                 </div>
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">{employeeSecondaryLabel(employee)} · 服务 {employee.serviceObject}</p>
                 <p className="mt-1 text-[11px] text-[var(--text-muted)]">岗位负责人 {employee.owner} · 人工接管 {employee.escalationOwner}</p>
@@ -1064,7 +1452,11 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
             </div>
             <div className="grid grid-cols-2 gap-x-7 gap-y-2 text-xs">
               <span><span className="block text-[11px] text-[var(--text-muted)]">运行环境</span><strong className="mt-0.5 block font-medium">{employee.environment === 'production' ? '生产环境' : employee.environment === 'staging' ? '预发环境' : '沙箱环境'}</strong></span>
-              <span><span className="block text-[11px] text-[var(--text-muted)]">质量评测</span><strong className="mt-0.5 block font-medium">{employee.evaluation.status === 'failed' ? '未通过' : employee.evaluation.score ?? '待评测'}{employee.evaluation.score ? ' 分' : ''}</strong></span>
+              {context === 'release' ? (
+                <span><span className="block text-[11px] text-[var(--text-muted)]">质量评测</span><strong className="mt-0.5 block font-medium">{employee.evaluation.status === 'failed' ? '未通过' : employee.evaluation.score ?? '待评测'}{employee.evaluation.score ? ' 分' : ''}</strong></span>
+              ) : (
+                <span><span className="block text-[11px] text-[var(--text-muted)]">人工接管</span><strong className="mt-0.5 block font-medium">{employee.escalationOwner || '待指定'}</strong></span>
+              )}
             </div>
           </div>
         </section>
@@ -1124,7 +1516,11 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
           <section className="space-y-4">
             <div>
               <h3 className="text-sm font-semibold">运行健康与处置</h3>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">仅提供业务运行观测和受控启停/隔离，不允许在运行场景修改岗位、能力或记忆策略。</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">仅提供业务运行观测和受控启停/隔离，不允许在运行场景修改岗位、能力或记忆策略。交接偏高阈值 ≥ {OPERATIONS_HANDOFF_THRESHOLD} 次 / 24h。</p>
+            </div>
+            <div className={cn('rounded-lg border p-3 text-xs leading-5', health.attention ? 'border-[var(--warning)]/40 bg-[var(--warning-light)] text-[var(--text-secondary)]' : 'border-[var(--success)]/30 bg-[var(--success-bg)] text-[var(--text-secondary)]')}>
+              <HeartPulse className="mr-1 inline h-3.5 w-3.5" />
+              {health.summary}
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <Metric label="24 小时调用" value={employee.runtime.calls24h} />
@@ -1134,10 +1530,27 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
               <Metric label="人工交接" value={employee.runtime.handoffs24h} sub="次" />
               <Metric label="异常信号" value={employee.runtime.anomalies} sub="项" />
             </div>
-            <div className={cn('rounded-lg border p-3 text-xs leading-5', employee.runtime.anomalies || employee.lifecycle === 'quarantined' ? 'border-[var(--warning)]/40 bg-[var(--warning-light)] text-[var(--text-secondary)]' : 'border-[var(--success)]/30 bg-[var(--success-bg)] text-[var(--text-secondary)]')}>
-              <HeartPulse className="mr-1 inline h-3.5 w-3.5" />
-              {employee.lifecycle === 'quarantined' ? '员工已隔离，恢复前请确认异常已处置并保留证据。' : employee.runtime.anomalies ? `检测到 ${employee.runtime.anomalies} 项异常信号；如影响扩大，请暂停或隔离并交由 ${employee.escalationOwner} 接管。` : '当前未发现异常信号，仍应按岗位授权契约执行人工接管和审批要求。'}
-            </div>
+            {health.signals.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold">异常与关注项</h4>
+                {health.signals.map((signal) => (
+                  <div key={signal.key} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium">{signal.label}</span>
+                      <Badge tone={signal.severity === 'error' ? 'error' : signal.severity === 'warn' ? 'warn' : 'neutral'}>{signal.severity === 'error' ? '优先' : signal.severity === 'warn' ? '关注' : '状态'}</Badge>
+                    </div>
+                    <p className="mt-1.5 text-[11px] leading-5 text-[var(--text-muted)]">{signal.detail}</p>
+                  </div>
+                ))}
+              </div>
+            )}
+            {employee.opsControl?.reason && (
+              <p className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+                最近处置：{employee.opsControl.lastAction === 'paused' ? '暂停' : employee.opsControl.lastAction === 'quarantined' ? '隔离' : '恢复'}
+                · {employee.opsControl.reason}
+                {employee.opsControl.actor ? ` · ${employee.opsControl.actor}` : ''}
+              </p>
+            )}
           </section>
         )}
         <section className="space-y-3">
@@ -1152,6 +1565,21 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
         </section>
       </div>
     </Modal>
+    {disposeLifecycle && (
+      <OperationsDisposeModal
+        employee={employee}
+        targetLifecycle={disposeLifecycle}
+        loading={transition.isPending}
+        onClose={() => setDisposeLifecycle(null)}
+        onConfirm={(input) => {
+          transition.mutate(
+            { lifecycle: disposeLifecycle, reason: input.reason, confirmed: input.confirmed },
+            { onSuccess: () => setDisposeLifecycle(null) },
+          );
+        }}
+      />
+    )}
+    </>
   );
 }
 
