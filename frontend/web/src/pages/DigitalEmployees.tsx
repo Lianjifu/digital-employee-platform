@@ -9,11 +9,11 @@ import { useT } from '@/i18n';
 import type { DigitalEmployee, DigitalEmployeeBoundaryPolicy, DigitalEmployeeConfigurationVersion, DigitalEmployeeExecutionMode, DigitalEmployeeLifecycle, DigitalEmployeeResponsibility, DigitalEmployeeTemplate, DigitalEmployeeTemplateAdoption } from '@de/web-types';
 import { DigitalEmployeeAvatar } from '@/components/DigitalEmployeeAvatar';
 import { DepartmentTeamPanel } from '@/components/DepartmentTeamPanel';
-import { compareDigitalEmployees, DIGITAL_EMPLOYEE_DEPARTMENT_ORDER, employeePrimaryLabel, employeeSecondaryLabel, isDepartmentHead } from '@/lib/digital-employees';
+import { capabilityAssemblyCompleteness, compareCapabilityAssemblyEmployees, compareDigitalEmployees, compareReleaseOnboardingEmployees, compareRoleSetupEmployees, DIGITAL_EMPLOYEE_DEPARTMENT_ORDER, employeePrimaryLabel, employeeSecondaryLabel, isDepartmentHead, releaseOnboardingCompleteness, roleSetupCompleteness, type ReleaseOnboardingStage } from '@/lib/digital-employees';
 import {
   ArrowUpRight, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Clock3, Database,
   HeartPulse, Layers3, MessageSquare, Pause, Play, Plus,
-  Route, Save, Search, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, UserRoundCheck, UsersRound,
+  Route, Save, Search, ShieldAlert, ShieldCheck, Sparkles, UserRoundCheck, UsersRound,
   XCircle, Trash2,
 } from 'lucide-react';
 
@@ -23,17 +23,39 @@ type DetailTab = 'team' | 'profile' | 'boundary' | 'capabilities' | 'memory' | '
 const CATALOG_PAGE_SIZE_OPTIONS = [4, 8, 12, 16, 24] as const;
 const CATALOG_PAGE_SIZE_KEY = 'de.catalog.pageSize';
 const CATALOG_DEFAULT_PAGE_SIZE = 8;
+const ROLE_SETUP_PAGE_SIZE_KEY = 'de.roleSetup.pageSize';
+const ROLE_SETUP_DEFAULT_PAGE_SIZE = 8;
+const CAPABILITY_PAGE_SIZE_KEY = 'de.capabilities.pageSize';
+const CAPABILITY_DEFAULT_PAGE_SIZE = 8;
+const RELEASE_PAGE_SIZE_KEY = 'de.release.pageSize';
+const RELEASE_DEFAULT_PAGE_SIZE = 8;
 const PLAZA_PAGE_SIZE = 4;
 
+function readStoredPageSize(key: string, fallback: number) {
+  if (typeof window === 'undefined') return fallback;
+  const raw = Number(window.localStorage.getItem(key));
+  return (CATALOG_PAGE_SIZE_OPTIONS as readonly number[]).includes(raw) ? raw : fallback;
+}
+
 function readCatalogPageSize() {
-  if (typeof window === 'undefined') return CATALOG_DEFAULT_PAGE_SIZE;
-  const raw = Number(window.localStorage.getItem(CATALOG_PAGE_SIZE_KEY));
-  return (CATALOG_PAGE_SIZE_OPTIONS as readonly number[]).includes(raw) ? raw : CATALOG_DEFAULT_PAGE_SIZE;
+  return readStoredPageSize(CATALOG_PAGE_SIZE_KEY, CATALOG_DEFAULT_PAGE_SIZE);
+}
+
+function readRoleSetupPageSize() {
+  return readStoredPageSize(ROLE_SETUP_PAGE_SIZE_KEY, ROLE_SETUP_DEFAULT_PAGE_SIZE);
+}
+
+function readCapabilityPageSize() {
+  return readStoredPageSize(CAPABILITY_PAGE_SIZE_KEY, CAPABILITY_DEFAULT_PAGE_SIZE);
+}
+
+function readReleasePageSize() {
+  return readStoredPageSize(RELEASE_PAGE_SIZE_KEY, RELEASE_DEFAULT_PAGE_SIZE);
 }
 
 const tabs: Array<{ key: ModuleTab; labelKey: string; icon: typeof BriefcaseBusiness; description: string }> = [
   { key: 'catalog', labelKey: 'module.agents.tabs.catalog', icon: UsersRound, description: '按岗位与部门发现、筛选专家团队中的数字员工。' },
-  { key: 'roleSetup', labelKey: 'module.agents.tabs.roleSetup', icon: BriefcaseBusiness, description: '配置岗位档案、职责边界与人工升级条件。' },
+  { key: 'roleSetup', labelKey: 'module.agents.tabs.roleSetup', icon: BriefcaseBusiness, description: '维护岗位授权契约：档案、职责边界、人工接管与记忆策略。' },
   { key: 'capabilities', labelKey: 'module.agents.tabs.capabilities', icon: Layers3, description: '仅引用已发布的模型、知识、技能与流程技能。' },
   { key: 'release', labelKey: 'module.agents.tabs.release', icon: Route, description: '质量评测、上岗门禁与受控审批。' },
   { key: 'operations', labelKey: 'module.agents.tabs.operations', icon: HeartPulse, description: '在岗健康、人工交接与例外处置。' },
@@ -97,6 +119,10 @@ export default function DigitalEmployees() {
   const [catalogSegment, setCatalogSegment] = useState<CatalogSegment>('all');
   const [catalogPage, setCatalogPage] = useState(1);
   const [catalogPageSize, setCatalogPageSize] = useState(readCatalogPageSize);
+  const [roleSetupPage, setRoleSetupPage] = useState(1);
+  const [roleSetupPageSize, setRoleSetupPageSize] = useState(readRoleSetupPageSize);
+  const [capabilityPage, setCapabilityPage] = useState(1);
+  const [capabilityPageSize, setCapabilityPageSize] = useState(readCapabilityPageSize);
   const { data: employees = [], isLoading } = useApiQuery<DigitalEmployee[]>(['digital-employees'], '/api/digital-employees');
   const { data: overview } = useApiQuery<{ total: number; active: number; pending: number; anomalies: number; costToday: number }>(['digital-employees', 'overview'], '/api/digital-employees/overview');
   const createEmployee = useApiMutation<DigitalEmployee, Partial<DigitalEmployee>>('/api/digital-employees', { onSuccess: (employee) => { setCreateOpen(false); setSelectedId(employee.id); } });
@@ -126,14 +152,60 @@ export default function DigitalEmployees() {
     [filtered, catalogSegment],
   );
 
+  const roleSorted = useMemo(() => [...filtered].sort(compareRoleSetupEmployees), [filtered]);
+  const roleSetupKpis = useMemo(() => {
+    let profilePending = 0;
+    let boundaryPending = 0;
+    let contractReady = 0;
+    for (const item of roleSorted) {
+      const completeness = roleSetupCompleteness(item);
+      if (!completeness.profileOk) profilePending += 1;
+      else if (!completeness.boundaryOk) boundaryPending += 1;
+      if (completeness.ready) contractReady += 1;
+    }
+    return { profilePending, boundaryPending, contractReady };
+  }, [roleSorted]);
+
+  const capabilitySorted = useMemo(() => [...filtered].sort(compareCapabilityAssemblyEmployees), [filtered]);
+  const capabilityKpis = useMemo(() => {
+    let noModel = 0;
+    let noAssets = 0;
+    let ready = 0;
+    for (const item of capabilitySorted) {
+      const completeness = capabilityAssemblyCompleteness(item);
+      if (!completeness.modelOk) noModel += 1;
+      else if (!completeness.assetsOk) noAssets += 1;
+      if (completeness.ready) ready += 1;
+    }
+    return { noModel, noAssets, ready };
+  }, [capabilitySorted]);
+
   useEffect(() => { setCatalogPage(1); }, [query, department, lifecycle, catalogPageSize, catalogSegment]);
   useEffect(() => { window.localStorage.setItem(CATALOG_PAGE_SIZE_KEY, String(catalogPageSize)); }, [catalogPageSize]);
+  useEffect(() => { setRoleSetupPage(1); }, [query, department, lifecycle, roleSetupPageSize]);
+  useEffect(() => { window.localStorage.setItem(ROLE_SETUP_PAGE_SIZE_KEY, String(roleSetupPageSize)); }, [roleSetupPageSize]);
+  useEffect(() => { setCapabilityPage(1); }, [query, department, lifecycle, capabilityPageSize]);
+  useEffect(() => { window.localStorage.setItem(CAPABILITY_PAGE_SIZE_KEY, String(capabilityPageSize)); }, [capabilityPageSize]);
 
   const catalogPageCount = Math.max(1, Math.ceil(catalogItems.length / catalogPageSize));
   const catalogPageSafe = Math.min(catalogPage, catalogPageCount);
   const catalogPageItems = useMemo(
     () => catalogItems.slice((catalogPageSafe - 1) * catalogPageSize, catalogPageSafe * catalogPageSize),
     [catalogItems, catalogPageSafe, catalogPageSize],
+  );
+
+  const roleSetupPageCount = Math.max(1, Math.ceil(roleSorted.length / roleSetupPageSize));
+  const roleSetupPageSafe = Math.min(roleSetupPage, roleSetupPageCount);
+  const roleSetupPageItems = useMemo(
+    () => roleSorted.slice((roleSetupPageSafe - 1) * roleSetupPageSize, roleSetupPageSafe * roleSetupPageSize),
+    [roleSorted, roleSetupPageSafe, roleSetupPageSize],
+  );
+
+  const capabilityPageCount = Math.max(1, Math.ceil(capabilitySorted.length / capabilityPageSize));
+  const capabilityPageSafe = Math.min(capabilityPage, capabilityPageCount);
+  const capabilityPageItems = useMemo(
+    () => capabilitySorted.slice((capabilityPageSafe - 1) * capabilityPageSize, capabilityPageSafe * capabilityPageSize),
+    [capabilitySorted, capabilityPageSafe, capabilityPageSize],
   );
 
   return (
@@ -232,25 +304,65 @@ export default function DigitalEmployees() {
         </>}
 
         {tab === 'roleSetup' && (
-          <SimpleList
-            title="岗位配置"
-            description="完善岗位档案、职责边界与记忆策略；能力装配请到「能力装配」Tab。生产/高风险/在岗变更需另一名管理员双重审批后生效。"
-            employees={filtered}
-            onSelect={setSelectedId}
-            empty="暂无需要配置的员工"
-            right={(employee) => (
-              <div className="text-right text-[11px] text-[var(--text-muted)]">
-                <span className="block">职责 {employee.responsibilities.length} 项</span>
-                <span className="mt-1 block text-[var(--brand)]">配置岗位 →</span>
-              </div>
-            )}
-          />
+          <div className="space-y-3">
+            <div className="de-employee-hint rounded-xl px-4 py-3 text-xs leading-5 text-[var(--text-secondary)]">
+              岗位配置只维护授权契约；能力引用请到「能力装配」；评测上岗请到「上岗发布」。生产/高风险/在岗变更需另一名管理员双重审批后生效。
+            </div>
+            <section className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+              <KpiCard label="待补档案" value={roleSetupKpis.profilePending} sub="个" icon={BriefcaseBusiness} tone={roleSetupKpis.profilePending ? 'warn' : 'success'} size="comfortable" />
+              <KpiCard label="边界待完善" value={roleSetupKpis.boundaryPending} sub="个" icon={ShieldAlert} tone={roleSetupKpis.boundaryPending ? 'warn' : 'success'} size="comfortable" />
+              <KpiCard label="契约完整" value={roleSetupKpis.contractReady} sub="个" icon={CheckCircle2} tone="success" size="comfortable" />
+            </section>
+            <SimpleList
+              title="岗位配置"
+              description="按未完整优先排列；点击即进入岗位授权契约配置工作台。"
+              employees={roleSetupPageItems}
+              onSelect={setSelectedId}
+              empty="暂无需要配置的员工"
+              headerExtra={(
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                    每页
+                    <select
+                      value={roleSetupPageSize}
+                      onChange={(event) => setRoleSetupPageSize(Number(event.target.value))}
+                      className="de-employee-input h-8 rounded-lg bg-[var(--bg)] px-2 text-xs text-[var(--text-secondary)]"
+                      aria-label="岗位配置每页数量"
+                    >
+                      {CATALOG_PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size} 个</option>)}
+                    </select>
+                  </label>
+                  <span className="text-xs text-[var(--text-muted)]">{roleSorted.length} 个岗位</span>
+                </div>
+              )}
+              footer={roleSetupPageCount > 1 ? (
+                <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ boxShadow: 'inset 0 1px 0 rgba(15,23,42,0.06)' }}>
+                  <span className="text-[11px] text-[var(--text-muted)]">第 {roleSetupPageSafe} / {roleSetupPageCount} 页 · 每页 {roleSetupPageSize} 个</span>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="secondary" disabled={roleSetupPageSafe <= 1} onClick={() => setRoleSetupPage((page) => Math.max(1, page - 1))}><ChevronLeft className="h-3.5 w-3.5" />上一页</Button>
+                    <Button size="sm" variant="secondary" disabled={roleSetupPageSafe >= roleSetupPageCount} onClick={() => setRoleSetupPage((page) => Math.min(roleSetupPageCount, page + 1))}>下一页<ChevronRight className="h-3.5 w-3.5" /></Button>
+                  </div>
+                </div>
+              ) : undefined}
+              right={(employee) => {
+                const completeness = roleSetupCompleteness(employee);
+                const tone = completeness.label === '契约完整' ? 'success' : 'warn';
+                return (
+                  <div className="text-right text-[11px] text-[var(--text-muted)]">
+                    <Badge tone={tone}>{completeness.label}</Badge>
+                    <span className="mt-1.5 block max-w-[200px] truncate">{completeness.missing.length ? `缺：${completeness.missing.slice(0, 2).join('、')}` : '可进入能力装配'}</span>
+                    <span className="mt-1 block text-[var(--brand)]">配置岗位 →</span>
+                  </div>
+                );
+              }}
+            />
+          </div>
         )}
 
         {tab === 'capabilities' && (
-          <section className="space-y-3">
+          <div className="space-y-3">
             <div className="de-employee-hint rounded-xl px-4 py-3 text-xs leading-5 text-[var(--text-secondary)]">
-              能力只引用已发布版本。流程类能力请先在「工作流程 → 发布技能」生成流程技能，再在此装配；模型 / 知识 / 技能请从对应能力中心发布后进入。
+              能力装配只引用各中心已发布资产，并设置执行授权模式；岗位职责请到「岗位配置」，评测上岗请到「上岗发布」。
               <div className="mt-2 flex flex-wrap gap-2">
                 <Link to="/workflows" className="de-employee-btn text-[11px]">工作流程</Link>
                 <Link to="/skills" className="de-employee-btn text-[11px]">技能中心</Link>
@@ -258,29 +370,63 @@ export default function DigitalEmployees() {
                 <Link to="/knowledge" className="de-employee-btn text-[11px]">知识中心</Link>
               </div>
             </div>
+            <section className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+              <KpiCard label="未绑模型" value={capabilityKpis.noModel} sub="个" icon={Layers3} tone={capabilityKpis.noModel ? 'warn' : 'success'} size="comfortable" />
+              <KpiCard label="缺执行能力" value={capabilityKpis.noAssets} sub="个" icon={ShieldAlert} tone={capabilityKpis.noAssets ? 'warn' : 'success'} size="comfortable" />
+              <KpiCard label="装配完整" value={capabilityKpis.ready} sub="个" icon={CheckCircle2} tone="success" size="comfortable" />
+            </section>
             <SimpleList
               title="能力装配"
-              description="仅引用各能力中心已发布资产；装配变更走配置版本，生产/在岗需双重审批。岗位职责请到「岗位配置」。"
-              employees={filtered}
+              description="按未完整优先排列；点击即进入受控能力引用与授权工作台。"
+              employees={capabilityPageItems}
               onSelect={setSelectedId}
               empty="暂无员工可装配"
+              headerExtra={(
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                    每页
+                    <select
+                      value={capabilityPageSize}
+                      onChange={(event) => setCapabilityPageSize(Number(event.target.value))}
+                      className="de-employee-input h-8 rounded-lg bg-[var(--bg)] px-2 text-xs text-[var(--text-secondary)]"
+                      aria-label="能力装配每页数量"
+                    >
+                      {CATALOG_PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size} 个</option>)}
+                    </select>
+                  </label>
+                  <span className="text-xs text-[var(--text-muted)]">{capabilitySorted.length} 个岗位</span>
+                </div>
+              )}
+              footer={capabilityPageCount > 1 ? (
+                <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ boxShadow: 'inset 0 1px 0 rgba(15,23,42,0.06)' }}>
+                  <span className="text-[11px] text-[var(--text-muted)]">第 {capabilityPageSafe} / {capabilityPageCount} 页 · 每页 {capabilityPageSize} 个</span>
+                  <div className="flex items-center gap-2">
+                    <Button size="sm" variant="secondary" disabled={capabilityPageSafe <= 1} onClick={() => setCapabilityPage((page) => Math.max(1, page - 1))}><ChevronLeft className="h-3.5 w-3.5" />上一页</Button>
+                    <Button size="sm" variant="secondary" disabled={capabilityPageSafe >= capabilityPageCount} onClick={() => setCapabilityPage((page) => Math.min(capabilityPageCount, page + 1))}>下一页<ChevronRight className="h-3.5 w-3.5" /></Button>
+                  </div>
+                </div>
+              ) : undefined}
               right={(employee) => {
-                const count = employee.capabilities.skills.length + employee.capabilities.tools.length + employee.capabilities.workflows.length + employee.capabilities.knowledge.length;
+                const completeness = capabilityAssemblyCompleteness(employee);
+                const contractReady = roleSetupCompleteness(employee).ready;
+                const tone = completeness.label === '装配完整' ? 'success' : 'warn';
                 return (
                   <div className="text-right text-[11px] text-[var(--text-muted)]">
-                    <span className="block">{count} 项已装配 · {employee.capabilities.model || '未绑模型'}</span>
+                    <Badge tone={tone}>{completeness.label}</Badge>
+                    {!contractReady && <span className="mt-1.5 block text-[var(--warning)]">岗位契约未完整</span>}
+                    <span className="mt-1.5 block max-w-[200px] truncate">{completeness.missing.length ? `缺：${completeness.missing.slice(0, 2).join('、')}` : `${completeness.boundCount} 项已引用`}</span>
                     <span className="mt-1 block text-[var(--brand)]">打开装配 →</span>
                   </div>
                 );
               }}
             />
-          </section>
+          </div>
         )}
 
-        {tab === 'release' && <OnboardingManagementView employees={orderedEmployees} onSelect={setSelectedId} />}
+        {tab === 'release' && <OnboardingManagementView employees={orderedEmployees} onSelect={setSelectedId} onGoToModule={setTab} />}
         {tab === 'operations' && <OperationsView employees={orderedEmployees} onSelect={setSelectedId} />}
       </div>
-      <EmployeeDetailModal employee={selected} context={tab} onClose={() => setSelectedId(null)} />
+      <EmployeeDetailModal employee={selected} context={tab} onClose={() => setSelectedId(null)} onGoToModule={setTab} />
       <CreateEmployeeModal open={createOpen} onClose={() => setCreateOpen(false)} loading={createEmployee.isPending} onCreate={(input) => createEmployee.mutate(input)} />
     </div>
   );
@@ -499,12 +645,121 @@ function PublishDepartmentTemplateModal({ open, onClose }: { open: boolean; onCl
   return <Modal open={open} onClose={onClose} title="发布部门蓝图" description="蓝图仅在当前工作区共享，发布后进入待认证状态；不会直接创建或上岗数字员工。" size="md" footer={<><Button variant="ghost" onClick={onClose}>取消</Button><Button loading={publish.isPending} disabled={!name.trim() || !role.trim() || !department.trim()} onClick={submit}>提交认证</Button></>}><div className="grid gap-4"><div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2.5 text-xs leading-5 text-[var(--text-muted)]">蓝图承载岗位边界与默认能力；模型、知识、技能、工作流和渠道仍须在各自中心完成治理与发布。</div><div className="grid gap-3 sm:grid-cols-2"><Field label="蓝图名称" value={name} onChange={setName} placeholder="例如：变更风险分析专员" required /><Field label="岗位角色" value={role} onChange={setRole} placeholder="例如：变更影响评估" required /><Field label="所属部门" value={department} onChange={setDepartment} placeholder="例如：信息技术部" required /><Field label="服务对象" value={serviceObject} onChange={setServiceObject} placeholder="例如：应用交付团队" /><SelectField label="风险等级" value={risk} onChange={(value) => setRisk(value as DigitalEmployee['risk'])} options={[['low', '低风险'], ['medium', '中风险'], ['high', '高风险']]} /><Field label="能力标签" value={tags} onChange={setTags} placeholder="例如：变更、风险评估" /></div><label className="grid gap-1.5 text-xs font-medium">岗位说明<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="说明岗位服务目标、默认职责与需要人工介入的边界。" className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs font-normal outline-none focus:border-[var(--brand)]" /></label>{error && <p role="alert" className="rounded-lg border border-[var(--danger)]/30 bg-[var(--danger-light)] px-3 py-2 text-xs text-[var(--danger)]">{error}</p>}</div></Modal>;
 }
 
-function OnboardingManagementView({ employees, onSelect }: { employees: DigitalEmployee[]; onSelect: (id: string) => void }) {
-  const pending = employees.filter((item) => item.release.status === 'pending_approval');
-  const ready = employees.filter((item) => item.evaluation.status === 'passed' && item.release.status === 'not_released');
-  const incomplete = employees.filter((item) => item.release.status === 'not_released' && item.evaluation.status !== 'passed' && item.lifecycle !== 'active');
-  const queue = employees.filter((item) => item.release.status !== 'released' || item.lifecycle === 'pending_approval');
-  return <div className="space-y-3"><section className="grid gap-3 sm:grid-cols-3"><KpiCard label="待执行评测" value={incomplete.length} sub="个" icon={ClipboardCheck} tone="neutral" /><KpiCard label="可申请上岗" value={ready.length} sub="个" icon={CheckCircle2} tone="success" /><KpiCard label="待双重审批" value={pending.length} sub="个" icon={Clock3} tone="warn" /></section><section className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_2px_12px_rgba(15,23,42,0.05)]"><div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--border)] px-5 py-4"><div><h2 className="text-sm font-semibold">上岗发布</h2><p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">按「配置完成 → 质量评测 → 上岗申请 → 双重审批生效」推进。缺档案、未绑已发布能力或评测未过不可申请上岗。</p></div><Badge tone="info">当前工作区</Badge></div><div className="divide-y divide-[var(--border)]">{queue.map((employee) => { const gate = employee.release.status === 'pending_approval' ? '待双重审批' : employee.evaluation.status === 'passed' ? '可申请上岗' : employee.evaluation.status === 'failed' ? '评测未通过' : employee.evaluation.status === 'running' ? '评测进行中' : '待执行评测'; return <button type="button" key={employee.id} onClick={() => onSelect(employee.id)} className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition-colors hover:bg-[var(--bg-hover)]"><div className="flex min-w-0 items-center gap-3"><EmployeeAvatar employee={employee} size={38} /><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-medium">{employeePrimaryLabel(employee)}</span>{isDepartmentHead(employee) && <Badge tone="info">部门负责人</Badge>}<Badge tone={employee.evaluation.status === 'passed' ? 'success' : employee.evaluation.status === 'failed' ? 'error' : 'warn'}>{employee.evaluation.status === 'passed' ? `评测 ${employee.evaluation.score}` : employee.evaluation.status === 'failed' ? '评测未通过' : employee.evaluation.status === 'running' ? '评测中' : '待评测'}</Badge><Badge tone={employee.release.status === 'pending_approval' ? 'warn' : 'neutral'}>{employee.release.status === 'pending_approval' ? '待双重审批' : '未上岗'}</Badge></div><p className="mt-1 text-xs text-[var(--text-muted)]">{employeeSecondaryLabel(employee)} · {employee.environment === 'production' ? '生产环境' : employee.environment === 'staging' ? '预发环境' : '沙箱环境'} · {employee.risk === 'high' ? '高风险岗位' : '常规风险岗位'}</p></div></div><div className="shrink-0 text-right"><span className="block text-xs font-medium text-[var(--brand)]">{gate}</span><span className="mt-1 block text-[11px] text-[var(--text-muted)]">查看门禁与处置 →</span></div></button>; })}{!queue.length && <EmptyState icon={CheckCircle2} title="所有员工均已完成上岗" description="后续配置变更将按版本化双重审批和定期复测管理。" />}</div></section></div>;
+function OnboardingManagementView({ employees, onSelect, onGoToModule }: { employees: DigitalEmployee[]; onSelect: (id: string) => void; onGoToModule: (tab: ModuleTab) => void }) {
+  type ReleaseSegment = 'all' | ReleaseOnboardingStage;
+  const [segment, setSegment] = useState<ReleaseSegment>('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(readReleasePageSize);
+
+  const queue = useMemo(
+    () => employees.filter((item) => item.release.status !== 'released').sort(compareReleaseOnboardingEmployees),
+    [employees],
+  );
+
+  const counts = useMemo(() => {
+    const next = { all: queue.length, pending_eval: 0, eval_failed: 0, ready_to_request: 0, pending_approval: 0, released: 0 };
+    for (const item of queue) {
+      const stage = releaseOnboardingCompleteness(item).stage;
+      if (stage !== 'released') next[stage] += 1;
+    }
+    return next;
+  }, [queue]);
+
+  const segments: Array<{ key: ReleaseSegment; label: string }> = [
+    { key: 'all', label: '全部待办' },
+    { key: 'pending_eval', label: '待评测' },
+    { key: 'eval_failed', label: '评测未通过' },
+    { key: 'ready_to_request', label: '可申请上岗' },
+    { key: 'pending_approval', label: '待双重审批' },
+  ];
+
+  const filtered = useMemo(
+    () => (segment === 'all' ? queue : queue.filter((item) => releaseOnboardingCompleteness(item).stage === segment)),
+    [queue, segment],
+  );
+
+  useEffect(() => { setPage(1); }, [segment, pageSize, employees]);
+  useEffect(() => { window.localStorage.setItem(RELEASE_PAGE_SIZE_KEY, String(pageSize)); }, [pageSize]);
+
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const pageSafe = Math.min(page, pageCount);
+  const pageItems = filtered.slice((pageSafe - 1) * pageSize, pageSafe * pageSize);
+
+  return (
+    <div className="space-y-3">
+      <div className="de-employee-hint rounded-xl px-4 py-3 text-xs leading-5 text-[var(--text-secondary)]">
+        上岗发布只做质量评测与双重审批；岗位档案请到「岗位配置」，能力引用请到「能力装配」。
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button type="button" className="de-employee-btn text-[11px]" onClick={() => onGoToModule('roleSetup')}>岗位配置</button>
+          <button type="button" className="de-employee-btn text-[11px]" onClick={() => onGoToModule('capabilities')}>能力装配</button>
+        </div>
+      </div>
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard label="待评测" value={counts.pending_eval} sub="个" icon={ClipboardCheck} tone={counts.pending_eval ? 'neutral' : 'success'} size="comfortable" />
+        <KpiCard label="评测未通过" value={counts.eval_failed} sub="个" icon={XCircle} tone={counts.eval_failed ? 'warn' : 'success'} size="comfortable" />
+        <KpiCard label="可申请上岗" value={counts.ready_to_request} sub="个" icon={CheckCircle2} tone="success" size="comfortable" />
+        <KpiCard label="待双重审批" value={counts.pending_approval} sub="个" icon={Clock3} tone={counts.pending_approval ? 'warn' : 'success'} size="comfortable" />
+      </section>
+      <SimpleList
+        title="上岗发布"
+        description="按「配置完成 → 质量评测 → 上岗申请 → 双重审批生效」推进；列表按未完成阶段优先排列。"
+        employees={pageItems}
+        onSelect={onSelect}
+        empty={segment === 'all' ? '所有员工均已完成上岗' : '当前分段暂无员工'}
+        headerExtra={(
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex gap-1 overflow-x-auto" role="tablist" aria-label="上岗阶段">
+              {segments.map((item) => (
+                <button
+                  type="button"
+                  key={item.key}
+                  role="tab"
+                  aria-selected={segment === item.key}
+                  onClick={() => setSegment(item.key)}
+                  className={cn('de-employee-chip shrink-0 rounded-md px-3 py-1.5 text-xs transition-colors', segment === item.key && 'is-active')}
+                >
+                  {item.label}
+                  <span className="ml-1.5 tabular-nums text-[10px] opacity-70">{counts[item.key]}</span>
+                </button>
+              ))}
+            </div>
+            <label className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+              每页
+              <select value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))} className="de-employee-input h-8 rounded-lg bg-[var(--bg)] px-2 text-xs text-[var(--text-secondary)]" aria-label="上岗发布每页数量">
+                {CATALOG_PAGE_SIZE_OPTIONS.map((size) => <option key={size} value={size}>{size} 个</option>)}
+              </select>
+            </label>
+          </div>
+        )}
+        footer={pageCount > 1 ? (
+          <div className="flex items-center justify-between gap-3 px-5 py-3" style={{ boxShadow: 'inset 0 1px 0 rgba(15,23,42,0.06)' }}>
+            <span className="text-[11px] text-[var(--text-muted)]">第 {pageSafe} / {pageCount} 页 · 每页 {pageSize} 个</span>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="secondary" disabled={pageSafe <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}><ChevronLeft className="h-3.5 w-3.5" />上一页</Button>
+              <Button size="sm" variant="secondary" disabled={pageSafe >= pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))}>下一页<ChevronRight className="h-3.5 w-3.5" /></Button>
+            </div>
+          </div>
+        ) : undefined}
+        right={(employee) => {
+          const completeness = releaseOnboardingCompleteness(employee);
+          const tone = completeness.stage === 'ready_to_request' || completeness.stage === 'released'
+            ? 'success'
+            : completeness.stage === 'pending_approval' || completeness.stage === 'eval_failed'
+              ? 'warn'
+              : 'neutral';
+          return (
+            <div className="text-right text-[11px] text-[var(--text-muted)]">
+              <Badge tone={tone}>{completeness.label}</Badge>
+              <span className="mt-1.5 block max-w-[220px] truncate">
+                {completeness.missing.length ? `缺：${completeness.missing.slice(0, 2).join('、')}` : '门禁已齐，可继续处置'}
+              </span>
+              <span className="mt-1 block text-[var(--brand)]">查看门禁 →</span>
+            </div>
+          );
+        }}
+      />
+    </div>
+  );
 }
 
 function OperationsView({ employees, onSelect }: { employees: DigitalEmployee[]; onSelect: (id: string) => void }) {
@@ -526,7 +781,39 @@ function OperationsEmployeeCard({ employee, isAdmin, loading, onSelect, onTransi
   return <article className={cn('rounded-xl border bg-[var(--bg)] p-4', attention ? 'border-[var(--warning)]/35' : 'border-[var(--border)]')}><div className="flex items-start justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><EmployeeAvatar employee={employee} size={40} /><div className="min-w-0"><div className="flex flex-wrap items-center gap-1.5"><div className="truncate text-sm font-semibold">{employeePrimaryLabel(employee)}</div>{isDepartmentHead(employee) && <Badge tone="info">部门负责人</Badge>}</div><p className="mt-1 truncate text-xs text-[var(--text-muted)]">{employeeSecondaryLabel(employee)}</p></div></div><Badge tone={tone}>{status}</Badge></div><div className="mt-4 grid grid-cols-4 gap-2 border-t border-[var(--border)] pt-3 text-center"><Metric label="调用" value={employee.runtime.calls24h} /><Metric label="成功率" value={employee.runtime.successRate ? `${(employee.runtime.successRate * 100).toFixed(1)}%` : '—'} /><Metric label="交接" value={employee.runtime.handoffs24h} /><Metric label="成本" value={`¥${employee.runtime.costToday}`} /></div><div className="mt-3 flex min-h-8 items-center justify-between gap-2"><p className="text-[11px] leading-4 text-[var(--text-muted)]">{detail}</p><div className="flex shrink-0 gap-2">{employee.lifecycle === 'active' && <Button size="sm" onClick={() => navigate(`/copilot?employeeId=${employee.id}`)}><MessageSquare className="h-3.5 w-3.5" />发起协作</Button>}{attention && <Button size="sm" variant="secondary" onClick={() => onSelect(employee.id)}>查看处置</Button>}{isAdmin && employee.lifecycle === 'active' && <Button size="sm" variant="ghost" loading={loading} onClick={() => onTransition('paused')}>暂停</Button>}{isAdmin && employee.lifecycle === 'active' && <Button size="sm" variant="ghost" loading={loading} onClick={() => onTransition('quarantined')}>隔离</Button>}{isAdmin && (employee.lifecycle === 'paused' || employee.lifecycle === 'quarantined') && employee.release.status === 'released' && <Button size="sm" loading={loading} onClick={() => onTransition('active')}>恢复</Button>}</div></div></article>;
 }
 
-function SimpleList({ title, description, employees, onSelect, empty, right }: { title: string; description: string; employees: DigitalEmployee[]; onSelect: (id: string) => void; empty?: string; right: (employee: DigitalEmployee) => ReactNode }) { return <section className="de-employee-shell rounded-xl bg-[var(--surface-1)]"><div className="px-5 py-4" style={{ boxShadow: 'var(--saas-divider)' }}><h2 className="text-sm font-semibold">{title}</h2><p className="mt-1 text-xs text-[var(--text-muted)]">{description}</p></div>{employees.length ? <div className="divide-y divide-[var(--border)]">{employees.map((employee) => <button type="button" key={employee.id} onClick={() => onSelect(employee.id)} className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[var(--bg-hover)]"><div className="min-w-0"><div className="flex items-center gap-2"><span className="text-sm font-medium">{employeePrimaryLabel(employee)}</span>{isDepartmentHead(employee) && <Badge tone="info">部门负责人</Badge>}<Badge tone={lifecycleMeta[employee.lifecycle].tone}>{lifecycleMeta[employee.lifecycle].label}</Badge></div><div className="mt-1 text-xs text-[var(--text-muted)]">{employeeSecondaryLabel(employee)}</div></div><div className="shrink-0">{right(employee)}</div></button>)}</div> : <EmptyState icon={BriefcaseBusiness} title={empty ?? '暂无记录'} />}</section>; }
+function SimpleList({ title, description, employees, onSelect, empty, right, headerExtra, footer }: { title: string; description: string; employees: DigitalEmployee[]; onSelect: (id: string) => void; empty?: string; right: (employee: DigitalEmployee) => ReactNode; headerExtra?: ReactNode; footer?: ReactNode }) {
+  return (
+    <section className="de-employee-shell rounded-xl bg-[var(--surface-1)]">
+      <div className="flex flex-wrap items-end justify-between gap-3 px-5 py-4" style={{ boxShadow: 'var(--saas-divider)' }}>
+        <div>
+          <h2 className="text-sm font-semibold">{title}</h2>
+          <p className="mt-1 text-xs text-[var(--text-muted)]">{description}</p>
+        </div>
+        {headerExtra}
+      </div>
+      {employees.length ? (
+        <>
+          <div className="divide-y divide-[var(--border)]">
+            {employees.map((employee) => (
+              <button type="button" key={employee.id} onClick={() => onSelect(employee.id)} className="flex w-full items-center justify-between gap-4 px-5 py-4 text-left hover:bg-[var(--bg-hover)]">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{employeePrimaryLabel(employee)}</span>
+                    {isDepartmentHead(employee) && <Badge tone="info">部门负责人</Badge>}
+                    <Badge tone={lifecycleMeta[employee.lifecycle].tone}>{lifecycleMeta[employee.lifecycle].label}</Badge>
+                  </div>
+                  <div className="mt-1 text-xs text-[var(--text-muted)]">{employeeSecondaryLabel(employee)}</div>
+                </div>
+                <div className="shrink-0">{right(employee)}</div>
+              </button>
+            ))}
+          </div>
+          {footer}
+        </>
+      ) : <EmptyState icon={BriefcaseBusiness} title={empty ?? '暂无记录'} />}
+    </section>
+  );
+}
 
 type EmployeeConfigurationInput = {
   profile: Pick<DigitalEmployee, 'name' | 'role' | 'department' | 'description' | 'owner' | 'escalationOwner' | 'serviceObject' | 'risk' | 'environment'>;
@@ -563,7 +850,7 @@ function resolveBoundaryPolicy(employee: DigitalEmployee): DigitalEmployeeBounda
   };
 }
 
-function BoundaryPolicyEditor({ policy, capabilities, onChange }: { policy: DigitalEmployeeBoundaryPolicy; capabilities: DigitalEmployee['capabilities']; onChange: (policy: DigitalEmployeeBoundaryPolicy) => void }) {
+function BoundaryPolicyEditor({ policy, capabilities, onChange, mode = 'role' }: { policy: DigitalEmployeeBoundaryPolicy; capabilities: DigitalEmployee['capabilities']; onChange: (policy: DigitalEmployeeBoundaryPolicy) => void; mode?: 'role' | 'capability' }) {
   const updateResponsibility = (index: number, patch: Partial<DigitalEmployeeResponsibility>) => onChange({ ...policy, responsibilities: policy.responsibilities.map((item, current) => current === index ? { ...item, ...patch } : item) });
   const setHandoff = (key: keyof DigitalEmployeeBoundaryPolicy['handoff'], value: string[] | number) => onChange({ ...policy, handoff: { ...policy.handoff, [key]: value } });
   const rows = [
@@ -571,31 +858,146 @@ function BoundaryPolicyEditor({ policy, capabilities, onChange }: { policy: Digi
     ...capabilities.workflows.map((capabilityName) => ({ capabilityType: 'workflow' as const, capabilityName, label: '工作流' })),
     ...capabilities.skills.map((capabilityName) => ({ capabilityType: 'skill' as const, capabilityName, label: '技能' })),
   ];
-  const setCapabilityMode = (capabilityType: 'tool' | 'workflow' | 'skill', capabilityName: string, mode: DigitalEmployeeExecutionMode) => {
+  const setCapabilityMode = (capabilityType: 'tool' | 'workflow' | 'skill', capabilityName: string, modeValue: DigitalEmployeeExecutionMode) => {
     const exists = policy.capabilityModes.some((item) => item.capabilityType === capabilityType && item.capabilityName === capabilityName);
-    onChange({ ...policy, capabilityModes: exists ? policy.capabilityModes.map((item) => item.capabilityType === capabilityType && item.capabilityName === capabilityName ? { ...item, mode } : item) : [...policy.capabilityModes, { capabilityType, capabilityName, mode }] });
+    onChange({ ...policy, capabilityModes: exists ? policy.capabilityModes.map((item) => item.capabilityType === capabilityType && item.capabilityName === capabilityName ? { ...item, mode: modeValue } : item) : [...policy.capabilityModes, { capabilityType, capabilityName, mode: modeValue }] });
   };
   const modeOf = (capabilityType: 'tool' | 'workflow' | 'skill', capabilityName: string) => policy.capabilityModes.find((item) => item.capabilityType === capabilityType && item.capabilityName === capabilityName)?.mode ?? 'recommend';
   const setEnvironment = (environment: DigitalEmployeeBoundaryPolicy['allowedEnvironments'][number], checked: boolean) => onChange({ ...policy, allowedEnvironments: checked ? [...new Set([...policy.allowedEnvironments, environment])] : policy.allowedEnvironments.filter((item) => item !== environment) });
   const addResponsibility = () => onChange({ ...policy, responsibilities: [...policy.responsibilities, { id: `responsibility-${Date.now()}`, title: '未命名岗位职责', objective: '', trigger: '', deliverables: [], evidenceRequired: true }] });
   const updateArrayItem = (key: 'triggers' | 'approvers' | 'notificationChannels', index: number, value: string) => setHandoff(key, policy.handoff[key].map((item, current) => current === index ? value : item));
   const addArrayItem = (key: 'triggers' | 'approvers' | 'notificationChannels', placeholder: string) => setHandoff(key, [...policy.handoff[key], placeholder]);
-  return <div className="space-y-6"><section><div className="flex items-start justify-between gap-3"><div><h3 className="text-sm font-semibold">岗位职责</h3><p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">每项职责需说明目标、触发条件与可复核交付，构成岗位授权的业务契约。</p></div><Button size="sm" variant="secondary" onClick={addResponsibility}><Plus className="h-3.5 w-3.5" />新增职责</Button></div><div className="mt-3 space-y-3">{policy.responsibilities.map((item, index) => <article key={item.id} className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3.5"><div className="mb-3 flex items-center justify-between"><span className="text-[11px] font-semibold text-[var(--brand)]">职责 {String(index + 1).padStart(2, '0')}</span>{policy.responsibilities.length > 1 && <button type="button" onClick={() => onChange({ ...policy, responsibilities: policy.responsibilities.filter((_, current) => current !== index) })} className="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--danger-light)] hover:text-[var(--danger)]" aria-label={`删除职责 ${item.title}`}><Trash2 className="h-3.5 w-3.5" /></button>}</div><div className="grid gap-3 sm:grid-cols-2"><Field label="职责名称" value={item.title} onChange={(value) => updateResponsibility(index, { title: value })} placeholder="例如：运行态势汇总" required /><Field label="业务目标" value={item.objective} onChange={(value) => updateResponsibility(index, { objective: value })} placeholder="例如：形成风险优先级建议" required /><Field label="触发条件" value={item.trigger} onChange={(value) => updateResponsibility(index, { trigger: value })} placeholder="例如：每日 09:00 / 重大事件" required /><Field label="交付与证据" value={item.deliverables.join('、')} onChange={(value) => updateResponsibility(index, { deliverables: value.split('、').map((entry) => entry.trim()).filter(Boolean) })} placeholder="例如：态势摘要、风险清单" /><label className="flex items-center gap-2 text-xs font-medium sm:col-span-2"><input type="checkbox" checked={item.evidenceRequired} onChange={(event) => updateResponsibility(index, { evidenceRequired: event.target.checked })} />要求留存处置证据</label></div></article>)}</div></section><section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3.5"><div><h3 className="text-sm font-semibold">执行边界</h3><p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">仅可对当前已装配的工具、工作流和技能授予执行模式；能力本体仍由各中心独立治理。</p></div><div className="mt-3 overflow-x-auto"><div className="min-w-[540px] divide-y divide-[var(--border)] text-xs"><div className="grid grid-cols-[minmax(180px,1fr)_92px_150px] gap-3 px-2 pb-2 text-[11px] text-[var(--text-muted)]"><span>已绑定能力</span><span>类型</span><span>授权模式</span></div>{rows.map((row) => <div key={`${row.capabilityType}-${row.capabilityName}`} className="grid grid-cols-[minmax(180px,1fr)_92px_150px] items-center gap-3 px-2 py-2.5"><span className="truncate font-medium">{row.capabilityName}</span><Badge tone="info">{row.label}</Badge><select value={modeOf(row.capabilityType, row.capabilityName)} onChange={(event) => setCapabilityMode(row.capabilityType, row.capabilityName, event.target.value as DigitalEmployeeExecutionMode)} className="h-8 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)]">{executionModeOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>)}{!rows.length && <p className="px-2 py-3 text-xs text-[var(--text-muted)]">请先在能力装配中引用至少一项工具、工作流或技能。</p>}</div></div></section><div className="grid gap-4 lg:grid-cols-2"><section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3.5"><h3 className="text-sm font-semibold">升级与审批</h3><p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">命中触发条件后中止自主执行，通知接管人并保留审批、交接证据。</p><div className="mt-3 space-y-2">{([['triggers', '接管触发条件', '例如：置信度不足'] as const, ['approvers', '接管负责人', '例如：值班经理'] as const, ['notificationChannels', '通知渠道', '例如：事件中心'] as const]).map(([key, label, placeholder]) => <div key={key}><div className="mb-1 flex items-center justify-between"><span className="text-[11px] font-medium">{label}</span><button type="button" onClick={() => addArrayItem(key, placeholder)} className="text-[11px] text-[var(--brand)]">+ 添加</button></div>{policy.handoff[key].map((value, index) => <div key={`${key}-${index}`} className="mb-1.5 flex gap-1.5"><input value={value} onChange={(event) => updateArrayItem(key, index, event.target.value)} placeholder={placeholder} className="h-8 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)]" />{policy.handoff[key].length > 1 && <button type="button" onClick={() => setHandoff(key, policy.handoff[key].filter((_, current) => current !== index))} className="rounded-md px-2 text-[var(--text-muted)] hover:bg-[var(--danger-light)] hover:text-[var(--danger)]">×</button>}</div>)}</div>)}<NumberField label="接管 SLA" value={policy.handoff.slaMinutes} suffix="分钟" onChange={(value) => setHandoff('slaMinutes', value)} /></div></section><section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3.5"><h3 className="text-sm font-semibold">数据与范围</h3><p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">仅声明此岗位策略允许使用的数据级别和运行环境，不替代零信任、数据权限策略。</p><div className="mt-3 grid gap-3"><SelectField label="最高数据分类" value={policy.dataClassification} onChange={(value) => onChange({ ...policy, dataClassification: value as DigitalEmployeeBoundaryPolicy['dataClassification'] })} options={[['internal', '内部'], ['confidential', '敏感'], ['restricted', '受限']]} /><fieldset><legend className="mb-1.5 text-xs font-medium">允许运行环境</legend><div className="flex flex-wrap gap-3">{environmentOptions.map(([value, label]) => <label key={value} className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]"><input type="checkbox" checked={policy.allowedEnvironments.includes(value)} onChange={(event) => setEnvironment(value, event.target.checked)} />{label}</label>)}</div></fieldset></div></section></div></div>;
+
+  if (mode === 'capability') {
+    return (
+      <div className="space-y-4">
+        <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3.5">
+          <div>
+            <h3 className="text-sm font-semibold">执行边界（能力授权模式）</h3>
+            <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">仅可对当前已装配的工具、工作流和技能授予执行模式；能力本体仍由各中心独立治理。岗位职责请到「岗位配置」维护。</p>
+          </div>
+          <div className="mt-3 overflow-x-auto">
+            <div className="min-w-[540px] divide-y divide-[var(--border)] text-xs">
+              <div className="grid grid-cols-[minmax(180px,1fr)_92px_150px] gap-3 px-2 pb-2 text-[11px] text-[var(--text-muted)]"><span>已绑定能力</span><span>类型</span><span>授权模式</span></div>
+              {rows.map((row) => (
+                <div key={`${row.capabilityType}-${row.capabilityName}`} className="grid grid-cols-[minmax(180px,1fr)_92px_150px] items-center gap-3 px-2 py-2.5">
+                  <span className="truncate font-medium">{row.capabilityName}</span>
+                  <Badge tone="info">{row.label}</Badge>
+                  <select value={modeOf(row.capabilityType, row.capabilityName)} onChange={(event) => setCapabilityMode(row.capabilityType, row.capabilityName, event.target.value as DigitalEmployeeExecutionMode)} className="h-8 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)]">
+                    {executionModeOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                  </select>
+                </div>
+              ))}
+              {!rows.length && <p className="px-2 py-3 text-xs text-[var(--text-muted)]">请先在上方引用至少一项工具、工作流或技能。</p>}
+            </div>
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <section>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold">岗位职责</h3>
+            <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">每项职责需说明目标、触发条件与可复核交付，构成岗位授权的业务契约。</p>
+          </div>
+          <Button size="sm" variant="secondary" onClick={addResponsibility}><Plus className="h-3.5 w-3.5" />新增职责</Button>
+        </div>
+        <div className="mt-3 space-y-3">
+          {policy.responsibilities.map((item, index) => (
+            <article key={item.id} className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3.5">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-[var(--brand)]">职责 {String(index + 1).padStart(2, '0')}</span>
+                {policy.responsibilities.length > 1 && (
+                  <button type="button" onClick={() => onChange({ ...policy, responsibilities: policy.responsibilities.filter((_, current) => current !== index) })} className="rounded-md p-1 text-[var(--text-muted)] hover:bg-[var(--danger-light)] hover:text-[var(--danger)]" aria-label={`删除职责 ${item.title}`}>
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="职责名称" value={item.title} onChange={(value) => updateResponsibility(index, { title: value })} placeholder="例如：运行态势汇总" required />
+                <Field label="业务目标" value={item.objective} onChange={(value) => updateResponsibility(index, { objective: value })} placeholder="例如：形成风险优先级建议" required />
+                <Field label="触发条件" value={item.trigger} onChange={(value) => updateResponsibility(index, { trigger: value })} placeholder="例如：每日 09:00 / 重大事件" required />
+                <Field label="交付与证据" value={item.deliverables.join('、')} onChange={(value) => updateResponsibility(index, { deliverables: value.split('、').map((entry) => entry.trim()).filter(Boolean) })} placeholder="例如：态势摘要、风险清单" />
+                <label className="flex items-center gap-2 text-xs font-medium sm:col-span-2"><input type="checkbox" checked={item.evidenceRequired} onChange={(event) => updateResponsibility(index, { evidenceRequired: event.target.checked })} />要求留存处置证据</label>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+      <div className="rounded-lg border border-[var(--brand)]/20 bg-[var(--brand-light)] px-3 py-2.5 text-xs leading-5 text-[var(--text-secondary)]">
+        能力授权模式（工具/技能/工作流执行边界）请到「能力装配」维护；此处只定义岗位职责与人工接管契约。
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3.5">
+          <h3 className="text-sm font-semibold">升级与审批</h3>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">命中触发条件后中止自主执行，通知接管人并保留审批、交接证据。</p>
+          <div className="mt-3 space-y-2">
+            {([['triggers', '接管触发条件', '例如：置信度不足'] as const, ['approvers', '接管负责人', '例如：值班经理'] as const, ['notificationChannels', '通知渠道', '例如：事件中心'] as const]).map(([key, label, placeholder]) => (
+              <div key={key}>
+                <div className="mb-1 flex items-center justify-between">
+                  <span className="text-[11px] font-medium">{label}</span>
+                  <button type="button" onClick={() => addArrayItem(key, placeholder)} className="text-[11px] text-[var(--brand)]">+ 添加</button>
+                </div>
+                {policy.handoff[key].map((value, index) => (
+                  <div key={`${key}-${index}`} className="mb-1.5 flex gap-1.5">
+                    <input value={value} onChange={(event) => updateArrayItem(key, index, event.target.value)} placeholder={placeholder} className="h-8 min-w-0 flex-1 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)]" />
+                    {policy.handoff[key].length > 1 && <button type="button" onClick={() => setHandoff(key, policy.handoff[key].filter((_, current) => current !== index))} className="rounded-md px-2 text-[var(--text-muted)] hover:bg-[var(--danger-light)] hover:text-[var(--danger)]">×</button>}
+                  </div>
+                ))}
+              </div>
+            ))}
+            <NumberField label="接管 SLA" value={policy.handoff.slaMinutes} suffix="分钟" onChange={(value) => setHandoff('slaMinutes', value)} />
+          </div>
+        </section>
+        <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3.5">
+          <h3 className="text-sm font-semibold">数据与范围</h3>
+          <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">仅声明此岗位策略允许使用的数据级别和运行环境，不替代零信任、数据权限策略。</p>
+          <div className="mt-3 grid gap-3">
+            <SelectField label="最高数据分类" value={policy.dataClassification} onChange={(value) => onChange({ ...policy, dataClassification: value as DigitalEmployeeBoundaryPolicy['dataClassification'] })} options={[['internal', '内部'], ['confidential', '敏感'], ['restricted', '受限']]} />
+            <fieldset>
+              <legend className="mb-1.5 text-xs font-medium">允许运行环境</legend>
+              <div className="flex flex-wrap gap-3">
+                {environmentOptions.map(([value, label]) => (
+                  <label key={value} className="flex items-center gap-1.5 text-xs text-[var(--text-secondary)]">
+                    <input type="checkbox" checked={policy.allowedEnvironments.includes(value)} onChange={(event) => setEnvironment(value, event.target.checked)} />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
 }
 
-function ContextualEmployeeDetail({ employee, context, onClose }: { employee: DigitalEmployee; context: 'release' | 'operations'; onClose: () => void }) {
+function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: { employee: DigitalEmployee; context: 'release' | 'operations'; onClose: () => void; onGoToModule?: (tab: ModuleTab) => void }) {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const isAdmin = user?.role === 'admin';
   const [message, setMessage] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState('');
   const { data: evidence = [] } = useApiQuery<Array<{ id: string; time: string; actor: string; action: string; target: string; result: string }>>(['digital-employee', employee.id, 'evidence'], `/api/digital-employees/${employee.id}/evidence`);
   const evaluate = useApiMutation<DigitalEmployee, Record<string, never>>(() => `/api/digital-employees/${employee.id}/evaluate`, {
-    onSuccess: (result) => setMessage(result.evaluation.status === 'passed' ? '评测已通过，可作为上岗门禁依据。' : '评测未通过，请完善岗位配置后复测。'),
+    onSuccess: (result) => setMessage(result.evaluation.status === 'passed' ? '评测已通过，可作为上岗门禁依据。' : '评测未通过，请按门禁缺失项补齐后复测。'),
     onError: (err) => setMessage(err instanceof Error ? err.message : '评测失败'),
   });
   const release = useApiMutation<DigitalEmployee, Record<string, never>>(() => `/api/digital-employees/${employee.id}/release`, {
     onSuccess: () => setMessage('已提交上岗申请，须由另一名管理员完成双重审批。'),
     onError: (err) => setMessage(err instanceof Error ? err.message : '申请失败'),
+  });
+  const withdraw = useApiMutation<DigitalEmployee, Record<string, never>>(() => `/api/digital-employees/${employee.id}/release/withdraw`, {
+    onSuccess: () => setMessage('已撤回上岗申请，可在补齐后重新申请。'),
+    onError: (err) => setMessage(err instanceof Error ? err.message : '撤回失败'),
+  });
+  const reject = useApiMutation<DigitalEmployee, { reason: string }>(() => `/api/digital-employees/${employee.id}/release/reject`, {
+    onSuccess: () => { setMessage('已驳回上岗申请。'); setRejectReason(''); },
+    onError: (err) => setMessage(err instanceof Error ? err.message : '驳回失败'),
   });
   const transition = useApiMutation<DigitalEmployee, { lifecycle: DigitalEmployeeLifecycle }>(() => `/api/digital-employees/${employee.id}/lifecycle`, {
     onSuccess: (_, input) => setMessage(input.lifecycle === 'active' ? (employee.release.status === 'pending_approval' ? '双重审批已通过，员工已上岗。' : '已恢复运行。') : input.lifecycle === 'paused' ? '已暂停员工运行。' : input.lifecycle === 'quarantined' ? '已隔离员工运行。' : '状态已更新。'),
@@ -605,25 +1007,27 @@ function ContextualEmployeeDetail({ employee, context, onClose }: { employee: Di
     ? { title: '上岗发布详情', description: '集中处理质量评测、上岗门禁与双重审批。' }
     : { title: '运行管理详情', description: '仅展示岗位服务健康、人工交接与运行处置；不可修改岗位或能力。' };
   const selfRequested = Boolean(employee.release.requestedById && user?.id && employee.release.requestedById === user.id);
-  const releaseGate = [
-    { label: '岗位档案', passed: Boolean(employee.owner && employee.escalationOwner && employee.escalationOwner !== '待指定' && employee.serviceObject), detail: employee.owner ? `负责人：${employee.owner}` : '待指定负责人' },
-    { label: '能力边界', passed: Boolean(employee.capabilities.model) && employee.responsibilities.length > 0 && (employee.capabilities.skills.length + employee.capabilities.tools.length + employee.capabilities.workflows.length) > 0, detail: `${employee.capabilities.skills.length + employee.capabilities.tools.length + employee.capabilities.workflows.length} 项已绑定能力` },
-    { label: '质量评测', passed: employee.evaluation.status === 'passed', detail: employee.evaluation.status === 'failed' ? `未通过 ${employee.evaluation.score ?? ''}`.trim() : employee.evaluation.score ? `${employee.evaluation.score} 分` : '尚未通过' },
-    { label: '双重审批上岗', passed: employee.release.status === 'released', detail: employee.release.status === 'released' ? `申请人 ${employee.release.requestedBy ?? '—'} · 批准人 ${employee.release.approver ?? '—'}` : employee.release.status === 'pending_approval' ? `待批准 · 申请人 ${employee.release.requestedBy ?? '—'}` : '尚未申请' },
-  ];
+  const completeness = releaseOnboardingCompleteness(employee);
+  const releaseGate = completeness.gates;
   const releaseActions = (
     <>
-      {employee.release.status === 'not_released' && employee.evaluation.status !== 'passed' && (
-        <Button size="sm" variant="secondary" loading={evaluate.isPending} onClick={() => evaluate.mutate({})}><ClipboardCheck className="h-3.5 w-3.5" />执行评测</Button>
+      {employee.release.status === 'not_released' && employee.evaluation.status !== 'passed' && completeness.configReady && (
+        <Button size="sm" variant="secondary" loading={evaluate.isPending} onClick={() => evaluate.mutate({})}><ClipboardCheck className="h-3.5 w-3.5" />{employee.evaluation.status === 'failed' ? '重新评测' : '执行评测'}</Button>
       )}
-      {employee.evaluation.status === 'failed' && employee.release.status === 'not_released' && (
-        <Button size="sm" variant="secondary" loading={evaluate.isPending} onClick={() => evaluate.mutate({})}><ClipboardCheck className="h-3.5 w-3.5" />重新评测</Button>
+      {employee.release.status === 'not_released' && employee.evaluation.status !== 'passed' && !completeness.configReady && (
+        <span className="text-[11px] text-[var(--text-muted)]">请先补齐岗位契约与能力装配</span>
       )}
       {employee.evaluation.status === 'passed' && employee.release.status === 'not_released' && (
         <Button size="sm" loading={release.isPending} onClick={() => release.mutate({})}><Route className="h-3.5 w-3.5" />申请上岗</Button>
       )}
+      {employee.release.status === 'pending_approval' && selfRequested && (
+        <Button size="sm" variant="secondary" loading={withdraw.isPending} onClick={() => withdraw.mutate({})}>撤回申请</Button>
+      )}
       {employee.release.status === 'pending_approval' && isAdmin && !selfRequested && (
-        <Button size="sm" loading={transition.isPending} onClick={() => transition.mutate({ lifecycle: 'active' })}><CheckCircle2 className="h-3.5 w-3.5" />确认双重审批上岗</Button>
+        <>
+          <Button size="sm" loading={transition.isPending} onClick={() => transition.mutate({ lifecycle: 'active' })}><CheckCircle2 className="h-3.5 w-3.5" />确认双重审批上岗</Button>
+          <Button size="sm" variant="secondary" loading={reject.isPending} onClick={() => reject.mutate({ reason: rejectReason || '未满足上岗门禁或需补充配置' })}>驳回</Button>
+        </>
       )}
       {employee.release.status === 'pending_approval' && selfRequested && (
         <span className="text-[11px] text-[var(--text-muted)]">您是申请人，须由另一名管理员批准</span>
@@ -652,6 +1056,7 @@ function ContextualEmployeeDetail({ employee, context, onClose }: { employee: Di
                   <h2 className="text-base font-semibold">{employeePrimaryLabel(employee)}</h2>
                   <Badge tone={lifecycleMeta[employee.lifecycle].tone}>{lifecycleMeta[employee.lifecycle].label}</Badge>
                   <Badge tone={riskMeta[employee.risk].tone}>{riskMeta[employee.risk].label}</Badge>
+                  {context === 'release' && <Badge tone={completeness.stage === 'ready_to_request' ? 'success' : completeness.stage === 'pending_eval' ? 'neutral' : 'warn'}>{completeness.label}</Badge>}
                 </div>
                 <p className="mt-1 text-xs text-[var(--text-secondary)]">{employeeSecondaryLabel(employee)} · 服务 {employee.serviceObject}</p>
                 <p className="mt-1 text-[11px] text-[var(--text-muted)]">岗位负责人 {employee.owner} · 人工接管 {employee.escalationOwner}</p>
@@ -664,20 +1069,51 @@ function ContextualEmployeeDetail({ employee, context, onClose }: { employee: Di
           </div>
         </section>
         {message && <p role="status" className="rounded-lg border border-[var(--brand)]/25 bg-[var(--brand-light)] px-3 py-2 text-xs text-[var(--text-secondary)]">{message}</p>}
+        {employee.release.rejectedReason && employee.release.status === 'not_released' && context === 'release' && (
+          <p role="status" className="rounded-lg border border-[var(--warning)]/35 bg-[var(--warning-light)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+            最近驳回：{employee.release.rejectedReason}{employee.release.rejectedBy ? ` · ${employee.release.rejectedBy}` : ''}
+          </p>
+        )}
         {context === 'release' && (
           <section className="space-y-5">
             <div>
               <h3 className="text-sm font-semibold">质量与上岗门禁</h3>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">缺岗位档案、未绑已发布能力、评测未过或审批未齐时不可上岗；申请人与批准人必须分离。</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">缺岗位契约、未完成能力装配、评测未过或审批未齐时不可上岗；申请人与批准人必须分离。</p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               {releaseGate.map((gate) => (
-                <div key={gate.label} className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3">
-                  <div className="flex items-center justify-between gap-2"><span className="text-xs font-semibold">{gate.label}</span><Badge tone={gate.passed ? 'success' : 'warn'}>{gate.passed ? '已满足' : '待处理'}</Badge></div>
+                <div key={gate.key} className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold">{gate.label}</span>
+                    <Badge tone={gate.passed ? 'success' : 'warn'}>{gate.passed ? '已满足' : '待处理'}</Badge>
+                  </div>
                   <p className="mt-2 text-xs text-[var(--text-secondary)]">{gate.detail}</p>
+                  {!gate.passed && gate.fixTab && onGoToModule && (
+                    <button
+                      type="button"
+                      className="mt-2 text-[11px] font-medium text-[var(--brand)]"
+                      onClick={() => { onClose(); onGoToModule(gate.fixTab!); }}
+                    >
+                      前往{gate.fixTab === 'roleSetup' ? '岗位配置' : '能力装配'} →
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
+            {employee.evaluation.status === 'failed' && (
+              <div className="rounded-lg border border-[var(--warning)]/35 bg-[var(--warning-light)] px-3 py-2.5 text-xs leading-5 text-[var(--text-secondary)]">
+                评测未通过{employee.evaluation.score ? `（${employee.evaluation.score} 分）` : ''}。
+                {!completeness.contractOk && ' 请先完善岗位契约。'}
+                {completeness.contractOk && !completeness.capabilityOk && ' 请先完成能力装配。'}
+                {completeness.configReady && ' 配置已齐，可直接复测。'}
+              </div>
+            )}
+            {employee.release.status === 'pending_approval' && isAdmin && !selfRequested && (
+              <label className="grid gap-1.5 text-xs font-medium">
+                驳回原因（可选）
+                <input value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} placeholder="例如：职责边界仍不完整，请补齐后重提" className="h-9 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 text-xs font-normal outline-none focus:border-[var(--brand)]" />
+              </label>
+            )}
             <div className="grid gap-2 sm:grid-cols-2">
               <BoundaryList icon={ClipboardCheck} tone="text-[var(--brand)]" title="评测覆盖" values={['岗位任务正确性', '职责与边界遵循', '能力调用可控性', '人工接管可达性']} />
               <BoundaryList icon={ShieldCheck} tone="text-[var(--success)]" title="当前评测依据" values={[`岗位版本 ${employee.version}`, `已绑定能力 ${employee.capabilities.skills.length + employee.capabilities.tools.length + employee.capabilities.workflows.length} 项`]} />
@@ -719,45 +1155,35 @@ function ContextualEmployeeDetail({ employee, context, onClose }: { employee: Di
   );
 }
 
-function EmployeeDetailModal({ employee, context, onClose }: { employee: DigitalEmployee | null; context: ModuleTab; onClose: () => void }) {
+function EmployeeDetailModal({ employee, context, onClose, onGoToModule }: { employee: DigitalEmployee | null; context: ModuleTab; onClose: () => void; onGoToModule?: (tab: ModuleTab) => void }) {
   const navigate = useNavigate();
   const [tab, setTab] = useState<DetailTab>('profile');
-  const [configOpen, setConfigOpen] = useState(false);
-  const { data: evidence = [] } = useApiQuery<Array<{ id: string; time: string; actor: string; action: string; target: string; result: string }>>(['digital-employee', employee?.id, 'evidence'], `/api/digital-employees/${employee?.id}/evidence`, undefined, { enabled: Boolean(employee) });
+  const { data: evidence = [] } = useApiQuery<Array<{ id: string; time: string; actor: string; action: string; target: string; result: string }>>(['digital-employee', employee?.id, 'evidence'], `/api/digital-employees/${employee?.id}/evidence`, undefined, { enabled: Boolean(employee) && context === 'catalog' });
   useEffect(() => {
     if (!employee) return;
-    if (isDepartmentHead(employee) && (context === 'catalog' || context === 'roleSetup')) setTab('team');
-    else setTab(context === 'capabilities' ? 'capabilities' : context === 'roleSetup' ? 'boundary' : 'profile');
-    setConfigOpen(false);
+    if (context === 'roleSetup' || context === 'capabilities') return;
+    if (isDepartmentHead(employee) && context === 'catalog') setTab('team');
+    else setTab('profile');
   }, [employee, context]);
   if (!employee) return null;
-  if (context === 'release' || context === 'operations') return <ContextualEmployeeDetail employee={employee} context={context} onClose={onClose} />;
-  // 配置模式复用当前员工详情的状态；页面上始终只保留一个模态窗，返回即可回到原详情。
-  if (configOpen) return <EmployeeConfigurationWorkbench employee={employee} open onClose={() => setConfigOpen(false)} initialSection={context === 'capabilities' ? 'capabilities' : context === 'roleSetup' ? 'boundary' : 'profile'} />;
+  if (context === 'release' || context === 'operations') return <ContextualEmployeeDetail employee={employee} context={context} onClose={onClose} onGoToModule={onGoToModule} />;
+  // 岗位配置 / 能力装配：选中后直达工作台，关闭即回列表。
+  if (context === 'roleSetup') {
+    return <EmployeeConfigurationWorkbench employee={employee} open mode="role" onClose={onClose} initialSection="profile" />;
+  }
+  if (context === 'capabilities') {
+    return <EmployeeConfigurationWorkbench employee={employee} open mode="capability" onClose={onClose} initialSection="capabilities" />;
+  }
   const head = isDepartmentHead(employee);
-  const detailTabs: Array<{ key: DetailTab; label: string }> = context === 'capabilities'
-    ? [
-        { key: 'capabilities', label: '能力装配' },
-        { key: 'boundary', label: '执行边界（只读）' },
-        { key: 'evidence', label: '审计证据' },
-      ]
-    : context === 'roleSetup'
-      ? [
-          ...(head ? [{ key: 'team' as const, label: '部门班组' }] : []),
-          { key: 'profile', label: '档案与岗位' },
-          { key: 'boundary', label: '职责与边界' },
-          { key: 'memory', label: '记忆与上下文' },
-          { key: 'evidence', label: '审计证据' },
-        ]
-      : [
-          ...(head ? [{ key: 'team' as const, label: '部门班组' }] : []),
-          { key: 'profile', label: '档案与岗位' },
-          { key: 'boundary', label: '职责与边界' },
-          { key: 'capabilities', label: '能力装配' },
-          { key: 'memory', label: '记忆与上下文' },
-          { key: 'runtime', label: '运行观测' },
-          { key: 'evidence', label: '审计证据' },
-        ];
+  const detailTabs: Array<{ key: DetailTab; label: string }> = [
+    ...(head ? [{ key: 'team' as const, label: '部门班组' }] : []),
+    { key: 'profile', label: '档案与岗位' },
+    { key: 'boundary', label: '职责与边界' },
+    { key: 'capabilities', label: '能力装配' },
+    { key: 'memory', label: '记忆与上下文' },
+    { key: 'runtime', label: '运行观测' },
+    { key: 'evidence', label: '审计证据' },
+  ];
   const nextStepHint = employee.release.status === 'pending_approval'
     ? '上岗申请待双重审批'
     : employee.evaluation.status !== 'passed'
@@ -768,9 +1194,8 @@ function EmployeeDetailModal({ employee, context, onClose }: { employee: Digital
   const actions = (
     <>
       {employee.lifecycle === 'active' && <Button size="sm" onClick={() => navigate(`/copilot?employeeId=${employee.id}`)}><MessageSquare className="h-3.5 w-3.5" />发起协作</Button>}
-      {head && employee.lifecycle === 'active' && (context === 'catalog' || context === 'roleSetup') && <Button size="sm" variant="secondary" onClick={() => setTab('team')}>班组调度</Button>}
-      {(context === 'catalog' || context === 'roleSetup' || context === 'capabilities') && <Button size="sm" variant="secondary" onClick={() => navigate(`/tasks?task=${encodeURIComponent(employeePrimaryLabel(employee))}`)}>相关任务</Button>}
-      {(context === 'roleSetup' || context === 'capabilities') && <Button size="sm" variant="secondary" onClick={() => setConfigOpen(true)}><SlidersHorizontal className="h-3.5 w-3.5" />{context === 'capabilities' ? '打开装配' : '配置岗位'}</Button>}
+      {head && employee.lifecycle === 'active' && context === 'catalog' && <Button size="sm" variant="secondary" onClick={() => setTab('team')}>班组调度</Button>}
+      {context === 'catalog' && <Button size="sm" variant="secondary" onClick={() => navigate(`/tasks?task=${encodeURIComponent(employeePrimaryLabel(employee))}`)}>相关任务</Button>}
       {context === 'catalog' && nextStepHint && <span className="hidden text-[11px] text-[var(--text-muted)] sm:inline">{nextStepHint}</span>}
       <Button size="sm" variant="ghost" onClick={onClose}>关闭</Button>
     </>
@@ -781,10 +1206,10 @@ function EmployeeDetailModal({ employee, context, onClose }: { employee: Digital
 {tab === 'capabilities' && <CapabilityContent employee={employee} />}
 {tab === 'memory' && <MemoryContent employee={employee} />}
 {tab === 'runtime' && <RuntimeContent employee={employee} />}
-{tab === 'evidence' && <div className="space-y-3">{evidence.map((event) => <div key={event.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-4 py-3"><div className="text-sm font-medium">{event.action}</div><div className="mt-1 text-xs text-[var(--text-secondary)]">{event.target}</div><div className="mt-1 text-[11px] text-[var(--text-muted)]">{event.actor} · {new Date(event.time).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}</div></div>)}</div>}</div></div></Modal><EmployeeConfigurationWorkbench employee={employee} open={configOpen} onClose={() => setConfigOpen(false)} initialSection={context === 'capabilities' ? 'capabilities' : context === 'roleSetup' ? 'boundary' : 'profile'} /></>;
+{tab === 'evidence' && <div className="space-y-3">{evidence.map((event) => <div key={event.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-4 py-3"><div className="text-sm font-medium">{event.action}</div><div className="mt-1 text-xs text-[var(--text-secondary)]">{event.target}</div><div className="mt-1 text-[11px] text-[var(--text-muted)]">{event.actor} · {new Date(event.time).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })}</div></div>)}</div>}</div></div></Modal></>;
 }
 
-function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSection = 'profile' }: { employee: DigitalEmployee; open: boolean; onClose: () => void; initialSection?: EmployeeConfigurationSection }) {
+function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSection = 'profile', mode = 'role' }: { employee: DigitalEmployee; open: boolean; onClose: () => void; initialSection?: EmployeeConfigurationSection; mode?: 'role' | 'capability' }) {
   const [section, setSection] = useState<EmployeeConfigurationSection>(initialSection);
   const [profile, setProfile] = useState({ name: employee.name, role: employee.role, department: employee.department, description: employee.description, owner: employee.owner, escalationOwner: employee.escalationOwner, serviceObject: employee.serviceObject, risk: employee.risk, environment: employee.environment });
   const [boundaryPolicy, setBoundaryPolicy] = useState<DigitalEmployeeBoundaryPolicy>(() => resolveBoundaryPolicy(employee));
@@ -799,31 +1224,378 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
   const approve = useApiMutation<DigitalEmployeeConfigurationVersion, { versionId: string }>(({ versionId }) => `/api/digital-employees/${employee.id}/configuration-versions/${versionId}/approve`);
   const lines = (value: string) => value.split('\n').map((item) => item.trim()).filter(Boolean);
   useEffect(() => { if (!open) return; setSection(initialSection); setMessage(null); setProfile({ name: employee.name, role: employee.role, department: employee.department, description: employee.description, owner: employee.owner, escalationOwner: employee.escalationOwner, serviceObject: employee.serviceObject, risk: employee.risk, environment: employee.environment }); setBoundaryPolicy(resolveBoundaryPolicy(employee)); setCapabilities({ ...employee.capabilities, knowledge: employee.capabilities.knowledge.join('\n'), skills: employee.capabilities.skills.join('\n'), tools: employee.capabilities.tools.join('\n'), workflows: employee.capabilities.workflows.join('\n'), channels: employee.capabilities.channels.join('\n') }); setMemory({ ...employee.memoryPolicy }); }, [employee, open, initialSection]);
-  const blocking = [!profile.name.trim() && '员工名称', !profile.role.trim() && '岗位名称', !profile.department.trim() && '所属部门', !capabilities.model.trim() && '模型路由', !boundaryPolicy.responsibilities.length && '至少一项岗位职责', boundaryPolicy.responsibilities.some((item) => !item.title.trim() || !item.objective.trim() || !item.trigger.trim()) && '完整的职责目标与触发条件', !boundaryPolicy.handoff.triggers.some(Boolean) && '至少一项接管触发条件', !boundaryPolicy.handoff.approvers.some(Boolean) && '至少一名接管负责人', !boundaryPolicy.allowedEnvironments.length && '至少一个运行环境'].filter(Boolean) as string[];
+  const capabilityCount = lines(capabilities.skills).length + lines(capabilities.tools).length + lines(capabilities.workflows).length;
+  const boundExecutable = [
+    ...lines(capabilities.skills).map((capabilityName) => ({ capabilityType: 'skill' as const, capabilityName })),
+    ...lines(capabilities.tools).map((capabilityName) => ({ capabilityType: 'tool' as const, capabilityName })),
+    ...lines(capabilities.workflows).map((capabilityName) => ({ capabilityType: 'workflow' as const, capabilityName })),
+  ];
+  const modesComplete = boundExecutable.every((item) => boundaryPolicy.capabilityModes.some((mode) => mode.capabilityType === item.capabilityType && mode.capabilityName === item.capabilityName));
+  const roleBlocking = [
+    !profile.name.trim() && '员工名称',
+    !profile.role.trim() && '岗位名称',
+    !profile.department.trim() && '所属部门',
+    !boundaryPolicy.responsibilities.length && '至少一项岗位职责',
+    boundaryPolicy.responsibilities.some((item) => !item.title.trim() || !item.objective.trim() || !item.trigger.trim()) && '完整的职责目标与触发条件',
+    !boundaryPolicy.handoff.triggers.some(Boolean) && '至少一项接管触发条件',
+    !boundaryPolicy.handoff.approvers.some(Boolean) && '至少一名接管负责人',
+    !boundaryPolicy.allowedEnvironments.length && '至少一个运行环境',
+  ].filter(Boolean) as string[];
+  const capabilityBlocking = [
+    !capabilities.model.trim() && '模型路由',
+    !capabilityCount && '至少一项技能/工具/工作流',
+    capabilityCount > 0 && !modesComplete && '执行授权模式',
+  ].filter(Boolean) as string[];
+  const blocking = mode === 'capability' ? capabilityBlocking : roleBlocking;
   const controlled = employee.lifecycle === 'active' || profile.environment === 'production' || profile.risk === 'high';
-  const submit = () => { if (blocking.length) { setMessage(`请补齐：${blocking.join('、')}`); return; } const normalizedPolicy = { ...boundaryPolicy, responsibilities: boundaryPolicy.responsibilities.map((item) => ({ ...item, title: item.title.trim(), objective: item.objective.trim(), trigger: item.trigger.trim(), deliverables: item.deliverables.filter(Boolean) })), handoff: { ...boundaryPolicy.handoff, triggers: boundaryPolicy.handoff.triggers.map((item) => item.trim()).filter(Boolean), approvers: boundaryPolicy.handoff.approvers.map((item) => item.trim()).filter(Boolean), notificationChannels: boundaryPolicy.handoff.notificationChannels.map((item) => item.trim()).filter(Boolean) } }; save.mutate({ profile, boundary: { responsibilities: normalizedPolicy.responsibilities.map((item) => item.title), prohibitedActions: normalizedPolicy.capabilityModes.filter((item) => item.mode === 'prohibited').map((item) => `禁止使用：${item.capabilityName}`), handoffPolicy: { triggers: normalizedPolicy.handoff.triggers, approvalRequiredFor: normalizedPolicy.capabilityModes.filter((item) => item.mode === 'approval_required').map((item) => item.capabilityName) }, boundaryPolicy: normalizedPolicy }, capabilities: { agentId: capabilities.agentId || undefined, model: capabilities.model, knowledge: lines(capabilities.knowledge), skills: lines(capabilities.skills), tools: lines(capabilities.tools), workflows: lines(capabilities.workflows), channels: lines(capabilities.channels) }, memoryPolicy: memory }); };
-  const nav: Array<{ key: EmployeeConfigurationSection; label: string; note: string }> = initialSection === 'capabilities'
-    ? [{ key: 'capabilities', label: '能力装配', note: '受控能力引用' }, { key: 'boundary', label: '执行边界', note: '授权模式' }]
-    : initialSection === 'boundary' || initialSection === 'profile' || initialSection === 'memory'
-      ? [{ key: 'profile', label: '岗位档案', note: '身份与责任' }, { key: 'boundary', label: '职责与边界', note: '可做与不可做' }, { key: 'memory', label: '记忆策略', note: '三层沉淀策略' }]
-      : [{ key: 'profile', label: '岗位档案', note: '身份与责任' }, { key: 'boundary', label: '职责与边界', note: '可做与不可做' }, { key: 'capabilities', label: '能力装配', note: '受控能力引用' }, { key: 'memory', label: '记忆策略', note: '三层沉淀策略' }];
+  const roleContractReady = roleSetupCompleteness(employee).ready;
+  const submit = () => {
+    if (blocking.length) { setMessage(`请补齐：${blocking.join('、')}`); return; }
+    const nextCapabilities = mode === 'role'
+      ? employee.capabilities
+      : { agentId: capabilities.agentId || undefined, model: capabilities.model, knowledge: lines(capabilities.knowledge), skills: lines(capabilities.skills), tools: lines(capabilities.tools), workflows: lines(capabilities.workflows), channels: lines(capabilities.channels) };
+    const syncedModes = mode === 'capability'
+      ? boundExecutable.map((item) => boundaryPolicy.capabilityModes.find((modeItem) => modeItem.capabilityType === item.capabilityType && modeItem.capabilityName === item.capabilityName) ?? { ...item, mode: item.capabilityType === 'skill' ? 'recommend' as const : 'approval_required' as const })
+      : boundaryPolicy.capabilityModes;
+    const normalizedPolicy = {
+      ...boundaryPolicy,
+      capabilityModes: syncedModes,
+      responsibilities: boundaryPolicy.responsibilities.map((item) => ({ ...item, title: item.title.trim(), objective: item.objective.trim(), trigger: item.trigger.trim(), deliverables: item.deliverables.filter(Boolean) })),
+      handoff: {
+        ...boundaryPolicy.handoff,
+        triggers: boundaryPolicy.handoff.triggers.map((item) => item.trim()).filter(Boolean),
+        approvers: boundaryPolicy.handoff.approvers.map((item) => item.trim()).filter(Boolean),
+        notificationChannels: boundaryPolicy.handoff.notificationChannels.map((item) => item.trim()).filter(Boolean),
+      },
+    };
+    const nextProfile = mode === 'capability'
+      ? { name: employee.name, role: employee.role, department: employee.department, description: employee.description, owner: employee.owner, escalationOwner: employee.escalationOwner, serviceObject: employee.serviceObject, risk: employee.risk, environment: employee.environment }
+      : profile;
+    const nextMemory = mode === 'capability' ? employee.memoryPolicy : memory;
+    save.mutate({
+      profile: nextProfile,
+      boundary: {
+        responsibilities: normalizedPolicy.responsibilities.map((item) => item.title),
+        prohibitedActions: normalizedPolicy.capabilityModes.filter((item) => item.mode === 'prohibited').map((item) => `禁止使用：${item.capabilityName}`),
+        handoffPolicy: { triggers: normalizedPolicy.handoff.triggers, approvalRequiredFor: normalizedPolicy.capabilityModes.filter((item) => item.mode === 'approval_required').map((item) => item.capabilityName) },
+        boundaryPolicy: normalizedPolicy,
+      },
+      capabilities: nextCapabilities,
+      memoryPolicy: nextMemory,
+    });
+  };
+  const nav: Array<{ key: EmployeeConfigurationSection; label: string; note: string }> = mode === 'capability'
+    ? []
+    : [{ key: 'profile', label: '岗位档案', note: '身份与责任' }, { key: 'boundary', label: '职责与边界', note: '可做与不可做' }, { key: 'memory', label: '记忆策略', note: '三层沉淀策略' }];
   const pendingVersion = versions.find((item) => item.status === 'pending_approval');
-  return <Modal open={open} onClose={onClose} title="配置数字员工" description="配置只维护岗位档案、边界、能力引用和记忆策略；高风险与在岗变更需双重审批后生效。" size="xl" footer={<><Button variant="ghost" onClick={onClose}>取消</Button><Button loading={save.isPending} disabled={Boolean(blocking.length)} onClick={submit}><Save className="h-3.5 w-3.5" />{controlled ? '提交双重审批变更' : '保存配置草稿'}</Button></>}><div className="space-y-5"><section className="flex flex-wrap items-start justify-between gap-4 rounded-xl bg-[var(--bg-elevated)] px-4 py-3" style={{ boxShadow: 'var(--saas-ring)' }}><div className="flex min-w-0 items-center gap-3"><EmployeeAvatar employee={employee} size={44} /><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h2 className="text-sm font-semibold">{employeePrimaryLabel(employee)}</h2><Badge tone={lifecycleMeta[employee.lifecycle].tone}>{lifecycleMeta[employee.lifecycle].label}</Badge><Badge tone={riskMeta[profile.risk].tone}>{riskMeta[profile.risk].label}</Badge></div><p className="mt-1 text-xs text-[var(--text-muted)]">{employeeSecondaryLabel(employee)} · 当前配置 {versions.find((item) => item.status === 'current')?.version ?? '配置 v1'}</p></div></div><div className={cn('rounded-lg px-3 py-2 text-xs', controlled ? 'bg-[var(--warning-bg)] text-[var(--text-secondary)]' : 'bg-[var(--success-bg)] text-[var(--text-secondary)]')} style={{ boxShadow: 'var(--saas-ring)' }}>{controlled ? '本次变更将进入双重审批，批准后生效' : '草稿配置可直接保存，仍需完成评测与上岗'}</div></section>{message && <p role="status" className="rounded-lg border border-[var(--brand)]/25 bg-[var(--brand-light)] px-3 py-2 text-xs text-[var(--text-secondary)]">{message}</p>}<div className="grid gap-5 lg:grid-cols-[164px_minmax(0,1fr)_220px]"><aside><p className="mb-2 px-3 text-[11px] font-medium text-[var(--text-muted)]">配置分区</p><nav className="flex gap-1 overflow-x-auto lg:flex-col" aria-label="员工配置导航">{nav.map((item) => <button type="button" key={item.key} onClick={() => setSection(item.key)} className={cn('shrink-0 rounded-lg px-3 py-2.5 text-left transition-colors', section === item.key ? 'bg-[var(--brand-light)] text-[var(--brand)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}><span className="block text-xs font-medium">{item.label}</span><span className="mt-0.5 block text-[10px] opacity-75">{item.note}</span></button>)}</nav></aside><main className="min-w-0 border-y border-[var(--border)] py-1 lg:border-y-0 lg:border-x lg:px-5">{section === 'profile' && <div className="space-y-4"><div><h3 className="text-sm font-semibold">岗位档案</h3><p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">明确岗位身份、责任归属和服务范围；生产环境与高风险调整会进入受控变更。</p></div><div className="grid gap-3 sm:grid-cols-2"><Field label="员工名称（花名）" value={profile.name} onChange={(value) => setProfile({ ...profile, name: value })} placeholder="例如：北辰" required /><Field label="岗位名称" value={profile.role} onChange={(value) => setProfile({ ...profile, role: value })} placeholder="例如：信息技术部负责人" required /><Field label="所属部门" value={profile.department} onChange={(value) => setProfile({ ...profile, department: value })} placeholder="例如：信息技术部" required /><Field label="岗位负责人" value={profile.owner} onChange={(value) => setProfile({ ...profile, owner: value })} placeholder="明确业务责任人" /><Field label="人工接管负责人" value={profile.escalationOwner} onChange={(value) => setProfile({ ...profile, escalationOwner: value })} placeholder="异常或越权时的接管人" /><Field label="服务对象" value={profile.serviceObject} onChange={(value) => setProfile({ ...profile, serviceObject: value })} placeholder="例如：生产业务系统" /><SelectField label="风险等级" value={profile.risk} onChange={(value) => setProfile({ ...profile, risk: value as DigitalEmployee['risk'] })} options={[['low', '低风险'], ['medium', '中风险'], ['high', '高风险']]} /><SelectField label="运行环境" value={profile.environment} onChange={(value) => setProfile({ ...profile, environment: value as DigitalEmployee['environment'] })} options={[['sandbox', '沙箱环境'], ['staging', '预发环境'], ['production', '生产环境']]} /><label className="grid gap-1.5 text-xs font-medium sm:col-span-2">岗位说明<textarea value={profile.description} onChange={(event) => setProfile({ ...profile, description: event.target.value })} rows={4} placeholder="说明服务目标、覆盖范围与人工介入边界。" className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs font-normal leading-5 outline-none focus:border-[var(--brand)]" /></label></div></div>}
-{section === 'boundary' && <BoundaryPolicyEditor policy={boundaryPolicy} capabilities={{ agentId: capabilities.agentId || undefined, model: capabilities.model, knowledge: lines(capabilities.knowledge), skills: lines(capabilities.skills), tools: lines(capabilities.tools), workflows: lines(capabilities.workflows), channels: lines(capabilities.channels) }} onChange={setBoundaryPolicy} />}
-{section === 'capabilities' && <CapabilityAssemblySelector catalog={capabilityCatalog} capabilities={{ agentId: capabilities.agentId || undefined, model: capabilities.model, knowledge: lines(capabilities.knowledge), skills: lines(capabilities.skills), tools: lines(capabilities.tools), workflows: lines(capabilities.workflows), channels: lines(capabilities.channels) }} onChange={(next) => setCapabilities({ ...next, knowledge: next.knowledge.join('\n'), skills: next.skills.join('\n'), tools: next.tools.join('\n'), workflows: next.workflows.join('\n'), channels: next.channels.join('\n') })} />}
-{section === 'memory' && <div className="space-y-4"><div><h3 className="text-sm font-semibold">三层记忆策略</h3><p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">短期记忆支撑当前会话，工作记忆支撑岗位协作，长期记忆仅可通过审核沉淀为知识候选。</p></div><div className="grid gap-3 sm:grid-cols-2"><NumberField label="短期记忆保留" value={memory.shortTermHours} suffix="小时" onChange={(value) => setMemory({ ...memory, shortTermHours: value })} /><NumberField label="工作记忆保留" value={memory.workingDays} suffix="天" onChange={(value) => setMemory({ ...memory, workingDays: value })} /><SelectField label="长期记忆提炼" value={memory.longTermCadence} onChange={(value) => setMemory({ ...memory, longTermCadence: value as DigitalEmployee['memoryPolicy']['longTermCadence'] })} options={[['daily', '每日提炼'], ['weekly', '每周提炼']]} /><SelectField label="转知识策略" value={memory.knowledgePromotion} onChange={(value) => setMemory({ ...memory, knowledgePromotion: value as DigitalEmployee['memoryPolicy']['knowledgePromotion'] })} options={[['approval_required', '审核后转知识'], ['disabled', '不转知识']]} /></div><div className="rounded-lg border border-[var(--warning)]/40 bg-[var(--warning-light)] p-3 text-xs leading-5 text-[var(--text-secondary)]"><Database className="mr-1 inline h-3.5 w-3.5 text-[var(--warning)]" />长期记忆不会直接成为企业知识；通过内容审核后，才进入知识中心的权威资产目录。</div></div>}</main><aside className="space-y-3"><section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3"><h3 className="text-xs font-semibold">配置校验</h3><div className="mt-3 space-y-2 text-[11px]">{blocking.length ? blocking.map((item) => <div key={item} className="flex gap-1.5 text-[var(--danger)]"><XCircle className="mt-0.5 h-3 w-3 shrink-0" />待补齐：{item}</div>) : <div className="flex gap-1.5 text-[var(--success)]"><CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" />必填配置已完整</div>}<div className="flex gap-1.5 text-[var(--text-secondary)]"><ShieldCheck className="mt-0.5 h-3 w-3 shrink-0 text-[var(--brand)]" />{controlled ? '需双重审批后生效' : '可保存为草稿配置'}</div></div></section><section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3"><h3 className="text-xs font-semibold">配置版本</h3><div className="mt-3 space-y-3">{versions.slice(0, 3).map((version) => <div key={version.id} className="text-[11px]"><div className="flex items-center justify-between gap-2"><span className="font-medium">{version.version}</span><Badge tone={version.status === 'current' ? 'success' : version.status === 'pending_approval' ? 'warn' : 'neutral'}>{version.status === 'current' ? '当前' : version.status === 'pending_approval' ? '待审批' : '已替代'}</Badge></div><p className="mt-1 leading-4 text-[var(--text-muted)]">{version.changeSummary}</p>{version.status === 'pending_approval' && isAdmin && version.updatedById !== user?.id && version.updatedBy !== user?.name && <Button size="sm" className="mt-2 w-full" loading={approve.isPending && approve.variables?.versionId === version.id} onClick={() => approve.mutate({ versionId: version.id })}>批准并生效</Button>}{version.status === 'pending_approval' && isAdmin && (version.updatedById === user?.id || version.updatedBy === user?.name) && <p className="mt-2 text-[10px] text-[var(--text-muted)]">您是提交人，须由另一名管理员批准</p>}</div>)}{!versions.length && <p className="text-[11px] text-[var(--text-muted)]">正在读取配置版本…</p>}</div></section>{pendingVersion && <p className="rounded-lg border border-[var(--warning)]/40 bg-[var(--warning-light)] px-3 py-2 text-[11px] leading-4 text-[var(--text-secondary)]">存在待审批配置 {pendingVersion.version}，批准前当前岗位不会改变。</p>}</aside></div></div></Modal>;
+  const workbenchTitle = mode === 'capability' ? '受控能力装配' : '配置岗位授权契约';
+  const workbenchDescription = mode === 'capability'
+    ? '引用已发布模型与能力资产，并为技能/工具/流程设置执行授权；岗位职责请到「岗位配置」。'
+    : '维护岗位档案、职责边界、人工接管与记忆策略；能力引用请到「能力装配」。高风险与在岗变更需双重审批后生效。';
+  const validationAside = (
+    <aside className="space-y-3 lg:w-[220px] lg:shrink-0">
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3">
+        <h3 className="text-xs font-semibold">配置校验</h3>
+        <div className="mt-3 space-y-2 text-[11px]">
+          {blocking.length
+            ? blocking.map((item) => <div key={item} className="flex gap-1.5 text-[var(--danger)]"><XCircle className="mt-0.5 h-3 w-3 shrink-0" />待补齐：{item}</div>)
+            : <div className="flex gap-1.5 text-[var(--success)]"><CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" />必填配置已完整</div>}
+          <div className="flex gap-1.5 text-[var(--text-secondary)]"><ShieldCheck className="mt-0.5 h-3 w-3 shrink-0 text-[var(--brand)]" />{controlled ? '需双重审批后生效' : '可保存为草稿配置'}</div>
+        </div>
+      </section>
+      <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3">
+        <h3 className="text-xs font-semibold">配置版本</h3>
+        <div className="mt-3 space-y-3">
+          {versions.slice(0, 3).map((version) => (
+            <div key={version.id} className="text-[11px]">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium">{version.version}</span>
+                <Badge tone={version.status === 'current' ? 'success' : version.status === 'pending_approval' ? 'warn' : 'neutral'}>{version.status === 'current' ? '当前' : version.status === 'pending_approval' ? '待审批' : '已替代'}</Badge>
+              </div>
+              <p className="mt-1 leading-4 text-[var(--text-muted)]">{version.changeSummary}</p>
+              {version.status === 'pending_approval' && isAdmin && version.updatedById !== user?.id && version.updatedBy !== user?.name && <Button size="sm" className="mt-2 w-full" loading={approve.isPending && approve.variables?.versionId === version.id} onClick={() => approve.mutate({ versionId: version.id })}>批准并生效</Button>}
+              {version.status === 'pending_approval' && isAdmin && (version.updatedById === user?.id || version.updatedBy === user?.name) && <p className="mt-2 text-[10px] text-[var(--text-muted)]">您是提交人，须由另一名管理员批准</p>}
+            </div>
+          ))}
+          {!versions.length && <p className="text-[11px] text-[var(--text-muted)]">正在读取配置版本…</p>}
+        </div>
+      </section>
+      {pendingVersion && <p className="rounded-lg border border-[var(--warning)]/40 bg-[var(--warning-light)] px-3 py-2 text-[11px] leading-4 text-[var(--text-secondary)]">存在待审批配置 {pendingVersion.version}，批准前当前岗位不会改变。</p>}
+    </aside>
+  );
+  return (
+    <Modal open={open} onClose={onClose} title={workbenchTitle} description={workbenchDescription} size="xl" footer={<><Button variant="ghost" onClick={onClose}>取消</Button><Button loading={save.isPending} disabled={Boolean(blocking.length)} onClick={submit}><Save className="h-3.5 w-3.5" />{controlled ? '提交双重审批变更' : '保存配置草稿'}</Button></>}>
+      <div className="space-y-4">
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[var(--bg-elevated)] px-4 py-3" style={{ boxShadow: 'var(--saas-ring)' }}>
+          <div className="flex min-w-0 items-center gap-3">
+            <EmployeeAvatar employee={employee} size={40} />
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-sm font-semibold">{employeePrimaryLabel(employee)}</h2>
+                <Badge tone={lifecycleMeta[employee.lifecycle].tone}>{lifecycleMeta[employee.lifecycle].label}</Badge>
+                <Badge tone={riskMeta[profile.risk].tone}>{riskMeta[profile.risk].label}</Badge>
+              </div>
+              <p className="mt-0.5 text-xs text-[var(--text-muted)]">{employeeSecondaryLabel(employee)} · {versions.find((item) => item.status === 'current')?.version ?? '配置 v1'}</p>
+            </div>
+          </div>
+          <div className={cn('rounded-lg px-3 py-1.5 text-[11px]', controlled ? 'bg-[var(--warning-bg)] text-[var(--text-secondary)]' : 'bg-[var(--success-bg)] text-[var(--text-secondary)]')} style={{ boxShadow: 'var(--saas-ring)' }}>
+            {controlled ? '变更将进入双重审批后生效' : '可保存草稿，仍需评测上岗'}
+          </div>
+        </section>
+        {mode === 'capability' && !roleContractReady && (
+          <p role="status" className="rounded-lg border border-[var(--warning)]/35 bg-[var(--warning-light)] px-3 py-2 text-xs text-[var(--text-secondary)]">
+            岗位授权契约尚未完整，可先装配能力；上岗评测前请到「岗位配置」补齐档案与职责。
+          </p>
+        )}
+        {message && <p role="status" className="rounded-lg border border-[var(--brand)]/25 bg-[var(--brand-light)] px-3 py-2 text-xs text-[var(--text-secondary)]">{message}</p>}
+        {mode === 'capability' ? (
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
+            <main className="min-w-0 flex-1">
+              <CapabilityAssemblySelector
+                catalog={capabilityCatalog}
+                capabilities={{ agentId: capabilities.agentId || undefined, model: capabilities.model, knowledge: lines(capabilities.knowledge), skills: lines(capabilities.skills), tools: lines(capabilities.tools), workflows: lines(capabilities.workflows), channels: lines(capabilities.channels) }}
+                policy={boundaryPolicy}
+                onChangeCapabilities={(next) => setCapabilities({ ...next, knowledge: next.knowledge.join('\n'), skills: next.skills.join('\n'), tools: next.tools.join('\n'), workflows: next.workflows.join('\n'), channels: next.channels.join('\n') })}
+                onChangePolicy={setBoundaryPolicy}
+              />
+            </main>
+            {validationAside}
+          </div>
+        ) : (
+          <div className="grid gap-5 lg:grid-cols-[164px_minmax(0,1fr)_220px]">
+            <aside>
+              <p className="mb-2 px-3 text-[11px] font-medium text-[var(--text-muted)]">配置分区</p>
+              <nav className="flex gap-1 overflow-x-auto lg:flex-col" aria-label="员工配置导航">
+                {nav.map((item) => (
+                  <button type="button" key={item.key} onClick={() => setSection(item.key)} className={cn('shrink-0 rounded-lg px-3 py-2.5 text-left transition-colors', section === item.key ? 'bg-[var(--brand-light)] text-[var(--brand)]' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}>
+                    <span className="block text-xs font-medium">{item.label}</span>
+                    <span className="mt-0.5 block text-[10px] opacity-75">{item.note}</span>
+                  </button>
+                ))}
+              </nav>
+            </aside>
+            <main className="min-w-0 border-y border-[var(--border)] py-1 lg:border-y-0 lg:border-x lg:px-5">
+              {section === 'profile' && (
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-sm font-semibold">岗位档案</h3>
+                    <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">明确岗位身份、责任归属和服务范围；生产环境与高风险调整会进入受控变更。</p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <Field label="员工名称（花名）" value={profile.name} onChange={(value) => setProfile({ ...profile, name: value })} placeholder="例如：北辰" required />
+                    <Field label="岗位名称" value={profile.role} onChange={(value) => setProfile({ ...profile, role: value })} placeholder="例如：信息技术部负责人" required />
+                    <Field label="所属部门" value={profile.department} onChange={(value) => setProfile({ ...profile, department: value })} placeholder="例如：信息技术部" required />
+                    <Field label="岗位负责人" value={profile.owner} onChange={(value) => setProfile({ ...profile, owner: value })} placeholder="明确业务责任人" />
+                    <Field label="人工接管负责人" value={profile.escalationOwner} onChange={(value) => setProfile({ ...profile, escalationOwner: value })} placeholder="异常或越权时的接管人" />
+                    <Field label="服务对象" value={profile.serviceObject} onChange={(value) => setProfile({ ...profile, serviceObject: value })} placeholder="例如：生产业务系统" />
+                    <SelectField label="风险等级" value={profile.risk} onChange={(value) => setProfile({ ...profile, risk: value as DigitalEmployee['risk'] })} options={[['low', '低风险'], ['medium', '中风险'], ['high', '高风险']]} />
+                    <SelectField label="运行环境" value={profile.environment} onChange={(value) => setProfile({ ...profile, environment: value as DigitalEmployee['environment'] })} options={[['sandbox', '沙箱环境'], ['staging', '预发环境'], ['production', '生产环境']]} />
+                    <label className="grid gap-1.5 text-xs font-medium sm:col-span-2">岗位说明<textarea value={profile.description} onChange={(event) => setProfile({ ...profile, description: event.target.value })} rows={4} placeholder="说明服务目标、覆盖范围与人工介入边界。" className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs font-normal leading-5 outline-none focus:border-[var(--brand)]" /></label>
+                  </div>
+                </div>
+              )}
+              {section === 'boundary' && <BoundaryPolicyEditor policy={boundaryPolicy} capabilities={{ agentId: capabilities.agentId || undefined, model: capabilities.model, knowledge: lines(capabilities.knowledge), skills: lines(capabilities.skills), tools: lines(capabilities.tools), workflows: lines(capabilities.workflows), channels: lines(capabilities.channels) }} onChange={setBoundaryPolicy} mode="role" />}
+              {section === 'memory' && (
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-sm font-semibold">三层记忆策略</h3>
+                    <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">短期记忆支撑当前会话，工作记忆支撑岗位协作，长期记忆仅可通过审核沉淀为知识候选。</p>
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <NumberField label="短期记忆保留" value={memory.shortTermHours} suffix="小时" onChange={(value) => setMemory({ ...memory, shortTermHours: value })} />
+                    <NumberField label="工作记忆保留" value={memory.workingDays} suffix="天" onChange={(value) => setMemory({ ...memory, workingDays: value })} />
+                    <SelectField label="长期记忆提炼" value={memory.longTermCadence} onChange={(value) => setMemory({ ...memory, longTermCadence: value as DigitalEmployee['memoryPolicy']['longTermCadence'] })} options={[['daily', '每日提炼'], ['weekly', '每周提炼']]} />
+                    <SelectField label="转知识策略" value={memory.knowledgePromotion} onChange={(value) => setMemory({ ...memory, knowledgePromotion: value as DigitalEmployee['memoryPolicy']['knowledgePromotion'] })} options={[['approval_required', '审核后转知识'], ['disabled', '不转知识']]} />
+                  </div>
+                  <div className="rounded-lg border border-[var(--warning)]/40 bg-[var(--warning-light)] p-3 text-xs leading-5 text-[var(--text-secondary)]"><Database className="mr-1 inline h-3.5 w-3.5 text-[var(--warning)]" />长期记忆不会直接成为企业知识；通过内容审核后，才进入知识中心的权威资产目录。</div>
+                </div>
+              )}
+            </main>
+            {validationAside}
+          </div>
+        )}
+      </div>
+    </Modal>
+  );
 }
 
-function LinkedAssetPicker({ label, hint, options, values, onChange }: { label: string; hint: string; options: CapabilityCatalogOption[]; values: string[]; onChange: (values: string[]) => void }) {
-  const available = options.filter((item) => !values.includes(item.name));
+function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityType, modeOf, onModeChange, compact }: {
+  label: string;
+  hint: string;
+  options: CapabilityCatalogOption[];
+  values: string[];
+  onChange: (values: string[]) => void;
+  capabilityType?: 'tool' | 'workflow' | 'skill';
+  modeOf?: (name: string) => DigitalEmployeeExecutionMode;
+  onModeChange?: (name: string, mode: DigitalEmployeeExecutionMode) => void;
+  compact?: boolean;
+}) {
+  const [filter, setFilter] = useState('');
+  const available = options.filter((item) => !values.includes(item.name) && (!filter.trim() || `${item.name} ${item.meta}`.toLowerCase().includes(filter.trim().toLowerCase())));
   const remove = (name: string) => onChange(values.filter((item) => item !== name));
-  return <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3.5"><div className="flex flex-wrap items-start justify-between gap-2"><div><h3 className="text-xs font-semibold">{label}</h3><p className="mt-1 text-[11px] leading-4 text-[var(--text-muted)]">{hint}</p></div><select aria-label={`添加${label}`} value="" onChange={(event) => { const selected = event.target.value; if (selected) onChange([...values, selected]); }} className="h-8 max-w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)]"><option value="">+ 选择已发布资产</option>{available.map((item) => <option key={item.id} value={item.name}>{item.name} · {item.meta}</option>)}</select></div><div className="mt-3 min-h-8 space-y-1.5">{values.length ? values.map((value) => { const option = options.find((item) => item.name === value); return <div key={value} className="flex items-center justify-between gap-2 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2.5 py-2"><div className="min-w-0"><span className="block truncate text-xs font-medium">{value}</span><span className="block truncate text-[11px] text-[var(--text-muted)]">{option?.meta ?? '历史已绑定资产'}</span></div><button type="button" onClick={() => remove(value)} className="rounded-md px-1.5 py-0.5 text-xs text-[var(--text-muted)] hover:bg-[var(--danger-light)] hover:text-[var(--danger)]">移除</button></div>; }) : <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[11px] text-[var(--text-muted)]">尚未选择</p>}</div></section>;
+  const withMode = Boolean(capabilityType && modeOf && onModeChange);
+  return (
+    <section className={cn('rounded-xl border border-[var(--border)] bg-[var(--bg)]', compact ? 'p-3' : 'p-3.5')}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h3 className="text-xs font-semibold">{label}</h3>
+            <span className="text-[10px] tabular-nums text-[var(--text-muted)]">{values.length}</span>
+          </div>
+          {!compact && <p className="mt-0.5 text-[11px] leading-4 text-[var(--text-muted)]">{hint}</p>}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <input
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            placeholder="搜索"
+            className="h-8 w-[108px] rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)]"
+            aria-label={`搜索${label}`}
+          />
+          <select
+            aria-label={`添加${label}`}
+            value=""
+            onChange={(event) => {
+              const selected = event.target.value;
+              if (selected) {
+                onChange([...values, selected]);
+                setFilter('');
+              }
+            }}
+            className="h-8 max-w-[160px] rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)]"
+          >
+            <option value="">+ 添加</option>
+            {available.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
+          </select>
+        </div>
+      </div>
+      <div className={cn('mt-2.5 space-y-1.5', !values.length && 'min-h-0')}>
+        {values.length ? values.map((value) => {
+          const option = options.find((item) => item.name === value);
+          return (
+            <div key={value} className="flex items-center gap-2 rounded-lg bg-[var(--surface-1)] px-2.5 py-2" style={{ boxShadow: 'var(--saas-ring)' }}>
+              <div className="min-w-0 flex-1">
+                <span className="block truncate text-xs font-medium">{value}</span>
+                {!compact && <span className="block truncate text-[10px] text-[var(--text-muted)]">{option?.meta ?? '历史已绑定资产'}</span>}
+              </div>
+              {withMode && modeOf && onModeChange && (
+                <select
+                  value={modeOf(value)}
+                  onChange={(event) => onModeChange(value, event.target.value as DigitalEmployeeExecutionMode)}
+                  className="h-7 max-w-[148px] shrink-0 rounded-md border border-[var(--border)] bg-[var(--bg)] px-1.5 text-[11px] outline-none focus:border-[var(--brand)]"
+                  aria-label={`${value} 授权模式`}
+                >
+                  {executionModeOptions.map(([modeValue, modeLabel]) => <option key={modeValue} value={modeValue}>{modeLabel}</option>)}
+                </select>
+              )}
+              <button type="button" onClick={() => remove(value)} className="shrink-0 rounded-md px-1 text-xs text-[var(--text-muted)] hover:bg-[var(--danger-light)] hover:text-[var(--danger)]" aria-label={`移除 ${value}`}>×</button>
+            </div>
+          );
+        }) : <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[11px] text-[var(--text-muted)]">尚未选择</p>}
+      </div>
+    </section>
+  );
 }
 
-function CapabilityAssemblySelector({ catalog, capabilities, onChange }: { catalog?: DigitalEmployeeCapabilityCatalog; capabilities: DigitalEmployee['capabilities']; onChange: (capabilities: DigitalEmployee['capabilities']) => void }) {
-  const update = (key: 'knowledge' | 'skills' | 'tools' | 'workflows' | 'channels', values: string[]) => onChange({ ...capabilities, [key]: values });
+function syncCapabilityModes(policy: DigitalEmployeeBoundaryPolicy, capabilities: DigitalEmployee['capabilities']): DigitalEmployeeBoundaryPolicy {
+  const bound = [
+    ...capabilities.skills.map((capabilityName) => ({ capabilityType: 'skill' as const, capabilityName, fallback: 'recommend' as DigitalEmployeeExecutionMode })),
+    ...capabilities.tools.map((capabilityName) => ({ capabilityType: 'tool' as const, capabilityName, fallback: 'approval_required' as DigitalEmployeeExecutionMode })),
+    ...capabilities.workflows.map((capabilityName) => ({ capabilityType: 'workflow' as const, capabilityName, fallback: 'approval_required' as DigitalEmployeeExecutionMode })),
+  ];
+  return {
+    ...policy,
+    capabilityModes: bound.map((item) => {
+      const existing = policy.capabilityModes.find((mode) => mode.capabilityType === item.capabilityType && mode.capabilityName === item.capabilityName);
+      return existing ?? { capabilityType: item.capabilityType, capabilityName: item.capabilityName, mode: item.fallback };
+    }),
+  };
+}
+
+function CapabilityAssemblySelector({ catalog, capabilities, policy, onChangeCapabilities, onChangePolicy }: {
+  catalog?: DigitalEmployeeCapabilityCatalog;
+  capabilities: DigitalEmployee['capabilities'];
+  policy: DigitalEmployeeBoundaryPolicy;
+  onChangeCapabilities: (capabilities: DigitalEmployee['capabilities']) => void;
+  onChangePolicy: (policy: DigitalEmployeeBoundaryPolicy) => void;
+}) {
+  const updateAssets = (key: 'knowledge' | 'skills' | 'tools' | 'workflows' | 'channels', values: string[]) => {
+    const next = { ...capabilities, [key]: values };
+    onChangeCapabilities(next);
+    if (key === 'skills' || key === 'tools' || key === 'workflows') onChangePolicy(syncCapabilityModes(policy, next));
+  };
+  const modeOf = (capabilityType: 'tool' | 'workflow' | 'skill', capabilityName: string) => policy.capabilityModes.find((item) => item.capabilityType === capabilityType && item.capabilityName === capabilityName)?.mode ?? 'recommend';
+  const setMode = (capabilityType: 'tool' | 'workflow' | 'skill', capabilityName: string, mode: DigitalEmployeeExecutionMode) => {
+    const exists = policy.capabilityModes.some((item) => item.capabilityType === capabilityType && item.capabilityName === capabilityName);
+    onChangePolicy({
+      ...policy,
+      capabilityModes: exists
+        ? policy.capabilityModes.map((item) => item.capabilityType === capabilityType && item.capabilityName === capabilityName ? { ...item, mode } : item)
+        : [...policy.capabilityModes, { capabilityType, capabilityName, mode }],
+    });
+  };
   const modelOptions = catalog?.models ?? [];
-  return <div className="space-y-4"><div><h3 className="text-sm font-semibold">能力装配</h3><p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">从模型、知识、技能、工作流和渠道中心选择当前工作区内已发布、已准入的资产。名称不可手填，保存后将记录引用关系并纳入变更审批。</p></div><section className="rounded-xl bg-[var(--bg-elevated)] p-3.5" style={{ boxShadow: 'var(--saas-ring)' }}><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-xs font-semibold">模型路由 <span className="text-[var(--danger)]">*</span></h3><p className="mt-1 text-[11px] text-[var(--text-muted)]">仅展示当前工作区已激活供应商的可用模型。</p></div><select value={capabilities.model} onChange={(event) => onChange({ ...capabilities, model: event.target.value })} className="h-9 min-w-[230px] rounded-lg bg-[var(--surface-1)] px-2 text-xs outline-none" style={{ boxShadow: 'var(--saas-ring)' }}><option value={capabilities.model}>{capabilities.model}（当前引用）</option>{modelOptions.filter((item) => item.name !== capabilities.model).map((item) => <option key={item.id} value={item.name}>{item.name} · {item.meta}</option>)}</select></div>{capabilities.agentId && <div className="mt-3 flex items-center gap-2 pt-3 text-[11px] text-[var(--text-muted)]" style={{ boxShadow: 'inset 0 1px 0 rgba(15,23,42,0.06)' }}><BriefcaseBusiness className="h-3.5 w-3.5" />执行运行时已绑定（内部），由上岗与配置流程维护，不作为对外身份。</div>}</section>{!catalog && <div className="rounded-xl px-3 py-5 text-center text-xs text-[var(--text-muted)]" style={{ boxShadow: 'var(--saas-ring)' }}>正在同步各能力中心的可选资产…</div>}{catalog && <div className="grid gap-3 lg:grid-cols-2"><LinkedAssetPicker label="知识" hint="来自知识中心已发布知识包" options={catalog.knowledge} values={capabilities.knowledge} onChange={(values) => update('knowledge', values)} /><LinkedAssetPicker label="技能" hint="来自技能中心已启用技能" options={catalog.skills} values={capabilities.skills} onChange={(values) => update('skills', values)} /><LinkedAssetPicker label="工具与 MCP" hint="来自技能中心已启用工具或 MCP 接入" options={catalog.tools} values={capabilities.tools} onChange={(values) => update('tools', values)} /><LinkedAssetPicker label="流程技能与工作流" hint="优先引用「工作流程 → 发布技能」产物，也可绑定已激活工作流" options={catalog.workflows} values={capabilities.workflows} onChange={(values) => update('workflows', values)} /><LinkedAssetPicker label="渠道" hint="来自渠道中心已启用渠道" options={catalog.channels} values={capabilities.channels} onChange={(values) => update('channels', values)} /></div>}<div className="rounded-lg bg-[var(--warning-bg)] p-3 text-xs leading-5 text-[var(--text-secondary)]" style={{ boxShadow: 'var(--saas-ring)' }}><ShieldAlert className="mr-1 inline h-3.5 w-3.5 text-[var(--warning)]" />引用关系仅允许选择可用资产；生产、在岗或高风险员工调整能力装配时，将作为受控变更提交双重审批（提交人不可自批）。</div></div>;
+  const executableCount = capabilities.skills.length + capabilities.tools.length + capabilities.workflows.length;
+  return (
+    <div className="space-y-4">
+      <section className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3.5 py-2.5">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-xs font-semibold">
+            模型路由 <span className="text-[var(--danger)]">*</span>
+          </div>
+          <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">仅可选当前工作区已激活供应商的可用模型</p>
+        </div>
+        <select
+          value={capabilities.model}
+          onChange={(event) => onChangeCapabilities({ ...capabilities, model: event.target.value })}
+          className="h-9 min-w-[220px] max-w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)]"
+        >
+          <option value={capabilities.model}>{capabilities.model || '请选择模型'}</option>
+          {modelOptions.filter((item) => item.name !== capabilities.model).map((item) => <option key={item.id} value={item.name}>{item.name} · {item.meta}</option>)}
+        </select>
+        {capabilities.agentId && (
+          <span className="w-full text-[11px] text-[var(--text-muted)] sm:w-auto sm:border-l sm:border-[var(--border)] sm:pl-3">
+            运行时已绑定（内部）
+          </span>
+        )}
+      </section>
+
+      {!catalog && <div className="rounded-xl px-3 py-8 text-center text-xs text-[var(--text-muted)]" style={{ boxShadow: 'var(--saas-ring)' }}>正在同步各能力中心的可选资产…</div>}
+
+      {catalog && (
+        <>
+          <section className="space-y-2.5">
+            <div className="flex items-end justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-semibold">执行能力</h3>
+                <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">技能、工具与流程须设置授权模式 · 已绑 {executableCount} 项</p>
+              </div>
+            </div>
+            <div className="space-y-2.5">
+              <LinkedAssetPicker label="技能" hint="" options={catalog.skills} values={capabilities.skills} onChange={(values) => updateAssets('skills', values)} capabilityType="skill" modeOf={(name) => modeOf('skill', name)} onModeChange={(name, mode) => setMode('skill', name, mode)} />
+              <LinkedAssetPicker label="工具接入" hint="" options={catalog.tools} values={capabilities.tools} onChange={(values) => updateAssets('tools', values)} capabilityType="tool" modeOf={(name) => modeOf('tool', name)} onModeChange={(name, mode) => setMode('tool', name, mode)} />
+              <LinkedAssetPicker label="流程技能与工作流" hint="" options={catalog.workflows} values={capabilities.workflows} onChange={(values) => updateAssets('workflows', values)} capabilityType="workflow" modeOf={(name) => modeOf('workflow', name)} onModeChange={(name, mode) => setMode('workflow', name, mode)} />
+            </div>
+          </section>
+
+          <section className="space-y-2.5">
+            <div>
+              <h3 className="text-sm font-semibold">上下文资产</h3>
+              <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">知识与渠道为引用，不设执行授权</p>
+            </div>
+            <div className="grid gap-2.5 sm:grid-cols-2">
+              <LinkedAssetPicker label="知识" hint="" options={catalog.knowledge} values={capabilities.knowledge} onChange={(values) => updateAssets('knowledge', values)} compact />
+              <LinkedAssetPicker label="渠道" hint="" options={catalog.channels} values={capabilities.channels} onChange={(values) => updateAssets('channels', values)} compact />
+            </div>
+          </section>
+        </>
+      )}
+
+      <p className="text-[11px] leading-4 text-[var(--text-muted)]">
+        仅可选择已发布资产；生产、在岗或高风险岗位的装配变更将提交双重审批（提交人不可自批）。
+      </p>
+    </div>
+  );
 }
 
 function ProfileContent({ employee }: { employee: DigitalEmployee }) {

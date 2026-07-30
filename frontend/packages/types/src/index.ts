@@ -401,6 +401,9 @@ export interface DigitalEmployee {
     /** 双重审批批准人；不得与 requestedById 相同 */
     approver?: string;
     approverId?: string;
+    /** 最近一次驳回原因（若有） */
+    rejectedReason?: string;
+    rejectedBy?: string;
   };
   templateId?: ID;
   templateVersion?: string;

@@ -2433,9 +2433,9 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     else { mockDigitalEmployeeConfigurationVersions.filter((item) => item.employeeId === employee.id && item.status === 'current').forEach((item) => { item.status = 'superseded'; }); applyDigitalEmployeeConfiguration(employee, body); workspaceAudit(currentWorkspaceId, '更新员工配置', `${employee.role} · ${employee.name} · ${version.version}`); }
     mockDigitalEmployeeConfigurationVersions.unshift(version); return { ...version, requiresApproval };
   }
-  const digitalEmployeeRoute = path.match(/^\/api\/digital-employees\/([^/]+)(?:\/(capabilities|boundary|memory-policy|evaluate|release|lifecycle|runtime|evidence))?$/);
+  const digitalEmployeeRoute = path.match(/^\/api\/digital-employees\/([^/]+)(?:\/(capabilities|boundary|memory-policy|evaluate|release|lifecycle|runtime|evidence)(?:\/(withdraw|reject))?)?$/);
   if (digitalEmployeeRoute) {
-    const [, employeeId, action] = digitalEmployeeRoute;
+    const [, employeeId, action, releaseAction] = digitalEmployeeRoute;
     const employee = mockDigitalEmployees.find((item) => item.id === employeeId && item.workspaceId === currentWorkspaceId);
     if (!employee) throw new Error('E_DIGITAL_EMPLOYEE_NOT_FOUND');
     if (!action && method === 'GET') return employee;
@@ -2461,7 +2461,23 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
         if (employee.lifecycle === 'draft') employee.lifecycle = 'testing';
       }
     }
-    if (action === 'release' && method === 'POST') {
+    if (action === 'release' && method === 'POST' && releaseAction === 'withdraw') {
+      if (employee.release.status !== 'pending_approval') throw new Error('E_DIGITAL_EMPLOYEE_RELEASE_NOT_PENDING: 仅待审批申请可撤回');
+      if (!employee.release.requestedById || employee.release.requestedById !== identity.id) throw new Error('E_DIGITAL_EMPLOYEE_RELEASE_WITHDRAW_FORBIDDEN: 仅申请人可撤回上岗申请');
+      employee.release = { status: 'not_released' };
+      employee.lifecycle = employee.evaluation.status === 'passed' ? 'testing' : 'draft';
+    } else if (action === 'release' && method === 'POST' && releaseAction === 'reject') {
+      requireAdministrator('驳回上岗申请');
+      if (employee.release.status !== 'pending_approval') throw new Error('E_DIGITAL_EMPLOYEE_RELEASE_NOT_PENDING: 仅待审批申请可驳回');
+      if (employee.release.requestedById && employee.release.requestedById === identity.id) throw new Error('E_SOD_SELF_APPROVAL: 上岗申请人不能驳回自己的申请');
+      const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+      employee.release = {
+        status: 'not_released',
+        rejectedReason: reason || '未满足上岗门禁或需补充配置',
+        rejectedBy: identity.name,
+      };
+      employee.lifecycle = 'testing';
+    } else if (action === 'release' && method === 'POST') {
       if (!employee.owner?.trim() || !employee.escalationOwner?.trim() || employee.escalationOwner === '待指定' || !employee.serviceObject?.trim()) throw new Error('E_DIGITAL_EMPLOYEE_PROFILE_INCOMPLETE: 请先完善岗位负责人、接管人与服务对象');
       if (!employee.responsibilities.length || employee.responsibilities.includes('待配置岗位职责')) throw new Error('E_DIGITAL_EMPLOYEE_BOUNDARY_REQUIRED: 请先配置岗位职责边界');
       const capabilityCount = employee.capabilities.skills.length + employee.capabilities.tools.length + employee.capabilities.workflows.length;
@@ -2504,7 +2520,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     // 采用记录只作为模板溯源视图，始终镜像员工实例的生命周期，避免两处状态漂移。
     const adoption = employee.templateId ? mockDigitalEmployeeTemplateAdoptions.find((item) => item.employeeId === employee.id) : undefined;
     if (adoption) adoption.status = employee.lifecycle;
-    employee.updatedAt = new Date().toISOString(); workspaceAudit(currentWorkspaceId, `数字员工：${action ?? '更新'}`, `${employee.role} · ${employee.name}`); return employee;
+    employee.updatedAt = new Date().toISOString(); workspaceAudit(currentWorkspaceId, `数字员工：${releaseAction ? `${action}/${releaseAction}` : (action ?? '更新')}`, `${employee.role} · ${employee.name}`); return employee;
   }
   const capabilityTarget = path.match(/^\/api\/(agents|workflows)\/([^/]+)\/capabilities(?:\/([^/]+))?$/);
   if (capabilityTarget) {

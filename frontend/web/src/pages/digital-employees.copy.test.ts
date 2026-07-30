@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { capabilityAssemblyCompleteness, releaseOnboardingCompleteness, roleSetupCompleteness, type CapabilityAssemblyEmployee, type ReleaseOnboardingEmployee, type RoleSetupEmployee } from '@/lib/digital-employees';
 
 /** Mirrors gateLabel / terminology rules from DigitalEmployees for regression. */
 function gateLabel(employee: {
@@ -19,6 +20,48 @@ function gateLabel(employee: {
 
 const forbidden = [/Agent\s+a\d/i, /双签/, /员工工厂/, /Workforce/i, /纳管员工/, /打开 Copilot/];
 
+function baseEmployee(overrides: Partial<RoleSetupEmployee> = {}): RoleSetupEmployee {
+  return {
+    owner: '张经理',
+    escalationOwner: '李值班',
+    serviceObject: '生产业务系统',
+    responsibilities: ['运行态势汇总'],
+    handoffPolicy: { triggers: ['置信度不足'], approvalRequiredFor: [] },
+    boundaryPolicy: {
+      responsibilities: [{ title: '运行态势汇总', objective: '形成风险优先级', trigger: '每日 09:00' }],
+      handoff: { triggers: ['置信度不足'], approvers: ['李值班'] },
+      allowedEnvironments: ['sandbox'],
+    },
+    memoryPolicy: {
+      shortTermHours: 24,
+      workingDays: 7,
+      longTermCadence: 'weekly',
+      knowledgePromotion: 'approval_required',
+    },
+    ...overrides,
+  };
+}
+
+function baseCapabilityEmployee(overrides: Partial<CapabilityAssemblyEmployee> = {}): CapabilityAssemblyEmployee {
+  return {
+    capabilities: {
+      model: '企业通用路由 v2',
+      skills: ['工单分诊'],
+      tools: ['Jira'],
+      workflows: ['IT 服务请求流'],
+      knowledge: ['IT 服务知识库'],
+    },
+    boundaryPolicy: {
+      capabilityModes: [
+        { capabilityType: 'skill', capabilityName: '工单分诊', mode: 'recommend' },
+        { capabilityType: 'tool', capabilityName: 'Jira', mode: 'approval_required' },
+        { capabilityType: 'workflow', capabilityName: 'IT 服务请求流', mode: 'approval_required' },
+      ],
+    },
+    ...overrides,
+  };
+}
+
 describe('digital employees catalog copy', () => {
   it('surfaces collaboration and dual-approval gates', () => {
     expect(gateLabel({ lifecycle: 'active', release: { status: 'released' }, evaluation: { status: 'passed', score: 94 }, runtime: { anomalies: 0 } })).toBe('可协作');
@@ -36,11 +79,178 @@ describe('digital employees catalog copy', () => {
       '执行运行时已绑定（内部）',
       '企业可信数字员工平台',
       '专家团队协同 · 岗位边界清晰',
+      '配置岗位授权契约',
+      '受控能力装配',
+      '岗位配置只维护授权契约；能力引用请到「能力装配」；评测上岗请到「上岗发布」。',
+      '能力装配只引用各中心已发布资产，并设置执行授权模式；岗位职责请到「岗位配置」，评测上岗请到「上岗发布」。',
+      '维护岗位档案、职责边界、人工接管与记忆策略；能力引用请到「能力装配」。',
+      '工具接入',
+      '待补档案',
+      '边界待完善',
+      '契约完整',
+      '未绑模型',
+      '缺执行能力',
+      '待设授权模式',
+      '装配完整',
+      '待评测',
+      '评测未通过',
+      '可申请上岗',
+      '待双重审批',
+      '已上岗',
+      '双重审批上岗',
+      '质量与上岗门禁',
     ];
     for (const phrase of phrases) {
       for (const pattern of forbidden) {
         expect(phrase).not.toMatch(pattern);
       }
     }
+  });
+
+  it('rejects legacy factory / workforce wording in role-setup surface', () => {
+    const banned = ['配置数字员工', 'Workforce', '员工工厂', '双签'];
+    const allowedTitles = ['配置岗位授权契约', '受控能力装配'];
+    for (const title of allowedTitles) {
+      for (const word of banned) {
+        expect(title).not.toContain(word);
+      }
+    }
+  });
+});
+
+describe('roleSetupCompleteness', () => {
+  it('marks complete contract as ready', () => {
+    const result = roleSetupCompleteness(baseEmployee());
+    expect(result.profileOk).toBe(true);
+    expect(result.boundaryOk).toBe(true);
+    expect(result.memoryOk).toBe(true);
+    expect(result.ready).toBe(true);
+    expect(result.label).toBe('契约完整');
+    expect(result.missing).toEqual([]);
+  });
+
+  it('flags missing profile before boundary', () => {
+    const result = roleSetupCompleteness(baseEmployee({
+      owner: '',
+      escalationOwner: '待指定',
+      serviceObject: '',
+    }));
+    expect(result.profileOk).toBe(false);
+    expect(result.label).toBe('待补档案');
+    expect(result.missing).toEqual(expect.arrayContaining(['岗位负责人', '人工接管负责人', '服务对象']));
+  });
+
+  it('flags incomplete boundary when profile is ok', () => {
+    const result = roleSetupCompleteness(baseEmployee({
+      boundaryPolicy: {
+        responsibilities: [{ title: '待配置岗位职责', objective: '', trigger: '' }],
+        handoff: { triggers: [], approvers: [] },
+        allowedEnvironments: [],
+      },
+    }));
+    expect(result.profileOk).toBe(true);
+    expect(result.boundaryOk).toBe(false);
+    expect(result.label).toBe('边界待完善');
+    expect(result.missing.length).toBeGreaterThan(0);
+  });
+
+  it('does not require model routing for role contract readiness', () => {
+    const result = roleSetupCompleteness(baseEmployee());
+    expect(result.ready).toBe(true);
+    expect(result.missing.join('')).not.toMatch(/模型/);
+  });
+});
+
+describe('capabilityAssemblyCompleteness', () => {
+  it('marks full assembly as ready', () => {
+    const result = capabilityAssemblyCompleteness(baseCapabilityEmployee());
+    expect(result.modelOk).toBe(true);
+    expect(result.assetsOk).toBe(true);
+    expect(result.modesOk).toBe(true);
+    expect(result.ready).toBe(true);
+    expect(result.label).toBe('装配完整');
+  });
+
+  it('flags missing model first', () => {
+    const result = capabilityAssemblyCompleteness(baseCapabilityEmployee({
+      capabilities: { model: '', skills: [], tools: [], workflows: [], knowledge: [] },
+      boundaryPolicy: { capabilityModes: [] },
+    }));
+    expect(result.label).toBe('未绑模型');
+    expect(result.missing).toContain('模型路由');
+  });
+
+  it('flags missing executable assets after model', () => {
+    const result = capabilityAssemblyCompleteness(baseCapabilityEmployee({
+      capabilities: { model: '企业通用路由 v2', skills: [], tools: [], workflows: [], knowledge: ['手册'] },
+      boundaryPolicy: { capabilityModes: [] },
+    }));
+    expect(result.label).toBe('缺执行能力');
+  });
+
+  it('flags missing execution modes when assets exist', () => {
+    const result = capabilityAssemblyCompleteness(baseCapabilityEmployee({
+      boundaryPolicy: { capabilityModes: [] },
+    }));
+    expect(result.assetsOk).toBe(true);
+    expect(result.modesOk).toBe(false);
+    expect(result.label).toBe('待设授权模式');
+  });
+});
+
+function baseReleaseEmployee(overrides: Partial<ReleaseOnboardingEmployee> = {}): ReleaseOnboardingEmployee {
+  const role = baseEmployee();
+  const capability = baseCapabilityEmployee();
+  return {
+    ...role,
+    capabilities: capability.capabilities,
+    boundaryPolicy: {
+      ...role.boundaryPolicy!,
+      capabilityModes: capability.boundaryPolicy!.capabilityModes,
+    },
+    evaluation: { status: 'not_started' },
+    release: { status: 'not_released' },
+    lifecycle: 'draft',
+    ...overrides,
+  };
+}
+
+describe('releaseOnboardingCompleteness', () => {
+  it('marks pending eval when config is ready but not evaluated', () => {
+    const result = releaseOnboardingCompleteness(baseReleaseEmployee());
+    expect(result.configReady).toBe(true);
+    expect(result.stage).toBe('pending_eval');
+    expect(result.label).toBe('待评测');
+    expect(result.missing).toContain('尚未评测');
+    expect(result.gates.find((gate) => gate.key === 'contract')?.fixTab).toBe('roleSetup');
+    expect(result.gates.find((gate) => gate.key === 'capability')?.fixTab).toBe('capabilities');
+  });
+
+  it('marks eval_failed and ready_to_request stages', () => {
+    expect(releaseOnboardingCompleteness(baseReleaseEmployee({ evaluation: { status: 'failed', score: 68 } })).stage).toBe('eval_failed');
+    expect(releaseOnboardingCompleteness(baseReleaseEmployee({ evaluation: { status: 'passed', score: 94 } })).stage).toBe('ready_to_request');
+  });
+
+  it('marks pending dual approval and released', () => {
+    expect(releaseOnboardingCompleteness(baseReleaseEmployee({
+      evaluation: { status: 'passed', score: 94 },
+      release: { status: 'pending_approval', requestedBy: '建造者' },
+      lifecycle: 'pending_approval',
+    })).label).toBe('待双重审批');
+    expect(releaseOnboardingCompleteness(baseReleaseEmployee({
+      evaluation: { status: 'passed', score: 94 },
+      release: { status: 'released', requestedBy: '建造者', approver: '平台管理员' },
+      lifecycle: 'active',
+    })).label).toBe('已上岗');
+  });
+
+  it('flags incomplete contract before evaluation', () => {
+    const result = releaseOnboardingCompleteness(baseReleaseEmployee({
+      owner: '',
+      capabilities: { model: '', skills: [], tools: [], workflows: [], knowledge: [] },
+    }));
+    expect(result.configReady).toBe(false);
+    expect(result.stage).toBe('pending_eval');
+    expect(result.missing).toEqual(expect.arrayContaining(['岗位负责人', '模型路由']));
   });
 });
