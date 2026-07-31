@@ -1,6 +1,6 @@
 /**
  * @de/web-ui — PSSP 设计系统组件库
- * 与 docs/01-product/mockups/assets/styles.css 1:1 对齐
+ * 与 docs/视觉设计规范.md Token 对齐
  * 双主题自适应（light / dark）
  */
 import { forwardRef, useState, type ButtonHTMLAttributes, type HTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react';
