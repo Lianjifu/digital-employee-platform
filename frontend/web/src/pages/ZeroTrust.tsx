@@ -12,7 +12,7 @@ type Tab = 'overview' | 'policies' | 'authorizations' | 'events';
 
 const decisionMeta = { allow: ['允许', 'success'], mask: ['脱敏', 'info'], approval_required: ['需审批', 'warn'], deny: ['已阻断', 'error'] } as const;
 
-export default function ZeroTrust() {
+export default function ZeroTrust({ embedded = false }: { embedded?: boolean } = {}) {
   const { t } = useT();
   const [tab, setTab] = useState<Tab>('overview');
   const [formOpen, setFormOpen] = useState(false);
@@ -24,8 +24,41 @@ export default function ZeroTrust() {
   const events = useApiQuery<ZeroTrustEvent[]>(['zero-trust', 'events'], '/api/zero-trust/events', undefined, { refetchInterval: 15_000 });
   const togglePolicy = useApiMutation<ZeroTrustPolicy, { id: string; enabled: boolean }>(({ id }) => `/api/zero-trust/policies/${id}`, { onSuccess: () => toast.success('策略版本已更新并写入审计') }, 'PATCH');
   const revoke = useApiMutation<TemporaryAuthorization, { id: string }>(({ id }) => `/api/zero-trust/authorizations/${id}/revoke`, { onSuccess: () => toast.success('临时授权已回收') });
+  const tabs = ([['overview', t('module.zeroTrust.tabs.overview')], ['policies', isAuditor ? '策略版本' : t('module.zeroTrust.tabs.policies')], ['authorizations', isAuditor ? '临时授权记录' : t('module.zeroTrust.tabs.authorizations')], ['events', t('module.zeroTrust.tabs.events')]] as Array<[Tab, string]>);
 
-  return <div className="mx-auto min-h-full max-w-[1480px] p-3 sm:p-4 lg:p-5"><header className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-4 py-4 sm:px-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h1 className="flex items-center gap-2 text-base font-semibold"><ShieldAlert className="h-4 w-4 text-[var(--brand)]" />{t('module.zeroTrust.title')}</h1><p className="mt-1 text-xs text-[var(--text-muted)]">{t('module.zeroTrust.subtitle')}</p>{isAuditor && <p className="mt-2 text-[11px] font-medium text-[var(--brand)]">只读复核范围：策略版本、临时授权记录与策略事件</p>}</div>{isAdmin && <Button size="sm" onClick={() => setFormOpen(true)}><Plus className="h-3.5 w-3.5" />授予临时访问</Button>}</div><nav className="mt-4 flex gap-1 overflow-x-auto rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-1">{([['overview', t('module.zeroTrust.tabs.overview')], ['policies', isAuditor ? '策略版本' : t('module.zeroTrust.tabs.policies')], ['authorizations', isAuditor ? '临时授权记录' : t('module.zeroTrust.tabs.authorizations')], ['events', t('module.zeroTrust.tabs.events')]] as Array<[Tab, string]>).map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={cn('shrink-0 rounded px-3 py-2 text-xs', tab === key ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}>{label}</button>)}</nav></header><div className="mt-3">{tab === 'overview' && <OverviewPanel data={overview.data} events={events.data ?? []} />}{tab === 'policies' && <Policies rows={policies.data ?? []} editable={isAdmin} onToggle={(id, enabled) => togglePolicy.mutate({ id, enabled })} />}{tab === 'authorizations' && <Authorizations rows={authorizations.data ?? []} editable={isAdmin} onRevoke={(id) => revoke.mutate({ id })} />}{tab === 'events' && <Events rows={events.data ?? []} />}</div>{formOpen && <AuthorizationDialog onClose={() => setFormOpen(false)} />}</div>;
+  return (
+    <div className={cn(embedded ? 'min-w-0' : 'mx-auto min-h-full max-w-[1480px] p-3 sm:p-4 lg:p-5')}>
+      {!embedded ? (
+        <header className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-4 py-4 sm:px-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h1 className="flex items-center gap-2 text-base font-semibold"><ShieldAlert className="h-4 w-4 text-[var(--brand)]" />{t('module.zeroTrust.title')}</h1>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">{t('module.zeroTrust.subtitle')}</p>
+              {isAuditor && <p className="mt-2 text-[11px] font-medium text-[var(--brand)]">只读复核范围：策略版本、临时授权记录与策略事件</p>}
+            </div>
+            {isAdmin && <Button size="sm" onClick={() => setFormOpen(true)}><Plus className="h-3.5 w-3.5" />授予临时访问</Button>}
+          </div>
+          <nav className="mt-4 flex gap-1 overflow-x-auto rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-1">
+            {tabs.map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={cn('shrink-0 rounded px-3 py-2 text-xs', tab === key ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}>{label}</button>)}
+          </nav>
+        </header>
+      ) : (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <nav className="flex gap-1 overflow-x-auto rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-1">
+            {tabs.map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={cn('shrink-0 rounded px-3 py-2 text-xs', tab === key ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}>{label}</button>)}
+          </nav>
+          {isAdmin && <Button size="sm" onClick={() => setFormOpen(true)}><Plus className="h-3.5 w-3.5" />授予临时访问</Button>}
+        </div>
+      )}
+      <div className={cn(!embedded && 'mt-3')}>
+        {tab === 'overview' && <OverviewPanel data={overview.data} events={events.data ?? []} />}
+        {tab === 'policies' && <Policies rows={policies.data ?? []} editable={isAdmin} onToggle={(id, enabled) => togglePolicy.mutate({ id, enabled })} />}
+        {tab === 'authorizations' && <Authorizations rows={authorizations.data ?? []} editable={isAdmin} onRevoke={(id) => revoke.mutate({ id })} />}
+        {tab === 'events' && <Events rows={events.data ?? []} />}
+      </div>
+      {formOpen && <AuthorizationDialog onClose={() => setFormOpen(false)} />}
+    </div>
+  );
 }
 
 function OverviewPanel({ data, events }: { data?: Overview; events: ZeroTrustEvent[] }) { const items = [{ label: '生效策略', value: data?.policies ?? 0, icon: SlidersHorizontal, tone: 'text-[var(--brand)]' }, { label: '已阻断', value: data?.blocked ?? 0, icon: ShieldAlert, tone: 'text-[var(--danger)]' }, { label: '等待审批', value: data?.approvals ?? 0, icon: Clock3, tone: 'text-[var(--warning)]' }, { label: '已脱敏', value: data?.masked ?? 0, icon: LockKeyhole, tone: 'text-[var(--info)]' }]; return <div className="space-y-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{items.map((item) => <div key={item.label} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4"><item.icon className={cn('h-4 w-4', item.tone)} /><div className="mt-4 text-2xl font-semibold">{item.value}</div><div className="mt-1 text-xs text-[var(--text-muted)]">{item.label}</div></div>)}</div><section className="rounded-lg border border-[var(--border)] bg-[var(--bg)]"><div className="border-b border-[var(--border)] px-4 py-3"><h2 className="text-sm font-semibold">最近策略事件</h2></div><div className="divide-y divide-[var(--border)]">{events.slice(0, 5).map((event) => <EventRow key={event.id} event={event} />)}</div></section></div>; }

@@ -1,30 +1,21 @@
 /**
- * P11 设置（企业级优化版）
- * Todo 1-10:
- *  1. 租户信息（完整表单）
- *  2. 成员 & 权限（CRUD 表格）
- *  3. 安全 & 认证（MFA / Authentik / OIDC）
- *  4. 审计 & 监控（实时流）
- *  5. 数据合规（94 项自评）
- *  6. 通知 & 告警（渠道订阅）
- *  7. 租户 & 计费（用量进度）
- *  8. 备份 & 恢复（历史 + 触发）
- *  9. API Key 管理
- * 10. Webhook 配置
+ * 平台设置：组织 / 身份 / 保留 / 集成 / 用量 + 治理三项（套餐用量右侧）
  */
-import { useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useApiQuery } from '@/services/query';
-import { Badge, Button, Progress } from '@de/web-ui';
+import { Badge, Button, KpiCard, Progress, toast } from '@de/web-ui';
 import {
-  Building2, Users, ShieldCheck, FileText, Lock, Bell, CreditCard, Database,
-  CheckCircle2, AlertTriangle, Plus, Key, Webhook, RotateCcw, Download,
-  History, Activity, Eye, Trash2, Archive, Send, Sparkles, Clock,
-  ArrowRight, ChevronRight, Copy,
-  Settings as SettingsIcon,
+  Building2, ShieldCheck, Bell, CreditCard, Database, Clock3, HardDrive,
+  CheckCircle2, Plus, Key, Webhook, RotateCcw, Download, Trash2, Copy,
+  Settings as SettingsIcon, Shield, ShieldAlert, ScrollText, Users, Link2, Activity,
+  AlertTriangle, Bot, Coins,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
-import type { AuditItem } from '@de/web-types';
 import { useT } from '@/i18n';
+import Governance from '@/pages/Governance';
+import ZeroTrust from '@/pages/ZeroTrust';
+import AuditCenter from '@/pages/AuditCenter';
 
 const MENU = [
   { key: 'tenant', labelKey: 'module.settings.tabs.organization', icon: Building2 },
@@ -32,244 +23,209 @@ const MENU = [
   { key: 'backup', labelKey: 'module.settings.tabs.retention', icon: Database },
   { key: 'apikeys', labelKey: 'module.settings.tabs.integration', icon: Key },
   { key: 'billing', labelKey: 'module.settings.tabs.usage', icon: CreditCard },
-];
+  { key: 'access', labelKey: 'nav.accessControl', icon: Shield },
+  { key: 'zeroTrust', labelKey: 'nav.zeroTrust', icon: ShieldAlert },
+  { key: 'auditCenter', labelKey: 'nav.auditCenter', icon: ScrollText },
+] as const;
+
+type TabKey = (typeof MENU)[number]['key'];
+const SETTINGS_TAB_KEYS = new Set<string>(MENU.map((item) => item.key));
+const panelClass = 'de-employee-shell overflow-hidden rounded-xl bg-[var(--surface-1)]';
 
 export default function Settings() {
   const { t } = useT();
-  const [active, setActive] = useState('tenant');
-  const { data: audits = [] } = useApiQuery<AuditItem[]>(['audits'], '/api/audits');
-  const { data: apiKeys = [] } = useApiQuery<any[]>(['api-keys'], '/api/api-keys');
-  const { data: webhooks = [] } = useApiQuery<any[]>(['webhooks-config'], '/api/webhooks-config');
-  const { data: backups = [] } = useApiQuery<any[]>(['backups'], '/api/backups');
-  const { data: auditStream = [] } = useApiQuery<any[]>(
-    ['audit-stream'],
-    '/api/audit-stream',
-    undefined,
-    { refetchInterval: 5_000 },
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tabFromUrl = searchParams.get('tab');
+  const [active, setActive] = useState<TabKey>(() =>
+    (tabFromUrl && SETTINGS_TAB_KEYS.has(tabFromUrl) ? tabFromUrl : 'tenant') as TabKey,
   );
-  const { data: billing } = useApiQuery<any>(['billing'], '/api/billing');
-  const { data: notifChannels = [] } = useApiQuery<any[]>(['notification-channels'], '/api/notification-channels');
 
-  const pass = audits.filter((a) => a.status === 'pass').length;
-  const warn = audits.filter((a) => a.status === 'warn').length;
-  const total = audits.length;
-  const auditScore = Math.round((pass / total) * 100);
+  const { data: billing } = useApiQuery<any>(['billing'], '/api/billing');
+  const { data: notifChannels = [] } = useApiQuery<any[]>(
+    ['notification-channels'],
+    '/api/notification-channels',
+    undefined,
+    { enabled: active === 'tenant' },
+  );
+  const { data: apiKeys = [] } = useApiQuery<any[]>(
+    ['api-keys'],
+    '/api/api-keys',
+    undefined,
+    { enabled: active === 'apikeys' },
+  );
+  const { data: webhooks = [] } = useApiQuery<any[]>(
+    ['webhooks-config'],
+    '/api/webhooks-config',
+    undefined,
+    { enabled: active === 'apikeys' },
+  );
+  const { data: backups = [] } = useApiQuery<any[]>(
+    ['backups'],
+    '/api/backups',
+    undefined,
+    { enabled: active === 'backup' },
+  );
+
+  const selectTab = (key: TabKey) => {
+    setActive(key);
+    setSearchParams(key === 'tenant' ? {} : { tab: key }, { replace: true });
+  };
+
+  useEffect(() => {
+    if (tabFromUrl && SETTINGS_TAB_KEYS.has(tabFromUrl) && tabFromUrl !== active) {
+      setActive(tabFromUrl as TabKey);
+    }
+  }, [tabFromUrl, active]);
 
   return (
-    <div className="settings-page h-full min-w-0 overflow-y-auto bg-[var(--bg-elevated)]">
-      {/* 已由顶部设置导航替代的旧侧栏，保留结构以兼容各设置模块。 */}
-      <aside className="hidden">
-        <div className="p-3 border-b border-[var(--border)]">
-          <div className="text-[10px] font-semibold mb-3 uppercase tracking-wider text-[var(--text-muted)]">企业管理</div>
-          <div className="space-y-0.5">
-            {MENU.map((m) => (
-              <button
-                key={m.key}
-                onClick={() => setActive(m.key)}
-                className={cn(
-                  'flex w-full items-center gap-2.5 rounded-md p-2 text-left text-xs transition-colors',
-                  active === m.key ? 'bg-[var(--brand-light)] text-[var(--brand)] font-semibold' : 'hover:bg-[var(--bg-hover)]',
-                )}
-              >
-                <m.icon className="h-3.5 w-3.5" />
-                <span>{t(m.labelKey)}</span>
-                {active === m.key && <ChevronRight className="h-3 w-3 ml-auto" />}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* 危险区 */}
-        <div className="p-3">
-          <div className="rounded-lg border border-[var(--danger)]/40 bg-[var(--danger-bg)] p-3">
-            <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--danger)]">
-              <AlertTriangle className="h-3.5 w-3.5" />危险区
+    <div className="settings-page de-employee-page h-full min-w-0 overflow-y-auto bg-[var(--bg-elevated)] p-3 md:p-4 lg:p-5">
+      <div className="space-y-3">
+        <section className={panelClass}>
+          <div className="flex flex-wrap items-start justify-between gap-3 px-4 py-3.5 md:px-5">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <div className="de-employee-icon-tile grid h-8 w-8 place-items-center rounded-lg">
+                  <SettingsIcon className="h-4 w-4" />
+                </div>
+                <h1 className="text-base font-semibold text-[var(--text)]">{t('module.settings.title')}</h1>
+              </div>
+              <p className="mt-1.5 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">{t('module.settings.subtitle')}</p>
             </div>
-            <div className="mt-1.5 space-y-1.5">
-              <Button size="sm" variant="secondary" className="w-full text-[10px] !h-7">
-                <Archive className="h-3 w-3" />归档租户
-              </Button>
-              <Button size="sm" variant="secondary" className="w-full text-[10px] !h-7">
-                <Database className="h-3 w-3" />迁移数据
-              </Button>
-              <Button size="sm" variant="danger" className="w-full text-[10px] !h-7">
-                <Trash2 className="h-3 w-3" />删除租户
-              </Button>
-            </div>
+            <Badge tone="success" className="shrink-0 text-[10px]">
+              <CheckCircle2 className="mr-1 h-3 w-3" />安全基线已启用
+            </Badge>
           </div>
-        </div>
-      </aside>
-
-      {/* 单一主面板 */}
-      <section className="mx-auto w-full max-w-[1480px] p-4 sm:p-6">
-        <header className="mb-4 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-4 py-4 sm:px-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h1 className="flex items-center gap-2 text-base font-semibold"><SettingsIcon className="h-4 w-4 text-[var(--brand)]" />{t('module.settings.title')}</h1>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">{t('module.settings.subtitle')}</p>
-            </div>
-            <Badge tone="success" className="text-[10px]"><CheckCircle2 className="mr-1 h-3 w-3" />安全基线已启用</Badge>
-          </div>
-          <nav className="mt-4 flex gap-1 overflow-x-auto rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-1" aria-label="设置分类">
+          <nav className="de-employee-tabs flex overflow-x-auto px-3" aria-label="设置分类">
             {MENU.map((item) => (
               <button
                 key={item.key}
-                onClick={() => setActive(item.key)}
-                className={cn('flex shrink-0 items-center gap-1.5 rounded-md px-3 py-2 text-xs transition-colors', active === item.key ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]')}
+                type="button"
+                onClick={() => selectTab(item.key)}
+                className={cn(
+                  'de-employee-tab flex shrink-0 items-center gap-1.5 px-3 py-2.5 text-xs transition-colors',
+                  active === item.key && 'is-active',
+                )}
               >
-                <item.icon className="h-3.5 w-3.5" />{t(item.labelKey)}
+                <item.icon className="h-3.5 w-3.5" />
+                {t(item.labelKey)}
               </button>
             ))}
           </nav>
-        </header>
-        <div className="space-y-4">
-        {/* Todo 1: 租户信息 */}
+        </section>
+
         {active === 'tenant' && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-              <div className="text-sm font-semibold flex items-center gap-2">
-                <Building2 className="h-4 w-4" />租户信息
-              </div>
-              <Button size="sm">保存</Button>
-            </div>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-3 p-4 text-xs">
-              <Field label="租户名" value="ACME Corp" />
-              <Field label="租户 ID" value={<span className="font-mono">tnt_a7f9****</span>} />
-              <Field label="区域" value={<Badge tone="info">cn-east-1</Badge>} />
-              <Field label="创建时间" value="2024-03-12" />
-              <Field label="席位" value={<span className="font-mono">50 / 50</span>} />
-              <Field label="订阅" value={<span className="font-mono">$5,000 / 月</span>} />
-            </div>
-          </div>
+          <TenantPanel
+            billing={billing}
+            notifChannels={notifChannels}
+            onSave={() => toast.success('组织资料已保存，并写入审计')}
+            onGotoAccess={() => selectTab('access')}
+          />
         )}
 
-        {/* Todo 2: 成员 & 权限 */}
-        {active === 'members' && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-              <div className="text-sm font-semibold flex items-center gap-2">
-                <Users className="h-4 w-4" />成员 & 权限
-              </div>
-              <Button size="sm"><Plus className="h-3 w-3" />邀请成员</Button>
-            </div>
-            <table className="w-full text-xs">
-              <thead className="text-[10px] uppercase tracking-wide text-[var(--text-muted)] bg-[var(--bg-elevated)]">
-                <tr>
-                  <th className="text-left px-3 py-2 font-semibold">成员</th>
-                  <th className="text-left px-3 py-2 font-semibold">角色</th>
-                  <th className="text-left px-3 py-2 font-semibold">MFA</th>
-                  <th className="text-left px-3 py-2 font-semibold">最后活跃</th>
-                  <th className="text-right px-3 py-2 font-semibold">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[
-                  { name: '王昊', role: 'Admin', mfa: true, last: '刚刚' },
-                  { name: '李婷', role: 'SRE', mfa: true, last: '5min 前' },
-                  { name: '张睿', role: 'Sec', mfa: true, last: '12min 前' },
-                  { name: '孙博', role: 'Admin', mfa: true, last: '32min 前' },
-                  { name: '周慧', role: 'View', mfa: false, last: '1h 前' },
-                ].map((m, i) => (
-                  <tr key={i} className="border-t border-[var(--border)] hover:bg-[var(--bg-hover)]">
-                    <td className="px-3 py-2 font-semibold">{m.name}</td>
-                    <td className="px-3 py-2">
-                      <Badge tone={m.role === 'Admin' ? 'error' : m.role === 'SRE' ? 'brand' : m.role === 'Sec' ? 'warn' : 'neutral'}>{m.role}</Badge>
-                    </td>
-                    <td className="px-3 py-2">
-                      {m.mfa ? <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" /> : <AlertTriangle className="h-3.5 w-3.5 text-[var(--warning)]" />}
-                    </td>
-                    <td className="px-3 py-2 text-[var(--text-muted)]">{m.last}</td>
-                    <td className="px-3 py-2 text-right">
-                      <button className="text-[var(--text-muted)] hover:text-[var(--brand)]"><Eye /></button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-
-        {/* 身份源与认证：访问范围、零信策略和审计均在安全治理中管理。 */}
         {active === 'security' && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-              <div className="text-sm font-semibold flex items-center gap-2">
-                <ShieldCheck className="h-4 w-4" />企业身份认证
-              </div>
-              <Badge tone="success"><CheckCircle2 className="mr-1 inline h-3 w-3" />企业 SSO 已连接</Badge>
-            </div>
-            <div className="grid gap-3 p-4 md:grid-cols-2"><div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3"><div className="text-xs font-semibold">单点登录</div><p className="mt-1 text-[11px] text-[var(--text-muted)]">OIDC · 企业身份源同步 · 强制多因素验证</p><Button size="sm" variant="secondary" className="mt-3">查看身份源</Button></div><div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3"><div className="text-xs font-semibold">账户生命周期</div><p className="mt-1 text-[11px] text-[var(--text-muted)]">成员同步、禁用和访问范围由访问控制统一管理。</p><Button size="sm" variant="secondary" className="mt-3">前往访问控制</Button></div></div>
-          </div>
+          <SecurityPanel onGotoAccess={() => selectTab('access')} />
         )}
 
-        {/* Todo 4: 审计 & 监控（实时流） */}
-        {active === 'audit' && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-              <div className="text-sm font-semibold flex items-center gap-2">
-                <Activity className="h-4 w-4" />实时审计流
-                <Badge tone="success" className="text-[10px]">
-                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--success)] animate-pulse mr-1" />LIVE
-                </Badge>
-              </div>
-              <Button size="sm" variant="secondary"><Download className="h-3 w-3" />导出</Button>
-            </div>
-            <div className="p-3 space-y-1.5 max-h-[500px] overflow-y-auto">
-              {auditStream.map((a) => (
-                <div key={a.id} className="flex items-center gap-2 rounded-md bg-[var(--bg-elevated)] p-2 text-[11px]">
-                  <span className="font-mono text-[10px] text-[var(--text-muted)] shrink-0">{a.time}</span>
-                  <Badge tone={a.result === 'success' ? 'success' : 'error'} className="text-[9px] shrink-0">
-                    {a.action}
-                  </Badge>
-                  <span className="text-[var(--text-muted)] shrink-0">{a.user}</span>
-                  <ArrowRight className="h-3 w-3 text-[var(--text-muted)] shrink-0" />
-                  <span className="font-mono text-[10px] truncate flex-1">{a.target}</span>
-                  {a.result === 'success' ? (
-                    <CheckCircle2 className="h-3 w-3 text-[var(--success)]" />
-                  ) : (
-                    <AlertTriangle className="h-3 w-3 text-[var(--danger)]" />
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
+        {active === 'backup' && (
+          <BackupPanel backups={backups} />
         )}
 
-        {/* Todo 5: 数据合规（合并到 security 同款） */}
-        {active === 'compliance' && (
-          <div className="grid grid-cols-2 gap-3">
-            {[
-              { name: '等保 3.0', status: 'pass', desc: '94 项 / 91 通过' },
-              { name: 'ISO 27001', status: 'pass', desc: '有效至 2027-03' },
-              { name: '数据出境', status: 'pass', desc: '境内 94% / 出境 6%' },
-              { name: 'GDPR 兼容', status: 'warn', desc: '需补充协议' },
-            ].map((c) => (
-              <div key={c.name} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="font-semibold">{c.name}</span>
-                  <Badge tone={c.status === 'pass' ? 'success' : 'warn'}>{c.status === 'pass' ? '通过' : '改善'}</Badge>
-                </div>
-                <div className="text-[10px] text-[var(--text-muted)]">{c.desc}</div>
-              </div>
-            ))}
-          </div>
+        {active === 'apikeys' && (
+          <IntegrationPanel apiKeys={apiKeys} webhooks={webhooks} />
         )}
 
-        {/* Todo 6: 通知 & 告警 */}
-        {active === 'notify' && (
-          <div className="space-y-3">
+        {active === 'billing' && billing && (
+          <BillingPanel billing={billing} />
+        )}
+
+        {active === 'access' && <Governance embedded />}
+        {active === 'zeroTrust' && <ZeroTrust embedded />}
+        {active === 'auditCenter' && <AuditCenter embedded />}
+      </div>
+    </div>
+  );
+}
+
+function PanelHeader({
+  icon: Icon,
+  title,
+  trailing,
+}: {
+  icon: typeof Building2;
+  title: string;
+  trailing?: ReactNode;
+}) {
+  return (
+    <div
+      className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3 md:px-5"
+      style={{ boxShadow: 'var(--saas-divider)' }}
+    >
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <Icon className="h-4 w-4 text-[var(--brand)]" />
+        {title}
+      </div>
+      {trailing}
+    </div>
+  );
+}
+
+function TenantPanel({
+  billing,
+  notifChannels,
+  onSave,
+  onGotoAccess,
+}: {
+  billing: any;
+  notifChannels: any[];
+  onSave: () => void;
+  onGotoAccess: () => void;
+}) {
+  const seats = billing?.usage?.seats ?? 18;
+  const seatLimit = billing?.usage?.seatLimit ?? 50;
+  const agents = billing?.usage?.agents ?? 8;
+  const agentLimit = billing?.usage?.agentLimit ?? 20;
+
+  return (
+    <div className="space-y-3">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard label="席位占用" value={seats} sub={`/ ${seatLimit}`} icon={Users} tone="brand" size="comfortable" />
+        <KpiCard label="数字员工" value={agents} sub={`/ ${agentLimit}`} icon={Building2} tone="success" size="comfortable" />
+        <KpiCard label="月费" value={billing?.price ?? '$5,000'} icon={CreditCard} tone="info" size="comfortable" />
+        <KpiCard label="方案" value={billing?.plan === 'Enterprise Plus' ? 'Ent+' : (billing?.plan ?? 'Ent+')} icon={ShieldCheck} tone="warn" size="comfortable" />
+      </section>
+
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)]">
+        <section className={panelClass}>
+          <PanelHeader icon={Building2} title="租户信息" trailing={<Button size="sm" onClick={onSave}>保存</Button>} />
+          <div className="grid gap-x-6 gap-y-3 p-4 text-xs sm:grid-cols-2 md:px-5">
+            <Field label="租户名" value="ACME Corp" />
+            <Field label="租户 ID" value={<span className="font-mono">tnt_a7f9****</span>} />
+            <Field label="区域" value={<Badge tone="info">cn-east-1</Badge>} />
+            <Field label="创建时间" value="2024-03-12" />
+            <Field label="席位" value={<span className="font-mono">{seats} / {seatLimit}</span>} />
+            <Field label="订阅" value={<span className="font-mono">{billing?.price ?? '$5,000'} / 月</span>} />
+          </div>
+          <div className="border-t border-[var(--border)] px-4 py-3 text-[11px] text-[var(--text-muted)] md:px-5">
+            成员授权与职责分离请在
+            <button type="button" className="mx-1 font-medium text-[var(--brand)] hover:underline" onClick={onGotoAccess}>访问控制</button>
+            管理。
+          </div>
+        </section>
+
+        <section className={panelClass}>
+          <PanelHeader icon={Bell} title="通知与告警" />
+          <div className="max-h-[360px] space-y-2 overflow-y-auto p-3 md:p-4">
             {notifChannels.map((n) => (
-              <div key={n.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <Bell className={cn('h-4 w-4', n.enabled ? 'text-[var(--brand)]' : 'text-[var(--text-muted)]')} />
-                    <span className="text-sm font-semibold">{n.name}</span>
-                    <Badge tone={n.enabled ? 'success' : 'neutral'} className="text-[10px]">{n.enabled ? '启用' : '禁用'}</Badge>
+              <div key={n.id} className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Bell className={cn('h-3.5 w-3.5 shrink-0', n.enabled ? 'text-[var(--brand)]' : 'text-[var(--text-muted)]')} />
+                    <span className="truncate text-xs font-semibold">{n.name}</span>
+                    <Badge tone={n.enabled ? 'success' : 'neutral'} className="text-[9px]">{n.enabled ? '启用' : '禁用'}</Badge>
                   </div>
-                  <input type="checkbox" defaultChecked={n.enabled} className="accent-[var(--brand)]" />
+                  <input type="checkbox" defaultChecked={n.enabled} className="accent-[var(--brand)]" aria-label={`${n.name} 开关`} />
                 </div>
-                <div className="flex items-center gap-2 text-[11px]">
-                  <span className="text-[var(--text-muted)]">渠道:</span>
+                <div className="mt-1.5 flex flex-wrap gap-1">
                   {n.channels.map((c: string) => (
                     <Badge key={c} tone="info" className="text-[9px]">{c}</Badge>
                   ))}
@@ -278,229 +234,348 @@ export default function Settings() {
               </div>
             ))}
           </div>
-        )}
-
-        {/* Todo 7: 租户 & 计费 */}
-        {active === 'billing' && billing && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-              <div className="text-sm font-semibold flex items-center gap-2">
-                <CreditCard className="h-4 w-4" />订阅
-              </div>
-              <Badge tone="brand">{billing.plan}</Badge>
-            </div>
-            <div className="p-4 space-y-3 text-xs">
-              <Field label="月费" value={<span className="font-mono text-base font-bold">{billing.price}</span>} />
-              <Field label="下次扣款" value={billing.nextBilling} />
-              <div>
-                <div className="flex justify-between text-[10px] mb-1">
-                  <span className="text-[var(--text-muted)]">本月成本</span>
-                  <span className="font-mono">${billing.usage.cost} / ${billing.usage.budget}</span>
-                </div>
-                <Progress value={(billing.usage.cost / billing.usage.budget) * 100} tone="success" />
-              </div>
-              <div>
-                <div className="flex justify-between text-[10px] mb-1">
-                  <span className="text-[var(--text-muted)]">Token</span>
-                  <span className="font-mono">{(billing.usage.tokens / 1e6).toFixed(1)}M / {(billing.usage.tokenBudget / 1e6).toFixed(0)}M</span>
-                </div>
-                <Progress value={(billing.usage.tokens / billing.usage.tokenBudget) * 100} tone="primary" />
-              </div>
-              <div>
-                <div className="flex justify-between text-[10px] mb-1">
-                  <span className="text-[var(--text-muted)]">席位</span>
-                  <span className="font-mono">{billing.usage.seats} / {billing.usage.seatLimit}</span>
-                </div>
-                <Progress value={(billing.usage.seats / billing.usage.seatLimit) * 100} tone="primary" />
-              </div>
-              <div>
-                <div className="flex justify-between text-[10px] mb-1">
-                  <span className="text-[var(--text-muted)]">智能体</span>
-                  <span className="font-mono">{billing.usage.agents} / {billing.usage.agentLimit}</span>
-                </div>
-                <Progress value={(billing.usage.agents / billing.usage.agentLimit) * 100} tone="success" />
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* 数据保留与恢复 */}
-        {active === 'backup' && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-              <div className="text-sm font-semibold flex items-center gap-2">
-                <Database className="h-4 w-4" />数据保留与恢复
-              </div>
-              <Button size="sm"><RotateCcw className="h-3 w-3" />立即备份</Button>
-            </div>
-            <div className="p-3 space-y-1.5">
-              {backups.map((b) => (
-                <div key={b.id} className="flex items-center justify-between rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5 text-xs">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" />
-                    <div>
-                      <div className="font-mono text-[11px]">{b.time}</div>
-                      <div className="text-[10px] text-[var(--text-muted)]">{b.type} · {b.size} · {b.duration}</div>
-                    </div>
-                  </div>
-                  <div className="flex gap-1">
-                    <Button size="sm" variant="secondary"><RotateCcw className="h-3 w-3" />恢复</Button>
-                    <Button size="sm" variant="secondary"><Download className="h-3 w-3" /></Button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* 开发者集成 */}
-        {active === 'apikeys' && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-              <div className="text-sm font-semibold flex items-center gap-2">
-                <Key className="h-4 w-4" />开发者凭证
-              </div>
-              <Button size="sm"><Plus className="h-3 w-3" />新建 Key</Button>
-            </div>
-            <div className="p-3 space-y-1.5">
-              {apiKeys.map((k) => (
-                <div key={k.id} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-xs">
-                  <div className="flex items-center justify-between mb-1">
-                    <div className="flex items-center gap-2">
-                      <Key className="h-3.5 w-3.5 text-[var(--brand)]" />
-                      <span className="font-semibold">{k.name}</span>
-                      <Badge tone={k.status === 'active' ? 'success' : 'warn'} className="text-[9px]">{k.status}</Badge>
-                    </div>
-                    <div className="flex gap-1">
-                      <Button size="sm" variant="secondary"><Copy className="h-3 w-3" /></Button>
-                      <Button size="sm" variant="secondary"><RotateCcw className="h-3 w-3" /></Button>
-                      <Button size="sm" variant="danger"><Trash2 className="h-3 w-3" /></Button>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3 text-[10px] text-[var(--text-muted)] font-mono">
-                    <span>{k.prefix}</span>
-                    <span>·</span>
-                    <span>创建 {k.created}</span>
-                    <span>·</span>
-                    <span>最后 {k.lastUsed}</span>
-                    <span>·</span>
-                    <span>到期 {k.expires}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Todo 10: Webhook */}
-        {active === 'webhooks' && (
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)]">
-            <div className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-              <div className="text-sm font-semibold flex items-center gap-2">
-                <Webhook className="h-4 w-4" />Webhook 配置
-              </div>
-              <Button size="sm"><Plus className="h-3 w-3" />添加</Button>
-            </div>
-            <div className="p-3 space-y-2">
-              {webhooks.map((w) => (
-                <div key={w.id} className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-xs">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2">
-                      <Badge tone="success" className="text-[9px]">{w.status}</Badge>
-                      <span className="font-mono text-[11px] truncate">{w.url}</span>
-                    </div>
-                    <Button size="sm" variant="secondary"><SettingsIcon className="h-3 w-3" /></Button>
-                  </div>
-                  <div className="flex items-center gap-3 text-[10px] text-[var(--text-muted)]">
-                    <span>事件: {w.events.map((e: string) => <Badge key={e} tone="info" className="text-[9px] mr-1">{e}</Badge>)}</span>
-                  </div>
-                  <div className="mt-1.5 flex items-center gap-3 text-[10px] text-[var(--text-muted)] font-mono">
-                    <span>签名 {w.secret}</span>
-                    <span>·</span>
-                    <span>重试 {w.retry}</span>
-                    <span>·</span>
-                    <span className="text-[var(--success)]">成功率 {w.success}%</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        </div>
-      </section>
-
-      {/* 固定企业详情侧栏已由顶部设置导航与各设置项内信息替代。 */}
-      <aside className="hidden">
-        <div className="p-4 border-b border-[var(--border)]">
-          <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-            <Building2 className="h-3.5 w-3.5 text-[var(--brand)]" />企业详情
-          </div>
-          <div className="space-y-2 text-xs">
-            <Row label="租户" value="ACME Corp" />
-            <Row label="订阅" value={billing?.plan ?? 'Enterprise Plus'} />
-            <Row label="席位" value={billing ? `${billing.usage.seats}/${billing.usage.seatLimit}` : '18/50'} />
-            <Row label="下次审计" value="2026-09-12" />
-          </div>
-        </div>
-        <div className="p-4 border-b border-[var(--border)]">
-          <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-            <CheckCircle2 className="h-3.5 w-3.5 text-[var(--success)]" />合规清单
-          </div>
-          <div className="space-y-1.5 text-xs">
-            {['等保 3.0', 'ISO 27001', '数据境内', '双审计', 'gVisor 沙箱'].map((c) => (
-              <Row key={c} label={c} value={<Badge tone="success" className="text-[9px]">✔</Badge>} />
-            ))}
-          </div>
-        </div>
-        <div className="p-4">
-          <div className="text-xs font-semibold mb-3">快捷操作</div>
-          <div className="space-y-1.5">
-            <Button size="sm" variant="secondary" className="w-full justify-start">
-              <Download className="h-3.5 w-3.5" />导出审计日志
-            </Button>
-            <Button size="sm" variant="secondary" className="w-full justify-start">
-              <Key className="h-3.5 w-3.5" />管理 API Key
-            </Button>
-            <Button size="sm" variant="secondary" className="w-full justify-start">
-              <Webhook className="h-3.5 w-3.5" />Webhook 配置
-            </Button>
-            <Button size="sm" variant="secondary" className="w-full justify-start">
-              <SettingsIcon className="h-3.5 w-3.5" />系统版本
-            </Button>
-          </div>
-        </div>
-        <div className="p-4">
-          <div className="rounded-md border border-[var(--brand)]/30 bg-gradient-to-br from-[var(--brand-light)] to-[var(--purple-bg)] p-3 text-xs">
-            <div className="font-semibold flex items-center gap-1.5">
-              <CheckCircle2 className="h-3.5 w-3.5 text-[var(--brand)]" />系统状态
-            </div>
-            <div className="mt-1.5 space-y-0.5 text-[10px]">
-              {['API 服务', '数据库', 'Milvus', 'OpenSearch'].map((s) => (
-                <div key={s} className="flex justify-between">
-                  <span>{s}</span>
-                  <span className="text-[var(--success)]">● 正常</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </aside>
+        </section>
+      </div>
     </div>
   );
 }
 
-function Field({ label, value }: { label: string; value: React.ReactNode }) {
+function SecurityPanel({ onGotoAccess }: { onGotoAccess: () => void }) {
   return (
-    <div className="flex items-center justify-between border-b border-[var(--border)] last:border-0 pb-2 last:pb-0">
+    <div className="space-y-3">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard label="身份源" value="OIDC" icon={ShieldCheck} tone="brand" size="comfortable" />
+        <KpiCard label="MFA 覆盖" value="96" sub="%" icon={Users} tone="success" size="comfortable" />
+        <KpiCard label="SSO 状态" value="已连接" icon={CheckCircle2} tone="info" size="comfortable" />
+        <KpiCard label="会话超时" value="8h" icon={Clock3} tone="warn" size="comfortable" />
+      </section>
+      <section className={panelClass}>
+        <PanelHeader
+          icon={ShieldCheck}
+          title="企业身份认证"
+          trailing={<Badge tone="success"><CheckCircle2 className="mr-1 inline h-3 w-3" />企业 SSO 已连接</Badge>}
+        />
+        <div className="grid gap-3 p-4 md:grid-cols-2 lg:grid-cols-3 md:px-5">
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-4">
+            <div className="text-xs font-semibold">单点登录</div>
+            <p className="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">OIDC · 企业身份源同步 · 强制多因素验证</p>
+            <Button size="sm" variant="secondary" className="mt-3">查看身份源</Button>
+          </div>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-4">
+            <div className="text-xs font-semibold">账户生命周期</div>
+            <p className="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">成员同步、禁用和访问范围由访问控制统一管理。</p>
+            <Button size="sm" variant="secondary" className="mt-3" onClick={onGotoAccess}>前往访问控制</Button>
+          </div>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-4 md:col-span-2 lg:col-span-1">
+            <div className="text-xs font-semibold">会话与令牌</div>
+            <p className="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">Web 会话 8 小时 · API Token 90 天轮换 · 异常登录自动告警</p>
+            <Button size="sm" variant="secondary" className="mt-3">查看策略</Button>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function BackupPanel({ backups }: { backups: any[] }) {
+  const latest = backups[0];
+  const autoCount = backups.filter((b) => b.type === '自动').length;
+
+  return (
+    <div className="space-y-3">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard label="备份总数" value={backups.length} sub="份" icon={Database} tone="brand" size="comfortable" />
+        <KpiCard label="最近备份" value={latest?.time?.slice(5, 10) ?? '—'} sub={latest?.time?.slice(11) ?? ''} icon={Clock3} tone="success" size="comfortable" />
+        <KpiCard label="自动备份" value={autoCount} sub="份" icon={RotateCcw} tone="info" size="comfortable" />
+        <KpiCard label="保留策略" value="30" sub="天" icon={HardDrive} tone="warn" size="comfortable" />
+      </section>
+
+      <section className={panelClass}>
+        <PanelHeader
+          icon={Database}
+          title="数据保留与恢复"
+          trailing={(
+            <Button size="sm" onClick={() => toast.success('已触发立即备份')}>
+              <RotateCcw className="h-3 w-3" />立即备份
+            </Button>
+          )}
+        />
+        <div className="hidden border-b border-[var(--border)] bg-[var(--bg-elevated)] px-5 py-2 text-[11px] font-medium text-[var(--text-muted)] md:grid md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)_minmax(0,0.6fr)_minmax(0,0.6fr)_auto] md:gap-4">
+          <span>备份时间</span>
+          <span>类型</span>
+          <span>大小</span>
+          <span>耗时</span>
+          <span className="text-right">操作</span>
+        </div>
+        <div className="divide-y divide-[var(--border)]">
+          {backups.map((b) => (
+            <article
+              key={b.id}
+              className="grid gap-3 px-4 py-3 text-xs transition-colors hover:bg-[var(--bg-hover)] md:grid-cols-[minmax(0,1.4fr)_minmax(0,0.6fr)_minmax(0,0.6fr)_minmax(0,0.6fr)_auto] md:items-center md:gap-4 md:px-5"
+            >
+              <div className="flex items-center gap-2">
+                <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[var(--success)]" />
+                <span className="font-mono text-[11px]">{b.time}</span>
+              </div>
+              <div><Badge tone={b.type === '自动' ? 'info' : 'brand'} className="text-[9px]">{b.type}</Badge></div>
+              <div className="font-mono text-[var(--text-secondary)]">{b.size}</div>
+              <div className="text-[var(--text-muted)]">{b.duration}</div>
+              <div className="flex justify-end gap-1">
+                <Button size="sm" variant="secondary"><RotateCcw className="h-3 w-3" />恢复</Button>
+                <Button size="sm" variant="secondary" aria-label="下载备份"><Download className="h-3 w-3" /></Button>
+              </div>
+            </article>
+          ))}
+        </div>
+        <div className="border-t border-[var(--border)] px-4 py-3 text-[11px] text-[var(--text-muted)] md:px-5">
+          自动备份每日 02:00 执行；恢复操作需管理员审批并写入审计。
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function IntegrationPanel({ apiKeys, webhooks }: { apiKeys: any[]; webhooks: any[] }) {
+  const activeKeys = apiKeys.filter((k) => k.status === 'active').length;
+  const expiringKeys = apiKeys.filter((k) => k.status === 'warning').length;
+  const avgSuccess = webhooks.length
+    ? (webhooks.reduce((sum, w) => sum + w.success, 0) / webhooks.length).toFixed(1)
+    : '—';
+
+  return (
+    <div className="space-y-3">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard label="活跃 Key" value={activeKeys} sub="个" icon={Key} tone="brand" size="comfortable" />
+        <KpiCard label="即将到期" value={expiringKeys} sub="个" icon={Clock3} tone={expiringKeys ? 'warn' : 'success'} size="comfortable" />
+        <KpiCard label="Webhook" value={webhooks.length} sub="个" icon={Webhook} tone="info" size="comfortable" />
+        <KpiCard label="投递成功率" value={avgSuccess} sub="%" icon={Activity} tone="success" size="comfortable" />
+      </section>
+
+      <section className={panelClass}>
+        <PanelHeader
+          icon={Key}
+          title="开发者凭证"
+          trailing={<Button size="sm"><Plus className="h-3 w-3" />新建 Key</Button>}
+        />
+        <div className="hidden border-b border-[var(--border)] bg-[var(--bg-elevated)] px-5 py-2 text-[11px] font-medium text-[var(--text-muted)] lg:grid lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.55fr)_minmax(0,0.55fr)_minmax(0,0.55fr)_minmax(0,0.55fr)_auto] lg:gap-4">
+          <span>名称</span>
+          <span>Key 前缀</span>
+          <span>状态</span>
+          <span>创建</span>
+          <span>最后使用</span>
+          <span>到期</span>
+          <span className="text-right">操作</span>
+        </div>
+        <div className="divide-y divide-[var(--border)]">
+          {apiKeys.map((k) => (
+            <article
+              key={k.id}
+              className="grid gap-3 px-4 py-3 text-xs transition-colors hover:bg-[var(--bg-hover)] lg:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_minmax(0,0.55fr)_minmax(0,0.55fr)_minmax(0,0.55fr)_minmax(0,0.55fr)_auto] lg:items-center lg:gap-4 lg:px-5"
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <Key className="h-3.5 w-3.5 shrink-0 text-[var(--brand)]" />
+                <span className="truncate font-semibold">{k.name}</span>
+              </div>
+              <div className="truncate font-mono text-[11px] text-[var(--text-secondary)]">{k.prefix}</div>
+              <div><KeyStatusBadge status={k.status} /></div>
+              <div className="text-[var(--text-muted)]">{k.created}</div>
+              <div className="text-[var(--text-muted)]">{k.lastUsed}</div>
+              <div className={cn('font-mono', k.status === 'warning' ? 'text-[var(--warning)]' : 'text-[var(--text-muted)]')}>{k.expires}</div>
+              <div className="flex justify-end gap-1">
+                <Button size="sm" variant="secondary" aria-label="复制 Key"><Copy className="h-3 w-3" /></Button>
+                <Button size="sm" variant="secondary" aria-label="轮换 Key"><RotateCcw className="h-3 w-3" /></Button>
+                <Button size="sm" variant="danger" aria-label="删除 Key"><Trash2 className="h-3 w-3" /></Button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <section className={panelClass}>
+        <PanelHeader
+          icon={Webhook}
+          title="Webhook 回调"
+          trailing={<Button size="sm"><Plus className="h-3 w-3" />添加</Button>}
+        />
+        <div className="hidden border-b border-[var(--border)] bg-[var(--bg-elevated)] px-5 py-2 text-[11px] font-medium text-[var(--text-muted)] lg:grid lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,0.5fr)_minmax(0,0.45fr)_auto] lg:gap-4">
+          <span>回调地址</span>
+          <span>订阅事件</span>
+          <span>成功率</span>
+          <span>重试</span>
+          <span className="text-right">操作</span>
+        </div>
+        <div className="divide-y divide-[var(--border)]">
+          {webhooks.map((w) => (
+            <article
+              key={w.id}
+              className="grid gap-3 px-4 py-3 text-xs transition-colors hover:bg-[var(--bg-hover)] lg:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,0.5fr)_minmax(0,0.45fr)_auto] lg:items-center lg:gap-4 lg:px-5"
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <Link2 className="h-3.5 w-3.5 shrink-0 text-[var(--brand)]" />
+                <span className="truncate font-mono text-[11px]">{w.url}</span>
+                <Badge tone="success" className="shrink-0 text-[9px]">{w.status === 'active' ? '生效' : w.status}</Badge>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {w.events.map((e: string) => (
+                  <Badge key={e} tone="info" className="text-[9px]">{e}</Badge>
+                ))}
+              </div>
+              <div className="font-mono text-[var(--success)]">{w.success}%</div>
+              <div className="text-[var(--text-muted)]">{w.retry} 次</div>
+              <div className="flex justify-end gap-1">
+                <Button size="sm" variant="secondary"><SettingsIcon className="h-3 w-3" /></Button>
+                <Button size="sm" variant="secondary" aria-label="下载日志"><Download className="h-3 w-3" /></Button>
+              </div>
+            </article>
+          ))}
+        </div>
+        <div className="border-t border-[var(--border)] px-4 py-3 text-[11px] text-[var(--text-muted)] lg:px-5">
+          API Key 与 Webhook 凭据由服务端保管；轮换与删除操作均写入审计，生产环境建议最小权限与 IP 白名单。
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function KeyStatusBadge({ status }: { status: string }) {
+  if (status === 'active') return <Badge tone="success" className="text-[9px]">生效中</Badge>;
+  if (status === 'warning') return <Badge tone="warn" className="text-[9px]">即将到期</Badge>;
+  return <Badge tone="neutral" className="text-[9px]">{status}</Badge>;
+}
+
+function BillingPanel({ billing }: { billing: any }) {
+  const usage = billing.usage;
+  const quotas = [
+    {
+      key: 'cost',
+      label: '本月成本',
+      used: `$${usage.cost}`,
+      limit: `$${usage.budget}`,
+      pct: (usage.cost / usage.budget) * 100,
+      tone: usage.cost / usage.budget >= 0.8 ? 'warn' as const : 'success' as const,
+      icon: Coins,
+    },
+    {
+      key: 'tokens',
+      label: 'Token 消耗',
+      used: `${(usage.tokens / 1e6).toFixed(1)}M`,
+      limit: `${(usage.tokenBudget / 1e6).toFixed(0)}M`,
+      pct: (usage.tokens / usage.tokenBudget) * 100,
+      tone: 'primary' as const,
+      icon: Activity,
+    },
+    {
+      key: 'seats',
+      label: '席位',
+      used: String(usage.seats),
+      limit: String(usage.seatLimit),
+      pct: (usage.seats / usage.seatLimit) * 100,
+      tone: 'primary' as const,
+      icon: Users,
+    },
+    {
+      key: 'agents',
+      label: '数字员工',
+      used: String(usage.agents),
+      limit: String(usage.agentLimit),
+      pct: (usage.agents / usage.agentLimit) * 100,
+      tone: usage.agents / usage.agentLimit >= 0.8 ? 'warn' as const : 'success' as const,
+      icon: Bot,
+    },
+  ];
+  const budgetPct = Math.round((usage.cost / usage.budget) * 100);
+  const warnCount = quotas.filter((q) => q.pct >= 80).length;
+
+  return (
+    <div className="space-y-3">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiCard label="订阅方案" value={billing.plan === 'Enterprise Plus' ? 'Ent+' : billing.plan} icon={CreditCard} tone="brand" size="comfortable" />
+        <KpiCard label="固定月费" value={billing.price} icon={Building2} tone="info" size="comfortable" />
+        <KpiCard label="预算消耗" value={budgetPct} sub="%" icon={Coins} tone={budgetPct >= 80 ? 'warn' : 'success'} size="comfortable" />
+        <KpiCard label="下次扣款" value={billing.nextBilling.slice(5)} icon={Clock3} tone="warn" size="comfortable" />
+      </section>
+
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+        <section className={panelClass}>
+          <PanelHeader icon={CreditCard} title="订阅信息" trailing={<Badge tone="brand">{billing.plan}</Badge>} />
+          <div className="space-y-0 divide-y divide-[var(--border)] px-4 text-xs md:px-5">
+            <BillingFact label="方案" value={billing.plan} />
+            <BillingFact label="月费" value={<span className="font-mono font-semibold">{billing.price}</span>} />
+            <BillingFact label="计费周期" value="按月 · 自然月结算" />
+            <BillingFact label="下次扣款" value={billing.nextBilling} />
+            <BillingFact label="席位上限" value={`${usage.seatLimit} 席`} />
+            <BillingFact label="数字员工上限" value={`${usage.agentLimit} 个`} />
+          </div>
+          <div className="border-t border-[var(--border)] px-4 py-3 md:px-5">
+            <Button size="sm" variant="secondary" className="w-full sm:w-auto">
+              <Download className="h-3 w-3" />导出账单
+            </Button>
+          </div>
+        </section>
+
+        <section className={panelClass}>
+          <PanelHeader
+            icon={Database}
+            title="配额用量"
+            trailing={warnCount > 0 ? (
+              <Badge tone="warn"><AlertTriangle className="mr-1 inline h-3 w-3" />{warnCount} 项接近上限</Badge>
+            ) : (
+              <Badge tone="success"><CheckCircle2 className="mr-1 inline h-3 w-3" />用量正常</Badge>
+            )}
+          />
+          <div className="hidden border-b border-[var(--border)] bg-[var(--bg-elevated)] px-5 py-2 text-[11px] font-medium text-[var(--text-muted)] lg:grid lg:grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.45fr)_minmax(0,1.2fr)] lg:gap-4">
+            <span>配额项</span>
+            <span>已用 / 上限</span>
+            <span>占用</span>
+            <span>进度</span>
+          </div>
+          <div className="divide-y divide-[var(--border)]">
+            {quotas.map((item) => (
+              <article
+                key={item.key}
+                className="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,0.45fr)_minmax(0,1.2fr)] lg:items-center lg:gap-4 lg:px-5"
+              >
+                <div className="flex items-center gap-2 text-xs font-semibold">
+                  <item.icon className="h-3.5 w-3.5 text-[var(--brand)]" />
+                  {item.label}
+                </div>
+                <div className="font-mono text-[11px] text-[var(--text-secondary)]">{item.used} / {item.limit}</div>
+                <div>
+                  <Badge tone={item.pct >= 90 ? 'error' : item.pct >= 80 ? 'warn' : item.tone === 'success' ? 'success' : 'brand'} className="text-[9px]">
+                    {Math.round(item.pct)}%
+                  </Badge>
+                </div>
+                <div className="min-w-0">
+                  <Progress
+                    value={item.pct}
+                    tone={item.pct >= 90 ? 'error' : item.pct >= 80 ? 'warn' : item.tone === 'success' ? 'success' : 'primary'}
+                  />
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <section className={cn(panelClass, 'px-4 py-3 text-[11px] leading-5 text-[var(--text-muted)] md:px-5')}>
+        套餐用量按租户聚合；Token 与运行成本达 80% 时将触发预算告警。升级方案或扩容席位请联系企业客户成功经理。
+      </section>
+    </div>
+  );
+}
+
+function BillingFact({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-2.5">
       <span className="text-[var(--text-muted)]">{label}</span>
       <span>{value}</span>
     </div>
   );
 }
 
-function Row({ label, value }: { label: string; value: React.ReactNode }) {
+function Field({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="flex items-center justify-between">
+    <div className="flex items-center justify-between border-b border-[var(--border)] pb-2 last:border-0 last:pb-0">
       <span className="text-[var(--text-muted)]">{label}</span>
       <span>{value}</span>
     </div>

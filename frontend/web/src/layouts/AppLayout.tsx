@@ -11,7 +11,7 @@ import {
   BookOpen, Wrench, Brain, BrainCircuit, Send,
   Menu, Settings2, Languages, Sun, Moon,
   LogOut, ChevronDown, X, CheckCircle2,
-  Shield, ShieldAlert, ScrollText, Sparkles,
+  ShieldAlert, ScrollText, Sparkles,
 } from 'lucide-react';
 import { useT } from '@/i18n';
 import { useUiStore } from '@/stores/uiStore';
@@ -23,7 +23,7 @@ import { useApiQuery } from '@/services/query';
 import { OnboardingGuide } from '@/features/onboarding/OnboardingGuide';
 import type { Permission, Workspace } from '@de/web-types';
 
-// 业务导航按工作场景分组；Settings / Workspace 移到左下角用户菜单。
+// 业务导航按工作场景分组；平台设置入口在左下角用户菜单。
 type NavItem = { to: string; i18n: string; icon: any; permission?: Permission; roles?: Array<'user' | 'admin' | 'auditor'> };
 const NAV_GROUPS: { labelKey: string | null; items: NavItem[] }[] = [
   { labelKey: null, items: [{ to: '/home', i18n: 'nav.home', icon: Home, roles: ['user', 'admin'] }] },
@@ -49,14 +49,6 @@ const NAV_GROUPS: { labelKey: string | null; items: NavItem[] }[] = [
       { to: '/skills', i18n: 'nav.skills', icon: Wrench, roles: ['user', 'admin'] },
       { to: '/memory', i18n: 'nav.memory', icon: BrainCircuit, roles: ['user', 'admin'] },
       { to: '/channels', i18n: 'nav.channels', icon: Send, roles: ['admin'] },
-    ],
-  },
-  {
-    labelKey: 'nav.group.governance',
-    items: [
-      { to: '/governance', i18n: 'nav.accessControl', icon: Shield, roles: ['admin'] },
-      { to: '/zero-trust', i18n: 'nav.zeroTrust', icon: ShieldAlert, roles: ['admin', 'auditor'] },
-      { to: '/audit-center', i18n: 'nav.auditCenter', icon: ScrollText, roles: ['admin', 'auditor'] },
     ],
   },
 ];
@@ -118,10 +110,13 @@ export function AppLayout() {
     navigate('/login', { replace: true });
   };
 
+  const canSeeNav = (item: { permission?: Permission; roles?: Array<'user' | 'admin' | 'auditor'> }) =>
+    !user || ((!item.permission || user.permissions.includes(item.permission)) && (!item.roles || item.roles.includes(user.role)));
+
   const visibleNavGroups = NAV_GROUPS
     .map((group) => ({
       ...group,
-      items: group.items.filter((item) => !user || ((!item.permission || user.permissions.includes(item.permission)) && (!item.roles || item.roles.includes(user.role)))),
+      items: group.items.filter(canSeeNav),
     }))
     .filter((group) => group.items.length > 0);
   const activeNav = visibleNavGroups.flatMap((group) => group.items).find((n) => location.pathname.startsWith(n.to));
@@ -210,7 +205,13 @@ export function AppLayout() {
         {!sidebarCollapsed && (
           <div className="hidden items-center gap-2 text-[13px] text-[var(--text-muted)] sm:flex">
             <span>·</span>
-            <span className="text-[var(--text-secondary)]">{t(activeNav?.i18n ?? 'nav.home')}</span>
+            <span className="text-[var(--text-secondary)]">{t(activeNav?.i18n ?? (
+              location.pathname.startsWith('/settings') ? 'nav.settingsGeneral'
+              : location.pathname.startsWith('/governance') ? 'nav.accessControl'
+              : location.pathname.startsWith('/zero-trust') ? 'nav.zeroTrust'
+              : location.pathname.startsWith('/audit-center') ? 'nav.auditCenter'
+              : 'nav.home'
+            ))}</span>
           </div>
         )}
 
@@ -312,7 +313,20 @@ export function AppLayout() {
               >
                 {/* 组 1：配置 */}
                 <div className="user-menu__group-title">{t('account.preferences')}</div>
-                {(user.role === 'admin') && <UserMenuItem icon={Settings2} label={t('account.platformSettings')} shortcut="⌘," onClick={() => { setUserMenuOpen(false); navigate('/settings'); }} />}
+                {user.role === 'admin' && (
+                  <UserMenuItem
+                    icon={Settings2}
+                    label={t('account.platformSettings')}
+                    shortcut="⌘,"
+                    onClick={() => { setUserMenuOpen(false); navigate('/settings'); }}
+                  />
+                )}
+                {user.role === 'auditor' && (
+                  <>
+                    <UserMenuItem icon={ShieldAlert} label={t('nav.zeroTrust')} onClick={() => { setUserMenuOpen(false); navigate('/zero-trust'); }} />
+                    <UserMenuItem icon={ScrollText} label={t('nav.auditCenter')} onClick={() => { setUserMenuOpen(false); navigate('/audit-center'); }} />
+                  </>
+                )}
                 {user.role === 'admin' && <button
                   className="user-menu__item"
                   onClick={() => { setUserMenuOpen(false); navigate('/workspaces'); }}

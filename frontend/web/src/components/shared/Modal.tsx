@@ -14,6 +14,9 @@ export interface ModalProps {
   size?: ModalSize;
   closeOnBackdrop?: boolean;
   children?: ReactNode;
+  /** 覆盖默认 body 样式，例如文档阅读器需要去掉内边距与外层滚动 */
+  bodyClassName?: string;
+  panelClassName?: string;
 }
 
 const SIZE_CLASS: Record<ModalSize, string> = {
@@ -38,6 +41,8 @@ export function Modal({
   size = 'md',
   closeOnBackdrop = true,
   children,
+  bodyClassName,
+  panelClassName,
 }: ModalProps) {
   useEffect(() => {
     if (!open) return;
@@ -60,13 +65,14 @@ export function Modal({
       {/* 弹窗本体 */}
       <div
         className={cn(
-          'relative w-full overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_20px_60px_rgba(15,23,42,0.16)] animate-[scaleIn_0.18s_ease]',
+          'relative flex w-full max-h-[min(92vh,920px)] flex-col overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_20px_60px_rgba(15,23,42,0.16)] animate-[scaleIn_0.18s_ease]',
           SIZE_CLASS[size],
+          panelClassName,
         )}
       >
         {/* Header */}
         {(title || description) && (
-          <div className="app-glass flex items-start justify-between gap-3 border-b px-6 py-5">
+          <div className="app-glass flex shrink-0 items-start justify-between gap-3 border-b px-6 py-4">
             <div className="min-w-0">
               {title && <h3 className="text-[15px] font-semibold text-[var(--text)]">{title}</h3>}
               {description && <p className="mt-1 text-[13px] text-[var(--text-muted)]">{description}</p>}
@@ -81,10 +87,10 @@ export function Modal({
           </div>
         )}
         {/* Body */}
-        <div className="max-h-[72vh] overflow-y-auto px-6 py-5">{children}</div>
+        <div className={cn('min-h-0 flex-1 overflow-y-auto px-6 py-5', bodyClassName)}>{children}</div>
         {/* Footer */}
         {footer && (
-          <div className="app-glass flex items-center justify-end gap-2 border-t px-6 py-4">
+          <div className="app-glass flex shrink-0 items-center justify-end gap-2 border-t px-6 py-3.5">
             {footer}
           </div>
         )}

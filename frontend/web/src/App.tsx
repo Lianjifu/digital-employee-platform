@@ -1,12 +1,12 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { lazy, Suspense } from 'react';
+import { lazy, Suspense, type ReactNode } from 'react';
 import { AppLayout } from './layouts/AppLayout';
 import { ProtectedRoute } from './router/ProtectedRoute';
 import { ToastHost, Spinner } from '@de/web-ui';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { NotFound } from './pages/NotFound';
+import { useAuthStore } from './stores/authStore';
 
-// 11 个模块按路由懒加载
 const Login = lazy(() => import('./pages/Login'));
 const Home = lazy(() => import('./pages/Home'));
 const Copilot = lazy(() => import('./pages/Copilot'));
@@ -21,7 +21,6 @@ const Skills = lazy(() => import('./pages/Skills'));
 const Models = lazy(() => import('./pages/Models'));
 const Channels = lazy(() => import('./pages/Channels'));
 const Settings = lazy(() => import('./pages/Settings'));
-const Governance = lazy(() => import('./pages/Governance'));
 const AuditCenter = lazy(() => import('./pages/AuditCenter'));
 const ZeroTrust = lazy(() => import('./pages/ZeroTrust'));
 
@@ -31,6 +30,13 @@ function PageFallback() {
       <Spinner size={28} className="text-[var(--brand)]" />
     </div>
   );
+}
+
+/** 管理员统一进入平台设置对应 Tab；审计员保留独立治理页。 */
+function AdminSettingsRedirect({ tab, children }: { tab: string; children: ReactNode }) {
+  const role = useAuthStore((state) => state.user?.role);
+  if (role === 'admin') return <Navigate to={`/settings?tab=${tab}`} replace />;
+  return <>{children}</>;
 }
 
 export default function App() {
@@ -65,9 +71,27 @@ export default function App() {
             <Route path="/skills" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Skills /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/models" element={<ProtectedRoute permission="model.read" roles={['admin']}><ErrorBoundary><Models /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/channels" element={<ProtectedRoute permission="channel.read" roles={['admin']}><ErrorBoundary><Channels /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/governance" element={<ProtectedRoute roles={['admin']}><ErrorBoundary><Governance /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/zero-trust" element={<ProtectedRoute roles={['admin', 'auditor']}><ErrorBoundary><ZeroTrust /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/audit-center" element={<ProtectedRoute roles={['admin', 'auditor']}><ErrorBoundary><AuditCenter /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/governance" element={<ProtectedRoute roles={['admin']}><Navigate to="/settings?tab=access" replace /></ProtectedRoute>} />
+            <Route
+              path="/zero-trust"
+              element={(
+                <ProtectedRoute roles={['admin', 'auditor']}>
+                  <AdminSettingsRedirect tab="zeroTrust">
+                    <ErrorBoundary><ZeroTrust /></ErrorBoundary>
+                  </AdminSettingsRedirect>
+                </ProtectedRoute>
+              )}
+            />
+            <Route
+              path="/audit-center"
+              element={(
+                <ProtectedRoute roles={['admin', 'auditor']}>
+                  <AdminSettingsRedirect tab="auditCenter">
+                    <ErrorBoundary><AuditCenter /></ErrorBoundary>
+                  </AdminSettingsRedirect>
+                </ProtectedRoute>
+              )}
+            />
             <Route path="/settings/*" element={<ProtectedRoute roles={['admin']}><ErrorBoundary><Settings /></ErrorBoundary></ProtectedRoute>} />
           </Route>
           <Route path="*" element={<NotFound />} />

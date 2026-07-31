@@ -37,6 +37,7 @@ import { useApiMutation, useApiQuery } from '@/services/query';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useT } from '@/i18n';
+import { computeVersionDiff } from '@/features/workflows/version-diff';
 
 type SidePanelKey = 'library' | 'debug' | 'properties';
 type TabKey = 'canvas' | 'templates' | 'publishSkill' | 'history' | 'versions';
@@ -635,16 +636,72 @@ function normalizeTemplateAsset(raw: Partial<WorkflowTemplateAsset> & { id: stri
 }
 
 
-/* ============ 版本快照（mock 历史版本） ============ */
-const VERSIONS = [
-  { id: 'v4', label: 'v4 · 当前', time: '刚刚', desc: '新增分支：回滚路径', active: true },
-  { id: 'v3', label: 'v3', time: '15 分钟前', desc: '调整审计节点位置' },
-  { id: 'v2', label: 'v2', time: '1 小时前', desc: '加入 Webhook 触发器' },
-  { id: 'v1', label: 'v1', time: '昨天 18:42', desc: '初始版本 · 受控恢复作业' },
-];
-
+/* ============ 版本快照 ============ */
 type Snapshot = { nodes: Node[]; edges: Edge[] };
-type VersionSnapshot = Snapshot & { id: string; label: string; time: string; desc: string };
+type VersionSnapshot = Snapshot & {
+  id: string;
+  label: string;
+  time: string;
+  desc: string;
+  status?: 'draft' | 'published';
+  evidenceMode?: 'recorded' | 'synthetic';
+  nodeCount?: number;
+  edgeCount?: number;
+  parentVersionId?: string;
+  publishedAt?: string;
+};
+
+function mapRemoteVersion(version: {
+  id: string; label: string; time: string; desc: string;
+  status?: 'draft' | 'published'; evidenceMode?: 'recorded' | 'synthetic';
+  nodeCount?: number; edgeCount?: number; parentVersionId?: string; publishedAt?: string;
+  nodes?: any[]; edges?: any[];
+}): VersionSnapshot {
+  const flow = draftToFlow({ nodes: version.nodes, edges: version.edges });
+  const hasGraph = Boolean(version.nodes?.length);
+  return {
+    id: version.id,
+    label: version.label,
+    time: version.time,
+    desc: version.desc,
+    status: version.status ?? 'draft',
+    evidenceMode: version.evidenceMode ?? (hasGraph ? 'recorded' : 'synthetic'),
+    nodeCount: version.nodeCount ?? flow.nodes.length,
+    edgeCount: version.edgeCount ?? flow.edges.length,
+    parentVersionId: version.parentVersionId,
+    publishedAt: version.publishedAt,
+    nodes: flow.nodes,
+    edges: flow.edges,
+  };
+}
+
+function WorkflowLifecycleStrip({ highlight }: { highlight: 'version' | 'skill' }) {
+  const steps = [
+    { key: 'draft', label: '草稿保存' },
+    { key: 'validate', label: '运行前校验' },
+    { key: 'trial', label: '沙箱试运行' },
+    { key: 'version', label: '发布版本' },
+    { key: 'skill', label: '发布技能' },
+  ] as const;
+  return (
+    <ol className="wf-lifecycle" aria-label="流程生命周期">
+      {steps.map((step, index) => (
+        <li
+          key={step.key}
+          className={cn(
+            'wf-lifecycle__step',
+            step.key === highlight && 'is-active',
+            (step.key === 'version' || step.key === 'skill') && 'is-fork',
+          )}
+        >
+          {index > 0 && <span className="wf-lifecycle__sep" aria-hidden="true" />}
+          <span className="wf-lifecycle__dot">{index + 1}</span>
+          <span className="wf-lifecycle__label">{step.label}</span>
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 function cloneSnapshot(snapshot: Snapshot): Snapshot {
   return {
@@ -700,11 +757,10 @@ export default function Workflows() {
   const [activeVersion, setActiveVersion] = useState('v4');
   const [versionMenuOpen, setVersionMenuOpen] = useState(false);
   const [versionDiffOpen, setVersionDiffOpen] = useState(false);
-  const [versions, setVersions] = useState<VersionSnapshot[]>(() => VERSIONS.map((version) => ({
-    ...version,
-    nodes: cloneSnapshot({ nodes: INITIAL_NODES, edges: INITIAL_EDGES }).nodes,
-    edges: cloneSnapshot({ nodes: INITIAL_NODES, edges: INITIAL_EDGES }).edges,
-  })));
+  const [versions, setVersions] = useState<VersionSnapshot[]>([]);
+  const [versionCenterSelectedId, setVersionCenterSelectedId] = useState<string>('');
+  const [diffBaseId, setDiffBaseId] = useState<string>('');
+  const [rollbackTargetId, setRollbackTargetId] = useState<string | null>(null);
 
   // 模板预览
   const [previewTemplate, setPreviewTemplate] = useState<WorkflowTemplateAsset | null>(null);
@@ -718,9 +774,10 @@ export default function Workflows() {
   const [generationModel, setGenerationModel] = useState('企业默认模型');
   const { data: generationHistory = [] } = useApiQuery<GenerationResult[]>(['workflow-generations'], '/api/workflows/generations');
   const { data: templateAssets = [] } = useApiQuery<Array<Partial<WorkflowTemplateAsset> & { id: string; name: string }>>(['workflow-templates'], '/api/workflow-templates');
-  const { data: workflowDraft } = useApiQuery<Workflow>(['workflow-draft', currentWorkspaceId], '/api/workflows/wf1');
-  const workflowId = workflowDraft?.id ?? 'wf1';
-  const { data: remoteVersions = [] } = useApiQuery<Array<{ id: string; label: string; time: string; desc: string }>>(['workflow-versions', currentWorkspaceId], '/api/workflows/wf1/versions');
+  const { data: workflowList = [] } = useApiQuery<Array<Pick<Workflow, 'id'>>>(['workflows', currentWorkspaceId], '/api/workflows');
+  const workflowId = workflowList[0]?.id ?? 'wf1';
+  const { data: workflowDraft } = useApiQuery<Workflow>(['workflow-draft', currentWorkspaceId, workflowId], `/api/workflows/${workflowId}`);
+  const { data: remoteVersions = [], refetch: refetchVersions } = useApiQuery<Array<Parameters<typeof mapRemoteVersion>[0]>>(['workflow-versions', currentWorkspaceId, workflowId], `/api/workflows/${workflowId}/versions`);
   const draftHydratedRef = useRef(false);
   const [draftGate, setDraftGate] = useState<DraftGate | null>(null);
   const [preflightOpen, setPreflightOpen] = useState(false);
@@ -749,14 +806,17 @@ export default function Workflows() {
   const applyGenerationApi = useApiMutation<GenerationResult, { id: string }>(({ id }) => `/api/workflows/generations/${id}/apply`, {
     onError: () => showToast('生成草稿与审计未提交，当前画布未变更', 'error'),
   });
-  const validateWorkflowApi = useApiMutation<WorkflowValidation, { revisionId?: string; nodes: unknown[]; edges: unknown[] }>('/api/workflows/wf1/validate', {
-    onSuccess: (result) => {
-      setPreflightResult(result);
-      setPreflightVersion(activeVersion);
-      setPreflightOpen(true);
+  const validateWorkflowApi = useApiMutation<WorkflowValidation, { workflowId?: string; revisionId?: string; nodes: unknown[]; edges: unknown[] }>(
+    (vars) => `/api/workflows/${vars.workflowId ?? workflowId}/validate`,
+    {
+      onSuccess: (result) => {
+        setPreflightResult(result);
+        setPreflightVersion(activeVersion);
+        setPreflightOpen(true);
+      },
+      onError: () => showToast('运行前校验失败，请稍后重试', 'error'),
     },
-    onError: () => showToast('运行前校验失败，请稍后重试', 'error'),
-  });
+  );
   const [focusRunId, setFocusRunId] = useState<string | null>(null);
   const { data: workflowRuns = [] } = useApiQuery<WorkflowRunRecord[]>(['workflow-runs'], '/api/workflow-runs');
   const runWorkflowApi = useApiMutation<WorkflowRunRecord, Record<string, unknown>>(
@@ -774,13 +834,65 @@ export default function Workflows() {
       },
     },
   );
-  const saveWorkflowApi = useApiMutation<Workflow, { nodes: unknown[]; edges: unknown[]; version: string }>('/api/workflows/wf1/draft', {
-    onError: () => showToast('服务端保存失败，本地草稿仍已保留', 'error'),
-  });
-  const publishWorkflowApi = useApiMutation<Workflow, { version: string }>('/api/workflows/wf1/publish', {
-    onSuccess: () => { setVersionMenuOpen(false); showToast('已提交发布，等待发布治理流程', 'success'); },
-    onError: () => showToast('发布提交失败，请先完成运行前校验', 'error'),
-  });
+  const saveWorkflowApi = useApiMutation<Workflow, { workflowId: string; nodes: unknown[]; edges: unknown[]; version: string; desc?: string }>(
+    (vars) => `/api/workflows/${vars.workflowId}/draft`,
+    { onError: () => showToast('服务端保存失败，本地草稿仍已保留', 'error') },
+    'PUT',
+  );
+  const publishWorkflowApi = useApiMutation<{ publishedVersion?: VersionSnapshot }, { workflowId: string; version: string }>(
+    (vars) => `/api/workflows/${vars.workflowId}/publish`,
+    {
+      onSuccess: (result) => {
+        setVersionMenuOpen(false);
+        refetchVersions();
+        const publishedId = (result as any)?.publishedVersion?.id;
+        showToast(publishedId ? `已发布版本 ${publishedId}` : '已发布当前草稿版本', 'success');
+      },
+      onError: (err) => {
+        const message = err instanceof Error ? err.message : '发布提交失败，请先完成运行前校验';
+        showToast(message.replace(/^E_[A-Z_]+:\s*/, ''), 'error');
+      },
+    },
+  );
+  const createVersionApi = useApiMutation<VersionSnapshot, { workflowId: string; label?: string; desc?: string; parentVersionId?: string; nodes: unknown[]; edges: unknown[] }>(
+    (vars) => `/api/workflows/${vars.workflowId}/versions`,
+    {
+      onSuccess: (version) => {
+        refetchVersions();
+        setActiveVersion(version.id);
+        setVersionCenterSelectedId(version.id);
+        setVersionMenuOpen(false);
+        showToast(`已另存版本 ${version.label}`, 'success');
+      },
+      onError: (err) => {
+        const message = err instanceof Error ? err.message : '另存版本失败';
+        showToast(message.replace(/^E_[A-Z_]+:\s*/, ''), 'error');
+      },
+    },
+  );
+  const rollbackVersionApi = useApiMutation<{ draft: any; version: VersionSnapshot; restoredFrom: string }, { workflowId: string; versionId: string }>(
+    (vars) => `/api/workflows/${vars.workflowId}/rollback`,
+    {
+      onSuccess: (result) => {
+        refetchVersions();
+        const mapped = mapRemoteVersion(result.version as any);
+        const next = cloneSnapshot(mapped);
+        setNodes(next.nodes);
+        setEdges(next.edges);
+        setActiveVersion(mapped.id);
+        setSelectedNodeId(next.nodes[0]?.id ?? null);
+        historyRef.current = { stack: [next], idx: 0 };
+        setRollbackTargetId(null);
+        setVersionMenuOpen(false);
+        setTab('canvas');
+        showToast(`已从 ${result.restoredFrom} 回滚并生成草稿 ${mapped.id}`, 'success');
+      },
+      onError: (err) => {
+        const message = err instanceof Error ? err.message : '回滚失败';
+        showToast(message.replace(/^E_[A-Z_]+:\s*/, ''), 'error');
+      },
+    },
+  );
   const releaseRequestApi = useApiMutation<unknown, { resourceType: 'workflow'; resourceName: string; risk: 'low' | 'medium' | 'high' }>('/api/release-approvals', {
     onSuccess: () => { setVersionMenuOpen(false); showToast('已提交生产发布申请，等待管理员审批', 'success'); },
     onError: () => showToast('发布申请提交失败，请稍后重试', 'error'),
@@ -824,7 +936,11 @@ export default function Workflows() {
       showToast(`模板依赖未就绪，无法发布：${draftGate.reasons[0] ?? '请先完成授权'}`, 'error');
       return;
     }
-    if (isAdmin) publishWorkflowApi.mutate({ version: activeVersion });
+    if (isDirty) {
+      showToast('请先保存草稿后再发布版本', 'error');
+      return;
+    }
+    if (isAdmin) publishWorkflowApi.mutate({ workflowId, version: activeVersion });
     else releaseRequestApi.mutate({ resourceType: 'workflow', resourceName: `工作流 ${activeVersion}`, risk: 'medium' });
   };
 
@@ -835,6 +951,14 @@ export default function Workflows() {
   // 撤销/重做栈
   const historyRef = useRef<{ stack: Snapshot[]; idx: number }>({ stack: [{ nodes: INITIAL_NODES, edges: INITIAL_EDGES }], idx: 0 });
   useEffect(() => {
+    if (!remoteVersions.length) return;
+    const mapped = remoteVersions.map(mapRemoteVersion);
+    setVersions(mapped);
+    setVersionCenterSelectedId((prev) => prev && mapped.some((item) => item.id === prev) ? prev : (mapped[0]?.id ?? ''));
+    setDiffBaseId((prev) => prev && mapped.some((item) => item.id === prev) ? prev : (mapped.find((item) => item.id !== mapped[0]?.id)?.id ?? mapped[0]?.id ?? ''));
+  }, [remoteVersions]);
+
+  useEffect(() => {
     if (!workflowDraft || draftHydratedRef.current) return;
     draftHydratedRef.current = true;
     const flow = draftToFlow(workflowDraft);
@@ -842,27 +966,8 @@ export default function Workflows() {
     setNodes(snapshot.nodes);
     setEdges(snapshot.edges);
     historyRef.current = { stack: [snapshot], idx: 0 };
-    setVersions((prev) => {
-      const merged = remoteVersions.length
-        ? remoteVersions.map((version) => {
-            const local = prev.find((item) => item.id === version.id);
-            return {
-              id: version.id,
-              label: version.label,
-              time: version.time,
-              desc: version.desc,
-              nodes: local?.nodes?.length ? local.nodes : snapshot.nodes,
-              edges: local?.edges?.length ? local.edges : snapshot.edges,
-            };
-          })
-        : prev;
-      return merged.map((item) => (
-        item.id === 'v4' || item.id === (remoteVersions[0]?.id ?? 'v4')
-          ? { ...item, nodes: snapshot.nodes, edges: snapshot.edges, desc: item.desc || '服务端草稿', time: item.time || '刚刚' }
-          : item
-      ));
-    });
     setSelectedNodeId(null);
+    if (remoteVersions[0]?.id) setActiveVersion(remoteVersions[0].id);
   }, [workflowDraft, remoteVersions]);
   const pushHistory = useCallback((next: Snapshot) => {
     const h = historyRef.current;
@@ -1108,20 +1213,43 @@ export default function Workflows() {
     if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
     const id = activeVersion;
     const version = versions.find((item) => item.id === id);
+    if (version?.status === 'published') {
+      showToast('已发布版本不可覆盖，请先另存为新草稿', 'error');
+      return;
+    }
+    const snapshot = cloneSnapshot({ nodes, edges });
     setVersions((prev) => prev.map((item) => item.id === id ? {
       ...item,
-      nodes: cloneSnapshot({ nodes, edges }).nodes,
-      edges: cloneSnapshot({ nodes, edges }).edges,
+      nodes: snapshot.nodes,
+      edges: snapshot.edges,
+      nodeCount: snapshot.nodes.length,
+      edgeCount: snapshot.edges.length,
+      evidenceMode: 'recorded',
       time: '刚刚',
       desc: '保存当前本地草稿',
     } : item));
     saveWorkflowApi.mutate({
+      workflowId,
       nodes: nodes.map((node) => ({ id: node.id, kind: node.data?.kind, label: node.data?.label, data: node.data, position: node.position })),
       edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
       version: id,
-    });
+      desc: '保存当前本地草稿',
+    }, { onSuccess: () => refetchVersions() });
     showToast(`已保存 ${version?.label ?? id}（工作流草稿）`, 'success');
-  }, [activeVersion, canWrite, edges, nodes, saveWorkflowApi, showToast, versions]);
+  }, [activeVersion, canWrite, edges, nodes, refetchVersions, saveWorkflowApi, showToast, versions, workflowId]);
+
+  const saveAsVersion = useCallback((label?: string) => {
+    if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
+    if (!nodes.length) { showToast('空画布不能另存版本', 'error'); return; }
+    createVersionApi.mutate({
+      workflowId,
+      label,
+      desc: '从当前画布另存的草稿版本',
+      parentVersionId: activeVersion,
+      nodes: nodes.map((node) => ({ id: node.id, kind: node.data?.kind, label: node.data?.label, data: node.data, position: node.position })),
+      edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })),
+    });
+  }, [activeVersion, canWrite, createVersionApi, edges, nodes, showToast, workflowId]);
 
   const loadSnapshot = useCallback((snapshot: Snapshot, versionId: string) => {
     const next = cloneSnapshot(snapshot);
@@ -1145,8 +1273,8 @@ export default function Workflows() {
       showToast(blocking[0].message, 'error');
       return;
     }
-    validateWorkflowApi.mutate({ revisionId: activeVersion.startsWith('rev_') || activeVersion.startsWith('tpl_') ? activeVersion : undefined, nodes: nodes.map((node) => ({ id: node.id, kind: node.data?.kind, label: node.data?.label, data: node.data })), edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })) });
-  }, [activeVersion, canExecute, draftGate, edges, nodes, showToast, validateWorkflowApi]);
+    validateWorkflowApi.mutate({ workflowId, revisionId: activeVersion.startsWith('rev_') || activeVersion.startsWith('tpl_') || activeVersion.startsWith('ver_') || activeVersion.startsWith('pub_') ? activeVersion : undefined, nodes: nodes.map((node) => ({ id: node.id, kind: node.data?.kind, label: node.data?.label, data: node.data })), edges: edges.map((edge) => ({ id: edge.id, source: edge.source, target: edge.target })) });
+  }, [activeVersion, canExecute, draftGate, edges, nodes, showToast, validateWorkflowApi, workflowId]);
 
   const openAIGenerator = useCallback(() => {
     if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
@@ -1402,74 +1530,83 @@ export default function Workflows() {
 
   return (
     <div className="workflow-page flex h-full min-w-0 flex-col gap-3 overflow-hidden bg-[var(--bg-elevated)] p-3 md:p-4 lg:p-5">
-      {/* ======== 一级功能导航 ======== */}
-      <div className="shrink-0 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.03)] md:px-6">
-        <div className="flex min-w-0 items-center justify-between gap-3">
-          <div className="flex min-w-0 flex-wrap items-center gap-2.5">
-            <div className="flex shrink-0 items-center gap-2">
-              <span className="grid h-7 w-7 place-items-center rounded-lg bg-[var(--brand-light)] text-[var(--brand)]">
-                <GitBranch className="h-3.5 w-3.5" />
-              </span>
-              <div className="leading-tight">
-                <h2 className="text-sm font-semibold tracking-[-0.01em] text-[var(--text)]">工作流编排</h2>
-                <p className="mt-1 text-xs font-normal text-[var(--text-muted)]">搭建、治理并运行企业级自动化流程；完成后发布为流程技能，供数字员工装配</p>
+      <section className="de-employee-shell shrink-0 overflow-hidden rounded-xl bg-[var(--surface-1)]">
+        <div className="flex items-start justify-between gap-4 px-4 py-3.5 md:px-5">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <div className="de-employee-icon-tile grid h-8 w-8 place-items-center rounded-lg text-[var(--text-secondary)]">
+                <GitBranch className="h-4 w-4" />
               </div>
+              <h1 className="text-base font-semibold text-[var(--text)]">{t('module.workflows.title')}</h1>
             </div>
-            {tab === 'canvas' ? (
+            <p className="mt-1.5 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">{t('module.workflows.subtitle')}</p>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            {tab === 'canvas' && (
               <>
-                <span className="hidden h-4 w-px bg-[var(--border)] sm:block" />
-                <span className="inline-flex items-center gap-1.5 rounded-md bg-[var(--bg-elevated)] px-2 py-1 text-[10px] font-medium text-[var(--text-secondary)]">
-                  <Box className="h-3 w-3 text-[var(--text-muted)]" />画布结构
-                  <span className="text-[var(--text-muted)]">{nodes.length} 节点 · {edges.length} 连线</span>
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--bg)] px-2.5 py-1.5 text-[11px] font-medium text-[var(--text-secondary)]" style={{ boxShadow: 'var(--saas-ring)' }}>
+                  <Box className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                  {nodes.length} 节点 · {edges.length} 连线
                 </span>
-                {isDirty && <Badge tone="warn" className="shrink-0 text-[9px]">草稿未保存</Badge>}
+                {isDirty && <Badge tone="warn">草稿未保存</Badge>}
               </>
-            ) : tab === 'publishSkill' ? (
-              <span className="truncate text-[10px] text-[var(--text-muted)]">
-                流程技能 · 已发布 {publishedSkillCount} · 待治理 {draftSkillCount}
+            )}
+            {tab === 'templates' && (
+              <span className="rounded-lg bg-[var(--bg)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]" style={{ boxShadow: 'var(--saas-ring)' }}>
+                模板库 · {TEMPLATES.length} 套
               </span>
-            ) : tab === 'history' ? (
-              <span className="truncate text-[10px] text-[var(--text-muted)]">
+            )}
+            {tab === 'publishSkill' && (
+              <span className="rounded-lg bg-[var(--bg)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]" style={{ boxShadow: 'var(--saas-ring)' }}>
+                已发布 {publishedSkillCount} · 待治理 {draftSkillCount}
+              </span>
+            )}
+            {tab === 'history' && (
+              <span className="rounded-lg bg-[var(--bg)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]" style={{ boxShadow: 'var(--saas-ring)' }}>
                 运行记录 · {workflowRuns.length} 条
               </span>
-            ) : (
-              <span className="truncate text-[10px] text-[var(--text-muted)]">
-                {tab === 'templates' ? `模板库 · ${TEMPLATES.length} 套` : tab === 'versions' ? `版本 · ${versions.length}` : '工作流'}
-              </span>
+            )}
+            {tab === 'versions' && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--brand-light)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--brand)]">
+                  <GitCompare className="h-3.5 w-3.5" />版本中心
+                </span>
+                <Button size="sm" variant="ghost" onClick={() => setTab('canvas')}>返回画布</Button>
+                <Button size="sm" variant="secondary" onClick={() => setTab('publishSkill')}>去发布技能</Button>
+              </div>
             )}
           </div>
         </div>
-        <nav className="mt-3 -mx-3 -mb-2 flex min-w-0 items-end overflow-x-auto px-3 md:-mx-6 md:px-6" aria-label="工作流视图">
-          <div className="flex min-w-max items-center gap-1">
-            {([
-              { k: 'templates' as TabKey, labelKey: 'module.workflows.tabs.templates', icon: Layers },
-              { k: 'canvas' as TabKey, labelKey: 'module.workflows.tabs.canvas', icon: GitBranch },
-              { k: 'publishSkill' as TabKey, labelKey: 'module.workflows.tabs.publishSkill', icon: Sparkles },
-              { k: 'history' as TabKey, labelKey: 'module.workflows.tabs.history', icon: History },
-              { k: 'versions' as TabKey, labelKey: 'module.workflows.tabs.versions', icon: GitCompare },
-            ]).map((v) => (
-              <button
-                key={v.k}
-                type="button"
-                onClick={() => setTab(v.k)}
-                aria-current={tab === v.k ? 'page' : undefined}
-                className={cn(
-                  'flex items-center gap-1.5 rounded-t-md px-3 py-2 text-[13px] transition-colors',
-                  tab === v.k
-                    ? 'z-10 -mb-px border border-[var(--border)] border-b-[var(--surface-1)] bg-[var(--surface-1)] font-semibold text-[var(--text)]'
-                    : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]',
-                )}
-              >
-                <v.icon className="h-3.5 w-3.5" />
-                {t(v.labelKey)}
-              </button>
-            ))}
+        <div className="de-employee-tabs flex overflow-x-auto px-3" role="tablist" aria-label="工作流视图">
+          {([
+            { k: 'templates' as TabKey, labelKey: 'module.workflows.tabs.templates', icon: Layers },
+            { k: 'canvas' as TabKey, labelKey: 'module.workflows.tabs.canvas', icon: GitBranch },
+            { k: 'publishSkill' as TabKey, labelKey: 'module.workflows.tabs.publishSkill', icon: Sparkles },
+            { k: 'history' as TabKey, labelKey: 'module.workflows.tabs.history', icon: History },
+          ]).map((v) => (
+            <button
+              key={v.k}
+              type="button"
+              role="tab"
+              aria-selected={tab === v.k}
+              aria-current={tab === v.k ? 'page' : undefined}
+              onClick={() => setTab(v.k)}
+              className={cn('de-employee-tab flex shrink-0 items-center gap-1.5 px-3 py-2.5 text-xs transition-colors', tab === v.k && 'is-active')}
+            >
+              <v.icon className="h-3.5 w-3.5" />
+              {t(v.labelKey)}
+            </button>
+          ))}
+        </div>
+        {tab === 'versions' && (
+          <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] px-4 py-2.5 md:px-5">
+            <span className="text-[11px] text-[var(--text-muted)]">由画布「当前版本」胶囊进入 · 不与模板库并列为主导航</span>
           </div>
-        </nav>
-      </div>
+        )}
+      </section>
 
       {/* ======== 主内容区 ======== */}
-      <div className="min-h-0 flex-1 overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
+      <div className="de-employee-shell min-h-0 flex-1 overflow-hidden rounded-xl bg-[var(--surface-1)]">
         {tab === 'canvas' && (
           <CanvasView
             wrapperRef={wrapperRef}
@@ -1538,6 +1675,10 @@ export default function Workflows() {
             publishing={publishWorkflowApi.isPending || releaseRequestApi.isPending}
             isDirty={isDirty}
             draftGate={draftGate}
+            onOpenVersionCenter={() => { setVersionMenuOpen(false); setTab('versions'); }}
+            onSaveAsVersion={() => saveAsVersion()}
+            saveAsPending={createVersionApi.isPending}
+            onRequestRollback={(versionId) => setRollbackTargetId(versionId)}
           />
         )}
 
@@ -1559,6 +1700,7 @@ export default function Workflows() {
             canExecute={canExecute}
             focusRunId={focusRunId}
             onFocusConsumed={() => setFocusRunId(null)}
+            onGoCanvas={() => setTab('canvas')}
           />
         )}
 
@@ -1577,9 +1719,23 @@ export default function Workflows() {
                 <span className="wf-publish__meta-chip">来源流程 <code>{workflowId}</code></span>
                 <span className="wf-publish__meta-chip">画布版本 <code>{activeVersion}</code></span>
                 <Button size="sm" variant="ghost" onClick={() => setTab('canvas')}>返回编排</Button>
+                <Button size="sm" variant="ghost" onClick={() => setTab('versions')}>版本中心</Button>
                 <Button size="sm" variant="secondary" onClick={() => navigate('/skills?tab=workflowSkills')}>技能中心</Button>
               </div>
             </header>
+
+            <WorkflowLifecycleStrip highlight="skill" />
+            <div className="wf-boundary" role="group" aria-label="发布边界">
+              <div className="wf-boundary__card">
+                <strong>发布版本</strong>
+                <span>写入不可变 revision，供生产执行与回滚。不进入技能中心。</span>
+                <Button size="sm" variant="ghost" onClick={() => setTab('versions')}>去版本中心</Button>
+              </div>
+              <div className="wf-boundary__card is-active">
+                <strong>发布技能（本页）</strong>
+                <span>沉淀为可装配流程技能。依赖已有版本，但不替代「发布版本」。</span>
+              </div>
+            </div>
 
             <div className="wf-publish__grid">
               <section className="wf-publish__panel" aria-labelledby="wf-publish-form-title">
@@ -1771,23 +1927,172 @@ export default function Workflows() {
           </div>
         )}
 
-        {tab === 'versions' && (
-          <div className="h-full overflow-y-auto p-5 space-y-3">
-            <div className="mb-2"><h2 className="text-sm font-semibold">版本管理</h2><p className="mt-1 text-xs text-[var(--text-muted)]">版本快照仅影响画布草稿；发布到生产与发布技能是独立动作。</p></div>
-            {versions.map((version) => (
-              <button key={version.id} type="button" onClick={() => { loadSnapshot(version, version.id); setTab('canvas'); showToast(`已加载 ${version.label}`, 'info'); }} className={cn('flex w-full items-start gap-3 rounded-xl border px-4 py-3 text-left transition-colors hover:bg-[var(--bg-hover)]', version.id === activeVersion ? 'border-[var(--brand)] bg-[var(--brand-light)]' : 'border-[var(--border)] bg-[var(--bg)]')}>
-                <span className="font-mono text-sm font-semibold text-[var(--brand)]">{version.label}</span>
-                <span className="min-w-0 flex-1"><span className="block text-[11px] text-[var(--text-muted)]">{version.time}</span><span className="block truncate text-xs text-[var(--text-secondary)]">{version.desc}</span></span>
-                {version.id === activeVersion && <Badge tone="success">当前</Badge>}
-              </button>
-            ))}
-            <div className="flex gap-2 pt-2">
-              <Button size="sm" variant="secondary" onClick={() => setVersionDiffOpen(true)}><GitCompare className="h-3.5 w-3.5" />查看差异</Button>
-              <Button size="sm" onClick={requestProductionRelease} loading={publishWorkflowApi.isPending || releaseRequestApi.isPending} disabled={!canWrite || isDirty || !!draftGate?.blocked}>{isAdmin ? '发布版本' : '提交发布申请'}</Button>
-              {draftGate?.blocked && <span className="text-[11px] text-[var(--warning)]">模板依赖未授权，禁止发布</span>}
+        {tab === 'versions' && (() => {
+          const selectedVersion = versions.find((item) => item.id === versionCenterSelectedId) ?? versions[0];
+          const compareBase = versions.find((item) => item.id === diffBaseId) ?? versions.find((item) => item.id !== selectedVersion?.id) ?? selectedVersion;
+          const diffTarget = selectedVersion ? { nodes: selectedVersion.nodes, edges: selectedVersion.edges } : { nodes, edges };
+          const diff = selectedVersion && compareBase
+            ? computeVersionDiff(compareBase, selectedVersion.id === activeVersion ? { nodes, edges } : diffTarget)
+            : null;
+          const recordedCount = versions.filter((item) => item.evidenceMode === 'recorded').length;
+          const publishedCount = versions.filter((item) => item.status === 'published').length;
+          const draftCount = versions.length - publishedCount;
+          return (
+            <div className="wf-versions">
+              <header className="wf-versions__hero">
+                <div className="wf-versions__hero-main">
+                  <div className="wf-versions__eyebrow"><GitCompare className="h-3.5 w-3.5" />画布上下文 · 修订治理</div>
+                  <h2 className="wf-versions__title">版本中心</h2>
+                  <p className="wf-versions__lead">
+                    管理流程 revision 快照。加载版本只影响画布草稿；「发布版本」写入不可变发布记录，与「发布技能」相互独立。
+                  </p>
+                </div>
+                <div className="wf-versions__hero-meta">
+                  <div className="wf-versions__stat"><strong>{versions.length}</strong><span>全部</span></div>
+                  <div className="wf-versions__stat is-pub"><strong>{publishedCount}</strong><span>已发布</span></div>
+                  <div className="wf-versions__stat"><strong>{draftCount}</strong><span>草稿</span></div>
+                  <div className="wf-versions__stat is-ok"><strong>{recordedCount}</strong><span>有快照</span></div>
+                  <Button size="sm" variant="ghost" onClick={() => setTab('canvas')}>返回编排</Button>
+                </div>
+              </header>
+
+              <WorkflowLifecycleStrip highlight="version" />
+              <div className="wf-boundary" role="group" aria-label="发布边界">
+                <div className="wf-boundary__card is-active">
+                  <strong>发布版本（本页）</strong>
+                  <span>生成不可变 revision，用于生产执行、审计对照与回滚基线。</span>
+                </div>
+                <div className="wf-boundary__card">
+                  <strong>发布技能</strong>
+                  <span>把流程沉淀为数字员工可装配能力，不替代版本发布。</span>
+                  <Button size="sm" variant="ghost" onClick={() => setTab('publishSkill')}>去发布技能</Button>
+                </div>
+              </div>
+
+              <div className="wf-versions__layout">
+                <section className="wf-versions__panel" aria-labelledby="wf-versions-list-title">
+                  <div className="wf-versions__panel-head">
+                    <div>
+                      <h3 id="wf-versions-list-title">版本列表</h3>
+                      <p>流程 <code>{workflowId}</code> · 点击查看详情与差异</p>
+                    </div>
+                    <Button size="sm" variant="secondary" disabled={!canWrite || createVersionApi.isPending} loading={createVersionApi.isPending} onClick={() => saveAsVersion()}>
+                      <Save className="h-3.5 w-3.5" />另存当前画布
+                    </Button>
+                  </div>
+                  <div className="wf-versions__list">
+                    {versions.length === 0 ? (
+                      <div className="wf-versions__empty"><strong>暂无版本记录</strong><span>保存草稿或另存后将出现在这里</span></div>
+                    ) : versions.map((version) => {
+                      const selected = version.id === (selectedVersion?.id);
+                      const current = version.id === activeVersion;
+                      return (
+                        <button
+                          key={version.id}
+                          type="button"
+                          className={cn('wf-versions__row', selected && 'is-selected')}
+                          onClick={() => { setVersionCenterSelectedId(version.id); if (!diffBaseId || diffBaseId === version.id) setDiffBaseId(versions.find((item) => item.id !== version.id)?.id ?? version.id); }}
+                        >
+                          <div className="wf-versions__row-main">
+                            <span className="wf-versions__row-id">{version.label}</span>
+                            <div className="wf-versions__row-tags">
+                              {current && <Badge tone="success" className="text-[9px]">画布当前</Badge>}
+                              <Badge tone={version.status === 'published' ? 'info' : 'neutral'} className="text-[9px]">{version.status === 'published' ? '已发布' : '草稿'}</Badge>
+                              <Badge tone={version.evidenceMode === 'recorded' ? 'success' : 'warn'} className="text-[9px]">{version.evidenceMode === 'recorded' ? '有快照' : '无快照'}</Badge>
+                            </div>
+                            <div className="wf-versions__row-meta">
+                              <span>{version.time}</span>
+                              <span className="wf-versions__sep" />
+                              <span>{version.nodeCount ?? version.nodes.length} 节点 · {version.edgeCount ?? version.edges.length} 连线</span>
+                              {version.parentVersionId && <><span className="wf-versions__sep" /><span>源自 {version.parentVersionId}</span></>}
+                            </div>
+                            <p className="wf-versions__row-desc">{version.desc}</p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </section>
+
+                <aside className="wf-versions__panel wf-versions__detail" aria-label="版本详情">
+                  {!selectedVersion ? (
+                    <div className="wf-versions__empty"><strong>选择一个版本</strong><span>查看快照、差异与回滚</span></div>
+                  ) : (
+                    <>
+                      <div className="wf-versions__panel-head">
+                        <div>
+                          <h3>{selectedVersion.label}</h3>
+                          <p>{selectedVersion.desc}</p>
+                        </div>
+                        <Badge tone={selectedVersion.status === 'published' ? 'info' : 'neutral'}>{selectedVersion.status === 'published' ? '已发布' : '草稿'}</Badge>
+                      </div>
+                      <div className="wf-versions__detail-body">
+                        <div className="wf-versions__kv">
+                          <div><span>版本 ID</span><code>{selectedVersion.id}</code></div>
+                          <div><span>更新时间</span><strong>{selectedVersion.time}</strong></div>
+                          <div><span>规模</span><strong>{selectedVersion.nodeCount ?? selectedVersion.nodes.length} / {selectedVersion.edgeCount ?? selectedVersion.edges.length}</strong></div>
+                          <div><span>证据</span><strong>{selectedVersion.evidenceMode === 'recorded' ? '节点快照' : '仅元数据'}</strong></div>
+                        </div>
+
+                        <div className="wf-versions__actions">
+                          <Button size="sm" variant="secondary" onClick={() => { loadSnapshot(selectedVersion, selectedVersion.id); setTab('canvas'); showToast(`已加载 ${selectedVersion.label} 到画布`, 'info'); }}>
+                            <Eye className="h-3.5 w-3.5" />加载到画布
+                          </Button>
+                          <Button size="sm" variant="outline" disabled={!canWrite || selectedVersion.evidenceMode !== 'recorded'} onClick={() => setRollbackTargetId(selectedVersion.id)}>
+                            <RotateCcw className="h-3.5 w-3.5" />回滚到此版本
+                          </Button>
+                          <Button size="sm" onClick={requestProductionRelease} loading={publishWorkflowApi.isPending || releaseRequestApi.isPending} disabled={!canWrite || isDirty || !!draftGate?.blocked || selectedVersion.id !== activeVersion}>
+                            {isAdmin ? '发布当前画布版本' : '提交发布申请'}
+                          </Button>
+                        </div>
+                        {draftGate?.blocked && <div className="wf-versions__warn">模板依赖未授权，禁止发布：{draftGate.reasons[0]}</div>}
+                        {selectedVersion.id !== activeVersion && <div className="wf-versions__hint">发布针对画布当前版本（{activeVersion}）。请先加载此版本或另存后再发布。</div>}
+
+                        <div className="wf-versions__diff-head">
+                          <h4>与基线差异</h4>
+                          <label>
+                            基线
+                            <select value={compareBase?.id ?? ''} onChange={(event) => setDiffBaseId(event.target.value)}>
+                              {versions.map((version) => (
+                                <option key={version.id} value={version.id} disabled={version.id === selectedVersion.id}>{version.label}</option>
+                              ))}
+                            </select>
+                          </label>
+                        </div>
+                        {!diff || !compareBase ? (
+                          <div className="wf-versions__hint">请选择不同的基线版本以查看差异。</div>
+                        ) : selectedVersion.evidenceMode !== 'recorded' || compareBase.evidenceMode !== 'recorded' ? (
+                          <div className="wf-versions__warn">一方缺少节点快照，无法生成可审计差异。</div>
+                        ) : (
+                          <div className="wf-versions__diff">
+                            <div className="wf-versions__diff-stats">
+                              <span>新增节点 <strong>{diff.addedNodes.length}</strong></span>
+                              <span>删除节点 <strong>{diff.removedNodes.length}</strong></span>
+                              <span>变更节点 <strong>{diff.changedNodes.length}</strong></span>
+                              <span>连线 +{diff.addedEdges} / -{diff.removedEdges}</span>
+                            </div>
+                            {diff.addedNodes.length + diff.removedNodes.length + diff.changedNodes.length === 0 && diff.addedEdges === 0 && diff.removedEdges === 0 ? (
+                              <div className="wf-versions__hint">与基线结构一致。</div>
+                            ) : (
+                              <ul className="wf-versions__diff-list">
+                                {diff.addedNodes.map((item) => <li key={`a-${item.id}`} className="is-add">+ {item.label} <code>{item.id}</code></li>)}
+                                {diff.removedNodes.map((item) => <li key={`r-${item.id}`} className="is-del">- {item.label} <code>{item.id}</code></li>)}
+                                {diff.changedNodes.map((item) => <li key={`c-${item.id}`} className="is-chg">~ {item.id}：{item.from} → {item.to}</li>)}
+                              </ul>
+                            )}
+                            {selectedVersion.id === activeVersion && isDirty && (
+                              <div className="wf-versions__hint">画布有未保存修改，差异已计入当前画布内容。</div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    </>
+                  )}
+                </aside>
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       {/* 模板预览弹窗 — 用 wrapper 避免 hooks 顺序问题 */}
@@ -1846,16 +2151,66 @@ export default function Workflows() {
       <Drawer
         open={versionDiffOpen}
         onClose={() => setVersionDiffOpen(false)}
-        width={480}
+        width={520}
         title="版本差异"
-        description={`${activeVersion} · 当前未保存修改将不会计入发布版本`}
+        description="对比基线版本与画布当前内容（含未保存修改）"
       >
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-2"><div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-[11px] text-[var(--text-muted)]">当前节点</div><div className="mt-1 text-xl font-semibold">{nodes.length}</div></div><div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-[11px] text-[var(--text-muted)]">当前连线</div><div className="mt-1 text-xl font-semibold">{edges.length}</div></div></div>
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="mb-2 text-xs font-semibold">当前草稿内容</div><div className="space-y-2 text-xs text-[var(--text-secondary)]">{nodes.map((node) => <div key={node.id} className="flex items-center justify-between"><span>{node.data?.label ?? node.id}</span><span className="font-mono text-[10px] text-[var(--text-muted)]">{node.data?.kind}</span></div>)}</div></div>
-          <div className="rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]">发布前请确认依赖、权限、审批、审计和回滚检查均已通过。</div>
-        </div>
+        {(() => {
+          const base = versions.find((item) => item.id === (diffBaseId || versions.find((version) => version.id !== activeVersion)?.id)) ?? versions[0];
+          const current = { nodes, edges };
+          const diff = base ? computeVersionDiff(base, current) : null;
+          return (
+            <div className="space-y-4">
+              <label className="block text-xs text-[var(--text-secondary)]">
+                基线版本
+                <select className="mt-1 h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 text-xs" value={base?.id ?? ''} onChange={(event) => setDiffBaseId(event.target.value)}>
+                  {versions.map((version) => <option key={version.id} value={version.id}>{version.label}</option>)}
+                </select>
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-[11px] text-[var(--text-muted)]">画布节点</div><div className="mt-1 text-xl font-semibold">{nodes.length}</div></div>
+                <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-[11px] text-[var(--text-muted)]">画布连线</div><div className="mt-1 text-xl font-semibold">{edges.length}</div></div>
+              </div>
+              {!base || !diff ? (
+                <div className="text-xs text-[var(--text-muted)]">暂无可对比版本</div>
+              ) : base.evidenceMode !== 'recorded' ? (
+                <div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] px-3 py-2 text-[11px] text-[var(--warning)]">基线缺少节点快照，无法生成可审计差异。</div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap gap-2 text-[11px] text-[var(--text-muted)]">
+                    <span>新增 {diff.addedNodes.length}</span><span>删除 {diff.removedNodes.length}</span><span>变更 {diff.changedNodes.length}</span><span>连线 +{diff.addedEdges}/-{diff.removedEdges}</span>
+                  </div>
+                  <div className="max-h-72 space-y-1.5 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3 text-xs">
+                    {diff.addedNodes.length + diff.removedNodes.length + diff.changedNodes.length === 0 && diff.addedEdges === 0 && diff.removedEdges === 0 ? (
+                      <div className="text-[var(--text-muted)]">与基线结构一致</div>
+                    ) : (
+                      <>
+                        {diff.addedNodes.map((item) => <div key={`a-${item.id}`} className="text-[var(--success)]">+ {item.label} <span className="font-mono text-[10px]">{item.id}</span></div>)}
+                        {diff.removedNodes.map((item) => <div key={`r-${item.id}`} className="text-[var(--danger)]">- {item.label} <span className="font-mono text-[10px]">{item.id}</span></div>)}
+                        {diff.changedNodes.map((item) => <div key={`c-${item.id}`} className="text-[var(--warning)]">~ {item.id}: {item.from} → {item.to}</div>)}
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+              <div className="rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]">未保存修改会计入此差异预览，但不会进入已发布版本；发布前请先保存草稿。</div>
+            </div>
+          );
+        })()}
       </Drawer>
+
+      <ConfirmDialog
+        open={Boolean(rollbackTargetId)}
+        onClose={() => setRollbackTargetId(null)}
+        title="确认回滚版本"
+        description={`将把画布恢复为 ${rollbackTargetId ?? ''} 的节点快照，并生成新的草稿版本。此操作可在版本列表中追溯。`}
+        confirmText="确认回滚"
+        tone="danger"
+        onConfirm={() => {
+          if (!rollbackTargetId) return;
+          rollbackVersionApi.mutate({ workflowId, versionId: rollbackTargetId });
+        }}
+      />
 
       <WorkflowAIGeneratorDrawer
         open={aiGenerateOpen}
@@ -2140,6 +2495,10 @@ function CanvasView(props: {
   publishing: boolean;
   isDirty: boolean;
   draftGate: DraftGate | null;
+  onOpenVersionCenter: () => void;
+  onSaveAsVersion: () => void;
+  saveAsPending: boolean;
+  onRequestRollback: (versionId: string) => void;
 }) {
   const {
     wrapperRef, rfNodes, rfEdges, onNodeClick, onNodeContextMenu, onNodesChange,
@@ -2150,8 +2509,8 @@ function CanvasView(props: {
     saveCanvas, saving, runWorkflow, resetCanvas, clearCanvas,
     addNode, deleteNode, duplicateNode, disableNode, updateNodeLabel, updateNodeDescription, updateNodeNote, patchNodeData, structureIssues, showToast,
     onConnect, deleteEdge, undo, redo, canUndo, canRedo, exportWorkflow, reactFlowRef, canWrite, canExecute, openAIGenerator, nodeLibraryOpen, setNodeLibraryOpen, validating,
-    versionMenuOpen, setVersionMenuOpen, versions, activeVersion, loadSnapshot, setVersions, setActiveVersion, setVersionDiffOpen, publishVersion, publishLabel, publishing, isDirty,
-    draftGate,
+    versionMenuOpen, setVersionMenuOpen, versions, activeVersion, loadSnapshot, setVersionDiffOpen, publishVersion, publishLabel, publishing, isDirty,
+    draftGate, onOpenVersionCenter, onSaveAsVersion, saveAsPending, onRequestRollback,
   } = props;
 
   const [mobilePanelOpen, setMobilePanelOpen] = useState<SidePanelKey | null>(null);
@@ -2181,6 +2540,7 @@ function CanvasView(props: {
       <div className="flex flex-wrap items-center gap-0.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-1 shadow-[0_1px_2px_rgba(15,23,42,0.04)]">
         <Button size="sm" variant="outline" className="rounded-lg border-transparent bg-[var(--brand-light)] px-2.5 text-[var(--brand)] shadow-none hover:border-transparent hover:bg-[var(--brand-light)]" onClick={() => setVersionMenuOpen(true)} aria-label="切换或管理当前画布版本">
           <HistoryIcon className="h-3.5 w-3.5" />
+          <span className="text-[10px] font-semibold opacity-80">当前版本</span>
           <span className="font-mono">{versions.find((version) => version.id === activeVersion)?.label ?? activeVersion}</span>
           <ChevronRight className="h-3.5 w-3.5 rotate-90" />
         </Button>
@@ -2213,14 +2573,47 @@ function CanvasView(props: {
     <div className="flex h-full min-h-0 min-w-0 flex-col">
       {actionToolbar}
       <div className="shrink-0 border-b border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-[11px] leading-5 text-[var(--text-muted)] md:px-5">
-        本页用于编排受控处置流程草稿。完成后请到「发布技能」发布为流程技能，供数字员工能力装配；本页不直接发起专家协作上岗。
+        本页用于编排受控处置流程草稿。版本治理请点「当前版本」进入抽屉 / 版本中心；完成后请到「发布技能」发布为流程技能，供数字员工能力装配；本页不直接发起专家协作上岗。
         {structureIssues.filter((item) => item.severity === 'failed').length > 0 && (
           <span className="ml-2 text-[var(--warning)]">结构门禁：{structureIssues.filter((item) => item.severity === 'failed').map((item) => item.message).join('；')}</span>
         )}
       </div>
-      <Drawer open={versionMenuOpen} onClose={() => setVersionMenuOpen(false)} width={520} title="工作流版本管理" description={`当前版本 ${activeVersion} · 版本切换仅影响画布草稿`} footer={<div className="flex w-full gap-2"><Button size="sm" variant="outline" className="flex-1" onClick={() => setVersionDiffOpen(true)}>查看差异</Button><Button size="sm" variant="primary" className="flex-1" onClick={publishVersion} loading={publishing} disabled={!canWrite || isDirty || !!draftGate?.blocked}>{publishLabel}</Button></div>}>
-        <div className="space-y-2">{versions.map((version) => <button key={version.id} type="button" onClick={() => { loadSnapshot(version, version.id); setVersionMenuOpen(false); showToast(`已加载 ${version.label}（本地快照）`, 'info'); }} className={cn('flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left transition-colors hover:bg-[var(--bg-hover)]', version.id === activeVersion ? 'border-[var(--brand)] bg-[var(--brand-light)]' : 'border-[var(--border)] bg-[var(--surface-1)]')}><span className="font-mono text-sm font-semibold text-[var(--brand)]">{version.label}</span><span className="min-w-0 flex-1"><span className="block text-[11px] text-[var(--text-muted)]">{version.time}</span><span className="block truncate text-xs text-[var(--text-secondary)]">{version.desc}</span></span>{version.id === activeVersion && <Badge tone="success">当前</Badge>}</button>)}</div>
-        <div className="mt-4 grid grid-cols-2 gap-2"><Button size="sm" variant="outline" onClick={() => { const current = versions.find((version) => version.id === activeVersion); if (current) loadSnapshot(current, current.id); setVersionMenuOpen(false); showToast('已回滚到当前版本', 'info'); }} disabled={!canWrite}><RotateCcw className="h-3 w-3" />回滚当前</Button><Button size="sm" variant="secondary" onClick={() => { const nextId = `v${versions.length + 1}`; setVersions((prev) => [...prev, { id: nextId, label: `${nextId} · 草稿`, time: '刚刚', desc: '从当前画布另存的本地快照', nodes: cloneSnapshot({ nodes: props.nodes as Node[], edges: props.rfEdges }).nodes, edges: cloneSnapshot({ nodes: props.nodes as Node[], edges: props.rfEdges }).edges }]); setActiveVersion(nextId); setVersionMenuOpen(false); showToast(`已另存为 ${nextId}`, 'success'); }} disabled={!canWrite}><Save className="h-3 w-3" />另存版本</Button></div>
+      <Drawer open={versionMenuOpen} onClose={() => setVersionMenuOpen(false)} width={520} title="当前版本" description={`画布 ${activeVersion} · 切换仅影响草稿；另存 / 发布 / 回滚请在版本中心完成`} footer={<div className="flex w-full gap-2"><Button size="sm" variant="outline" className="flex-1" onClick={onOpenVersionCenter}>打开版本中心</Button><Button size="sm" variant="outline" className="flex-1" onClick={() => setVersionDiffOpen(true)}>查看差异</Button><Button size="sm" variant="primary" className="flex-1" onClick={publishVersion} loading={publishing} disabled={!canWrite || isDirty || !!draftGate?.blocked}>{publishLabel}</Button></div>}>
+        <div className="space-y-2">
+          {versions.map((version) => (
+            <button
+              key={version.id}
+              type="button"
+              onClick={() => { loadSnapshot(version, version.id); setVersionMenuOpen(false); showToast(`已加载 ${version.label}`, 'info'); }}
+              className={cn('flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left transition-colors hover:bg-[var(--bg-hover)]', version.id === activeVersion ? 'border-[var(--brand)] bg-[var(--brand-light)]' : 'border-[var(--border)] bg-[var(--surface-1)]')}
+            >
+              <span className="min-w-0 flex-1">
+                <span className="flex flex-wrap items-center gap-1.5">
+                  <span className="font-mono text-sm font-semibold text-[var(--brand)]">{version.label}</span>
+                  {version.id === activeVersion && <Badge tone="success">当前</Badge>}
+                  <Badge tone={version.status === 'published' ? 'info' : 'neutral'} className="text-[9px]">{version.status === 'published' ? '已发布' : '草稿'}</Badge>
+                  <Badge tone={version.evidenceMode === 'recorded' ? 'success' : 'warn'} className="text-[9px]">{version.evidenceMode === 'recorded' ? '有快照' : '无快照'}</Badge>
+                </span>
+                <span className="mt-1 block text-[11px] text-[var(--text-muted)]">{version.time} · {version.nodeCount ?? version.nodes.length} 节点</span>
+                <span className="block truncate text-xs text-[var(--text-secondary)]">{version.desc}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={!canWrite || !versions.find((item) => item.id === activeVersion && item.evidenceMode === 'recorded')}
+            onClick={() => onRequestRollback(activeVersion)}
+          >
+            <RotateCcw className="h-3 w-3" />回滚并生成新草稿
+          </Button>
+          <Button size="sm" variant="secondary" onClick={onSaveAsVersion} disabled={!canWrite} loading={saveAsPending}>
+            <Save className="h-3 w-3" />另存版本
+          </Button>
+        </div>
+        <p className="mt-3 text-[11px] leading-5 text-[var(--text-muted)]">回滚会调用服务端生成新草稿 revision，不会原地覆盖已发布记录；破坏性操作需二次确认。</p>
         {draftGate?.blocked && <div className="mt-3 rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--warning)]">来源模板「{draftGate.templateName}」存在未授权依赖，完成授权前不可发布。</div>}
       </Drawer>
 
@@ -3296,12 +3689,14 @@ function HistoryView({
   canExecute,
   focusRunId,
   onFocusConsumed,
+  onGoCanvas,
 }: {
   showToast: (msg: string, tone?: 'success' | 'error' | 'info') => void;
   workflowId: string;
   canExecute: boolean;
   focusRunId?: string | null;
   onFocusConsumed?: () => void;
+  onGoCanvas?: () => void;
 }) {
   const { data: runs = [], refetch, isLoading } = useApiQuery<WorkflowRunRecord[]>(['workflow-runs'], '/api/workflow-runs');
   const [selectedRunId, setSelectedRunId] = useState<string>('');
@@ -3345,11 +3740,15 @@ function HistoryView({
       }));
   const hasRecordedEvidence = selectedRun?.evidenceMode === 'recorded' && Boolean(selectedRun.nodeSteps?.length);
   const totalSteps = replaySteps.length;
+  const successCount = runs.filter((run) => run.status === 'success').length;
+  const failedCount = runs.filter((run) => run.status === 'failed').length;
+  const runningCount = runs.filter((run) => run.status === 'running').length;
+  const recordedCount = runs.filter((run) => run.evidenceMode === 'recorded' && Boolean(run.nodeSteps?.length)).length;
   const visibleRuns = runs.filter((run) => (
     (statusFilter === 'all' || run.status === statusFilter)
     && (!query.trim() || `${run.id} ${run.trigger} ${run.who} ${run.revisionId ?? ''} ${run.correlationId ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()))
   ));
-  const pageSize = 10;
+  const pageSize = 8;
   const pageCount = Math.max(1, Math.ceil(visibleRuns.length / pageSize));
   const currentPage = Math.min(page, pageCount);
   const pagedRuns = visibleRuns.slice((currentPage - 1) * pageSize, currentPage * pageSize);
@@ -3378,68 +3777,80 @@ function HistoryView({
 
   const openRun = (id: string, mobile = false) => {
     setSelectedRunId(id);
-    if (mobile || (typeof window !== 'undefined' && window.matchMedia('(max-width: 1023px)').matches)) {
+    if (mobile || (typeof window !== 'undefined' && window.matchMedia('(max-width: 1079px)').matches)) {
       setMobileReplayOpen(true);
     }
   };
 
-  const renderReplayBody = () => {
+  const statusLabel = (status: string) => (
+    status === 'success' ? '已完成' : status === 'failed' ? '执行失败' : '运行中'
+  );
+
+  const renderReplayBody = (embedded = false) => {
     if (!selectedRun) {
-      return <div className="grid flex-1 place-items-center p-6 text-xs text-[var(--text-muted)]">请选择一条运行记录</div>;
+      return <div className="wf-history__replay-empty">请选择左侧一条运行记录查看回放</div>;
     }
     return (
       <>
-        <div className="border-b border-[var(--border)] px-4 py-3">
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">运行回放</div>
-          <div className="text-sm font-semibold">{selectedRun.trigger}</div>
-          <div className="mt-0.5 text-[11px] text-[var(--text-muted)]">
+        <div className="wf-history__replay-head">
+          {!embedded && <div className="wf-history__replay-kicker">运行回放</div>}
+          <h3 className="wf-history__replay-title">{selectedRun.trigger}</h3>
+          <div className="wf-history__replay-sub">
             {selectedRun.time} · {selectedRun.who}
             {selectedRun.revisionId ? ` · ${selectedRun.revisionId}` : ''}
             {selectedRun.attempt && selectedRun.attempt > 1 ? ` · 第 ${selectedRun.attempt} 次尝试` : ''}
+            {selectedRun.parentRunId ? ` · 源自 ${selectedRun.parentRunId}` : ''}
           </div>
-          <div className="mt-2 flex flex-wrap gap-1.5">
+          <div className="wf-history__replay-tags">
             <Badge tone={selectedRun.status === 'success' ? 'success' : selectedRun.status === 'failed' ? 'error' : 'info'}>
-              {selectedRun.status === 'success' ? '已完成' : selectedRun.status === 'failed' ? '执行失败' : '运行中'}
+              {statusLabel(selectedRun.status)}
             </Badge>
             {selectedRun.environment && <Badge tone="neutral">{selectedRun.environment}</Badge>}
             <Badge tone={hasRecordedEvidence ? 'success' : 'warn'}>
-              {hasRecordedEvidence ? '节点快照证据' : '仅有汇总（无逐步证据）'}
+              {hasRecordedEvidence ? '节点快照证据' : '仅有汇总'}
             </Badge>
           </div>
         </div>
 
         {!hasRecordedEvidence && (
-          <div className="border-b border-[var(--warning)]/30 bg-[var(--warning-bg)] px-4 py-2 text-[11px] leading-5 text-[var(--warning)]">
-            该记录未保存节点快照。下方回放仅按步骤数占位，不能作为审计逐步证据。
+          <div className="wf-history__replay-warn">
+            该记录未保存节点快照。下方回放按步骤数占位，不能作为审计逐步证据。
           </div>
         )}
 
-        <div className="border-b border-[var(--border)] px-4 py-3">
-          <div className="mb-2 flex h-3 overflow-hidden rounded bg-[var(--bg-hover)]">
+        <div className="wf-history__replay-progress">
+          <div className="wf-history__progress-bar" aria-hidden>
             {replaySteps.map((item, i) => {
               const isCompleted = i < step;
               const isCurrent = i === step;
-              const isFailed = item.status === 'failed' || (selectedRun.status === 'failed' && i === Math.min(totalSteps - 1, (selectedRun.nodeSteps?.findIndex((s) => s.status === 'failed') ?? totalSteps - 1)));
+              const failedIndex = selectedRun.nodeSteps?.findIndex((s) => s.status === 'failed') ?? -1;
+              const isFailed = item.status === 'failed' || (selectedRun.status === 'failed' && i === (failedIndex >= 0 ? failedIndex : totalSteps - 1));
               return (
-                <div
+                <span
                   key={item.id}
-                  className={cn(
-                    'flex-1 transition-all',
-                    isFailed && i <= step ? 'bg-[var(--danger)]' : isCurrent ? 'bg-[var(--brand)] animate-pulse' : isCompleted ? 'bg-[var(--success)]' : 'bg-[var(--bg-hover)]',
-                  )}
+                  style={{
+                    background: isFailed && i <= step
+                      ? 'var(--danger)'
+                      : isCurrent
+                        ? 'var(--brand)'
+                        : isCompleted
+                          ? 'var(--success)'
+                          : undefined,
+                  }}
                 />
               );
             })}
           </div>
-          <div className="text-center text-[11px]">
-            当前步骤: <span className="font-mono font-semibold text-[var(--brand)]">{Math.min(step, totalSteps)} / {totalSteps}</span>
+          <div className="wf-history__progress-meta">
+            <span>当前步骤</span>
+            <strong>{Math.min(step, totalSteps)} / {totalSteps}</strong>
           </div>
           {selectedRun.correlationId && (
-            <div className="mt-2 truncate font-mono text-[10px] text-[var(--text-muted)]">correlation: {selectedRun.correlationId}</div>
+            <div className="wf-history__corr">correlation: {selectedRun.correlationId}</div>
           )}
         </div>
 
-        <div className="flex-1 space-y-2 overflow-y-auto p-4">
+        <div className="wf-history__steps">
           {replaySteps.map((item, i) => {
             const isDone = i < step;
             const isCurrent = i === step;
@@ -3448,140 +3859,152 @@ function HistoryView({
               <div
                 key={item.id}
                 className={cn(
-                  'rounded-md border p-2 transition-all',
-                  isCurrent && 'border-[var(--brand)] bg-[var(--brand-light)] ring-2 ring-[var(--brand)]/20',
-                  isDone && !isFailedStep && 'border-[var(--success)]/30 bg-[var(--success-bg)]',
-                  isFailedStep && 'border-[var(--danger)]/30 bg-[var(--danger-bg)]',
-                  !isDone && !isCurrent && 'border-[var(--border)] opacity-50',
+                  'wf-history__step',
+                  isCurrent && 'is-current',
+                  isDone && !isFailedStep && 'is-done',
+                  isFailedStep && 'is-failed',
                 )}
               >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className={cn(
-                      'grid h-5 w-5 shrink-0 place-items-center rounded-full text-[9px] font-bold',
-                      isDone && !isFailedStep && 'bg-[var(--success)] text-white',
-                      isFailedStep && 'bg-[var(--danger)] text-white',
-                      isCurrent && 'bg-[var(--brand)] text-white',
-                      !isDone && !isCurrent && 'bg-[var(--bg-hover)] text-[var(--text-muted)]',
-                    )}>
-                      {isDone && !isFailedStep ? <CheckCircle2 className="h-3 w-3" /> : i + 1}
-                    </span>
-                    <span className="truncate text-[11px] font-semibold">{item.label}</span>
-                  </div>
-                  {item.kind && <span className="shrink-0 font-mono text-[9px] text-[var(--text-muted)]">{item.kind}</span>}
-                  {isFailedStep && <Badge tone="error" className="text-[9px]">失败</Badge>}
+                <div className="wf-history__step-left">
+                  <span className="wf-history__step-index">
+                    {isDone && !isFailedStep ? <CheckCircle2 className="h-3 w-3" /> : i + 1}
+                  </span>
+                  <span className="wf-history__step-label">{item.label}</span>
                 </div>
+                {'kind' in item && item.kind && <span className="wf-history__step-kind">{item.kind}</span>}
+                {isFailedStep && <Badge tone="error" className="text-[9px]">失败</Badge>}
               </div>
             );
           })}
           {selectedRun.error && (
-            <div className="rounded-lg border border-[var(--danger)]/30 bg-[var(--danger-bg)] px-3 py-2 text-[11px] text-[var(--danger)]">
-              <span className="font-semibold">异常：</span>{selectedRun.error}
+            <div className="wf-history__error">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <span><span className="font-semibold">异常：</span>{selectedRun.error}</span>
             </div>
           )}
         </div>
 
-        <div className="border-t border-[var(--border)] p-3">
-          <div className="grid grid-cols-5 gap-1">
-            <button type="button" aria-label="回到开始" onClick={() => { setStep(0); setPlaying(false); }} className="grid h-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)]"><SkipBack className="h-3.5 w-3.5" /></button>
-            <button type="button" aria-label="上一步" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0} className="grid h-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)] disabled:cursor-not-allowed disabled:opacity-30"><StepBack className="h-3.5 w-3.5" /></button>
-            <button type="button" aria-label={playing ? '暂停' : '播放'} onClick={() => setPlaying(!playing)} disabled={step >= totalSteps || totalSteps === 0} className="grid h-9 place-items-center rounded-md bg-[var(--brand)] text-white hover:bg-[var(--brand-hover)] disabled:cursor-not-allowed disabled:opacity-30">{playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}</button>
-            <button type="button" aria-label="下一步" onClick={() => setStep((s) => Math.min(totalSteps, s + 1))} disabled={step >= totalSteps} className="grid h-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)] disabled:cursor-not-allowed disabled:opacity-30"><StepForward className="h-3.5 w-3.5" /></button>
-            <button type="button" aria-label="跳到结束" onClick={() => { setStep(totalSteps); setPlaying(false); }} className="grid h-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--bg)] hover:border-[var(--brand)]"><SkipForward className="h-3.5 w-3.5" /></button>
+        <div className="wf-history__replay-controls">
+          <div className="wf-history__transport">
+            <button type="button" aria-label="回到开始" onClick={() => { setStep(0); setPlaying(false); }}><SkipBack className="h-3.5 w-3.5" /></button>
+            <button type="button" aria-label="上一步" onClick={() => setStep((s) => Math.max(0, s - 1))} disabled={step === 0}><StepBack className="h-3.5 w-3.5" /></button>
+            <button type="button" aria-label={playing ? '暂停' : '播放'} className="is-primary" onClick={() => setPlaying(!playing)} disabled={step >= totalSteps || totalSteps === 0}>{playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}</button>
+            <button type="button" aria-label="下一步" onClick={() => setStep((s) => Math.min(totalSteps, s + 1))} disabled={step >= totalSteps}><StepForward className="h-3.5 w-3.5" /></button>
+            <button type="button" aria-label="跳到结束" onClick={() => { setStep(totalSteps); setPlaying(false); }}><SkipForward className="h-3.5 w-3.5" /></button>
           </div>
-          <div className="mt-2 text-center font-mono text-[10px] text-[var(--text-muted)]">单步 / 自动播放 800ms · {hasRecordedEvidence ? '基于节点快照' : '占位回放'}</div>
+          <div className="wf-history__transport-note">单步 / 自动 800ms · {hasRecordedEvidence ? '基于节点快照' : '占位回放'}</div>
         </div>
       </>
     );
   };
 
   return (
-    <div className="flex h-full overflow-hidden bg-[var(--bg-elevated)]">
-      <div className="min-w-0 flex-1 overflow-y-auto p-6">
-        <div className="mb-4">
-          <h2 className="flex items-center gap-2 text-base font-semibold">
-            <Clock className="h-4 w-4 text-[var(--text-muted)]" />运行记录
-          </h2>
-          <p className="mt-0.5 text-xs text-[var(--text-muted)]">
-            {isLoading ? '加载中…' : `${runs.length} 次运行`} · 仅「节点快照证据」可用于逐步回放核对
+    <div className="wf-history">
+      <header className="wf-history__hero">
+        <div className="wf-history__hero-main">
+          <div className="wf-history__eyebrow"><History className="h-3.5 w-3.5" />执行证据与回放</div>
+          <h2 className="wf-history__title">运行记录</h2>
+          <p className="wf-history__lead">
+            查看每次试运行与正式触发的结果。仅标注「节点快照证据」的记录可逐步回放核对；沙箱试运行成功后会自动聚焦到本页。
           </p>
         </div>
-        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3">
-          <div className="relative min-w-[220px] flex-1">
-            <Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索运行 ID、触发源、执行人或 correlation" className="h-8 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] pl-8 pr-3 text-xs leading-5 outline-none focus:border-[var(--brand)]" />
-          </div>
-          <div className="flex rounded-lg bg-[var(--bg-elevated)] p-1" role="group" aria-label="运行状态">
-            {([['all', '全部'], ['success', '成功'], ['failed', '失败'], ['running', '运行中']] as const).map(([key, label]) => (
-              <button key={key} type="button" onClick={() => setStatusFilter(key)} className={cn('rounded-md px-2.5 py-1 text-xs font-medium leading-5 transition-colors', statusFilter === key ? 'bg-[var(--surface-1)] text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>{label}</button>
-            ))}
-          </div>
-          <span className="text-xs leading-5 text-[var(--text-muted)]">{visibleRuns.length} 条结果</span>
+        <div className="wf-history__hero-meta">
+          <div className="wf-history__stat"><strong>{isLoading ? '—' : runs.length}</strong><span>全部</span></div>
+          <div className="wf-history__stat is-ok"><strong>{successCount}</strong><span>成功</span></div>
+          <div className="wf-history__stat is-bad"><strong>{failedCount}</strong><span>失败</span></div>
+          <div className="wf-history__stat is-run"><strong>{runningCount}</strong><span>运行中</span></div>
+          <div className="wf-history__stat"><strong>{recordedCount}</strong><span>有快照</span></div>
+          <Button size="sm" variant="ghost" onClick={onGoCanvas}>返回编排</Button>
         </div>
+      </header>
 
-        {visibleRuns.length > 0 ? (
-          <>
-            <div className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] shadow-[0_1px_2px_rgba(15,23,42,0.03)]">
-              {pagedRuns.map((r, rowIndex) => {
-                const recorded = r.evidenceMode === 'recorded' && Boolean(r.nodeSteps?.length);
-                const reachedStages = r.status === 'success' ? 5 : Math.max(1, Math.min(4, Math.ceil((r.steps / Math.max(r.steps, 5)) * 5)));
-                return (
-                  <div
-                    key={r.id}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => openRun(r.id)}
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter' || event.key === ' ') {
-                        event.preventDefault();
-                        openRun(r.id);
-                      }
-                    }}
-                    className={cn(
-                      'group cursor-pointer px-4 py-4 text-left transition-colors',
-                      rowIndex > 0 && 'border-t border-[var(--border)]',
-                      selectedRunId === r.id ? 'bg-[var(--brand-light)]/55' : 'hover:bg-[var(--bg-elevated)]',
-                    )}
-                  >
-                    <div className="grid items-center gap-4 xl:grid-cols-[minmax(260px,1.4fr)_minmax(170px,0.8fr)_minmax(150px,0.65fr)_auto]">
-                      <div className="flex min-w-0 items-start gap-3">
-                        <span className={cn('mt-1.5 h-2 w-2 shrink-0 rounded-full', r.status === 'success' ? 'bg-[var(--success)]' : r.status === 'failed' ? 'bg-[var(--danger)]' : 'animate-pulse bg-[var(--info)]')} />
+      <div className="wf-history__layout">
+        <section className="wf-history__panel" aria-labelledby="wf-history-list-title">
+          <div className="wf-history__panel-head">
+            <div>
+              <h3 id="wf-history-list-title">运行列表</h3>
+              <p>流程 <code className="font-mono text-[10px] text-[var(--text-secondary)]">{workflowId}</code> · 当前筛选 {visibleRuns.length} 条</p>
+            </div>
+          </div>
+
+          <div className="wf-history__toolbar">
+            <div className="wf-history__search">
+              <Search />
+              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索运行 ID、触发源、执行人或 correlation" />
+            </div>
+            <div className="wf-history__filters" role="group" aria-label="运行状态">
+              {([['all', '全部'], ['success', '成功'], ['failed', '失败'], ['running', '运行中']] as const).map(([key, label]) => (
+                <button key={key} type="button" onClick={() => setStatusFilter(key)} className={statusFilter === key ? 'is-active' : undefined}>{label}</button>
+              ))}
+            </div>
+          </div>
+
+          {visibleRuns.length > 0 ? (
+            <>
+              <div className="wf-history__list">
+                {pagedRuns.map((r) => {
+                  const recorded = r.evidenceMode === 'recorded' && Boolean(r.nodeSteps?.length);
+                  return (
+                    <div
+                      key={r.id}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => openRun(r.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          openRun(r.id);
+                        }
+                      }}
+                      className={cn('wf-history__row', selectedRunId === r.id && 'is-selected')}
+                    >
+                      <div className="wf-history__row-main">
+                        <span className={cn('wf-history__dot', r.status === 'success' ? 'is-success' : r.status === 'failed' ? 'is-failed' : 'is-running')} />
                         <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="truncate text-sm font-semibold text-[var(--text)]">{r.trigger}</span>
-                            <Badge tone={r.status === 'success' ? 'success' : r.status === 'failed' ? 'error' : 'info'} className="text-[9px]">{r.status === 'success' ? '已完成' : r.status === 'failed' ? '执行失败' : '运行中'}</Badge>
+                          <div className="wf-history__row-title">
+                            <strong className="truncate">{r.trigger}</strong>
+                            <Badge tone={r.status === 'success' ? 'success' : r.status === 'failed' ? 'error' : 'info'} className="text-[9px]">{statusLabel(r.status)}</Badge>
                             <Badge tone={recorded ? 'success' : 'warn'} className="text-[9px]">{recorded ? '有快照' : '仅汇总'}</Badge>
                           </div>
-                          <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] text-[var(--text-muted)]">
-                            <span className="font-mono">{r.id}</span>
-                            {r.revisionId && <><span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" /><span className="font-mono">{r.revisionId}</span></>}
-                            <span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" /><span>{r.time}</span>
-                            <span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" /><span>{r.who}</span>
-                            {r.environment && <><span className="h-1 w-1 rounded-full bg-[var(--border-strong)]" /><span>{r.environment}</span></>}
+                          <div className="wf-history__row-meta">
+                            <code>{r.id}</code>
+                            {r.revisionId && <><span className="wf-history__sep" /><code>{r.revisionId}</code></>}
+                            <span className="wf-history__sep" /><span>{r.time}</span>
+                            <span className="wf-history__sep" /><span>{r.who}</span>
+                            {r.environment && <><span className="wf-history__sep" /><span>{r.environment}</span></>}
+                            {r.attempt && r.attempt > 1 && <><span className="wf-history__sep" /><span>第 {r.attempt} 次</span></>}
                           </div>
+                          {recorded && r.nodeSteps?.length ? (
+                            <div className="wf-history__rail" aria-label="节点快照进度">
+                              {r.nodeSteps.map((nodeStep) => (
+                                <span
+                                  key={nodeStep.id}
+                                  className={
+                                    nodeStep.status === 'failed' ? 'is-bad'
+                                      : nodeStep.status === 'success' ? 'is-ok'
+                                        : nodeStep.status === 'skipped' ? 'is-skip'
+                                          : 'is-pending'
+                                  }
+                                />
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="mt-2 text-[10px] text-[var(--text-muted)]">{r.steps} 步 · 无节点快照</div>
+                          )}
                         </div>
                       </div>
-                      <div className="hidden xl:block">
-                        <div className="mb-1.5 flex items-center justify-between text-[9px] font-medium text-[var(--text-muted)]"><span>执行阶段</span><span>{r.steps} 步</span></div>
-                        <div className="flex gap-1" aria-label={`执行阶段：${reachedStages} / 5`}>
-                          {Array.from({ length: 5 }).map((_, index) => {
-                            const failedStage = r.status === 'failed' && index === reachedStages - 1;
-                            const completed = r.status === 'success' || index < reachedStages - (r.status === 'failed' ? 1 : 0);
-                            return <span key={index} className={cn('h-1.5 flex-1 rounded-full', failedStage ? 'bg-[var(--danger)]' : completed ? 'bg-[var(--success)]' : 'bg-[var(--border)]')} />;
-                          })}
-                        </div>
+
+                      <div className="wf-history__metrics">
+                        <div><div>耗时</div><strong>{r.status === 'running' ? '处理中' : `${r.duration}s`}</strong></div>
+                        <div><div>步骤</div><strong>{r.steps}</strong></div>
                       </div>
-                      <div className="flex items-center gap-5 text-[10px] text-[var(--text-muted)]">
-                        <div><div>耗时</div><div className="mt-0.5 font-mono text-xs font-semibold text-[var(--text)]">{r.status === 'running' ? '处理中' : `${r.duration}s`}</div></div>
-                        <div><div>步骤</div><div className="mt-0.5 font-mono text-xs font-semibold text-[var(--text)]">{r.steps}</div></div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1.5">
-                        <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); openRun(r.id, true); }}><Eye className="h-3 w-3" />查看</Button>
+
+                      <div className="wf-history__actions">
+                        <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); openRun(r.id, true); }}><Eye className="h-3 w-3" />回放</Button>
                         {r.status === 'failed' && (
                           <Button
                             size="sm"
                             variant="secondary"
-                            className="rounded-lg"
                             disabled={!canExecute}
                             title={canExecute ? undefined : '缺少 workflow.execute 权限'}
                             onClick={(e) => {
@@ -3594,37 +4017,44 @@ function HistoryView({
                           </Button>
                         )}
                       </div>
-                    </div>
-                    {r.error && (
-                      <div className="ml-5 mt-3 flex items-start gap-2 rounded-lg bg-[var(--danger-bg)] px-3 py-2 text-[11px] text-[var(--danger)] xl:ml-0">
-                        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                        <span><span className="font-semibold">异常：</span>{r.error}</span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-[11px] text-[var(--text-muted)]">
-              <span>显示第 {firstItem}–{lastItem} 条，共 {visibleRuns.length} 条运行记录</span>
-              <nav className="flex items-center gap-1" aria-label="运行记录分页">
-                <button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="上一页"><ChevronLeft className="h-3.5 w-3.5" /></button>
-                {Array.from({ length: pageCount }, (_, index) => index + 1).map((item) => (
-                  <button key={item} type="button" onClick={() => setPage(item)} aria-current={item === currentPage ? 'page' : undefined} className={cn('grid h-7 min-w-7 place-items-center rounded-md px-1.5 text-[11px] font-medium transition-colors', item === currentPage ? 'bg-[var(--brand)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}>{item}</button>
-                ))}
-                <button type="button" disabled={currentPage === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} className="grid h-7 w-7 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="下一页"><ChevronRight className="h-3.5 w-3.5" /></button>
-              </nav>
-            </div>
-          </>
-        ) : (
-          <div className="grid min-h-48 place-items-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--surface-1)] text-sm text-[var(--text-muted)]">
-            {isLoading ? '正在加载运行记录…' : '没有符合当前筛选条件的运行记录。'}
-          </div>
-        )}
-      </div>
 
-      <div className="hidden w-[380px] shrink-0 flex-col border-l border-[var(--border)] bg-[var(--surface-1)] lg:flex">
-        {renderReplayBody()}
+                      {r.error && (
+                        <div className="wf-history__error">
+                          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span><span className="font-semibold">异常：</span>{r.error}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="wf-history__footer">
+                <span>显示第 {firstItem}–{lastItem} 条，共 {visibleRuns.length} 条</span>
+                <nav className="wf-history__pager" aria-label="运行记录分页">
+                  <button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} aria-label="上一页"><ChevronLeft className="h-3.5 w-3.5" /></button>
+                  {Array.from({ length: pageCount }, (_, index) => index + 1).map((item) => (
+                    <button key={item} type="button" onClick={() => setPage(item)} className={item === currentPage ? 'is-current' : undefined} aria-current={item === currentPage ? 'page' : undefined}>{item}</button>
+                  ))}
+                  <button type="button" disabled={currentPage === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} aria-label="下一页"><ChevronRight className="h-3.5 w-3.5" /></button>
+                </nav>
+              </div>
+            </>
+          ) : (
+            <div className="wf-history__empty">
+              <strong>{isLoading ? '正在加载运行记录…' : '没有符合条件的运行记录'}</strong>
+              {!isLoading && (
+                <>
+                  <span>可调整筛选，或回到画布发起一次沙箱试运行。</span>
+                  <Button size="sm" variant="secondary" onClick={onGoCanvas}>返回编排</Button>
+                </>
+              )}
+            </div>
+          )}
+        </section>
+
+        <aside className="wf-history__panel wf-history__replay" aria-label="运行回放">
+          {renderReplayBody()}
+        </aside>
       </div>
 
       <Drawer
@@ -3635,12 +4065,13 @@ function HistoryView({
         width={520}
       >
         <div className="flex min-h-[60vh] flex-col">
-          {renderReplayBody()}
+          {renderReplayBody(true)}
         </div>
       </Drawer>
     </div>
   );
 }
+
 
 function Mini({ label, value, tone }: { label: string; value: any; tone?: 'warn' }) {
   return (

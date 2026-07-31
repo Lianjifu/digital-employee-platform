@@ -959,6 +959,14 @@ export interface ModelRoute {
 export type ModelCapability = 'chat' | 'reasoning' | 'embedding' | 'vision';
 export type ModelProviderStatus = 'draft' | 'standby' | 'active' | 'disabled' | 'offline';
 export type RoutingPolicyStatus = 'draft' | 'ready' | 'published' | 'superseded';
+/** 主流大模型接入协议，决定表单字段与默认 Base URL。 */
+export type ModelConnectProtocol =
+  | 'openai_compatible'
+  | 'azure_openai'
+  | 'anthropic'
+  | 'dashscope'
+  | 'ollama'
+  | 'custom';
 
 /** 已准入的模型部署；凭据只以引用和掩码形式出现在客户端。 */
 export interface ModelProfile {
@@ -977,6 +985,18 @@ export interface ModelProvider {
   workspaceId: ID;
   name: string;
   tier: ProviderTier;
+  /** 接入协议，缺省按 tier 推断展示。 */
+  protocol?: ModelConnectProtocol;
+  /** API Base URL / Azure Endpoint，不含密钥。 */
+  baseUrl?: string;
+  /** Azure 等需要的 API Version。 */
+  apiVersion?: string;
+  /** OpenAI Organization / Project（可选）。 */
+  organizationId?: string;
+  /** Azure Deployment Name 等。 */
+  deploymentName?: string;
+  /** 接入备注（账号用途等）。 */
+  note?: string;
   cloudRegion: string;
   dataResidency: 'cn' | 'global';
   status: ModelProviderStatus;
@@ -1027,6 +1047,22 @@ export interface ModelAuditEvent {
   reason?: string;
   policyVersion?: ID;
   correlationId: string;
+}
+
+/** 模型治理总览（Mock 演示语义，非生产结算证明） */
+export interface ModelGovernanceSnapshot {
+  activeProviders: number;
+  standbyProviders: number;
+  disabledProviders: number;
+  publishedRoutes: number;
+  draftRoutes: number;
+  budgetRisk: 'normal' | 'attention' | 'critical';
+  monthlyBudgetUsd: number;
+  monthlySpendUsd: number;
+  healthyShare: number;
+  avgLatencyMs: number;
+  regionDistribution: Array<{ region: string; count: number }>;
+  updatedAt: ISODate;
 }
 
 // ============ 渠道 P10 ============

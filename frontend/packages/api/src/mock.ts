@@ -32,6 +32,7 @@ import type {
   KnowledgeSourceConnection,
   KpiCard,
   ModelAuditEvent,
+  ModelConnectProtocol,
   ModelProfile,
   ModelProvider,
   ModelRoute,
@@ -992,14 +993,92 @@ export const mockWorkflow: Workflow = {
 };
 
 // 工作流控制台运行态按工作区分域，避免草稿、运行、版本和审计跨工作区混用。
-type WorkflowControl = { draft: any; versions: any[]; audits: any[]; runs: any[] };
+type WorkflowVersionRecord = {
+  id: string;
+  label: string;
+  time: string;
+  desc: string;
+  status: 'draft' | 'published';
+  evidenceMode: 'recorded' | 'synthetic';
+  nodeCount: number;
+  edgeCount: number;
+  nodes: any[];
+  edges: any[];
+  publishedAt?: string;
+  parentVersionId?: string;
+};
+
+function cloneWorkflowGraph(nodes: any[], edges: any[]) {
+  return {
+    nodes: JSON.parse(JSON.stringify(nodes ?? [])),
+    edges: JSON.parse(JSON.stringify(edges ?? [])),
+  };
+}
+
+function workflowVersionFromGraph(
+  partial: Omit<WorkflowVersionRecord, 'nodeCount' | 'edgeCount' | 'nodes' | 'edges' | 'evidenceMode'> & {
+    nodes: any[];
+    edges: any[];
+    evidenceMode?: WorkflowVersionRecord['evidenceMode'];
+  },
+): WorkflowVersionRecord {
+  const graph = cloneWorkflowGraph(partial.nodes, partial.edges);
+  return {
+    ...partial,
+    evidenceMode: partial.evidenceMode ?? 'recorded',
+    nodes: graph.nodes,
+    edges: graph.edges,
+    nodeCount: graph.nodes.length,
+    edgeCount: graph.edges.length,
+  };
+}
+
+function buildInitialWorkflowVersions(): WorkflowVersionRecord[] {
+  const full = cloneWorkflowGraph(mockWorkflow.nodes, mockWorkflow.edges);
+  const v3Nodes = full.nodes.filter((node: any) => !['n6', 'n8'].includes(node.id));
+  const v3Edges = full.edges.filter((edge: any) => !['e4-6', 'e6-8', 'e8-9'].includes(edge.id));
+  const v2Nodes = full.nodes.filter((node: any) => ['n1', 'n2', 'n3', 'n4', 'n5', 'n7', 'n9', 'n10'].includes(node.id));
+  const v2Edges = full.edges.filter((edge: any) => ['e1-2', 'e2-3', 'e3-4', 'e4-5', 'e5-7', 'e7-9', 'e9-10'].includes(edge.id));
+  const v1Nodes = full.nodes.filter((node: any) => ['n1', 'n2', 'n3', 'n4', 'n9', 'n10'].includes(node.id));
+  const v1Edges = [
+    ...full.edges.filter((edge: any) => ['e1-2', 'e2-3', 'e3-4', 'e9-10'].includes(edge.id)),
+    { id: 'e4-9', source: 'n4', target: 'n9' },
+  ];
+  return [
+    workflowVersionFromGraph({
+      id: 'v4', label: 'v4 · 当前草稿', time: '刚刚', desc: '新增分支：回滚路径', status: 'draft',
+      nodes: full.nodes, edges: full.edges,
+    }),
+    workflowVersionFromGraph({
+      id: 'v3', label: 'v3', time: '15 分钟前', desc: '调整审计节点位置（尚无回滚分支）', status: 'published',
+      publishedAt: '2026-07-30T02:00:00Z', nodes: v3Nodes, edges: v3Edges,
+    }),
+    workflowVersionFromGraph({
+      id: 'v2', label: 'v2', time: '1 小时前', desc: '加入成功路径与受控恢复', status: 'published',
+      publishedAt: '2026-07-30T01:00:00Z', nodes: v2Nodes, edges: v2Edges,
+    }),
+    workflowVersionFromGraph({
+      id: 'v1', label: 'v1', time: '昨天 18:42', desc: '初始版本 · 审批后直达审计通知', status: 'published',
+      publishedAt: '2026-07-29T10:42:00Z', nodes: v1Nodes, edges: v1Edges,
+    }),
+  ];
+}
+
+type WorkflowControl = { draft: any; versions: WorkflowVersionRecord[]; audits: any[]; runs: any[] };
 const workflowControls = new Map<string, WorkflowControl>();
 function workflowControlFor(workspaceId: string): WorkflowControl {
   const existing = workflowControls.get(workspaceId);
   if (existing) return existing;
+  const versions = buildInitialWorkflowVersions();
+  const current = versions[0];
   const initial: WorkflowControl = {
-    draft: { ...JSON.parse(JSON.stringify(mockWorkflow)), workspaceId },
-    versions: [{ id: 'v4', label: 'v4 · 当前草稿', time: '刚刚', desc: '当前工作流草稿' }],
+    draft: {
+      ...JSON.parse(JSON.stringify(mockWorkflow)),
+      workspaceId,
+      nodes: cloneWorkflowGraph(current.nodes, current.edges).nodes,
+      edges: cloneWorkflowGraph(current.nodes, current.edges).edges,
+    },
+    versions,
     audits: [{ id: 'wa1', action: 'WORKFLOW_LOAD', actor: '系统', target: mockWorkflow.name, time: new Date().toISOString(), result: 'success' }],
     runs: mockWorkflowRuns.map((run) => ({ ...run, workspaceId })),
   };
@@ -1410,7 +1489,7 @@ export const mockDocDetail = {
   size: '124 KB',
   chunks: 86,
   version: 'v3.2',
-  content: '# Redis 故障 Runbook\n\n## §3.1 OOM 处理\n\n当 Redis 触发 maxmemory 限制时，优先检查 maxmemory-policy 与最近写入速率；建议在维护窗口执行 volatile-lru 切换。\n\n### 步骤\n\n1. **检测**：监控指标 used_memory 与 maxmemory 比值\n2. **评估**：判断是否有大 Key 写入（>100MB）\n3. **方案**：临时扩容 OR 切换 LRU 策略\n4. **执行**：CONFIG SET maxmemory-policy volatile-lru\n5. **验证**：观察 5min 内 OOM 频率下降\n\n### 历史事件\n\n- 2026-05-22 INC-019：使用 volatile-lru，耗时 38min\n- 2026-04-08 INC-011：临时扩容到 16GB，耗时 22min',
+  content: '# Redis 故障 Runbook\n\n## §3.1 OOM 处理\n\n当 Redis 触发 `maxmemory` 限制时，优先检查 `maxmemory-policy` 与最近写入速率；建议在维护窗口执行 `volatile-lru` 切换。\n\n> 生产变更需完成双重审批，并在变更窗口内保留回滚预案。\n\n### 步骤\n\n1. **检测**：监控指标 `used_memory` 与 `maxmemory` 比值\n2. **评估**：判断是否有大 Key 写入（>100MB）\n3. **方案**：临时扩容 OR 切换 LRU 策略\n4. **执行**：`CONFIG SET maxmemory-policy volatile-lru`\n5. **验证**：观察 5min 内 OOM 频率下降\n\n### 历史事件\n\n- 2026-05-22 INC-019：使用 volatile-lru，耗时 38min\n- 2026-04-08 INC-011：临时扩容到 16GB，耗时 22min',
 };
 
 export const mockSearchHistory = [
@@ -1545,22 +1624,26 @@ function appendKnowledgeAudit(action: string, target: string, result: KnowledgeA
 }
 
 function knowledgeDocDetail(doc: KnowledgeDoc) {
+  const ownerLabels: Record<string, string> = { u1: '平台管理员', u2: '业务构建者', u3: '合规审计员' };
+  const versionMatch = doc.title.match(/v[\d.]+/i);
+  const version = versionMatch?.[0] ?? 'v1.0';
+  const author = ownerLabels[doc.ownerId ?? 'u1'] ?? '未指定责任人';
   return {
     id: doc.id,
     title: doc.title,
     source: doc.source,
-    author: '李婷',
+    author,
     updatedAt: doc.updatedAt.slice(0, 10),
     size: `${doc.sizeKb} KB`,
     chunks: doc.chunks,
-    version: 'v3.2',
+    version,
     status: doc.status,
     citeCount: doc.citeCount,
     tags: doc.source === 'Runbook' ? ['redis', 'oom', '生产环境'] : [doc.source, '企业知识'],
-    classification: doc.source === 'CVE' ? '受限' : '内部',
+    classification: doc.classification === 'restricted' ? '受限' : doc.classification === 'confidential' ? '机密' : '内部',
     chunkStrategy: doc.source === 'CMDB' ? '表格切片' : '结构切片',
     quality: { completeness: 96, freshness: 92, citationAccuracy: 97 },
-    versions: [{ version: 'v3.2', time: doc.updatedAt.slice(0, 10), note: '当前发布版本' }, { version: 'v3.1', time: '2026-06-18', note: '补充处置步骤与引用证据' }],
+    versions: [{ version, time: doc.updatedAt.slice(0, 10), note: '当前发布版本' }, { version: 'v3.1', time: '2026-06-18', note: '补充处置步骤与引用证据' }],
     content: doc.id === 'k1' ? mockDocDetail.content : `# ${doc.title}\n\n该知识资产由企业知识运营工作台管理，已纳入版本、权限和引用审计。`,
   };
 }
@@ -1889,10 +1972,10 @@ const modelProfiles: ModelProfile[] = [
 ];
 
 const modelProviders: ModelProvider[] = [
-  { id: 'p1', workspaceId: 'w1', name: 'Anthropic', tier: 'official', cloudRegion: 'us-west-2', dataResidency: 'global', status: 'active', credentialRef: 'vault://model-providers/p1/credential', credentialMasked: 'sk-…prod', lastVerifiedAt: '2026-07-19T14:32:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p1') },
-  { id: 'p2', workspaceId: 'w1', name: 'Azure OpenAI', tier: 'official', cloudRegion: 'eastasia', dataResidency: 'global', status: 'standby', credentialRef: 'vault://model-providers/p2/credential', credentialMasked: 'key-…prod', lastVerifiedAt: '2026-07-19T14:28:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p2') },
-  { id: 'p5', workspaceId: 'w1', name: 'Qwen2.5-72B', tier: 'self_hosted', cloudRegion: 'cn-east-1', dataResidency: 'cn', status: 'active', credentialRef: 'vault://model-providers/p5/credential', credentialMasked: 'vault-managed', lastVerifiedAt: '2026-07-19T14:31:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p5') },
-  { id: 'p9', workspaceId: 'w2', name: '隔离工作区供应商', tier: 'self_hosted', cloudRegion: 'cn-east-1', dataResidency: 'cn', status: 'active', credentialRef: 'vault://model-providers/p9/credential', credentialMasked: 'vault-managed', lastVerifiedAt: '2026-07-19T14:31:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p9') },
+  { id: 'p1', workspaceId: 'w1', name: 'Anthropic', protocol: 'anthropic', tier: 'official', baseUrl: 'https://api.anthropic.com', cloudRegion: 'us-west-2', dataResidency: 'global', status: 'active', credentialRef: 'vault://model-providers/p1/credential', credentialMasked: 'sk-…prod', lastVerifiedAt: '2026-07-19T14:32:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p1') },
+  { id: 'p2', workspaceId: 'w1', name: 'Azure OpenAI', protocol: 'azure_openai', tier: 'official', baseUrl: 'https://contoso.openai.azure.com', apiVersion: '2024-10-21', deploymentName: 'gpt-4o', cloudRegion: 'eastasia', dataResidency: 'global', status: 'standby', credentialRef: 'vault://model-providers/p2/credential', credentialMasked: 'key-…prod', lastVerifiedAt: '2026-07-19T14:28:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p2') },
+  { id: 'p5', workspaceId: 'w1', name: 'Qwen2.5-72B', protocol: 'ollama', tier: 'self_hosted', baseUrl: 'http://llm-gateway.internal/v1', cloudRegion: 'cn-east-1', dataResidency: 'cn', status: 'active', credentialRef: 'vault://model-providers/p5/credential', credentialMasked: 'vault-managed', lastVerifiedAt: '2026-07-19T14:31:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p5') },
+  { id: 'p9', workspaceId: 'w2', name: '隔离工作区供应商', protocol: 'custom', tier: 'self_hosted', baseUrl: 'http://isolated-llm.internal/v1', cloudRegion: 'cn-east-1', dataResidency: 'cn', status: 'active', credentialRef: 'vault://model-providers/p9/credential', credentialMasked: 'vault-managed', lastVerifiedAt: '2026-07-19T14:31:00.000Z', models: modelProfiles.filter((model) => model.providerId === 'p9') },
 ];
 
 const routingPolicies: RoutingPolicyDraft[] = [
@@ -1906,7 +1989,11 @@ const routingVersions: RoutingPolicyVersion[] = [
   { id: 'route-p2-v1', policyId: 'route-p2', version: 1, snapshot: { ...routingPolicies[2], fallbackModelIds: [] }, publishedAt: '2026-07-18T09:00:00.000Z', publishedBy: '王昊' },
 ];
 
-const modelAuditEvents: ModelAuditEvent[] = [];
+const modelAuditEvents: ModelAuditEvent[] = [
+  { id: 'ma-seed-1', time: '2026-07-19T14:32:00.000Z', workspaceId: 'w1', actor: '王昊', action: '验证供应商连通性', target: 'Anthropic', result: 'success', reason: '定时健康检查', correlationId: 'corr_seed_1' },
+  { id: 'ma-seed-2', time: '2026-07-18T09:05:00.000Z', workspaceId: 'w1', actor: '王昊', action: '发布路由版本', target: 'P0', result: 'success', policyVersion: 'route-p0-v1', correlationId: 'corr_seed_2' },
+  { id: 'ma-seed-3', time: '2026-07-18T08:50:00.000Z', workspaceId: 'w1', actor: '李婷', action: '校验路由草稿', target: 'P1', result: 'failed', reason: '降级链待补齐', correlationId: 'corr_seed_3' },
+];
 
 type ModelRequestOptions = { headers?: Record<string, string>; body?: unknown };
 
@@ -3401,8 +3488,13 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       const candidate = session.candidates.find((item) => item.id === (body.candidateId ?? session.activeCandidateId));
       if (!candidate) throw new Error('请先生成草稿示例');
       const revisionId = `rev_${mockId('wf')}`;
-      workflowGenerationRevisions.set(revisionId, { id: revisionId, generationId: session.id, nodes: JSON.parse(JSON.stringify(candidate.workflow.nodes)), edges: JSON.parse(JSON.stringify(candidate.workflow.edges)), createdAt: new Date().toISOString() });
-      workflowControl.versions.unshift({ id: revisionId, label: `${revisionId} · AI 草稿`, time: '刚刚', desc: `AI 辅助编排会话 · ${session.id}` });
+      const revisionNodes = JSON.parse(JSON.stringify(candidate.workflow.nodes));
+      const revisionEdges = JSON.parse(JSON.stringify(candidate.workflow.edges));
+      workflowGenerationRevisions.set(revisionId, { id: revisionId, generationId: session.id, nodes: revisionNodes, edges: revisionEdges, createdAt: new Date().toISOString() });
+      workflowControl.versions.unshift(workflowVersionFromGraph({
+        id: revisionId, label: `${revisionId} · AI 草稿`, time: '刚刚', desc: `AI 辅助编排会话 · ${session.id}`, status: 'draft',
+        nodes: revisionNodes, edges: revisionEdges,
+      }));
       session.status = 'applied';
       session.appliedRevisionId = revisionId;
       session.updatedAt = new Date().toISOString();
@@ -3628,7 +3720,10 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       const revisionId = `rev_${mockId('wf')}`;
       const revision = { id: revisionId, generationId: record.id, nodes: JSON.parse(JSON.stringify(record.workflow.nodes)), edges: JSON.parse(JSON.stringify(record.workflow.edges)), createdAt: new Date().toISOString() };
       workflowGenerationRevisions.set(revisionId, revision);
-      workflowControl.versions.unshift({ id: revisionId, label: `${revisionId} · AI 草稿`, time: '刚刚', desc: `AI 辅助编排 · ${record.promptDigest}` });
+      workflowControl.versions.unshift(workflowVersionFromGraph({
+        id: revisionId, label: `${revisionId} · AI 草稿`, time: '刚刚', desc: `AI 辅助编排 · ${record.promptDigest}`, status: 'draft',
+        nodes: revision.nodes, edges: revision.edges,
+      }));
       record.status = 'applied';
       record.revisionId = revisionId;
       workflowAudit(workflowControl, 'WORKFLOW_GENERATION_APPLY', `${record.id}:${revisionId}`);
@@ -3642,12 +3737,29 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     if (action === 'draft' && method === 'PUT') {
       const body = (opts.body ?? {}) as Record<string, any>;
       workflowControl.draft = { ...workflowControl.draft, ...body, workspaceId: currentWorkspaceId };
-      const revision = body.version ? workflowGenerationRevisions.get(String(body.version)) : undefined;
+      const versionId = body.version ? String(body.version) : undefined;
+      const revision = versionId ? workflowGenerationRevisions.get(versionId) : undefined;
       if (revision) {
         revision.nodes = JSON.parse(JSON.stringify(body.nodes ?? revision.nodes));
         revision.edges = JSON.parse(JSON.stringify(body.edges ?? revision.edges));
       }
-      workflowAudit(workflowControl, 'WORKFLOW_SAVE', `${workflowDetail[1]}:${body.version ?? 'current-draft'}`);
+      if (versionId) {
+        const existing = workflowControl.versions.find((item) => item.id === versionId);
+        if (existing) {
+          if (existing.status === 'published') {
+            throw new Error('E_WORKFLOW_VERSION_IMMUTABLE: 已发布版本不可覆盖，请另存为新草稿');
+          }
+          const graph = cloneWorkflowGraph(body.nodes ?? existing.nodes, body.edges ?? existing.edges);
+          existing.nodes = graph.nodes;
+          existing.edges = graph.edges;
+          existing.nodeCount = graph.nodes.length;
+          existing.edgeCount = graph.edges.length;
+          existing.time = '刚刚';
+          existing.desc = body.desc ?? existing.desc ?? '保存当前本地草稿';
+          existing.evidenceMode = 'recorded';
+        }
+      }
+      workflowAudit(workflowControl, 'WORKFLOW_SAVE', `${workflowDetail[1]}:${versionId ?? 'current-draft'}`);
       return workflowControl.draft;
     }
     if (action === 'validate' && method === 'POST') {
@@ -3725,16 +3837,90 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       workflowAudit(workflowControl, 'WORKFLOW_RUN', `${workflowDetail[1]}:${run.revisionId}:${run.id}`);
       return run;
     }
-    if (action === 'versions' && method === 'GET') return workflowControl.versions;
+    if (action === 'versions' && method === 'GET') return workflowControl.versions.map((version) => ({
+      ...version,
+      nodes: cloneWorkflowGraph(version.nodes, version.edges).nodes,
+      edges: cloneWorkflowGraph(version.nodes, version.edges).edges,
+    }));
+    if (action === 'versions' && method === 'POST') {
+      if (identity && !identity.permissions.includes('workflow.write')) {
+        throw new Error('E_WORKFLOW_WRITE_FORBIDDEN: 缺少工作流写权限');
+      }
+      const body = (opts.body ?? {}) as Record<string, any>;
+      const nodes = Array.isArray(body.nodes) && body.nodes.length ? body.nodes : workflowControl.draft.nodes;
+      const edges = Array.isArray(body.edges) ? body.edges : (workflowControl.draft.edges ?? []);
+      if (!nodes?.length) throw new Error('E_WORKFLOW_VERSION_EMPTY: 空画布不能另存版本');
+      const version = workflowVersionFromGraph({
+        id: mockId('ver'),
+        label: String(body.label ?? '').trim() || `草稿 · ${new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`,
+        time: '刚刚',
+        desc: String(body.desc ?? '从当前画布另存的草稿版本'),
+        status: 'draft',
+        parentVersionId: body.parentVersionId ? String(body.parentVersionId) : undefined,
+        nodes,
+        edges,
+      });
+      workflowControl.versions.unshift(version);
+      workflowAudit(workflowControl, 'WORKFLOW_VERSION_SAVE', version.id);
+      return version;
+    }
     if (action === 'publish' && method === 'POST') {
+      if (identity && !identity.permissions.includes('workflow.write')) {
+        throw new Error('E_WORKFLOW_WRITE_FORBIDDEN: 缺少工作流写权限');
+      }
+      const body = (opts.body ?? {}) as Record<string, any>;
       const nodeKinds = (workflowControl.draft.nodes ?? []).map((node: any) => node.kind ?? node.data?.kind);
       const hasExternalWrite = nodeKinds.some((kind: string) => ['execute', 'http', 'mcp'].includes(kind));
-      const hasGovernance = nodeKinds.includes('policy') && nodeKinds.includes('approval') && nodeKinds.includes('audit') && nodeKinds.includes('compensate');
-      if (hasExternalWrite && !hasGovernance) throw new Error('高风险工作流缺少治理节点，禁止发布');
-      if (hasExternalWrite) throw new Error('外部执行节点尚未完成依赖与权限授权，禁止发布');
-      workflowAudit(workflowControl, 'WORKFLOW_PUBLISH', workflowDetail[1]); return { ...workflowControl.draft, status: 'published' };
+      const hasRollback = nodeKinds.includes('compensate') || (workflowControl.draft.nodes ?? []).some((n: any) => /回滚|补偿/.test(String(n.label ?? n.data?.label ?? '')));
+      const hasSandboxGovernance = nodeKinds.includes('approval') && nodeKinds.includes('audit') && hasRollback;
+      if (hasExternalWrite && !hasSandboxGovernance) {
+        throw new Error('高风险工作流缺少审批、审计或回滚路径，禁止发布');
+      }
+      if (hasExternalWrite && body.environment === 'production') {
+        throw new Error('外部执行节点尚未完成依赖与权限授权，禁止发布到生产');
+      }
+      const published = workflowVersionFromGraph({
+        id: mockId('pub'),
+        label: String(body.label ?? '').trim() || `发布版 · ${new Date().toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}`,
+        time: '刚刚',
+        desc: String(body.desc ?? `由 ${body.version ?? 'current-draft'} 发布`),
+        status: 'published',
+        publishedAt: new Date().toISOString(),
+        parentVersionId: body.version ? String(body.version) : undefined,
+        nodes: workflowControl.draft.nodes,
+        edges: workflowControl.draft.edges ?? [],
+      });
+      workflowControl.versions.unshift(published);
+      workflowControl.draft = { ...workflowControl.draft, status: 'published' };
+      workflowAudit(workflowControl, 'WORKFLOW_PUBLISH', `${workflowDetail[1]}:${published.id}`);
+      return { ...workflowControl.draft, publishedVersion: published };
     }
-    if (action === 'rollback' && method === 'POST') { workflowAudit(workflowControl, 'WORKFLOW_ROLLBACK', workflowDetail[1]); return workflowControl.draft; }
+    if (action === 'rollback' && method === 'POST') {
+      if (identity && !identity.permissions.includes('workflow.write')) {
+        throw new Error('E_WORKFLOW_WRITE_FORBIDDEN: 缺少工作流写权限');
+      }
+      const body = (opts.body ?? {}) as Record<string, any>;
+      const target = workflowControl.versions.find((item) => item.id === String(body.versionId ?? ''));
+      if (!target) throw new Error('E_WORKFLOW_VERSION_NOT_FOUND: 版本不存在');
+      if (!target.nodes?.length || target.evidenceMode === 'synthetic') {
+        throw new Error('E_WORKFLOW_VERSION_NO_SNAPSHOT: 该版本无节点快照，无法回滚');
+      }
+      const graph = cloneWorkflowGraph(target.nodes, target.edges);
+      workflowControl.draft = { ...workflowControl.draft, nodes: graph.nodes, edges: graph.edges, status: 'active' };
+      const rolled = workflowVersionFromGraph({
+        id: mockId('ver'),
+        label: `回滚自 ${target.id}`,
+        time: '刚刚',
+        desc: `从 ${target.label} 回滚生成的草稿`,
+        status: 'draft',
+        parentVersionId: target.id,
+        nodes: graph.nodes,
+        edges: graph.edges,
+      });
+      workflowControl.versions.unshift(rolled);
+      workflowAudit(workflowControl, 'WORKFLOW_ROLLBACK', `${target.id}→${rolled.id}`);
+      return { draft: workflowControl.draft, version: rolled, restoredFrom: target.id };
+    }
     if (action === 'audit' && method === 'GET') return workflowControl.audits;
   }
   const workflowRunAction = path.match(/^\/api\/workflows\/([^/]+)\/runs\/([^/]+)\/(retry|resume)$/);
@@ -4072,6 +4258,48 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/skills/perms') return mockSkillPerms;
 
   // 模型控制面：以领域状态为唯一事实源。旧 P9 路径保留给历史页面，新增路径用于受控治理。
+  if (path === '/api/model-providers/discover-models' && method === 'POST') {
+    requireModelWrite(opts, (opts.body as any)?.workspaceId ?? 'w1');
+    const body = (opts.body ?? {}) as any;
+    const existing = body.providerId ? modelProviders.find((item) => item.id === String(body.providerId)) : undefined;
+    const protocol = String(body.protocol ?? existing?.protocol ?? 'openai_compatible') as ModelConnectProtocol;
+    const baseUrl = String(body.baseUrl ?? existing?.baseUrl ?? '').trim();
+    if (!baseUrl) throw new Error('E_PROVIDER_DISCOVER_INVALID: 请先填写 API 请求地址');
+    if (!/^https?:\/\//i.test(baseUrl)) throw new Error('E_PROVIDER_DISCOVER_INVALID: API 请求地址格式无效');
+    if (protocol !== 'ollama' && !String(body.apiKey ?? '').trim() && !existing) {
+      throw new Error('E_PROVIDER_DISCOVER_AUTH: 拉取模型列表需要 API Key');
+    }
+    const catalogs: Record<ModelConnectProtocol, Array<{ id: string; name: string }>> = {
+      openai_compatible: [
+        { id: 'gpt-4o', name: 'gpt-4o' }, { id: 'gpt-4o-mini', name: 'gpt-4o-mini' },
+        { id: 'gpt-4.1', name: 'gpt-4.1' }, { id: 'o3-mini', name: 'o3-mini' },
+        { id: 'deepseek-chat', name: 'deepseek-chat' }, { id: 'deepseek-reasoner', name: 'deepseek-reasoner' },
+      ],
+      azure_openai: [
+        { id: 'gpt-4o', name: 'gpt-4o' }, { id: 'gpt-4o-mini', name: 'gpt-4o-mini' },
+        { id: 'gpt-35-turbo', name: 'gpt-35-turbo' }, { id: 'text-embedding-3-large', name: 'text-embedding-3-large' },
+      ],
+      anthropic: [
+        { id: 'claude-sonnet-4-20250514', name: 'claude-sonnet-4-20250514' },
+        { id: 'claude-opus-4-20250514', name: 'claude-opus-4-20250514' },
+        { id: 'claude-haiku-4-20250514', name: 'claude-haiku-4-20250514' },
+      ],
+      dashscope: [
+        { id: 'qwen-max', name: 'qwen-max' }, { id: 'qwen-plus', name: 'qwen-plus' },
+        { id: 'qwen-turbo', name: 'qwen-turbo' }, { id: 'qwen2.5-72b-instruct', name: 'qwen2.5-72b-instruct' },
+      ],
+      ollama: [
+        { id: 'qwen2.5:72b', name: 'qwen2.5:72b' }, { id: 'llama3.1:70b', name: 'llama3.1:70b' },
+        { id: 'deepseek-r1:32b', name: 'deepseek-r1:32b' },
+      ],
+      custom: [
+        { id: 'default', name: 'default' }, { id: 'chat', name: 'chat' }, { id: 'embeddings', name: 'embeddings' },
+      ],
+    };
+    const models = catalogs[protocol] ?? catalogs.openai_compatible;
+    appendModelAudit(opts, '拉取模型列表', baseUrl, 'success', { reason: `${protocol}:${models.length}` });
+    return { protocol, baseUrl, models, fetchedAt: new Date().toISOString() };
+  }
   if (path === '/api/model-providers' && method === 'GET') { const context = requireModelRead(opts); return modelProviders.filter((provider) => provider.workspaceId === context.workspaceId).map((provider) => ({ ...provider, models: provider.models.map((model) => ({ ...model })) })); }
   if (path === '/api/model-providers' && method === 'POST') {
     const body = (opts.body ?? {}) as any;
@@ -4081,8 +4309,35 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       throw new Error('E_PROVIDER_INVALID: 供应商名称、模型和凭据不能为空');
     }
     const providerId = mockId('model_provider');
-    const model: ModelProfile = { id: mockId('model'), providerId, name: body.model.trim(), cloudRegion: body.region ?? 'global', dataResidency: String(body.region ?? '').startsWith('cn-') ? 'cn' : 'global', capabilities: ['chat'], status: 'available', contextWindow: 32_000 };
-    const provider: ModelProvider = { id: providerId, workspaceId: context.workspaceId, name: body.name.trim(), tier: body.tier ?? 'connectable', cloudRegion: model.cloudRegion, dataResidency: model.dataResidency, status: 'standby', credentialRef: `vault://model-providers/${providerId}/credential`, credentialMasked: '••••••••', models: [model] };
+    const region = String(body.region ?? 'global');
+    const model: ModelProfile = {
+      id: mockId('model'),
+      providerId,
+      name: body.model.trim(),
+      cloudRegion: region,
+      dataResidency: region.startsWith('cn-') || region === 'cn' ? 'cn' : 'global',
+      capabilities: ['chat'],
+      status: 'available',
+      contextWindow: 32_000,
+    };
+    const provider: ModelProvider = {
+      id: providerId,
+      workspaceId: context.workspaceId,
+      name: body.name.trim(),
+      note: body.note ? String(body.note).trim() : undefined,
+      protocol: body.protocol,
+      tier: body.tier ?? 'connectable',
+      baseUrl: body.baseUrl ? String(body.baseUrl).trim() : undefined,
+      apiVersion: body.apiVersion ? String(body.apiVersion).trim() : undefined,
+      organizationId: body.organizationId ? String(body.organizationId).trim() : undefined,
+      deploymentName: body.deploymentName ? String(body.deploymentName).trim() : undefined,
+      cloudRegion: model.cloudRegion,
+      dataResidency: model.dataResidency,
+      status: 'standby',
+      credentialRef: `vault://model-providers/${providerId}/credential`,
+      credentialMasked: '••••••••',
+      models: [model],
+    };
     modelProfiles.push(model);
     modelProviders.unshift(provider);
     appendModelAudit(opts, '接入供应商', provider.name, 'success', { reason: body.reason });
@@ -4098,8 +4353,45 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     requireModelWrite(opts, provider.workspaceId);
     if (method === 'POST' && action === 'test') {
       provider.lastVerifiedAt = new Date().toISOString();
+      if (provider.status === 'standby' || provider.status === 'draft' || provider.status === 'offline') {
+        provider.status = 'active';
+      }
+      provider.models.forEach((model) => { if (provider.status === 'active') model.status = 'available'; });
       appendModelAudit(opts, '验证供应商连通性', provider.name, 'success', { reason: body.reason });
-      return { providerId: provider.id, status: 'healthy', verifiedAt: provider.lastVerifiedAt };
+      return { providerId: provider.id, status: 'healthy', providerStatus: provider.status, verifiedAt: provider.lastVerifiedAt };
+    }
+    if (method === 'PATCH' && !action) {
+      if (!body.name?.trim() && !body.region && !body.tier && body.baseUrl == null && body.protocol == null && body.model == null && body.note == null && body.apiVersion == null && body.organizationId == null && body.deploymentName == null && !body.credential) {
+        throw new Error('E_PROVIDER_INVALID: 请至少提供一项连接配置变更');
+      }
+      if (body.name?.trim()) provider.name = String(body.name).trim();
+      if (body.note != null) provider.note = String(body.note).trim() || undefined;
+      if (body.protocol) provider.protocol = body.protocol;
+      if (body.tier) provider.tier = body.tier;
+      if (body.baseUrl != null) provider.baseUrl = String(body.baseUrl).trim() || undefined;
+      if (body.apiVersion != null) provider.apiVersion = String(body.apiVersion).trim() || undefined;
+      if (body.organizationId != null) provider.organizationId = String(body.organizationId).trim() || undefined;
+      if (body.deploymentName != null) provider.deploymentName = String(body.deploymentName).trim() || undefined;
+      if (body.region) {
+        provider.cloudRegion = String(body.region);
+        provider.dataResidency = String(body.region).startsWith('cn-') || String(body.region) === 'cn' ? 'cn' : 'global';
+        provider.models.forEach((model) => {
+          model.cloudRegion = provider.cloudRegion;
+          model.dataResidency = provider.dataResidency;
+        });
+      }
+      if (body.model?.trim() && provider.models[0]) {
+        provider.models[0].name = String(body.model).trim();
+        provider.models[0].cloudRegion = provider.cloudRegion;
+        provider.models[0].dataResidency = provider.dataResidency;
+      }
+      if (body.credential?.trim()) {
+        provider.credentialMasked = '••••••••';
+        provider.credentialRef = `vault://model-providers/${provider.id}/credential`;
+        provider.status = provider.status === 'active' ? 'standby' : provider.status;
+      }
+      appendModelAudit(opts, '更新供应商资料', provider.name, 'success', { reason: body.reason });
+      return provider;
     }
     if (method === 'POST' && action === 'disable') {
       provider.status = 'disabled';
@@ -4196,10 +4488,41 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     appendModelAudit(opts, '执行隔离故障切换演练', policy.level, 'success', { reason: body.reason, correlationId });
     return { id: mockId('failover'), policyId: policy.id, scope: body.scope, status: 'passed', fromModelId: policy.primaryModelId, toModelId: fallback, correlationId };
   }
-  if (path === '/api/model-governance/overview' && method === 'GET') { const context = requireModelRead(opts); return { activeProviders: modelProviders.filter((provider) => provider.workspaceId === context.workspaceId && provider.status === 'active').length, publishedRoutes: routingPolicies.filter((policy) => policy.workspaceId === context.workspaceId && policy.status === 'published').length, budgetRisk: 'normal', updatedAt: new Date().toISOString() }; }
-  if (path === '/api/model-audit' && method === 'GET') { const context = requireModelRead(opts); return modelAuditEvents.filter((event) => event.workspaceId === context.workspaceId).map((event) => ({ ...event })); }
+  if (path === '/api/model-governance/overview' && method === 'GET') {
+    const context = requireModelRead(opts);
+    const providers = modelProviders.filter((provider) => provider.workspaceId === context.workspaceId);
+    const policies = routingPolicies.filter((policy) => policy.workspaceId === context.workspaceId);
+    const regionMap = new Map<string, number>();
+    providers.forEach((provider) => regionMap.set(provider.cloudRegion, (regionMap.get(provider.cloudRegion) ?? 0) + 1));
+    const monthlyBudgetUsd = policies.reduce((sum, policy) => sum + (policy.budgetLimitUsd || 0), 0);
+    const monthlySpendUsd = Math.round(monthlyBudgetUsd * 0.42);
+    const budgetRisk = monthlyBudgetUsd <= 0 ? 'attention' : monthlySpendUsd / monthlyBudgetUsd > 0.85 ? 'critical' : monthlySpendUsd / monthlyBudgetUsd > 0.65 ? 'attention' : 'normal';
+    const activeProviders = providers.filter((provider) => provider.status === 'active').length;
+    return {
+      activeProviders,
+      standbyProviders: providers.filter((provider) => provider.status === 'standby').length,
+      disabledProviders: providers.filter((provider) => provider.status === 'disabled').length,
+      publishedRoutes: policies.filter((policy) => policy.status === 'published').length,
+      draftRoutes: policies.filter((policy) => policy.status === 'draft' || policy.status === 'ready').length,
+      budgetRisk,
+      monthlyBudgetUsd,
+      monthlySpendUsd,
+      healthyShare: providers.length ? Math.round((activeProviders / providers.length) * 100) : 0,
+      avgLatencyMs: 420,
+      regionDistribution: Array.from(regionMap.entries()).map(([region, count]) => ({ region, count })),
+      updatedAt: new Date().toISOString(),
+    };
+  }
+  if (path === '/api/model-audit' && method === 'GET') {
+    const context = requireModelRead(opts);
+    const action = opts.query?.action ? String(opts.query.action) : '';
+    return modelAuditEvents
+      .filter((event) => event.workspaceId === context.workspaceId)
+      .filter((event) => !action || action === 'all' || event.action.includes(action))
+      .map((event) => ({ ...event }));
+  }
 
-  // 模型 Provider 与路由策略（历史 P9 API，待页面迁移后删除）
+  // 模型 Provider 与路由策略（历史 P9 API，仅兼容旧调用；新页面请使用 /api/model-*）
   if (path === '/api/providers' && method === 'GET') return mockProviders;
   if (path === '/api/providers' && method === 'POST') {
     const body = (opts.body ?? {}) as Partial<Provider> & { model?: string };
@@ -4215,7 +4538,6 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/route-flow') return mockRouteFlow;
   if (path === '/api/export-routes') return mockExportRoutes;
   if (path === '/api/model-compare') return mockModelCompare;
-  if (path === '/api/model-audit') return [...mockControlPlaneAudit.filter((item) => item.domain === 'model'), ...mockAuditLog];
   if (path === '/api/routes' && method === 'GET') return mockRoutes;
   if (path === '/api/routes' && method === 'PATCH') { const body = (opts.body ?? {}) as Partial<ModelRoute>; const route = mockRoutes.find((item) => item.level === body.level); if (!route) throw new Error('路由策略不存在'); Object.assign(route, body); appendControlPlaneAudit('model', '更新模型路由', route.level); return route; }
   if (path === '/api/model-failover-test' && method === 'POST') { const route = mockRoutes.find((item) => item.fallback1 && item.fallback1 !== '—') ?? mockRoutes[0]; appendControlPlaneAudit('model', '执行故障切换演练', route.level); return { level: route.level, from: route.primary, to: route.fallback1, reason: '模拟主 Provider 503 故障' }; }

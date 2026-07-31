@@ -137,6 +137,17 @@ describe('workflow canvas orchestration', () => {
     expect(mockSource).toContain('治理发布工作流技能');
   });
 
+  it('keeps version governance under canvas capsule rather than primary tab', () => {
+    expect(workflowsSource).toContain("labelKey: 'module.workflows.tabs.history'");
+    expect(workflowsSource).not.toContain("labelKey: 'module.workflows.tabs.versions'");
+    expect(workflowsSource).toContain('打开版本中心');
+    expect(workflowsSource).toContain('回滚并生成新草稿');
+    expect(workflowsSource).toContain('WorkflowLifecycleStrip');
+    expect(workflowsSource).toContain('wf-boundary');
+    expect(workflowsSource).toContain('/api/workflows/${workflowId}');
+    expect(workflowsSource).not.toContain("'/api/workflows/wf1'");
+  });
+
   it('enforces structure gates for external write nodes', () => {
     expect(workflowsSource).toContain('evaluateWorkflowStructure');
     expect(workflowsSource).toContain('存在外部写入节点，但缺少双重审批节点');

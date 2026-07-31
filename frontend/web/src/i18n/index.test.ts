@@ -38,6 +38,8 @@ describe('enterprise navigation translations', () => {
       expect([...DICTS['zh-CN'][key]].length).toBe(4);
     }
     expect(DICTS['zh-CN']['nav.group.operations']).toBe('协作');
+    expect(DICTS['zh-CN']['account.platformSettings']).toBe('平台设置');
+    expect(DICTS['zh-CN']['module.settings.tabs.usage']).toBe('套餐用量');
     expect(DICTS['zh-CN']['nav.workflows']).toBe('工作流程');
     expect(DICTS['zh-CN']['nav.zeroTrust']).toBe('持续验证');
     expect(DICTS['zh-CN']['module.agents.tabs.market']).not.toContain('工厂');

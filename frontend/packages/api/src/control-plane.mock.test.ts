@@ -82,6 +82,33 @@ describe('control plane mock mutations', () => {
 
     const verified = await mockHandler(`/api/model-providers/${provider.id}/test`, { method: 'POST', headers: modelWriteHeaders, body: { reason: '上线前连通性验证' } }) as any;
     expect(verified.status).toBe('healthy');
+    expect(verified.providerStatus).toBe('active');
+
+    const providers = await mockHandler('/api/model-providers', { method: 'GET', headers: modelWriteHeaders }) as any[];
+    expect(providers.find((item) => item.id === provider.id)?.status).toBe('active');
+  });
+
+  it('allows patching provider metadata without returning raw credentials', async () => {
+    const provider = await mockHandler('/api/model-providers', {
+      method: 'POST', headers: modelWriteHeaders,
+      body: { name: '待更名供应商', tier: 'official', region: 'us-east-1', model: 'gpt-test', credential: 'sk-secret-value' },
+    }) as any;
+    const updated = await mockHandler(`/api/model-providers/${provider.id}`, {
+      method: 'PATCH', headers: modelWriteHeaders,
+      body: { name: '已更名供应商', region: 'cn-east-1', reason: '资料校正' },
+    }) as any;
+    expect(updated.name).toBe('已更名供应商');
+    expect(updated.cloudRegion).toBe('cn-east-1');
+    expect(updated.dataResidency).toBe('cn');
+    expect(JSON.stringify(updated)).not.toContain('sk-secret-value');
+  });
+
+  it('returns an expanded governance overview snapshot', async () => {
+    const overview = await mockHandler('/api/model-governance/overview', { method: 'GET', headers: modelWriteHeaders }) as any;
+    expect(overview.activeProviders).toBeGreaterThan(0);
+    expect(overview).toHaveProperty('monthlyBudgetUsd');
+    expect(overview).toHaveProperty('regionDistribution');
+    expect(['normal', 'attention', 'critical']).toContain(overview.budgetRisk);
   });
 
   it('rejects removal of a provider referenced by a published model route', async () => {

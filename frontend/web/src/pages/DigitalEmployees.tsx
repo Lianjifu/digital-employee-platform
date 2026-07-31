@@ -221,7 +221,7 @@ export default function DigitalEmployees() {
           <div className="flex items-start justify-between gap-4 px-5 py-4">
             <div className="min-w-0">
               <div className="flex items-center gap-2">
-                <div className="de-employee-icon-tile grid h-8 w-8 place-items-center rounded-lg text-[var(--text-secondary)]"><BriefcaseBusiness className="h-4 w-4" /></div>
+                <div className="de-employee-icon-tile grid h-8 w-8 place-items-center rounded-lg"><BriefcaseBusiness className="h-4 w-4" /></div>
                 <h1 className="text-base font-semibold text-[var(--text)]">{t('nav.agents')}</h1>
               </div>
               <p className="mt-2 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">专家团队协同的数字员工：岗位边界清晰，双重审批与人工接管可追溯。</p>
@@ -238,14 +238,14 @@ export default function DigitalEmployees() {
 
         {tab === 'catalog' && <>
           <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <KpiCard label="在册专家" value={overview?.total ?? 0} sub="个" icon={UsersRound} tone="neutral" size="comfortable" />
+            <KpiCard label="在册专家" value={overview?.total ?? 0} sub="个" icon={UsersRound} tone="brand" size="comfortable" />
             <KpiCard label="已上岗" value={overview?.active ?? 0} sub="个" icon={CheckCircle2} tone="success" size="comfortable" />
             <KpiCard label="待上岗审批" value={overview?.pending ?? 0} sub="个" icon={Clock3} tone="warn" size="comfortable" />
             <KpiCard label="运行异常" value={overview?.anomalies ?? 0} sub="个" icon={ShieldAlert} tone={(overview?.anomalies ?? 0) > 0 ? 'warn' : 'success'} size="comfortable" />
           </section>
           <section className="de-employee-shell overflow-hidden rounded-xl bg-[var(--surface-1)]">
             <div className="flex flex-wrap items-center gap-2 px-4 py-3" style={{ boxShadow: 'var(--saas-divider)' }}>
-              <div className="relative min-w-[210px] flex-1"><Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索专家、岗位、部门或负责人" className="de-employee-input h-9 w-full rounded-lg bg-[var(--bg)] pl-8 pr-3 text-xs outline-none" /></div>
+              <div className="relative min-w-[210px] flex-1"><Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--brand)]" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索专家、岗位、部门或负责人" className="de-employee-input h-9 w-full rounded-lg bg-[var(--bg)] pl-8 pr-3 text-xs outline-none" /></div>
               <select value={lifecycle} onChange={(event) => setLifecycle(event.target.value)} className="de-employee-input h-9 rounded-lg bg-[var(--bg)] px-2 text-xs text-[var(--text-secondary)]">{['全部状态', ...Object.values(lifecycleMeta).map((item) => item.label)].map((item) => <option key={item}>{item}</option>)}</select>
             </div>
             <div className="flex gap-1 overflow-x-auto px-4 py-2.5" style={{ boxShadow: 'var(--saas-divider)' }}>{departments.map((item) => <button type="button" key={item} onClick={() => setDepartment(item)} className={cn('de-employee-chip shrink-0 rounded-md px-3 py-1.5 text-xs transition-colors', department === item && 'is-active')}>{item}</button>)}</div>
@@ -407,7 +407,7 @@ function EmployeeCard({ employee, onSelect }: { employee: DigitalEmployee; onSel
               <div className="mt-1 text-[11px] text-[var(--text-muted)]">{employeeSecondaryLabel(employee)}</div>
             </div>
           </div>
-          <ArrowUpRight className="h-4 w-4 shrink-0 text-[var(--text-muted)] transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+          <ArrowUpRight className="h-4 w-4 shrink-0 text-[var(--brand)] transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
         </div>
         <div className="mt-3 flex flex-wrap gap-1.5">
           {isDepartmentHead(employee) && <Badge tone="info">部门负责人</Badge>}
@@ -418,7 +418,7 @@ function EmployeeCard({ employee, onSelect }: { employee: DigitalEmployee; onSel
         {tags.length > 0 && <div className="mt-2 flex flex-wrap gap-1">{tags.map((tag) => <span key={tag} className="max-w-[110px] truncate rounded px-2 py-0.5 text-[10px] text-[var(--text-muted)]" style={{ boxShadow: 'var(--saas-ring)' }}>{tag}</span>)}</div>}
       </button>
       {employee.lifecycle === 'active' && (
-        <div className="mt-3 flex justify-end gap-2 pt-3" style={{ boxShadow: 'inset 0 1px 0 rgba(15,23,42,0.06)' }}>
+        <div className="mt-3 flex justify-end gap-2 pt-3" style={{ boxShadow: 'inset 0 1px 0 color-mix(in srgb, var(--brand) 14%, transparent)' }}>
           {isDepartmentHead(employee) && (
             <button type="button" className="de-employee-btn" onClick={(event) => { event.stopPropagation(); onSelect(); }}>
               <UsersRound className="h-3.5 w-3.5" />班组调度
@@ -480,7 +480,7 @@ function EmployeePlaza({ employees, onCreate, onAdopt, onClose }: { employees: D
         </div>
         <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] bg-[var(--bg)] px-5 py-3">
           <div className="relative min-w-[220px] flex-1">
-            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" />
+            <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--brand)]" />
             <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索岗位、部门或能力标签" className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] pl-8 pr-3 text-xs outline-none focus:border-[var(--brand)]" />
           </div>
           <select value={source} onChange={(event) => setSource(event.target.value as typeof source)} className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs">
