@@ -64,10 +64,7 @@ export default function Governance({ embedded = false }: { embedded?: boolean } 
 
   const tabNav = (
     <nav
-      className={cn(
-        'flex gap-1 overflow-x-auto rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-1',
-        embedded ? 'flex-1' : 'mt-4',
-      )}
+      className={cn('settings-subnav', !embedded && 'mt-4')}
       aria-label="访问治理分类"
     >
       {tabItems.map(([key, label]) => (
@@ -75,12 +72,7 @@ export default function Governance({ embedded = false }: { embedded?: boolean } 
           key={key}
           type="button"
           onClick={() => setTab(key)}
-          className={cn(
-            'shrink-0 rounded px-3 py-2 text-xs transition-colors',
-            tab === key
-              ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm'
-              : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]',
-          )}
+          className={cn('settings-subnav__item', tab === key && 'is-active')}
         >
           {label}
         </button>
@@ -97,21 +89,29 @@ export default function Governance({ embedded = false }: { embedded?: boolean } 
   return (
     <div className={cn(embedded ? 'min-w-0 space-y-3' : 'mx-auto min-h-full max-w-[1480px] p-3 sm:p-4 lg:p-5')}>
       {!embedded ? (
-        <header className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-4 py-4 sm:px-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h1 className="flex items-center gap-2 text-base font-semibold">
-                <Shield className="h-4 w-4 text-[var(--brand)]" />{t('module.governance.title')}
-              </h1>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">{t('module.governance.subtitle')}</p>
+        <>
+          <header className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-4 py-4 sm:px-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h1 className="flex items-center gap-2 text-base font-semibold">
+                  <Shield className="h-4 w-4 text-[var(--brand)]" />{t('module.governance.title')}
+                </h1>
+                <p className="mt-1 text-xs text-[var(--text-muted)]">{t('module.governance.subtitle')}</p>
+              </div>
+              {grantButton}
             </div>
-            {grantButton}
-          </div>
-          {tabNav}
-        </header>
+            {tabNav}
+          </header>
+          <section className="settings-kpis mt-3">
+            <KpiCard label="生效授权" value={activeGrants} sub="个" icon={UsersRound} tone="brand" size="comfortable" />
+            <KpiCard label="即将到期" value={expiringGrants} sub="个" icon={Clock3} tone={expiringGrants ? 'warn' : 'success'} size="comfortable" />
+            <KpiCard label="待发布审批" value={pendingApprovals.length} sub="项" icon={Shield} tone={pendingApprovals.length ? 'warn' : 'success'} size="comfortable" />
+            <KpiCard label="职责风险" value={sodIssues} sub="项" icon={AlertTriangle} tone={sodIssues ? 'warn' : 'success'} size="comfortable" />
+          </section>
+        </>
       ) : (
         <>
-          <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <section className="settings-kpis">
             <KpiCard label="生效授权" value={activeGrants} sub="个" icon={UsersRound} tone="brand" size="comfortable" />
             <KpiCard label="即将到期" value={expiringGrants} sub="个" icon={Clock3} tone={expiringGrants ? 'warn' : 'success'} size="comfortable" />
             <KpiCard label="待发布审批" value={pendingApprovals.length} sub="项" icon={Shield} tone={pendingApprovals.length ? 'warn' : 'success'} size="comfortable" />

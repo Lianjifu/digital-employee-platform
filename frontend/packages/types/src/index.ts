@@ -703,6 +703,8 @@ export interface MemoryRecord {
   id: ID;
   workspaceId: ID;
   ownerId: ID;
+  /** 关联数字员工；用于岗位维度检索与策略对照。 */
+  digitalEmployeeId?: ID;
   layer: MemoryLayer;
   scope: MemoryScope;
   title: string;
@@ -789,6 +791,13 @@ export interface Skill {
   hasUpdate?: boolean;
   upgradeVersion?: string;
   tags?: string[];
+}
+
+export interface CapabilityRef {
+  id: ID;
+  kind: 'skill' | 'mcp' | 'tool' | 'workflow_skill';
+  name: string;
+  pinnedVersion: string;
 }
 
 export interface SkillGovernancePolicy {

@@ -37,16 +37,16 @@ export default function AuditCenter({ embedded = false }: { embedded?: boolean }
   }, [storyRows]);
 
   const tabNav = (
-    <nav className={cn('flex gap-1 rounded-md bg-[var(--bg-elevated)] p-1', embedded ? '' : 'mt-4')}>
+    <nav className={cn('settings-subnav', !embedded && 'mt-4')} aria-label="审计分类">
       {([['events', '审计事件'], ['storyline', '故事线'], ['review', '合规复核'], ['exports', '导出历史']] as const).map(([key, label]) => (
-        <button key={key} onClick={() => setTab(key)} className={tab === key ? 'rounded bg-[var(--bg)] px-3 py-2 text-xs font-semibold text-[var(--brand)] shadow-sm' : 'rounded px-3 py-2 text-xs text-[var(--text-muted)]'}>{label}</button>
+        <button key={key} type="button" onClick={() => setTab(key)} className={cn('settings-subnav__item', tab === key && 'is-active')}>{label}</button>
       ))}
     </nav>
   );
   const searchBar = (tab === 'events' || tab === 'storyline') && (
-    <div className={cn('flex h-9 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-3', embedded ? 'mt-3' : 'mt-4')}>
-      <Filter className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-      <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="按操作人、资源、关联 ID 搜索" className="min-w-0 flex-1 bg-transparent text-xs outline-none placeholder:text-[var(--text-muted)]" />
+    <div className={cn('settings-search', embedded ? 'mt-3' : 'mt-4')}>
+      <Filter className="h-3.5 w-3.5" />
+      <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="按操作人、资源、关联 ID 搜索" />
     </div>
   );
 
@@ -85,14 +85,19 @@ export default function AuditCenter({ embedded = false }: { embedded?: boolean }
 
       {tab === 'storyline' && (
         <section className="mt-3 space-y-3">
-          <div className="flex flex-wrap gap-1 rounded-lg border border-[var(--border)] bg-[var(--bg)] p-1">
+          <div className="flex flex-wrap gap-1 settings-subnav">
             {([
               ['all', '全部故事线', FileSearch],
               ['employee', '数字员工', Bot],
               ['task', '任务协作', ListChecks],
               ['workflow', '工作流程', Workflow],
             ] as const).map(([key, label, Icon]) => (
-              <button key={key} type="button" onClick={() => setStoryline(key)} className={storyline === key ? 'flex items-center gap-1.5 rounded-md bg-[var(--brand-light)] px-3 py-2 text-xs font-semibold text-[var(--brand)]' : 'flex items-center gap-1.5 rounded-md px-3 py-2 text-xs text-[var(--text-muted)] hover:bg-[var(--bg-hover)]'}>
+              <button
+                key={key}
+                type="button"
+                onClick={() => setStoryline(key)}
+                className={cn('settings-subnav__item', storyline === key && 'is-active')}
+              >
                 <Icon className="h-3.5 w-3.5" />{label}
               </button>
             ))}

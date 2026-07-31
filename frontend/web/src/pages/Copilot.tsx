@@ -966,88 +966,87 @@ export default function Copilot() {
         aria-label="会话列表"
         data-open={sessionsOpen ? 'true' : 'false'}
       >
-        <div className="px-3 py-3 border-b border-[var(--border)] space-y-2">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xs font-semibold text-[var(--text-secondary)]">会话记录</h2>
-            <span className="text-[10px] text-[var(--text-muted)]">固定保留</span>
+        <div className="copilot-sessions__head">
+          <div className="copilot-sessions__title-row">
+            <h2>会话记录</h2>
+            <span className="copilot-sessions__count" title="当前工作区可见会话数">{filteredSessions.length}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <Button size="sm" className="flex-1" onClick={openNewSessionPicker}>
-              <Plus className="h-3.5 w-3.5" />新会话
-            </Button>
-            <span className="text-[10px] text-[var(--text-muted)] font-mono" title="当前工作区可见会话数">{filteredSessions.length}</span>
-          </div>
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-[var(--text-muted)]" />
-            <Input
+          <Button size="sm" className="copilot-sessions__new" onClick={openNewSessionPicker}>
+            <Plus className="h-3.5 w-3.5" />新会话
+          </Button>
+          <div className="copilot-sessions__search">
+            <Search className="h-3.5 w-3.5" />
+            <input
               value={searchQ}
               onChange={(e) => setSearchQ(e.target.value)}
               placeholder="搜索会话..."
-              className="h-8 pl-8 text-xs"
+              aria-label="搜索会话"
             />
           </div>
         </div>
-        <div className="flex-1 overflow-y-auto py-2">
+
+        <div className="copilot-sessions__body">
           {(['pinned', 'today', 'yesterday', 'week', 'earlier'] as const).map((g) =>
             grouped[g].length === 0 ? null : (
-              <div key={g} className="mb-2.5 last:mb-0">
-                <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
+              <section key={g} className="copilot-sessions__group">
+                <div className="copilot-sessions__group-head">
                   {g === 'pinned' && <Pin className="h-3 w-3" />}
-                  {g === 'today' ? '今天' : g === 'yesterday' ? '昨天' : g === 'week' ? '本周' : g === 'earlier' ? '更早' : '置顶'}
-                  {g === 'pinned' && <Badge tone="brand" className="text-[9px] ml-auto">置顶</Badge>}
+                  <span>{g === 'today' ? '今天' : g === 'yesterday' ? '昨天' : g === 'week' ? '本周' : g === 'earlier' ? '更早' : '置顶'}</span>
+                  <span className="copilot-sessions__group-count">{grouped[g].length}</span>
                 </div>
-                {grouped[g].map((s) => {
-                  const active = s.id === chat.state.activeId;
-                  return (
-                    <div key={s.id} className="copilot-session-item__wrap relative group">
-                      <button
-                        type="button"
-                        onClick={() => switchSession(s.id)}
-                        onDoubleClick={() => chat.togglePin(s.id)}
-                        className={cn('session-item copilot-session-item w-full text-left', active && 'session-item--active')}
-                        aria-current={active ? 'page' : undefined}
-                        aria-label={`${s.title}，${s.status === 'active' ? '进行中' : '已完成'}${s.unread ? `，${s.unread} 条未读` : ''}`}
-                      >
-                        <div className="grid grid-cols-[1fr_auto] items-center gap-2">
-                          <div className="session-item__title min-w-0">
-                            {s.pinned && <Pin className="h-3 w-3 shrink-0 text-[var(--brand)]" />}
-                            <span className="truncate">{s.title}</span>
-                          </div>
-                          <div className="shrink-0 flex items-center gap-1">
+                <div className="copilot-sessions__list">
+                  {grouped[g].map((s) => {
+                    const active = s.id === chat.state.activeId;
+                    return (
+                      <div key={s.id} className="copilot-session-item__wrap group">
+                        <button
+                          type="button"
+                          onClick={() => switchSession(s.id)}
+                          onDoubleClick={() => chat.togglePin(s.id)}
+                          className={cn('session-item copilot-session-item', active && 'session-item--active')}
+                          aria-current={active ? 'page' : undefined}
+                          aria-label={`${s.title}，${s.status === 'active' ? '进行中' : '已完成'}${s.unread ? `，${s.unread} 条未读` : ''}`}
+                        >
+                          <div className="session-item__top">
+                            <div className="session-item__title">
+                              {s.pinned && <Pin className="h-3 w-3 shrink-0 text-[var(--brand)]" />}
+                              <span className="truncate">{s.title}</span>
+                            </div>
                             {s.unread ? (
-                              <span className="min-w-[16px] h-4 rounded-full bg-[var(--danger)] text-white text-[9px] font-mono flex items-center justify-center px-1">{s.unread}</span>
+                              <span className="session-item__unread">{s.unread}</span>
                             ) : (
-                              <span className="text-[10px] text-[var(--text-muted)] font-mono whitespace-nowrap">{s.time}</span>
+                              <time className="session-item__time">{s.time}</time>
                             )}
                           </div>
-                        </div>
-                        <div className="session-item__preview">{s.preview || '(空)'}</div>
-                        <div className="session-item__meta">
-                          <span className="nav-pill text-[10px] !py-0.5">{s.agent}</span>
-                          <Badge tone={s.status === 'active' ? 'brand' : 'success'} className="text-[10px]">
-                            {s.status === 'active' ? '进行中' : '已完成'}
-                          </Badge>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => chat.delSession(s.id)}
-                        className="copilot-session-item__delete absolute right-2 bottom-2 grid h-5 w-5 place-items-center rounded text-[var(--text-muted)] opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-[var(--danger)] hover:bg-[var(--danger-bg)] transition-all"
-                        aria-label={`删除会话：${s.title}`}
-                        title="删除"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
+                          <div className="session-item__preview">{s.preview || '暂无消息'}</div>
+                          <div className="session-item__meta">
+                            <span className="session-item__agent">{s.agent}</span>
+                            <Badge tone={s.status === 'active' ? 'brand' : 'success'} className="text-[10px]">
+                              {s.status === 'active' ? '进行中' : '已完成'}
+                            </Badge>
+                          </div>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => chat.delSession(s.id)}
+                          className="copilot-session-item__delete"
+                          aria-label={`删除会话：${s.title}`}
+                          title="删除"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
             )
           )}
           {filteredSessions.length === 0 && (
-            <div className="text-center text-xs text-[var(--text-muted)] py-8">
-              <Bot className="h-8 w-8 mx-auto mb-2 opacity-30" />
-              还没有会话，点'新会话'开始
+            <div className="copilot-sessions__empty">
+              <Bot className="h-8 w-8" />
+              <strong>还没有会话</strong>
+              <span>点击「新会话」选择在岗专家开始协作</span>
             </div>
           )}
         </div>
@@ -1703,7 +1702,7 @@ export default function Copilot() {
       >
         {detailsOpen ? (
         <div className="copilot-agent-details__inner flex min-h-0 flex-1 flex-col">
-          <header className="copilot-agent-details__header shrink-0 border-b border-[var(--border)] px-4 py-3">
+          <header className="copilot-agent-details__header shrink-0">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-2.5">
                 <span className="copilot-agent-details__avatar shrink-0">
@@ -1730,7 +1729,7 @@ export default function Copilot() {
                 <button type="button" onClick={closeContext} title="关闭会话上下文" aria-label="关闭会话上下文" className="copilot-details-header-action grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-[var(--surface-1)] text-[var(--text-muted)] hover:!bg-[var(--danger-bg)] hover:!text-[var(--danger)]"><X className="h-4 w-4" /></button>
               </div>
             </div>
-            <div className="copilot-agent-details__status-row mt-3 flex flex-wrap items-center gap-2">
+            <div className="copilot-agent-details__status-row">
               <span className={cn('copilot-agent-details__status-dot', handoffActive || sessionMode === 'execute' ? 'copilot-agent-details__status-dot--warning' : 'copilot-agent-details__status-dot--active')} aria-hidden="true" />
               <Badge tone={handoffActive || sessionMode === 'execute' ? 'warn' : 'brand'} className="text-[10px]">{handoffActive ? '人工接管中' : sessionMode === 'execute' ? '受控执行中' : '研判进行中'}</Badge>
               <span className={cn('copilot-agent-details__risk', riskLevel === 'high' ? 'copilot-agent-details__risk--high' : riskLevel === 'medium' ? 'copilot-agent-details__risk--medium' : 'copilot-agent-details__risk--low')}>
@@ -1739,17 +1738,19 @@ export default function Copilot() {
               {handoffActive && <span className="copilot-agent-details__handoff">由 {handoffOwner} 处理后续变更</span>}
             </div>
           </header>
-          <div className="copilot-agent-details__body min-h-0 flex-1 overflow-y-auto">
-            <nav className="copilot-agent-details__tabs sticky top-0 z-10 flex gap-1 overflow-x-auto border-b border-[var(--border)] bg-[var(--bg)] px-4" aria-label="会话上下文分区">
-              {visibleContextTabs.map(({ tab, label, count }) => (
-                <button key={tab} type="button" onClick={() => setContextTab(tab)} aria-current={contextTab === tab ? 'page' : undefined} className={cn('copilot-agent-details__tab shrink-0', contextTab === tab && 'is-active')}>
-                  <span>{label}</span>
-                  {count !== undefined && <span className="copilot-agent-details__tab-count">{count}</span>}
-                </button>
-              ))}
-            </nav>
+
+          <nav className="copilot-agent-details__tabs shrink-0" aria-label="会话上下文分区">
+            {visibleContextTabs.map(({ tab, label, count }) => (
+              <button key={tab} type="button" onClick={() => setContextTab(tab)} aria-current={contextTab === tab ? 'page' : undefined} className={cn('copilot-agent-details__tab', contextTab === tab && 'is-active')}>
+                <span>{label}</span>
+                {count !== undefined && <span className="copilot-agent-details__tab-count">{count}</span>}
+              </button>
+            ))}
+          </nav>
+
+          <div className="copilot-agent-details__body min-h-0 flex-1">
             {contextTab === 'admin' && (
-              <section className="copilot-agent-details__section copilot-agent-details__section--admin space-y-3 border-b border-[var(--border)] px-4 py-4">
+              <section className="copilot-agent-details__section copilot-agent-details__section--admin space-y-3">
                 <div className="copilot-agent-details__section-heading flex items-center gap-1.5"><Settings className="h-3.5 w-3.5 text-[var(--brand)]" />运行控制 <Badge tone="brand" className="ml-auto text-[9px]">管理员</Badge></div>
                 <Row label="当前模型" value={<span className="font-mono text-[11px]">{currentModel.label} · {currentModel.tier}</span>} />
                 <Row label="启用工具" value={<span className="font-mono text-[11px]">{enabledToolCount}/{availableTools.length}</span>} />
@@ -1760,139 +1761,142 @@ export default function Copilot() {
             {contextTab !== 'overview' && contextTab !== 'admin' && (
               <ContextDrawerPanel tab={contextTab} messages={contextMessages} onCitation={openCitation} focusedCitation={focusedCitation} />
             )}
-            {contextTab === 'overview' && <>
-            <ContextOverview summary={contextSummary} sessionMode={sessionMode} riskLevel={riskLevel} handoffActive={handoffActive} onOpenTab={setContextTab} />
-            <section className="copilot-agent-details__section border-b border-[var(--border)] px-4 py-4">
-              <div className="copilot-details-card space-y-1.5 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-xs">
-                <div className="copilot-details-card__heading"><BriefcaseBusiness className="h-3.5 w-3.5 text-[var(--text-muted)]" />岗位专家</div>
-                {activeEmployee ? (
-                  <>
-                    <div className="flex justify-between gap-2"><span className="text-[var(--text-muted)]">岗位</span><span className="truncate font-medium">{employeePrimaryLabel(activeEmployee)}</span></div>
-                    <div className="flex justify-between"><span className="text-[var(--text-muted)]">花名</span><span className="truncate font-medium">{activeEmployee.name}</span></div>
-                    <div className="flex justify-between"><span className="text-[var(--text-muted)]">部门</span><Badge tone="info">{activeEmployee.department}</Badge></div>
-                    <div className="flex justify-between"><span className="text-[var(--text-muted)]">版本</span><span className="font-mono">v{activeEmployee.version}</span></div>
-                    <div className="flex justify-between"><span className="text-[var(--text-muted)]">风险</span><Badge tone={activeEmployee.risk === 'high' ? 'error' : activeEmployee.risk === 'medium' ? 'warn' : 'success'}>{activeEmployee.risk === 'high' ? '高' : activeEmployee.risk === 'medium' ? '中' : '低'}</Badge></div>
-                    <div className="flex justify-between"><span className="text-[var(--text-muted)]">今日成本</span><span className="font-mono">¥{activeEmployee.runtime.costToday}</span></div>
-                    <div className="pt-1.5 border-t border-[var(--border)]">
-                      <div className="text-[10px] text-[var(--text-muted)] mb-1">已装配能力</div>
-                      <div className="flex flex-wrap gap-1">
-                        {[...activeEmployee.capabilities.skills, ...activeEmployee.capabilities.workflows, ...activeEmployee.capabilities.tools].slice(0, 6).map((item) => (
-                          <span key={item} className="rounded bg-[var(--bg)] px-1.5 py-0.5 text-[10px] text-[var(--text-secondary)]">{item}</span>
-                        ))}
-                        {![...activeEmployee.capabilities.skills, ...activeEmployee.capabilities.workflows, ...activeEmployee.capabilities.tools].length && (
-                          <span className="text-[10px] text-[var(--text-muted)]">尚未装配</span>
-                        )}
-                      </div>
+            {contextTab === 'overview' && (
+              <div className="copilot-context-stack">
+                <ContextOverview summary={contextSummary} sessionMode={sessionMode} riskLevel={riskLevel} handoffActive={handoffActive} onOpenTab={setContextTab} />
+
+                <section className="copilot-agent-details__section">
+                  <div className="copilot-details-card">
+                    <div className="copilot-details-card__heading">
+                      <BriefcaseBusiness className="h-3.5 w-3.5 text-[var(--brand)]" />
+                      岗位专家
                     </div>
-                    <div className="pt-1.5 border-t border-[var(--border)] text-[10px] text-[var(--text-muted)]">{activeEmployee.description}</div>
-                    <Link to="/agents" className="mt-1 inline-flex text-[11px] font-medium text-[var(--brand)]">查看岗位配置 →</Link>
-                  </>
-                ) : (
-                  <div className="space-y-2 py-1">
-                    <p className="text-[var(--text-muted)]">当前会话尚未绑定在岗数字员工。</p>
-                    <Button size="sm" variant="secondary" onClick={openNewSessionPicker}>选择专家</Button>
+                    {activeEmployee ? (
+                      <div className="copilot-expert-facts">
+                        <div><span>岗位</span><strong className="truncate">{employeePrimaryLabel(activeEmployee)}</strong></div>
+                        <div><span>花名</span><strong className="truncate">{activeEmployee.name}</strong></div>
+                        <div><span>部门</span><Badge tone="info">{activeEmployee.department}</Badge></div>
+                        <div><span>版本</span><strong className="font-mono">v{activeEmployee.version}</strong></div>
+                        <div className="copilot-expert-facts__wide">
+                          <span>已装配能力</span>
+                          <div className="copilot-expert-caps">
+                            {[...activeEmployee.capabilities.skills, ...activeEmployee.capabilities.workflows, ...activeEmployee.capabilities.tools].slice(0, 6).map((item) => (
+                              <span key={item}>{item}</span>
+                            ))}
+                            {![...activeEmployee.capabilities.skills, ...activeEmployee.capabilities.workflows, ...activeEmployee.capabilities.tools].length && (
+                              <em>尚未装配</em>
+                            )}
+                          </div>
+                        </div>
+                        <Link to="/agents" className="copilot-text-link">查看岗位配置</Link>
+                      </div>
+                    ) : (
+                      <div className="copilot-expert-empty">
+                        <p>当前会话尚未绑定在岗数字员工。</p>
+                        <Button size="sm" onClick={openNewSessionPicker}>选择专家</Button>
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            </section>
+                </section>
 
-            <section className="copilot-agent-details__section border-b border-[var(--border)] px-4 py-4">
-              <div className="copilot-details-card__heading mb-3">
-                <Database className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-                RAG 检索
-                <Badge tone="success" className="ml-auto text-[10px]">实时</Badge>
-              </div>
-          <div className="space-y-2 text-xs">
-            <Row label="召回耗时" value={<span className="font-mono text-[11px]">320ms</span>} />
-            <Row label="Top-K" value={<Badge tone="brand" className="text-[10px]">8</Badge>} />
-            <Row label="重排模型" value="bge-reranker-large" />
-            <Row label="命中率" value={<span className="text-[var(--success)]">92%</span>} />
-          </div>
-          <div className="mt-3 pt-3 border-t border-[var(--border)]">
-            <div className="flex justify-between text-xs mb-1.5">
-              <span className="text-[var(--text-muted)]">上下文 Token</span>
-              <span className="font-mono">1.2k / 200k</span>
-            </div>
-            <div className="h-1.5 bg-[var(--bg-hover)] rounded overflow-hidden">
-              <div className="h-full bg-slate-500" style={{ width: '0.6%' }} />
-            </div>
-          </div>
-            </section>
-
-            <section className="copilot-agent-details__section border-b border-[var(--border)] px-4 py-4">
-              <div className="copilot-details-card__heading mb-3">
-                <Link2 className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-                最近引用（带置信度）
-              </div>
-          <div className="space-y-2">
-            {[
-              { src: 'Redis Runbook v3.2', source: 'Runbook', page: 12, score: 0.92 },
-              { src: 'CMDB PRD-CACHE-019', source: 'CMDB', page: null, score: 0.78 },
-              { src: 'INC-019 处理记录', source: 'Runbook', page: 5, score: 0.71 },
-              { src: 'CVE-2026-3321', source: 'CVE', page: null, score: 0.65 },
-            ].map((c, i) => (
-              <button
-                key={i}
-                onClick={() => openCitation(c)}
-                className="copilot-evidence-item block w-full text-left p-2.5"
-              >
-                <div className="flex items-center gap-1.5 mb-1">
-                  <span className={cn('nav-pill text-[9px]', SOURCE_COLOR[c.source])}>{c.source}</span>
-                  <span className="font-mono text-[10px] text-[var(--text-muted)]">[{i + 1}]</span>
-                  <span className="font-semibold text-[11px] truncate flex-1">{c.src}</span>
-                  {c.page && <span className="text-[10px] text-[var(--text-muted)]">p.{c.page}</span>}
-                </div>
-                <div className="flex items-center gap-2 text-[10px]">
-                  <span className="text-[var(--text-muted)] shrink-0">置信</span>
-                  <div className={cn('copilot-confidence-bar', c.score >= 0.85 ? 'is-high' : c.score >= 0.7 ? 'is-mid' : 'is-low')}>
-                    <span style={{ width: `${c.score * 100}%` }} />
+                <section className="copilot-agent-details__section">
+                  <div className="copilot-details-card">
+                    <div className="copilot-details-card__heading">
+                      <Database className="h-3.5 w-3.5 text-[var(--brand)]" />
+                      RAG 检索
+                      <Badge tone="success" className="ml-auto text-[10px]">实时</Badge>
+                    </div>
+                    <div className="copilot-rag-grid">
+                      <div><span>召回耗时</span><strong className="font-mono">320ms</strong></div>
+                      <div><span>Top-K</span><strong className="font-mono">8</strong></div>
+                      <div><span>命中率</span><strong className="text-[var(--success)]">92%</strong></div>
+                      <div><span>重排</span><strong className="truncate font-mono text-[11px]">bge-reranker</strong></div>
+                    </div>
+                    <div className="copilot-token-meter">
+                      <div className="copilot-token-meter__label">
+                        <span>上下文 Token</span>
+                        <strong className="font-mono">1.2k / 200k</strong>
+                      </div>
+                      <div className="copilot-token-meter__track"><span style={{ width: '0.6%' }} /></div>
+                    </div>
                   </div>
-                  <span className={cn('font-mono', c.score >= 0.85 ? 'text-[var(--success)]' : c.score >= 0.7 ? 'text-[var(--text-secondary)]' : 'text-[var(--warning)]')}>
-                    {(c.score * 100).toFixed(0)}%
-                  </span>
-                </div>
-              </button>
-            ))}
-          </div>
-            </section>
+                </section>
 
-            <section className="copilot-agent-details__section border-b border-[var(--border)] px-4 py-4">
-              <div className="copilot-details-card__heading mb-3">
-                <Wrench className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-                工具调用统计
-                <Badge tone="brand" className="ml-auto text-[10px]">3</Badge>
-              </div>
-          <div className="grid grid-cols-2 gap-2">
-            <Mini label="成功" value="3" tone="success" />
-            <Mini label="失败" value="0" tone="success" />
-            <Mini label="平均" value="42ms" />
-            <Mini label="缓存" value="32%" tone="success" />
-              </div>
-            </section>
+                <section className="copilot-agent-details__section">
+                  <div className="copilot-details-card__heading mb-2.5">
+                    <Link2 className="h-3.5 w-3.5 text-[var(--brand)]" />
+                    最近引用
+                  </div>
+                  <div className="copilot-details-list">
+                    {[
+                      { src: 'Redis Runbook v3.2', source: 'Runbook', page: 12, score: 0.92 },
+                      { src: 'CMDB PRD-CACHE-019', source: 'CMDB', page: null, score: 0.78 },
+                      { src: 'INC-019 处理记录', source: 'Runbook', page: 5, score: 0.71 },
+                    ].map((c, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => openCitation(c)}
+                        className="copilot-evidence-item block w-full text-left p-2.5"
+                      >
+                        <div className="mb-1.5 flex items-center gap-1.5">
+                          <span className={cn('nav-pill text-[9px]', SOURCE_COLOR[c.source])}>{c.source}</span>
+                          <span className="flex-1 truncate text-[11px] font-semibold">{c.src}</span>
+                          {c.page && <span className="text-[10px] text-[var(--text-muted)]">p.{c.page}</span>}
+                        </div>
+                        <div className="flex items-center gap-2 text-[10px]">
+                          <span className="shrink-0 text-[var(--text-muted)]">置信度</span>
+                          <div className={cn('copilot-confidence-bar', c.score >= 0.85 ? 'is-high' : c.score >= 0.7 ? 'is-mid' : 'is-low')}>
+                            <span style={{ width: `${c.score * 100}%` }} />
+                          </div>
+                          <span className={cn('font-mono', c.score >= 0.85 ? 'text-[var(--success)]' : c.score >= 0.7 ? 'text-[var(--text-secondary)]' : 'text-[var(--warning)]')}>
+                            {(c.score * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </section>
 
-            <section className="copilot-agent-details__section px-4 py-4">
-              <div className="copilot-details-card__heading mb-3">
-                <Clock className="h-3.5 w-3.5 text-[var(--text-muted)]" />活动时间线
+                <section className="copilot-agent-details__section">
+                  <div className="copilot-details-card__heading mb-2.5">
+                    <Wrench className="h-3.5 w-3.5 text-[var(--brand)]" />
+                    工具调用
+                    <Badge tone="brand" className="ml-auto text-[10px]">3</Badge>
+                  </div>
+                  <div className="copilot-mini-grid">
+                    <Mini label="成功" value="3" tone="success" />
+                    <Mini label="失败" value="0" tone="success" />
+                    <Mini label="平均" value="42ms" />
+                    <Mini label="缓存" value="32%" tone="success" />
+                  </div>
+                </section>
+
+                <section className="copilot-agent-details__section copilot-agent-details__section--last">
+                  <div className="copilot-details-card__heading mb-2.5">
+                    <Clock className="h-3.5 w-3.5 text-[var(--brand)]" />
+                    活动时间线
+                  </div>
+                  <div className="activity-timeline">
+                    {[
+                      { tone: 'success' as const, icon: CheckCircle2, text: `${expertName} 完成处置`, time: '14:32' },
+                      { tone: 'success' as const, icon: ShieldCheck, text: '双重审批通过（王昊 + 李婷）', time: '14:28' },
+                      { tone: 'info' as const, icon: Search, text: '检索 2 个 Runbook 文档', time: '14:25' },
+                    ].map((a, i) => (
+                      <div key={i} className="activity-timeline__item">
+                        <div className={cn('activity-timeline__dot', `activity-timeline__dot--${a.tone}`)}>
+                          <a.icon className="h-3 w-3" />
+                        </div>
+                        <div className="activity-timeline__content">
+                          <div className="activity-timeline__text">{a.text}</div>
+                          <div className="activity-timeline__time">{a.time}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
               </div>
-              <div className="activity-timeline">
-            {[
-              { tone: 'success' as const, icon: CheckCircle2, text: `${expertName} 完成处置`, time: '14:32' },
-              { tone: 'success' as const, icon: ShieldCheck, text: '双重审批通过（王昊 + 李婷）', time: '14:28' },
-              { tone: 'info' as const, icon: Search, text: '检索 2 个 Runbook 文档', time: '14:25' },
-            ].map((a, i) => (
-              <div key={i} className="activity-timeline__item">
-                <div className={cn('activity-timeline__dot', `activity-timeline__dot--${a.tone}`)}>
-                  <a.icon className="h-3 w-3" />
-                </div>
-                <div className="activity-timeline__content">
-                  <div className="activity-timeline__text">{a.text}</div>
-                  <div className="activity-timeline__time">{a.time}</div>
-                </div>
-              </div>
-            ))}
-              </div>
-            </section>
-            </>}
+            )}
           </div>
         </div>
         ) : null}
@@ -2785,10 +2789,10 @@ function ContextDrawerPanel({ tab, messages, onCitation, focusedCitation }: { ta
   const PanelIcon = meta.icon;
   const empty = (label: string) => <div className="copilot-details-empty"><span className="copilot-details-empty__icon"><PanelIcon className="h-4 w-4" /></span><strong>暂无{label}</strong><span>当前会话还没有可展示的记录</span></div>;
 
-  if (tab === 'evidence') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4 text-[var(--text-muted)]" />{meta.label}</div><div>{meta.hint}</div></div>{focusedCitation && <div className="copilot-citation-focus"><div className="copilot-citation-focus__header"><span><Hash className="mr-1 inline h-3 w-3 text-[var(--text-muted)]" />当前引用</span><span className="font-mono text-[10px] text-[var(--text-muted)]">{focusedCitation.page ? `p.${focusedCitation.page}` : '可追溯'}</span></div><div className="mt-2 flex items-center gap-2"><span className={cn('nav-pill text-[9px]', SOURCE_COLOR[focusedCitation.source] ?? 'text-[var(--text-secondary)] bg-[var(--bg-elevated)]')}>{focusedCitation.source ?? focusedCitation.src ?? '来源'}</span><span className="truncate text-xs font-semibold">{focusedCitation.docId ?? focusedCitation.src ?? focusedCitation.source ?? '关联文档'}</span></div><div className="mt-2 flex items-center gap-2 text-[10px]"><span className="text-[var(--text-muted)]">相关度</span><span className="copilot-confidence-bar"><span style={{ width: `${(focusedCitation.score ?? 0) * 100}%` }} /></span><span className="font-mono text-[var(--success)]">{((focusedCitation.score ?? 0) * 100).toFixed(0)}%</span></div><div className="copilot-citation-focus__text">{focusedCitation.text ?? '已定位到该来源。当前引用由会话检索结果生成，可继续回到中栏查看关联消息。'}</div></div>}{evidence.length ? <div className="copilot-details-list">{evidence.map((citation) => <button key={citation.id} type="button" onClick={() => onCitation(citation, citation.__messageId)} className={cn('copilot-context-item copilot-context-item--button', focusedCitation?.id === citation.id && 'is-focused')}><div className="flex min-w-0 items-center gap-2"><span className={cn('nav-pill text-[9px]', SOURCE_COLOR[citation.source] ?? 'text-[var(--text-secondary)] bg-[var(--bg-elevated)]')}>{citation.source}</span><span className="truncate text-xs font-semibold">{citation.docId || citation.source}</span></div><div className="mt-2 flex items-center gap-2 text-[10px]"><span className="text-[var(--text-muted)]">置信度</span><span className="copilot-confidence-bar"><span style={{ width: `${citation.score * 100}%` }} /></span><span className="font-mono text-[var(--text-secondary)]">{(citation.score * 100).toFixed(0)}%</span><span className="ml-auto text-[var(--text-muted)]">{citation.page ? `p.${citation.page}` : '可追溯'}</span></div></button>)}</div> : empty('证据')}</section>;
-  if (tab === 'tasks') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4 text-[var(--text-muted)]" />{meta.label}</div><div>{meta.hint}</div></div>{tasks.length ? <div className="copilot-details-list">{tasks.map((task) => <div key={task.id} className="copilot-context-item"><div className="flex items-start justify-between gap-2"><span className="min-w-0 truncate text-xs font-semibold">{task.title}</span><Badge tone={task.status === 'approved' ? 'success' : 'warn'}>{task.status === 'approved' ? '已通过' : '待处理'}</Badge></div><div className="mt-2 flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]"><span>任务 ID</span><span className="font-mono">{task.id}</span></div></div>)}</div> : empty('关联任务')}</section>;
-  if (tab === 'approvals') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4 text-[var(--warning)]" />{meta.label}</div><div>{meta.hint}</div></div>{approvals.length ? <div className="copilot-details-list">{approvals.map(({ id, approval }) => <div key={id} className="copilot-context-item copilot-context-item--approval"><div className="flex items-start justify-between gap-2"><span className="text-xs font-semibold">受控审批</span><Badge tone={approval.decision === 'approved' ? 'success' : approval.decision === 'rejected' ? 'error' : 'warn'}>{approval.decision === 'approved' ? '已通过' : approval.decision === 'rejected' ? '已拒绝' : '待审批'}</Badge></div><p className="mt-2 break-words text-[11px] leading-5 text-[var(--text-secondary)]">{approval.action}</p><div className="mt-2 flex items-center justify-between text-[10px] text-[var(--text-muted)]"><span>签署进度</span><span className="font-mono">{approval.signed}/{approval.required} 已签</span></div></div>)}</div> : empty('待审批事项')}</section>;
-  return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4 text-[var(--info)]" />{meta.label}</div><div>{meta.hint}</div></div>{audit.length ? <div className="copilot-details-list">{audit.map((item) => <div key={item.id} className="copilot-context-item copilot-context-item--audit"><span className={cn('copilot-audit-dot', item.tone === 'error' ? 'copilot-audit-dot--error' : 'copilot-audit-dot--success')} /><div className="min-w-0"><div className="text-[11px] font-medium text-[var(--text)]">{item.text}</div><div className="mt-1 font-mono text-[10px] text-[var(--text-muted)]">{item.time.slice(11, 19)} · {item.id}</div></div></div>)}</div> : empty('审计事件')}</section>;
+  if (tab === 'evidence') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4" />{meta.label}</div><div>{meta.hint}</div></div>{focusedCitation && <div className="copilot-citation-focus"><div className="copilot-citation-focus__header"><span><Hash className="mr-1 inline h-3 w-3 text-[var(--text-muted)]" />当前引用</span><span className="font-mono text-[10px] text-[var(--text-muted)]">{focusedCitation.page ? `p.${focusedCitation.page}` : '可追溯'}</span></div><div className="mt-2 flex items-center gap-2"><span className={cn('nav-pill text-[9px]', SOURCE_COLOR[focusedCitation.source] ?? 'text-[var(--text-secondary)] bg-[var(--bg-elevated)]')}>{focusedCitation.source ?? focusedCitation.src ?? '来源'}</span><span className="truncate text-xs font-semibold">{focusedCitation.docId ?? focusedCitation.src ?? focusedCitation.source ?? '关联文档'}</span></div><div className="mt-2 flex items-center gap-2 text-[10px]"><span className="text-[var(--text-muted)]">相关度</span><span className="copilot-confidence-bar"><span style={{ width: `${(focusedCitation.score ?? 0) * 100}%` }} /></span><span className="font-mono text-[var(--success)]">{((focusedCitation.score ?? 0) * 100).toFixed(0)}%</span></div><div className="copilot-citation-focus__text">{focusedCitation.text ?? '已定位到该来源。当前引用由会话检索结果生成，可继续回到中栏查看关联消息。'}</div></div>}{evidence.length ? <div className="copilot-details-list">{evidence.map((citation) => <button key={citation.id} type="button" onClick={() => onCitation(citation, citation.__messageId)} className={cn('copilot-context-item copilot-context-item--button', focusedCitation?.id === citation.id && 'is-focused')}><div className="flex min-w-0 items-center gap-2"><span className={cn('nav-pill text-[9px]', SOURCE_COLOR[citation.source] ?? 'text-[var(--text-secondary)] bg-[var(--bg-elevated)]')}>{citation.source}</span><span className="truncate text-xs font-semibold">{citation.docId || citation.source}</span></div><div className="mt-2 flex items-center gap-2 text-[10px]"><span className="text-[var(--text-muted)]">置信度</span><span className="copilot-confidence-bar"><span style={{ width: `${citation.score * 100}%` }} /></span><span className="font-mono text-[var(--text-secondary)]">{(citation.score * 100).toFixed(0)}%</span><span className="ml-auto text-[var(--text-muted)]">{citation.page ? `p.${citation.page}` : '可追溯'}</span></div></button>)}</div> : empty('证据')}</section>;
+  if (tab === 'tasks') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4" />{meta.label}</div><div>{meta.hint}</div></div>{tasks.length ? <div className="copilot-details-list">{tasks.map((task) => <div key={task.id} className="copilot-context-item"><div className="flex items-start justify-between gap-2"><span className="min-w-0 truncate text-xs font-semibold">{task.title}</span><Badge tone={task.status === 'approved' ? 'success' : 'warn'}>{task.status === 'approved' ? '已通过' : '待处理'}</Badge></div><div className="mt-2 flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]"><span>任务 ID</span><span className="font-mono">{task.id}</span></div></div>)}</div> : empty('关联任务')}</section>;
+  if (tab === 'approvals') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4" />{meta.label}</div><div>{meta.hint}</div></div>{approvals.length ? <div className="copilot-details-list">{approvals.map(({ id, approval }) => <div key={id} className="copilot-context-item copilot-context-item--approval"><div className="flex items-start justify-between gap-2"><span className="text-xs font-semibold">受控审批</span><Badge tone={approval.decision === 'approved' ? 'success' : approval.decision === 'rejected' ? 'error' : 'warn'}>{approval.decision === 'approved' ? '已通过' : approval.decision === 'rejected' ? '已拒绝' : '待审批'}</Badge></div><p className="mt-2 break-words text-[11px] leading-5 text-[var(--text-secondary)]">{approval.action}</p><div className="mt-2 flex items-center justify-between text-[10px] text-[var(--text-muted)]"><span>签署进度</span><span className="font-mono">{approval.signed}/{approval.required} 已签</span></div></div>)}</div> : empty('待审批事项')}</section>;
+  return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4" />{meta.label}</div><div>{meta.hint}</div></div>{audit.length ? <div className="copilot-details-list">{audit.map((item) => <div key={item.id} className="copilot-context-item copilot-context-item--audit"><span className={cn('copilot-audit-dot', item.tone === 'error' ? 'copilot-audit-dot--error' : 'copilot-audit-dot--success')} /><div className="min-w-0"><div className="text-[11px] font-medium text-[var(--text)]">{item.text}</div><div className="mt-1 font-mono text-[10px] text-[var(--text-muted)]">{item.time.slice(11, 19)} · {item.id}</div></div></div>)}</div> : empty('审计事件')}</section>;
 }
 
 function ContextOverview({ summary, sessionMode, riskLevel, handoffActive, onOpenTab }: {
@@ -2807,20 +2811,45 @@ function ContextOverview({ summary, sessionMode, riskLevel, handoffActive, onOpe
     { tab: 'evidence', label: '证据引用', value: summary.evidence, icon: Link2, tone: 'text-[var(--success)] bg-[var(--success-bg)]' },
     { tab: 'audit', label: '执行记录', value: summary.executions, icon: Activity, tone: 'text-[var(--info)] bg-[var(--info-bg)]' },
   ];
-  return <section className="copilot-context-overview border-b border-[var(--border)] px-4 py-4">
-    <div className="copilot-context-overview__hero">
-      <div className="copilot-context-overview__eyebrow"><span>处置状态</span><Badge tone={statusTone as any} className="text-[10px]">{statusLabel}</Badge></div>
-      <div className="mt-2 text-sm font-semibold leading-5 text-[var(--text)]">{summary.nextAction}</div>
-      <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-[var(--border)] pt-3 text-[10px] text-[var(--text-muted)]">
-        <span className="inline-flex items-center gap-1.5"><span className={cn('h-1.5 w-1.5 rounded-full', riskLevel === 'high' ? 'bg-[var(--danger)]' : riskLevel === 'medium' ? 'bg-[var(--warning)]' : 'bg-[var(--success)]')} />风险 {riskLabel}</span>
-        <span>·</span><span>数字员工持续监控</span>
+  return (
+    <section className="copilot-context-overview">
+      <div className="copilot-context-overview__hero">
+        <div className="copilot-context-overview__eyebrow">
+          <span>处置状态</span>
+          <Badge tone={statusTone as any} className="text-[10px]">{statusLabel}</Badge>
+        </div>
+        <div className="mt-2 text-sm font-semibold leading-5 text-[var(--text)]">{summary.nextAction}</div>
+        <div className="copilot-context-overview__meta">
+          <span className="inline-flex items-center gap-1.5">
+            <span className={cn('h-1.5 w-1.5 rounded-full', riskLevel === 'high' ? 'bg-[var(--danger)]' : riskLevel === 'medium' ? 'bg-[var(--warning)]' : 'bg-[var(--success)]')} />
+            风险 {riskLabel}
+          </span>
+          <span>数字员工持续监控</span>
+        </div>
       </div>
-    </div>
-    <div className="copilot-context-overview__summary-head"><span>治理摘要</span><span>点击查看明细</span></div>
-    <div className="copilot-context-overview__stats">
-      {cards.filter((card) => card.value > 0).map((card) => { const Icon = card.icon; return <button key={card.tab} type="button" onClick={() => onOpenTab(card.tab)} className="copilot-summary-card group"><span className={cn('copilot-summary-card__icon grid h-7 w-7 place-items-center rounded-lg', card.tone)}><Icon className="h-3.5 w-3.5" /></span><span className="mt-2 flex items-end justify-between gap-2"><span className="text-[10px] text-[var(--text-muted)]">{card.label}</span><span className="font-mono text-base font-semibold text-[var(--text)]">{card.value}</span></span><span className="copilot-summary-card__action">查看明细 <ChevronRight className="h-3 w-3" /></span></button>; })}
-    </div>
-  </section>;
+      <div className="copilot-context-overview__summary-head">
+        <span>治理摘要</span>
+        <span>点击查看明细</span>
+      </div>
+      <div className="copilot-context-overview__stats">
+        {cards.filter((card) => card.value > 0).map((card) => {
+          const Icon = card.icon;
+          return (
+            <button key={card.tab} type="button" onClick={() => onOpenTab(card.tab)} className="copilot-summary-card group">
+              <span className={cn('copilot-summary-card__icon grid h-7 w-7 place-items-center rounded-lg', card.tone)}>
+                <Icon className="h-3.5 w-3.5" />
+              </span>
+              <span className="mt-2 flex items-end justify-between gap-2">
+                <span className="text-[10px] text-[var(--text-muted)]">{card.label}</span>
+                <span className="font-mono text-base font-semibold text-[var(--text)]">{card.value}</span>
+              </span>
+              <span className="copilot-summary-card__action">查看明细 <ChevronRight className="h-3 w-3" /></span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
 }
 
 // ============ Agent 详情折叠条 ============
@@ -2838,11 +2867,10 @@ function AgentDetailsCollapsed({ onOpen }: { onOpen: () => void }) {
 
 
 function Mini({ label, value, tone }: { label: string; value: any; tone?: 'success' }) {
-  const color = tone === 'success' ? 'text-[var(--success)]' : 'text-[var(--text)]';
   return (
-    <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2.5 py-1.5">
-      <div className="text-[10px] text-[var(--text-muted)]">{label}</div>
-      <div className={cn('text-sm font-mono font-bold', color)}>{value}</div>
+    <div className="copilot-mini-stat">
+      <div className="copilot-mini-stat__label">{label}</div>
+      <div className={cn('copilot-mini-stat__value', tone === 'success' && 'is-success')}>{value}</div>
     </div>
   );
 }

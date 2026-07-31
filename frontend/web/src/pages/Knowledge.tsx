@@ -3,6 +3,7 @@
  * 增强：所有按钮接入交互，纯前端 state 化演示。
  */
 import { useState, useMemo, useRef, useEffect, type CSSProperties } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import ReactFlow, { Background, Controls, Handle, MarkerType, Position, useEdgesState, useNodesState, type Edge, type Node } from 'reactflow';
 import 'reactflow/dist/style.css';
 import { useApiMutation, useApiQuery } from '@/services/query';
@@ -16,7 +17,7 @@ import {
 } from 'lucide-react';
 import type { KnowledgeAuditEvent, KnowledgeConsumerBinding, KnowledgeDoc, KnowledgeEvaluation, KnowledgeGovernancePolicy, KnowledgeGraphEntity, KnowledgeGraphRelation, KnowledgePackage, KnowledgeProcessingJob, KnowledgeRetrievalProfile, KnowledgeRetrievalResult, KnowledgeSourceConnection } from '@de/web-types';
 import { cn } from '@de/web-utils';
-import { Modal, Drawer, ConfirmDialog, EmptyState } from '@/components/shared';
+import { Modal, ConfirmDialog, EmptyState } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useT } from '@/i18n';
@@ -62,22 +63,72 @@ function escapeHtml(value: string) {
 
 function formatInlineMarkdown(value: string) {
   return escapeHtml(value)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>');
+    .replace(/(^|[^*\w])\*([^*\n]+)\*(?!\*)/g, '$1<em>$2</em>')
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 }
 
 function MarkdownView({ text }: { text: string }) {
   const html = useMemo(() => {
-    const lines = text.split('\n');
+    const lines = text.replace(/\r\n/g, '\n').split('\n');
     const out: string[] = [];
     let inUl = false;
     let inOl = false;
+    let inQuote = false;
+    let inCode = false;
+    let codeLang = '';
+    let codeBuf: string[] = [];
+    let quoteBuf: string[] = [];
+
     const closeLists = () => {
       if (inUl) { out.push('</ul>'); inUl = false; }
       if (inOl) { out.push('</ol>'); inOl = false; }
     };
+    const flushQuote = () => {
+      if (!inQuote) return;
+      out.push(`<blockquote><p>${quoteBuf.join('<br />')}</p></blockquote>`);
+      quoteBuf = [];
+      inQuote = false;
+    };
+    const flushCode = () => {
+      if (!inCode) return;
+      const body = escapeHtml(codeBuf.join('\n'));
+      out.push(`<pre class="knowledge-md__pre"><code class="language-${escapeHtml(codeLang || 'text')}">${body}</code></pre>`);
+      codeBuf = [];
+      codeLang = '';
+      inCode = false;
+    };
+
     for (const raw of lines) {
       const line = raw.trimEnd();
+      const trimmed = line.trim();
+
+      if (trimmed.startsWith('```')) {
+        closeLists();
+        flushQuote();
+        if (!inCode) {
+          inCode = true;
+          codeLang = trimmed.slice(3).trim() || 'text';
+          codeBuf = [];
+        } else {
+          flushCode();
+        }
+        continue;
+      }
+      if (inCode) {
+        codeBuf.push(raw);
+        continue;
+      }
+
+      if (/^>\s?/.test(line)) {
+        closeLists();
+        if (!inQuote) inQuote = true;
+        quoteBuf.push(formatInlineMarkdown(line.replace(/^>\s?/, '')));
+        continue;
+      }
+      if (inQuote) flushQuote();
+
       if (/^### (.+)$/.test(line)) {
         closeLists();
         out.push(`<h3>${formatInlineMarkdown(line.replace(/^### /, ''))}</h3>`);
@@ -95,19 +146,18 @@ function MarkdownView({ text }: { text: string }) {
         if (inUl) { out.push('</ul>'); inUl = false; }
         if (!inOl) { out.push('<ol>'); inOl = true; }
         out.push(`<li>${formatInlineMarkdown(line.replace(/^\d+\. /, ''))}</li>`);
-      } else if (/^>\s?(.+)$/.test(line)) {
-        closeLists();
-        out.push(`<blockquote>${formatInlineMarkdown(line.replace(/^>\s?/, ''))}</blockquote>`);
-      } else if (/^---+$/.test(line.trim())) {
+      } else if (/^---+$/.test(trimmed)) {
         closeLists();
         out.push('<hr />');
-      } else if (!line.trim()) {
+      } else if (!trimmed) {
         closeLists();
       } else {
         closeLists();
         out.push(`<p>${formatInlineMarkdown(line)}</p>`);
       }
     }
+    flushCode();
+    flushQuote();
     closeLists();
     return out.join('');
   }, [text]);
@@ -121,6 +171,7 @@ type AssetsView = 'docs' | 'packages';
 export default function Knowledge() {
   const { t } = useT();
   const { user } = useAuthStore();
+  const [searchParams] = useSearchParams();
   const canWrite = Boolean(user?.permissions.includes('knowledge.write'));
   const currentWorkspace = useWorkspaceStore((state) => state.current);
   const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
@@ -129,6 +180,7 @@ export default function Knowledge() {
 
   const [workspace, setWorkspace] = useState<KnowledgeWorkspace>('assets');
   const [assetsView, setAssetsView] = useState<AssetsView>('docs');
+  const [highlightedPackageId, setHighlightedPackageId] = useState<string | null>(null);
   const [jobStatusFilter, setJobStatusFilter] = useState<'all' | 'running' | 'succeeded' | 'failed'>('all');
   const [docPreviewId, setDocPreviewId] = useState<string | null>('k1');
   const [chunkDrawer, setChunkDrawer] = useState<any | null>(null);
@@ -144,6 +196,18 @@ export default function Knowledge() {
   const [governanceNotice, setGovernanceNotice] = useState('所有知识资产均处于可追溯治理范围内');
   const sourcesSectionRef = useRef<HTMLElement>(null);
   const jobsSectionRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    const packageId = searchParams.get('package');
+    const view = searchParams.get('view');
+    if (!packageId && view !== 'packages') return;
+    setWorkspace('assets');
+    if (view === 'packages' || packageId) setAssetsView('packages');
+    if (packageId) {
+      setHighlightedPackageId(packageId);
+      setGovernanceNotice('已定位记忆晋升生成的知识包草稿，请完成加工与评测后发布。');
+    }
+  }, [searchParams]);
 
   const isAssets = workspace === 'assets';
   const isProcessing = workspace === 'processing';
@@ -515,7 +579,10 @@ export default function Knowledge() {
                   ) : (
                     <div className="grid gap-3 p-3 md:grid-cols-2 md:p-4 lg:grid-cols-3">
                       {knowledgePackages.map((item) => (
-                        <article key={item.id} className="knowledge-package-card group">
+                        <article
+                          key={item.id}
+                          className={cn('knowledge-package-card group', highlightedPackageId === item.id && 'ring-2 ring-[var(--brand)]')}
+                        >
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <div className="truncate text-sm font-semibold text-[var(--text)]">{item.name}</div>
@@ -978,39 +1045,47 @@ export default function Knowledge() {
         citation={activeCitation}
       />
 
-      {/* Chunk 详情 Drawer */}
-      <Drawer
+      {/* Chunk 详情 · 居中模态 */}
+      <Modal
         open={!!chunkDrawer}
         onClose={() => setChunkDrawer(null)}
-        title={chunkDrawer ? `Chunk [${chunkDrawer.idx}] · 详情` : ''}
-        description={chunkDrawer ? `相关度 ${(chunkDrawer.score * 100).toFixed(0)}%` : ''}
-        width={520}
+        title={chunkDrawer ? `Chunk [${chunkDrawer.idx}] · 详情` : 'Chunk 详情'}
+        description={chunkDrawer ? `相关度 ${(chunkDrawer.score * 100).toFixed(0)}%` : undefined}
+        size="md"
+        panelClassName="max-w-[560px]"
+        bodyClassName="chunk-detail-modal"
+        footer={chunkDrawer ? (
+          <>
+            {canWrite && (
+              <Button variant="secondary" onClick={handleRescore}>
+                <RefreshCw className="h-3.5 w-3.5" />重新评分
+              </Button>
+            )}
+            <Button onClick={() => setChunkDrawer(null)}>
+              <ExternalLink className="h-3.5 w-3.5" />查看原文
+            </Button>
+          </>
+        ) : undefined}
       >
         {chunkDrawer && (
-          <div className="space-y-3 text-xs">
-            <DrawerField label="来源" value={chunkDrawer.source} />
-            {chunkDrawer.page && <DrawerField label="页码" value={`p.${chunkDrawer.page}`} mono />}
-            <DrawerField label="相关度" value={<Badge tone="success">{(chunkDrawer.score * 100).toFixed(0)}%</Badge>} />
-            <DrawerField label="所属文档" value={chunkDrawer.source} />
-            <DrawerField label="Token 数" value="128" mono />
-            <DrawerField label="Embedding 模型" value="BGE-M3" mono />
-            <div className="pt-3 border-t border-[var(--border)]">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] mb-1.5">原文片段</div>
-              <div className="rounded-md bg-[var(--bg)] border border-[var(--border)] p-3 text-[11px] leading-relaxed text-[var(--text)] whitespace-pre-wrap">
+          <div className="flex flex-col gap-5 text-xs">
+            <dl className="chunk-detail-kv">
+              <div><dt>来源</dt><dd>{chunkDrawer.source}</dd></div>
+              {chunkDrawer.page != null && <div><dt>页码</dt><dd className="font-mono">p.{chunkDrawer.page}</dd></div>}
+              <div><dt>相关度</dt><dd><Badge tone="success">{(chunkDrawer.score * 100).toFixed(0)}%</Badge></dd></div>
+              <div><dt>所属文档</dt><dd>{chunkDrawer.source}</dd></div>
+              <div><dt>Token 数</dt><dd className="font-mono">128</dd></div>
+              <div><dt>Embedding 模型</dt><dd className="font-mono">BGE-M3</dd></div>
+            </dl>
+            <div>
+              <div className="mb-2 text-[11px] font-semibold text-[var(--text-muted)]">原文片段</div>
+              <div className="rounded-xl border border-[var(--border)] bg-[var(--bg)] px-4 py-3.5 text-[12px] leading-6 text-[var(--text)] whitespace-pre-wrap">
                 {chunkDrawer.text}
               </div>
             </div>
-            <div className="flex gap-2 pt-3 border-t border-[var(--border)]">
-              {canWrite && <Button size="sm" variant="secondary" className="flex-1" onClick={handleRescore}>
-                <RefreshCw className="h-3 w-3" />重新评分
-              </Button>}
-              <Button size="sm" className="flex-1">
-                <ExternalLink className="h-3 w-3" />查看原文
-              </Button>
-            </div>
           </div>
         )}
-      </Drawer>
+      </Modal>
     </div>
   );
 }
@@ -1103,15 +1178,6 @@ function KnowledgeGraphCanvasLegacy({ entities, relations, selectedEntityId, onS
   const toneFor = (type: KnowledgeGraphEntity['type']) => type === 'asset' ? { fill: '#eef2ff', stroke: '#818cf8', text: '#4f46e5' } : type === 'service' ? { fill: '#eff6ff', stroke: '#60a5fa', text: '#2563eb' } : type === 'runbook' ? { fill: '#ecfdf5', stroke: '#34d399', text: '#047857' } : type === 'vulnerability' ? { fill: '#fff7ed', stroke: '#fb923c', text: '#c2410c' } : { fill: '#f5f3ff', stroke: '#a78bfa', text: '#7c3aed' };
   const typeLabel = (type: KnowledgeGraphEntity['type']) => ({ service: '服务', asset: '资产', runbook: 'Runbook', alert: '告警', vulnerability: '漏洞', owner: '责任团队' }[type]);
   return <section className="mt-3 rounded-xl border border-[var(--border)] bg-[var(--bg)] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="knowledge-section-title"><Network className="h-3.5 w-3.5 text-[var(--brand)]" />知识关系图谱 <Badge tone="neutral">{entities.length} 个实体 · {relations.length} 条关系</Badge></div><p className="mt-1 text-[11px] text-[var(--text-muted)]">选择节点查看来源证据；关系边表示已抽取且可追溯的业务依赖。</p></div><div className="flex flex-wrap gap-2 text-[10px] text-[var(--text-muted)]"><span>● 服务</span><span>● 资产</span><span>● Runbook</span><span>● 漏洞</span><span>● 责任团队</span></div></div><div className="knowledge-graph-canvas mt-3"><svg viewBox="0 0 740 360" role="img" aria-label="知识图谱实体与关系" preserveAspectRatio="xMidYMid meet"><defs><marker id="knowledge-graph-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#94a3b8" /></marker></defs><g>{relations.map((relation) => { const fromIndex = entities.findIndex((entity) => entity.id === relation.fromId); const toIndex = entities.findIndex((entity) => entity.id === relation.toId); const from = entities[fromIndex]; const to = entities[toIndex]; if (!from || !to) return null; const [x1, y1] = positionFor(from, fromIndex); const [x2, y2] = positionFor(to, toIndex); return <g key={relation.id}><line x1={x1} y1={y1} x2={x2} y2={y2} stroke="#94a3b8" strokeWidth="1.5" markerEnd="url(#knowledge-graph-arrow)" /><rect x={(x1 + x2) / 2 - 30} y={(y1 + y2) / 2 - 11} width="60" height="18" rx="9" fill="var(--surface-1)" stroke="#e2e8f0" /><text x={(x1 + x2) / 2} y={(y1 + y2) / 2 + 3.5} textAnchor="middle" fontSize="9" fill="#64748b">{relation.type}</text></g>; })}</g><g>{entities.map((entity, index) => { const [x, y] = positionFor(entity, index); const tone = toneFor(entity.type); const active = entity.id === selected?.id; return <g key={entity.id} transform={`translate(${x} ${y})`} className="knowledge-graph-node" onClick={() => onSelect(entity.id)} role="button" tabIndex={0} aria-label={`选择实体 ${entity.name}`} onKeyDown={(event) => event.key === 'Enter' && onSelect(entity.id)}><rect x="-74" y="-30" width="148" height="60" rx="10" fill={tone.fill} stroke={active ? '#4f46e5' : tone.stroke} strokeWidth={active ? 2.2 : 1.2} /><circle cx="-54" cy="0" r="11" fill="var(--surface-1)" stroke={tone.stroke} /><circle cx="-54" cy="0" r="4" fill={tone.text} /><text x="-35" y="-4" fontSize="11" fontWeight="600" fill="#1e293b">{entity.name.length > 16 ? `${entity.name.slice(0, 15)}…` : entity.name}</text><text x="-35" y="14" fontSize="9" fill="#64748b">{typeLabel(entity.type)} · {(entity.confidence * 100).toFixed(0)}%</text></g>; })}</g></svg></div>{selected && <div className="mt-3 grid gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto]"><span className="min-w-0"><strong className="block text-xs">{selected.name}</strong><small className="mt-1 block text-[10px] text-[var(--text-muted)]">{typeLabel(selected.type)} · 来自 {selected.sourceDocId} · {selected.sourceVersion}</small></span><span className="text-[11px]"><small className="block text-[var(--text-muted)]">抽取置信度</small><strong className="font-mono text-[var(--success)]">{(selected.confidence * 100).toFixed(0)}%</strong></span><span className="text-[11px]"><small className="block text-[var(--text-muted)]">关联关系</small><strong>{relations.filter((relation) => relation.fromId === selected.id || relation.toId === selected.id).length} 条</strong></span><button type="button" className="text-left text-[11px] text-[var(--brand)] hover:underline" onClick={() => setTimeout(() => document.getElementById('knowledge-graph-evidence')?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 0)}>查看证据</button></div>}<div id="knowledge-graph-evidence" className="mt-3 rounded-lg bg-[var(--brand-light)] px-3 py-2 text-[11px] text-[var(--text-secondary)]"><Brain className="mr-1 inline h-3.5 w-3.5 text-[var(--brand)]" />图谱用于扩展候选证据；实际回答仍需完成权限过滤、混合召回与引用校验。</div></section>;
-}
-
-function DrawerField({ label, value, mono }: { label: string; value: React.ReactNode; mono?: boolean }) {
-  return (
-    <div className="flex items-center justify-between">
-      <span className="text-[var(--text-muted)]">{label}</span>
-      <span className={cn(mono && 'font-mono text-[11px]')}>{value}</span>
-    </div>
-  );
 }
 
 function NewKnowledgePackageModal({ open, onClose, onSubmit }: { open: boolean; onClose: () => void; onSubmit: (form: { name: string; description: string; domain: string; classification: KnowledgePackage['classification'] }) => void }) {

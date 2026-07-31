@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock3, LockKeyhole, Plus, ShieldAlert, SlidersHorizontal } from 'lucide-react';
-import { Badge, Button, Input, toast } from '@de/web-ui';
+import { Badge, Button, Input, KpiCard, toast } from '@de/web-ui';
 import { cn } from '@de/web-utils';
 import type { TemporaryAuthorization, ZeroTrustEvent, ZeroTrustPolicy } from '@de/web-types';
 import { useApiMutation, useApiQuery } from '@/services/query';
@@ -38,19 +38,21 @@ export default function ZeroTrust({ embedded = false }: { embedded?: boolean } =
             </div>
             {isAdmin && <Button size="sm" onClick={() => setFormOpen(true)}><Plus className="h-3.5 w-3.5" />授予临时访问</Button>}
           </div>
-          <nav className="mt-4 flex gap-1 overflow-x-auto rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-1">
-            {tabs.map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={cn('shrink-0 rounded px-3 py-2 text-xs', tab === key ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}>{label}</button>)}
+          <nav className="settings-subnav mt-4" aria-label="持续验证分类">
+            {tabs.map(([key, label]) => (
+              <button key={key} type="button" onClick={() => setTab(key)} className={cn('settings-subnav__item', tab === key && 'is-active')}>{label}</button>
+            ))}
           </nav>
         </header>
       ) : (
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <nav className="flex gap-1 overflow-x-auto rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-1">
-            {tabs.map(([key, label]) => <button key={key} onClick={() => setTab(key)} className={cn('shrink-0 rounded px-3 py-2 text-xs', tab === key ? 'bg-[var(--bg)] font-semibold text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:bg-[var(--bg-hover)]')}>{label}</button>)}
+          <nav className="settings-subnav" aria-label="持续验证分类">
+            {tabs.map(([key, label]) => <button key={key} type="button" onClick={() => setTab(key)} className={cn('settings-subnav__item', tab === key && 'is-active')}>{label}</button>)}
           </nav>
           {isAdmin && <Button size="sm" onClick={() => setFormOpen(true)}><Plus className="h-3.5 w-3.5" />授予临时访问</Button>}
         </div>
       )}
-      <div className={cn(!embedded && 'mt-3')}>
+      <div className={cn(!embedded && 'mt-3', embedded && 'settings-section')}>
         {tab === 'overview' && <OverviewPanel data={overview.data} events={events.data ?? []} />}
         {tab === 'policies' && <Policies rows={policies.data ?? []} editable={isAdmin} onToggle={(id, enabled) => togglePolicy.mutate({ id, enabled })} />}
         {tab === 'authorizations' && <Authorizations rows={authorizations.data ?? []} editable={isAdmin} onRevoke={(id) => revoke.mutate({ id })} />}
@@ -61,7 +63,29 @@ export default function ZeroTrust({ embedded = false }: { embedded?: boolean } =
   );
 }
 
-function OverviewPanel({ data, events }: { data?: Overview; events: ZeroTrustEvent[] }) { const items = [{ label: '生效策略', value: data?.policies ?? 0, icon: SlidersHorizontal, tone: 'text-[var(--brand)]' }, { label: '已阻断', value: data?.blocked ?? 0, icon: ShieldAlert, tone: 'text-[var(--danger)]' }, { label: '等待审批', value: data?.approvals ?? 0, icon: Clock3, tone: 'text-[var(--warning)]' }, { label: '已脱敏', value: data?.masked ?? 0, icon: LockKeyhole, tone: 'text-[var(--info)]' }]; return <div className="space-y-3"><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{items.map((item) => <div key={item.label} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-4"><item.icon className={cn('h-4 w-4', item.tone)} /><div className="mt-4 text-2xl font-semibold">{item.value}</div><div className="mt-1 text-xs text-[var(--text-muted)]">{item.label}</div></div>)}</div><section className="rounded-lg border border-[var(--border)] bg-[var(--bg)]"><div className="border-b border-[var(--border)] px-4 py-3"><h2 className="text-sm font-semibold">最近策略事件</h2></div><div className="divide-y divide-[var(--border)]">{events.slice(0, 5).map((event) => <EventRow key={event.id} event={event} />)}</div></section></div>; }
+function OverviewPanel({ data, events }: { data?: Overview; events: ZeroTrustEvent[] }) {
+  return (
+    <div className="space-y-3.5">
+      <section className="settings-kpis">
+        <KpiCard label="生效策略" value={data?.policies ?? 0} icon={SlidersHorizontal} tone="brand" size="comfortable" />
+        <KpiCard label="已阻断" value={data?.blocked ?? 0} icon={ShieldAlert} tone={(data?.blocked ?? 0) > 0 ? 'warn' : 'success'} size="comfortable" />
+        <KpiCard label="等待审批" value={data?.approvals ?? 0} icon={Clock3} tone={(data?.approvals ?? 0) > 0 ? 'warn' : 'success'} size="comfortable" />
+        <KpiCard label="已脱敏" value={data?.masked ?? 0} icon={LockKeyhole} tone="info" size="comfortable" />
+      </section>
+      <section className="de-employee-shell overflow-hidden rounded-xl bg-[var(--surface-1)]">
+        <div className="settings-panel__head">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <AlertTriangle className="h-4 w-4 text-[var(--brand)]" />
+            最近策略事件
+          </div>
+        </div>
+        <div className="divide-y divide-[var(--border)]">
+          {events.slice(0, 5).map((event) => <EventRow key={event.id} event={event} />)}
+        </div>
+      </section>
+    </div>
+  );
+}
 function Policies({ rows, editable, onToggle }: { rows: ZeroTrustPolicy[]; editable: boolean; onToggle: (id: string, enabled: boolean) => void }) { return <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)]"><div className="border-b border-[var(--border)] px-4 py-3"><h2 className="text-sm font-semibold">访问策略</h2><p className="mt-1 text-[11px] text-[var(--text-muted)]">策略按资源、动作、范围与条件决定允许、脱敏、审批或阻断；租户安全基线不可停用。</p></div><div className="overflow-x-auto"><table className="w-full min-w-[820px] text-left text-xs"><thead className="bg-[var(--bg-elevated)] text-[var(--text-muted)]"><tr><th className="px-4 py-2.5">策略</th><th className="px-4 py-2.5">资源 / 动作</th><th className="px-4 py-2.5">条件</th><th className="px-4 py-2.5">处置</th><th className="px-4 py-2.5">版本</th><th className="px-4 py-2.5">状态</th></tr></thead><tbody>{rows.map((row) => { const [label, tone] = decisionMeta[row.decision]; return <tr key={row.id} className="border-t border-[var(--border)]"><td className="px-4 py-3 font-medium">{row.name}{row.baseline && <Badge tone="brand" className="ml-2 text-[9px]">安全基线</Badge>}<div className="mt-1 text-[10px] text-[var(--text-muted)]">{row.scope}</div></td><td className="px-4 py-3">{row.resource} / {row.action}</td><td className="px-4 py-3 text-[var(--text-secondary)]">{row.condition}</td><td className="px-4 py-3"><Badge tone={tone as any}>{label}</Badge></td><td className="px-4 py-3 font-mono">v{row.version}</td><td className="px-4 py-3">{editable && !row.baseline ? <button type="button" onClick={() => onToggle(row.id, !row.enabled)} className={cn('rounded px-2 py-1 text-[10px]', row.enabled ? 'bg-[var(--success-bg)] text-[var(--success)]' : 'bg-[var(--bg-elevated)] text-[var(--text-muted)]')}>{row.enabled ? '启用' : '停用'}</button> : <Badge tone={row.enabled ? 'success' : 'neutral'}>{row.enabled ? '启用' : '停用'}</Badge>}</td></tr>; })}</tbody></table></div></section>; }
 function Authorizations({ rows, editable, onRevoke }: { rows: TemporaryAuthorization[]; editable: boolean; onRevoke: (id: string) => void }) { return <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)]"><div className="border-b border-[var(--border)] px-4 py-3"><h2 className="text-sm font-semibold">临时授权</h2><p className="mt-1 text-[11px] text-[var(--text-muted)]">仅对明确工作区、资源与动作生效，到期自动失效并保留审计记录。</p></div><div className="divide-y divide-[var(--border)]">{rows.map((row) => <div key={row.id} className="flex flex-wrap items-center gap-3 px-4 py-3"><div className="min-w-[150px] flex-1"><strong className="text-xs">{row.subjectName}</strong><p className="mt-1 text-[10px] text-[var(--text-muted)]">{row.workspaceId} · {row.resource}:{row.action} · {row.reason}</p></div><span className="text-[11px] text-[var(--text-secondary)]">至 {new Date(row.expiresAt).toLocaleString('zh-CN')}</span><Badge tone={row.status === 'active' ? 'warn' : 'neutral'}>{row.status === 'active' ? '生效中' : row.status === 'revoked' ? '已回收' : '已到期'}</Badge>{editable && row.status === 'active' && <Button size="sm" variant="secondary" onClick={() => onRevoke(row.id)}>回收</Button>}</div>)}</div></section>; }
 function Events({ rows }: { rows: ZeroTrustEvent[] }) { return <section className="overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg)]"><div className="border-b border-[var(--border)] px-4 py-3"><h2 className="text-sm font-semibold">策略命中记录</h2></div><div className="divide-y divide-[var(--border)]">{rows.map((event) => <EventRow key={event.id} event={event} detail />)}</div></section>; }

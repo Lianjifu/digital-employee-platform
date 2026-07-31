@@ -8,6 +8,7 @@ const CONTROL_PLANE_KEYS = [
   'module.channels.tabs.routing',
   'module.knowledge.tabs.processing',
   'module.memory.tabs.governance',
+  'module.memory.guardrail',
   'module.workspace.tabs.environment',
   'module.governance.tabs.controls',
   'module.zeroTrust.tabs.events',
@@ -43,5 +44,13 @@ describe('enterprise navigation translations', () => {
     expect(DICTS['zh-CN']['nav.workflows']).toBe('工作流程');
     expect(DICTS['zh-CN']['nav.zeroTrust']).toBe('持续验证');
     expect(DICTS['zh-CN']['module.agents.tabs.market']).not.toContain('工厂');
+  });
+
+  it('labels the skills store tab and CTA consistently', () => {
+    expect(DICTS['zh-CN']['module.skills.tabs.store']).toBe('技能商店');
+    expect(DICTS['zh-CN']['module.skills.cta.store']).toBe('从商店安装');
+    expect(DICTS['zh-CN']['module.skills.summary.store']).toContain('技能商店');
+    expect(DICTS['en-US']['module.skills.tabs.store']).toBe('Skill Store');
+    expect(DICTS['en-US']['module.skills.cta.store']).toBe('Install from store');
   });
 });

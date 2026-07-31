@@ -1869,10 +1869,10 @@ const mockSkillImpacts: Record<string, SkillImpactReport> = {
   s2: { skillId: 's2', agents: ['故障自愈', '变更辅助'], workflows: ['K8s 节点自愈', '灰度发布'], activeRuns: 0, uninstallAllowed: false, reason: '存在 2 个已发布智能体引用' },
 };
 const mockSkillCatalog: Array<Skill & { publisher: string; signed: boolean; dependencies: string[]; license: string; lastScannedAt: string; vulnerabilityCount: number; supportedEnvironments: string[] }> = [
-  { id: 'st1', name: 'mysql-cli', kind: 'skill', description: 'MySQL 命令执行', version: '2.0.0', status: 'available', rating: 4.7, installCount: 3200, riskLevel: 'mid', cacheable: true, publisher: '企业能力市场', signed: true, dependencies: [], license: 'Apache-2.0', lastScannedAt: '12 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
-  { id: 'st2', name: 'pg-cli', kind: 'skill', description: 'PostgreSQL 客户端', version: '1.8.0', status: 'available', rating: 4.6, installCount: 2800, riskLevel: 'mid', cacheable: true, publisher: '企业能力市场', signed: true, dependencies: [], license: 'Apache-2.0', lastScannedAt: '18 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
-  { id: 'st3', name: 'gitlab-mcp', kind: 'mcp', description: 'GitLab MR/Issue MCP', version: '0.9.0', status: 'available', rating: 4.4, installCount: 1200, riskLevel: 'mid', cacheable: false, publisher: '企业能力市场', signed: true, dependencies: ['gitlab-connector'], license: 'MIT', lastScannedAt: '36 分钟前', vulnerabilityCount: 1, supportedEnvironments: ['测试'] },
-  { id: 'st4', name: 'jenkins-mcp', kind: 'mcp', description: 'Jenkins 构建触发', version: '1.0.0', status: 'available', rating: 4.3, installCount: 880, riskLevel: 'high', cacheable: false, publisher: '企业能力市场', signed: true, dependencies: ['jenkins-mcp'], license: '商业授权', lastScannedAt: '刚刚', vulnerabilityCount: 0, supportedEnvironments: ['隔离环境'] },
+  { id: 'st1', name: 'mysql-cli', kind: 'skill', description: 'MySQL 命令执行', version: '2.0.0', status: 'available', rating: 4.7, installCount: 3200, riskLevel: 'mid', cacheable: true, publisher: '企业能力商店', signed: true, dependencies: [], license: 'Apache-2.0', lastScannedAt: '12 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
+  { id: 'st2', name: 'pg-cli', kind: 'skill', description: 'PostgreSQL 客户端', version: '1.8.0', status: 'available', rating: 4.6, installCount: 2800, riskLevel: 'mid', cacheable: true, publisher: '企业能力商店', signed: true, dependencies: [], license: 'Apache-2.0', lastScannedAt: '18 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
+  { id: 'st3', name: 'gitlab-mcp', kind: 'mcp', description: 'GitLab MR/Issue MCP', version: '0.9.0', status: 'available', rating: 4.4, installCount: 1200, riskLevel: 'mid', cacheable: false, publisher: '企业能力商店', signed: true, dependencies: ['gitlab-connector'], license: 'MIT', lastScannedAt: '36 分钟前', vulnerabilityCount: 1, supportedEnvironments: ['测试'] },
+  { id: 'st4', name: 'jenkins-mcp', kind: 'mcp', description: 'Jenkins 构建触发', version: '1.0.0', status: 'available', rating: 4.3, installCount: 880, riskLevel: 'high', cacheable: false, publisher: '企业能力商店', signed: true, dependencies: ['jenkins-mcp'], license: '商业授权', lastScannedAt: '刚刚', vulnerabilityCount: 0, supportedEnvironments: ['隔离环境'] },
   { id: 'st5', name: 'runbook-executor', kind: 'skill', description: '按受控运行手册执行诊断与处置步骤', version: '1.3.0', status: 'available', rating: 4.8, installCount: 2180, riskLevel: 'mid', cacheable: false, publisher: 'SRE 平台组', signed: true, dependencies: ['knowledge-retrieval'], license: '内部许可', lastScannedAt: '9 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
   { id: 'st6', name: 'security-evidence-skill', kind: 'skill', description: '归集告警、日志与资产证据并输出安全研判材料', version: '1.1.0', status: 'available', rating: 4.6, installCount: 960, riskLevel: 'low', cacheable: true, publisher: '安全运营组', signed: true, dependencies: [], license: '内部许可', lastScannedAt: '16 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
   { id: 'st7', name: 'pagerduty-mcp', kind: 'mcp', description: '查询事件、升级策略与值班排班的 PagerDuty 连接器', version: '1.2.0', status: 'available', rating: 4.5, installCount: 760, riskLevel: 'mid', cacheable: false, publisher: '企业能力商店', signed: true, dependencies: ['pagerduty-oauth'], license: 'MIT', lastScannedAt: '28 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
@@ -1898,11 +1898,13 @@ function skillAuditEvents(): SkillAuditEvent[] {
   return mockControlPlaneAudit.filter((event) => event.domain === 'skill').map((event) => ({ ...event, correlationId: `skill:${event.target}` }));
 }
 const mockChannelTemplates = [
-  { id: 'card1', name: '告警卡片', tone: 'error', desc: 'P0/P1 紧急事件 · 含一键跳转', preview: '🔴 [P0] Redis OOM\n集群: prod-redis-01\n[查看详情 →]' },
-  { id: 'card2', name: '审批卡片', tone: 'warn', desc: '双签审批 · 同意/拒绝按钮', preview: '✍️ 变更审批\n[批准] [拒绝]' },
+  { id: 'card1', name: '告警卡片', kind: 'feishu', locale: 'zh-CN', status: 'published', tone: 'error', desc: 'P0/P1 紧急事件 · 含一键跳转', preview: '[P0] Redis OOM\n集群: prod-redis-01\n[查看详情 →]', updatedAt: '2026-07-18T08:00:00.000Z' },
+  { id: 'card2', name: '审批卡片', kind: 'feishu', locale: 'zh-CN', status: 'published', tone: 'warn', desc: '双签审批 · 同意/拒绝按钮', preview: '变更审批\n[批准] [拒绝]', updatedAt: '2026-07-17T09:30:00.000Z' },
+  { id: 'card3', name: '交接摘要', kind: 'email', locale: 'zh-CN', status: 'draft', tone: 'info', desc: '人工接管摘要 · 脱敏任务上下文', preview: '交接：夜航 → 值班经理\n任务 TSK-*** 待审批', updatedAt: '2026-07-21T07:10:00.000Z' },
 ];
 const mockChannelBlacklist = [
   { id: 'b1', type: '用户', value: 'test-spammer@external.com', reason: '高频无效告警', addedBy: '系统', expires: '2026-08-01' },
+  { id: 'b2', type: '群组', value: 'ext-noise-room', reason: '外部噪音群，禁止投递生产告警', addedBy: '消息平台组', expires: '永久' },
 ];
 const mockChannelLanguages = [
   { key: 'zh-CN', label: '简体中文', sample: '您的服务出现异常，请立即处理。' },
@@ -1923,8 +1925,14 @@ const deliveryPolicies: DeliveryPolicyDraft[] = [
   { id: 'delivery-policy-p0', workspaceId: 'w1', eventType: 'P0 紧急告警', primaryDeploymentId: 'delivery-feishu', fallbackDeploymentIds: ['delivery-email'], audience: 'SRE 值班组', dataClassification: 'internal', status: 'draft', validationIssues: [] },
 ];
 const deliveryVersions: DeliveryPolicyVersion[] = [];
-const deliveryAttempts: DeliveryAttempt[] = [];
-const channelAuditEvents: ChannelAuditEvent[] = [];
+const deliveryAttempts: DeliveryAttempt[] = [
+  { id: 'da-demo-1', workspaceId: 'w1', policyId: 'delivery-policy-p0', deploymentId: 'delivery-feishu', targetMasked: 'SRE ****', payloadSummary: '[P0] **** OOM ****', status: 'dead_letter', attempts: 3, correlationId: 'corr_delivery_demo_1', createdAt: '2026-07-21T10:12:00.000Z' },
+];
+const channelAuditEvents: ChannelAuditEvent[] = [
+  { id: 'ca-1', workspaceId: 'w1', time: '2026-07-21T09:40:00.000Z', actor: '消息平台组', action: '验证渠道部署', target: '飞书生产投递', result: 'success', correlationId: 'corr_channel_verify_1' },
+  { id: 'ca-2', workspaceId: 'w1', time: '2026-07-20T16:20:00.000Z', actor: '平台管理员', action: '创建渠道部署', target: '邮件生产投递', result: 'success', correlationId: 'corr_channel_create_1' },
+  { id: 'ca-3', workspaceId: 'w1', time: '2026-07-19T12:00:00.000Z', actor: '消息平台组', action: '保存投递策略草稿', target: 'P0 紧急告警', result: 'success', correlationId: 'corr_channel_policy_1' },
+];
 
 function channelContext(opts: { headers?: Record<string, string> }) {
   const permissions = opts.headers?.['x-mock-permissions']?.split(',').map((item) => item.trim()) ?? [];
@@ -2400,14 +2408,20 @@ export const mockConversation: Conversation = {
 
 // ============ 记忆中心：受控运行记忆，不作为权威知识直接使用 ============
 const memoryRecords: MemoryRecord[] = [
-  { id: 'mem-short-1', workspaceId: 'w1', ownerId: 'u1', layer: 'short_term', scope: 'user', title: 'Redis OOM 会话上下文', content: '当前会话已确认 prod-redis-01 的 maxmemory 风险，等待双重审批执行。', classification: 'internal', sourceType: 'conversation', sourceId: 'cv1', correlationId: 'corr_conversation_cv1', confidence: .92, status: 'active', expiresAt: '2026-07-22T08:00:00.000Z', createdAt: '2026-07-21T08:12:00.000Z', updatedAt: '2026-07-21T08:24:00.000Z' },
-  { id: 'mem-work-1', workspaceId: 'w1', ownerId: 'u1', layer: 'working', scope: 'team', title: 'TSK-20260713-001 处置上下文', content: '已完成内存趋势验证与大 Key 识别；人工接管前需保留执行证据。', classification: 'internal', sourceType: 'task', sourceId: 't1', correlationId: 'corr_task_t1', confidence: .96, status: 'active', expiresAt: '2026-08-20T00:00:00.000Z', createdAt: '2026-07-13T08:24:00.000Z', updatedAt: '2026-07-21T08:24:00.000Z' },
-  { id: 'mem-long-1', workspaceId: 'w1', ownerId: 'u1', layer: 'long_term', scope: 'workspace', title: 'Redis OOM 处置偏好', content: '生产 Redis OOM 优先检索已发布 Runbook；涉及配置写入必须由 SRE 与管理员完成双重审批。', classification: 'restricted', sourceType: 'workflow', sourceId: 'wf1', correlationId: 'corr_task_t1', confidence: .91, status: 'active', createdAt: '2026-07-18T09:00:00.000Z', updatedAt: '2026-07-21T08:24:00.000Z' },
-  { id: 'mem-long-2', workspaceId: 'w2', ownerId: 'u2', layer: 'long_term', scope: 'workspace', title: '预发扩容验收规则', content: '预发扩容先完成 10% 灰度与回滚演练，再提交生产发布审批。', classification: 'internal', sourceType: 'task', sourceId: 't6', correlationId: 'corr_task_t6', confidence: .88, status: 'active', createdAt: '2026-07-17T09:00:00.000Z', updatedAt: '2026-07-20T08:00:00.000Z' },
+  { id: 'mem-short-1', workspaceId: 'w1', ownerId: 'u1', digitalEmployeeId: 'de-sre', layer: 'short_term', scope: 'user', title: 'Redis OOM 会话上下文', content: '当前会话已确认 prod-redis-01 的 maxmemory 风险，等待双重审批执行。', classification: 'internal', sourceType: 'conversation', sourceId: 'cv1', correlationId: 'corr_conversation_cv1', confidence: .92, status: 'active', expiresAt: '2026-07-22T08:00:00.000Z', createdAt: '2026-07-21T08:12:00.000Z', updatedAt: '2026-07-21T08:24:00.000Z' },
+  { id: 'mem-work-1', workspaceId: 'w1', ownerId: 'u1', digitalEmployeeId: 'de-sre', layer: 'working', scope: 'team', title: 'TSK-20260713-001 处置上下文', content: '已完成内存趋势验证与大 Key 识别；人工接管前需保留执行证据。', classification: 'internal', sourceType: 'task', sourceId: 't1', correlationId: 'corr_task_t1', confidence: .96, status: 'active', expiresAt: '2026-08-20T00:00:00.000Z', createdAt: '2026-07-13T08:24:00.000Z', updatedAt: '2026-07-21T08:24:00.000Z' },
+  { id: 'mem-long-1', workspaceId: 'w1', ownerId: 'u1', digitalEmployeeId: 'de-sre', layer: 'long_term', scope: 'workspace', title: 'Redis OOM 处置偏好', content: '生产 Redis OOM 优先检索已发布 Runbook；涉及配置写入必须由 SRE 与管理员完成双重审批。', classification: 'restricted', sourceType: 'workflow', sourceId: 'wf1', correlationId: 'corr_task_t1', confidence: .91, status: 'active', createdAt: '2026-07-18T09:00:00.000Z', updatedAt: '2026-07-21T08:24:00.000Z' },
+  { id: 'mem-long-pending', workspaceId: 'w1', ownerId: 'u1', digitalEmployeeId: 'de-alert-ops', layer: 'long_term', scope: 'workspace', title: '告警静默窗口经验', content: '重大活动窗口内对已知抖动告警可建议静默，但不得自动关闭 P1；需值班经理确认后执行。', classification: 'confidential', sourceType: 'task', sourceId: 't2', correlationId: 'corr_task_t2', confidence: .89, status: 'pending_review', createdAt: '2026-07-20T10:00:00.000Z', updatedAt: '2026-07-21T09:00:00.000Z' },
+  { id: 'mem-long-2', workspaceId: 'w2', ownerId: 'u2', digitalEmployeeId: 'de-capacity', layer: 'long_term', scope: 'workspace', title: '预发扩容验收规则', content: '预发扩容先完成 10% 灰度与回滚演练，再提交生产发布审批。', classification: 'internal', sourceType: 'task', sourceId: 't6', correlationId: 'corr_task_t6', confidence: .88, status: 'active', createdAt: '2026-07-17T09:00:00.000Z', updatedAt: '2026-07-20T08:00:00.000Z' },
 ];
-const memoryCandidates: MemoryKnowledgeCandidate[] = [];
+const memoryCandidates: MemoryKnowledgeCandidate[] = [
+  { id: 'mc-1', workspaceId: 'w1', memoryId: 'mem-long-pending', title: '告警静默窗口经验', summary: '重大活动窗口内对已知抖动告警可建议静默，但不得自动关闭 P1；需值班经理确认后执行。', classification: 'confidential', sourceCorrelationId: 'corr_task_t2', status: 'pending_review', submittedAt: '2026-07-21T09:00:00.000Z' },
+];
 const memoryPolicies: MemoryPolicy[] = [{ workspaceId: 'w1', shortTermTtlHours: 24, workingMemoryTtlDays: 30, dailyRefinementTime: '02:00', shortToWorkingEnabled: true, workingToLongEnabled: true, longToKnowledgeEnabled: true, minimumConfidence: .85, longTermWriteApproval: true, sensitiveDataMasking: true, longTermCapacity: 5000, usedCapacity: 312 }];
-const memoryAudits: MemoryAuditEvent[] = [];
+const memoryAudits: MemoryAuditEvent[] = [
+  { id: 'ma-1', workspaceId: 'w1', time: '2026-07-21T09:00:00.000Z', actor: '观星', action: '提炼知识候选', target: '告警静默窗口经验', result: 'success', correlationId: 'corr_task_t2' },
+  { id: 'ma-2', workspaceId: 'w1', time: '2026-07-21T08:24:00.000Z', actor: '夜航', action: '写入记忆', target: 'Redis OOM 会话上下文', result: 'success', correlationId: 'corr_conversation_cv1' },
+];
 
 // ============ 运行时 Mock 领域状态 ============
 // 让会话中的行动、审批、任务、审计和通知共享同一份数据。
@@ -2691,7 +2705,8 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/memory/overview' && method === 'GET') {
     const records = memoryRecords.filter(inCurrentWorkspace).filter(canReadScopedResource);
     const candidates = memoryCandidates.filter(inCurrentWorkspace);
-    return { workspaceId: currentWorkspaceId, totals: { shortTerm: records.filter((item) => item.layer === 'short_term').length, working: records.filter((item) => item.layer === 'working').length, longTerm: records.filter((item) => item.layer === 'long_term').length, pendingCandidates: candidates.filter((item) => item.status === 'pending_review').length }, policy: memoryPolicies.find((item) => item.workspaceId === currentWorkspaceId) ?? { workspaceId: currentWorkspaceId, shortTermTtlHours: 24, workingMemoryTtlDays: 30, dailyRefinementTime: '02:00', shortToWorkingEnabled: true, workingToLongEnabled: true, longToKnowledgeEnabled: true, minimumConfidence: .85, longTermWriteApproval: true, sensitiveDataMasking: true, longTermCapacity: 5000, usedCapacity: 0 } };
+    const active = (layer: MemoryRecord['layer']) => records.filter((item) => item.layer === layer && item.status === 'active').length;
+    return { workspaceId: currentWorkspaceId, totals: { shortTerm: active('short_term'), working: active('working'), longTerm: active('long_term'), pendingCandidates: candidates.filter((item) => item.status === 'pending_review').length }, policy: memoryPolicies.find((item) => item.workspaceId === currentWorkspaceId) ?? { workspaceId: currentWorkspaceId, shortTermTtlHours: 24, workingMemoryTtlDays: 30, dailyRefinementTime: '02:00', shortToWorkingEnabled: true, workingToLongEnabled: true, longToKnowledgeEnabled: true, minimumConfidence: .85, longTermWriteApproval: true, sensitiveDataMasking: true, longTermCapacity: 5000, usedCapacity: 0 } };
   }
   if (path === '/api/memory/records' && method === 'GET') return memoryRecords.filter(inCurrentWorkspace).filter(canReadScopedResource);
   if (path === '/api/memory/records' && method === 'POST') {
@@ -2699,7 +2714,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     if (!body.title?.trim() || !body.content?.trim() || !body.layer) throw new Error('E_MEMORY_INVALID: 标题、内容与记忆层级不能为空');
     if (body.layer === 'long_term' && (memoryPolicies.find((item) => item.workspaceId === currentWorkspaceId)?.longTermWriteApproval ?? true)) throw new Error('E_MEMORY_APPROVAL_REQUIRED: 长期记忆写入需要通过提炼审核');
     const now = new Date().toISOString();
-    const record: MemoryRecord = { id: mockId('memory'), workspaceId: currentWorkspaceId, ownerId: identity?.id ?? 'u1', layer: body.layer, scope: body.scope ?? 'user', title: body.title.trim(), content: body.content.trim(), classification: body.classification ?? 'internal', sourceType: body.sourceType ?? 'manual', sourceId: body.sourceId ?? 'manual', correlationId: body.correlationId ?? mockId('memory_corr'), confidence: body.confidence ?? .8, status: 'active', expiresAt: body.expiresAt, createdAt: now, updatedAt: now };
+    const record: MemoryRecord = { id: mockId('memory'), workspaceId: currentWorkspaceId, ownerId: identity?.id ?? 'u1', digitalEmployeeId: body.digitalEmployeeId, layer: body.layer, scope: body.scope ?? 'user', title: body.title.trim(), content: body.content.trim(), classification: body.classification ?? 'internal', sourceType: body.sourceType ?? 'manual', sourceId: body.sourceId ?? 'manual', correlationId: body.correlationId ?? mockId('memory_corr'), confidence: body.confidence ?? .8, status: 'active', expiresAt: body.expiresAt, createdAt: now, updatedAt: now };
     memoryRecords.unshift(record); memoryAudit('写入记忆', record.title, 'success', record.correlationId); return record;
   }
   const memoryRecordRoute = path.match(/^\/api\/memory\/records\/([^/]+)(?:\/(expire|candidate))?$/);
@@ -2738,11 +2753,11 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     const now = new Date().toISOString(); let workingCreated = 0; let longCreated = 0; let candidatesCreated = 0;
     if (policy.shortToWorkingEnabled) memoryRecords.filter((item) => inCurrentWorkspace(item) && item.layer === 'short_term' && item.status === 'active').forEach((source) => {
       if (memoryRecords.some((item) => item.layer === 'working' && item.sourceId === source.sourceId)) return;
-      memoryRecords.unshift({ ...source, id: mockId('memory_work'), layer: 'working', scope: 'team', title: `${source.title} · 会话摘要`, content: `每日归纳：${source.content}`, confidence: Math.min(.99, source.confidence + .02), expiresAt: new Date(Date.now() + policy.workingMemoryTtlDays * 86400000).toISOString(), createdAt: now, updatedAt: now }); workingCreated += 1;
+      memoryRecords.unshift({ ...source, id: mockId('memory_work'), digitalEmployeeId: source.digitalEmployeeId, layer: 'working', scope: 'team', title: `${source.title} · 会话摘要`, content: `每日归纳：${source.content}`, confidence: Math.min(.99, source.confidence + .02), expiresAt: new Date(Date.now() + policy.workingMemoryTtlDays * 86400000).toISOString(), createdAt: now, updatedAt: now }); workingCreated += 1;
     });
     if (policy.workingToLongEnabled) memoryRecords.filter((item) => inCurrentWorkspace(item) && item.layer === 'working' && item.status === 'active' && item.confidence >= policy.minimumConfidence).forEach((source) => {
       if (memoryRecords.some((item) => item.layer === 'long_term' && item.sourceId === source.sourceId)) return;
-      memoryRecords.unshift({ ...source, id: mockId('memory_long'), layer: 'long_term', scope: 'workspace', title: `${source.title} · 日结经验`, content: `经每日提炼的可复用经验：${source.content}`, status: 'active', createdAt: now, updatedAt: now }); longCreated += 1;
+      memoryRecords.unshift({ ...source, id: mockId('memory_long'), digitalEmployeeId: source.digitalEmployeeId, layer: 'long_term', scope: 'workspace', title: `${source.title} · 日结经验`, content: `经每日提炼的可复用经验：${source.content}`, status: 'active', createdAt: now, updatedAt: now }); longCreated += 1;
     });
     if (policy.longToKnowledgeEnabled) memoryRecords.filter((item) => inCurrentWorkspace(item) && item.layer === 'long_term' && item.status === 'active' && item.confidence >= policy.minimumConfidence).forEach((source) => {
       if (memoryCandidates.some((item) => item.memoryId === source.id && item.status === 'pending_review')) return;
@@ -4213,7 +4228,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       if (!candidate) throw new Error('技能或市场制品不存在');
       const missingDependency = (catalogSkill?.dependencies ?? []).filter((dependency) => dependency === 'jenkins-mcp').map((name) => ({ name, status: 'missing' as const }));
       const requiresApproval = candidate.riskLevel === 'high';
-      const result: SkillInstallPreflight = { skillId: id, trustedPublisher: catalogSkill?.publisher === '企业能力市场' || !catalogSkill, signatureValid: catalogSkill?.signed ?? true, dependencies: missingDependency, requiresApproval, decision: missingDependency.length ? 'blocked' : requiresApproval ? 'review_required' : 'approved', reason: missingDependency.length ? '缺少受控 Jenkins 连接器，禁止安装' : requiresApproval ? '高风险能力需要安全负责人审批' : undefined };
+      const result: SkillInstallPreflight = { skillId: id, trustedPublisher: catalogSkill?.publisher === '企业能力商店' || !catalogSkill, signatureValid: catalogSkill?.signed ?? true, dependencies: missingDependency, requiresApproval, decision: missingDependency.length ? 'blocked' : requiresApproval ? 'review_required' : 'approved', reason: missingDependency.length ? '缺少受控 Jenkins 连接器，禁止安装' : requiresApproval ? '高风险能力需要安全负责人审批' : undefined };
       appendControlPlaneAudit('skill', '安装预检', candidate.name, result.decision === 'blocked' ? 'failed' : 'success');
       return result;
     }

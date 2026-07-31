@@ -67,7 +67,8 @@ export function AppLayout() {
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
 
   const { data: workspaces } = useApiQuery<Workspace[]>(['workspaces'], '/api/workspaces');
-  const onboardingStorageKey = user ? `de-onboarding-completed:v1:${user.id}` : null;
+  // v2：侧栏 IA（记忆/渠道/数字员工等）更新后，向导内容同步升版，已完成 v1 的账号再展示一次。
+  const onboardingStorageKey = user ? `de-onboarding-completed:v2:${user.id}` : null;
 
   // 引导仅对每个账号的首次登录展示；刷新或后续登录不重复打扰用户。
   useEffect(() => {

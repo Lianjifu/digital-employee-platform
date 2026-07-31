@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { useAuthStore } from '@/stores/authStore';
 import { Badge, Button, KpiCard } from '@de/web-ui';
@@ -115,6 +115,7 @@ function Metric({ label, value, sub }: { label: string; value: string | number; 
 
 export default function DigitalEmployees() {
   const { t } = useT();
+  const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<ModuleTab>('catalog');
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -132,6 +133,11 @@ export default function DigitalEmployees() {
   const { data: employees = [], isLoading } = useApiQuery<DigitalEmployee[]>(['digital-employees'], '/api/digital-employees');
   const { data: overview } = useApiQuery<{ total: number; active: number; pending: number; anomalies: number; costToday: number }>(['digital-employees', 'overview'], '/api/digital-employees/overview');
   const createEmployee = useApiMutation<DigitalEmployee, Partial<DigitalEmployee>>('/api/digital-employees', { onSuccess: (employee) => { setCreateOpen(false); setSelectedId(employee.id); } });
+
+  useEffect(() => {
+    const employeeId = searchParams.get('employeeId');
+    if (employeeId) setSelectedId(employeeId);
+  }, [searchParams]);
 
   const selected = employees.find((employee) => employee.id === selectedId) ?? null;
   const departments = useMemo(() => {
