@@ -77,7 +77,7 @@ func (s *Server) modelByIDLocked(modelID string) (map[string]any, map[string]any
 }
 
 func (s *Server) providerImpactLocked(providerID string) map[string]any {
-	var refs []map[string]any
+	refs := make([]map[string]any, 0)
 	for _, ver := range s.Store.PolicyVersions {
 		snap, _ := ver["snapshot"].(map[string]any)
 		if snap == nil {
@@ -209,7 +209,7 @@ func (s *Server) listModelProvidersFE(r *http.Request) (any, error) {
 	ws := s.workspaceID(r)
 	s.Store.RLock()
 	defer s.Store.RUnlock()
-	var out []map[string]any
+	out := make([]map[string]any, 0)
 	for _, p := range s.Store.ModelProviders {
 		if str(p["workspaceId"]) == ws {
 			cp := map[string]any{}
@@ -217,6 +217,11 @@ func (s *Server) listModelProvidersFE(r *http.Request) (any, error) {
 				cp[k] = v
 			}
 			cp["tier"] = normalizeTier(str(p["tier"]))
+			models := providerModels(p)
+			if models == nil {
+				models = []map[string]any{}
+			}
+			cp["models"] = models
 			out = append(out, cp)
 		}
 	}
@@ -612,14 +617,16 @@ func (s *Server) discoverModels(r *http.Request) (any, error) {
 	}
 	dr, err := s.modelProbe().Discover(r.Context(), protocol, baseURL, apiKey, apiVersion)
 	if err != nil {
-		msg := "拉取模型失败"
+		msg := "拉取模型失败：无法从供应商端点获取模型列表"
 		code := apperr.ProviderUnreachable
 		if strings.Contains(err.Error(), "auth") {
 			code = apperr.ProviderAuth
-			msg = "拉取模型鉴权失败"
+			msg = "拉取模型鉴权失败，请检查 API Key 与协议是否匹配"
 		} else if strings.Contains(err.Error(), "ssrf") || strings.Contains(err.Error(), "private") {
 			code = apperr.EgressBlocked
-			msg = "目标地址被安全策略拦截"
+			msg = "目标地址被安全策略拦截（内网地址需设置 DE_MODEL_ALLOW_PRIVATE=1）"
+		} else if strings.Contains(err.Error(), "empty") {
+			msg = "供应商返回空模型列表，请确认 Base URL / 协议是否正确"
 		}
 		s.Store.Lock()
 		s.appendModelAudit(ws, id.Name, "拉取模型列表", baseURL, "failed", map[string]any{"reason": msg})
@@ -631,10 +638,67 @@ func (s *Server) discoverModels(r *http.Request) (any, error) {
 		models = append(models, map[string]any{"id": m["id"], "name": m["name"]})
 	}
 	s.Store.Lock()
-	s.appendModelAudit(ws, id.Name, "拉取模型列表", baseURL, "success", map[string]any{"reason": protocol + ":" + itoa(len(models))})
+	s.appendModelAudit(ws, id.Name, "拉取模型列表", baseURL, "success", map[string]any{
+		"reason": protocol + ":" + itoa(len(models)) + ":" + dr.Source,
+	})
 	s.Store.Unlock()
 	return map[string]any{
 		"protocol": dr.Protocol, "baseUrl": dr.BaseURL, "models": models, "fetchedAt": dr.FetchedAt,
+		"source": dr.Source, "resolvedUrl": dr.ResolvedURL, "suggestedProtocol": dr.SuggestedProt,
+	}, nil
+}
+
+// testModelConnection probes a draft provider config before create (no provider id required).
+func (s *Server) testModelConnection(r *http.Request) (any, error) {
+	id := identityFrom(r.Context())
+	if err := requireModelWrite(id); err != nil {
+		return nil, err
+	}
+	ws := s.workspaceID(r)
+	if !s.allowModelRate(ws+":probe", 30, time.Minute) {
+		return nil, apperr.New(apperr.RateLimited, 429, "探活请求过于频繁")
+	}
+	body, _ := decodeMap(r)
+	protocol := coalesce(str(body["protocol"]), "openai_compatible")
+	baseURL := strings.TrimSpace(str(body["baseUrl"]))
+	apiKey := modelprov.ExtractCredential(body)
+	apiVersion := str(body["apiVersion"])
+	deployment := str(body["deploymentName"])
+	if baseURL == "" {
+		return nil, apperr.BadReq(apperr.ProviderInvalid, "请先填写 API 请求地址")
+	}
+	if protocol != "ollama" && apiKey == "" {
+		return nil, apperr.BadReq(apperr.ProviderDiscoverAuth, "连接测试需要 API Key")
+	}
+	pr, err := s.modelProbe().Probe(r.Context(), protocol, baseURL, apiKey, apiVersion, deployment)
+	IncModelProbe(err == nil && pr.Healthy, pr.LatencyMS)
+	if err != nil {
+		msg := "连接测试失败"
+		code := apperr.ProviderUnreachable
+		if strings.Contains(err.Error(), "auth") {
+			code = apperr.ProviderAuth
+			msg = "鉴权失败，请检查 API Key 或协议（DeepSeek 请用 OpenAI 兼容）"
+		} else if strings.Contains(err.Error(), "timeout") {
+			code = apperr.ProviderTimeout
+			msg = "连接超时"
+		} else if strings.Contains(err.Error(), "ssrf") || strings.Contains(err.Error(), "private") {
+			code = apperr.EgressBlocked
+			msg = "目标地址被安全策略拦截"
+		}
+		s.Store.Lock()
+		s.appendModelAudit(ws, id.Name, "连接测试", baseURL, "failed", map[string]any{"reason": msg})
+		s.Store.Unlock()
+		return nil, apperr.BadReq(code, msg)
+	}
+	s.Store.Lock()
+	s.appendModelAudit(ws, id.Name, "连接测试", baseURL, "success", map[string]any{
+		"reason": "latencyMs=" + itoa(int(pr.LatencyMS)),
+	})
+	s.Store.Unlock()
+	return map[string]any{
+		"status": "healthy", "latencyMs": pr.LatencyMS, "protocol": protocol,
+		"baseUrl": baseURL, "suggestedProtocol": modelprov.InferProtocolFromURL(baseURL),
+		"verifiedAt": time.Now().UTC().Format(time.RFC3339),
 	}, nil
 }
 
@@ -646,11 +710,26 @@ func (s *Server) listRoutingPolicies(r *http.Request) (any, error) {
 	ws := s.workspaceID(r)
 	s.Store.RLock()
 	defer s.Store.RUnlock()
-	var out []map[string]any
+	out := make([]map[string]any, 0)
 	for _, p := range s.Store.RoutingPolicies {
-		if str(p["workspaceId"]) == ws {
-			out = append(out, p)
+		if str(p["workspaceId"]) != ws {
+			continue
 		}
+		cp := map[string]any{}
+		for k, v := range p {
+			cp[k] = v
+		}
+		fb := stringSlice(p["fallbackModelIds"])
+		if fb == nil {
+			fb = []string{}
+		}
+		cp["fallbackModelIds"] = fb
+		issues := stringSlice(p["validationIssues"])
+		if issues == nil {
+			issues = []string{}
+		}
+		cp["validationIssues"] = issues
+		out = append(out, cp)
 	}
 	return out, nil
 }

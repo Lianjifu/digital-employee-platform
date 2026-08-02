@@ -53,10 +53,22 @@ export function governanceDrillEligibility(policies: RoutingPolicyDraft[]) {
   return { drillable, count: drillable.length, total: policies.length };
 }
 
-export function providerLifecycleAction(impact: Pick<ProviderImpact, 'deletionAllowed'>) {
+export function providerLifecycleAction(impact: Pick<ProviderImpact, 'deletionAllowed'> | null | undefined) {
+  if (!impact) {
+    return { disabled: true, label: '检查引用中…' };
+  }
   return impact.deletionAllowed
     ? { disabled: false, label: '删除供应商' }
     : { disabled: true, label: '已被路由引用' };
+}
+
+/** Normalize impact payload so null slices never crash the provider detail drawer. */
+export function normalizeProviderImpact(impact: ProviderImpact | null | undefined): ProviderImpact | undefined {
+  if (!impact) return undefined;
+  return {
+    ...impact,
+    routeReferences: Array.isArray(impact.routeReferences) ? impact.routeReferences : [],
+  };
 }
 
 export function policyStatusLabel(status: RoutingPolicyStatus) {
@@ -84,9 +96,43 @@ export function budgetRiskLabel(risk: string) {
   return ({ normal: '正常', attention: '关注', critical: '告警' } as const)[risk as 'normal' | 'attention' | 'critical'] ?? risk;
 }
 
-export function modelQueryState({ isLoading, isError, data }: { isLoading: boolean; isError: boolean; data?: readonly unknown[] }) {
-  if (isLoading) return { kind: 'loading' as const, label: '正在读取模型控制面数据' };
-  if (isError) return { kind: 'error' as const, label: '模型控制面数据读取失败' };
-  if (data && data.length === 0) return { kind: 'empty' as const, label: '暂无模型控制面数据' };
-  return { kind: 'ready' as const, label: '' };
+export function modelQueryState({
+  isLoading,
+  isError,
+  data,
+  errorDetail,
+}: {
+  isLoading: boolean;
+  isError: boolean;
+  data?: readonly unknown[];
+  errorDetail?: string;
+}) {
+  if (isLoading) return { kind: 'loading' as const, label: '正在读取模型控制面数据', detail: undefined as string | undefined };
+  if (isError) {
+    return {
+      kind: 'error' as const,
+      label: '模型控制面数据读取失败',
+      detail: errorDetail?.replace(/^E_[A-Z0-9_]+:\s*/, '') || '请确认 de-core 已启动（cd backend && make run），然后重新读取。',
+    };
+  }
+  if (data && data.length === 0) return { kind: 'empty' as const, label: '暂无模型控制面数据', detail: undefined as string | undefined };
+  return { kind: 'ready' as const, label: '', detail: undefined as string | undefined };
+}
+
+/** Normalize provider/policy payloads from de-core (null slices → []). */
+export function normalizeModelProviders<T extends { models?: readonly unknown[] | null }>(providers: T[] | null | undefined): T[] {
+  return (providers ?? []).map((provider) => ({
+    ...provider,
+    models: Array.isArray(provider.models) ? provider.models : [],
+  }));
+}
+
+export function normalizeRoutingPolicies<T extends { fallbackModelIds?: readonly string[] | null; validationIssues?: readonly string[] | null }>(
+  policies: T[] | null | undefined,
+): Array<T & { fallbackModelIds: string[]; validationIssues: string[] }> {
+  return (policies ?? []).map((policy) => ({
+    ...policy,
+    fallbackModelIds: Array.isArray(policy.fallbackModelIds) ? [...policy.fallbackModelIds] : [],
+    validationIssues: Array.isArray(policy.validationIssues) ? [...policy.validationIssues] : [],
+  }));
 }

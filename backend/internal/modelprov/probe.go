@@ -22,10 +22,13 @@ type ProbeResult struct {
 
 // DiscoverResult matches FE/Mock discover-models response.
 type DiscoverResult struct {
-	Protocol  string              `json:"protocol"`
-	BaseURL   string              `json:"baseUrl"`
-	Models    []map[string]string `json:"models"`
-	FetchedAt string              `json:"fetchedAt"`
+	Protocol      string              `json:"protocol"`
+	BaseURL       string              `json:"baseUrl"`
+	Models        []map[string]string `json:"models"`
+	FetchedAt     string              `json:"fetchedAt"`
+	Source        string              `json:"source"` // remote | catalog
+	ResolvedURL   string              `json:"resolvedUrl,omitempty"`
+	SuggestedProt string              `json:"suggestedProtocol,omitempty"`
 }
 
 // Client performs outbound probe/discover against model provider endpoints.
@@ -64,6 +67,7 @@ func (c *Client) timeout() time.Duration {
 
 // Probe verifies credential + endpoint reachability for a protocol.
 func (c *Client) Probe(ctx context.Context, protocol, baseURL, apiKey, apiVersion, deployment string) (ProbeResult, error) {
+	_ = deployment
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
 		return ProbeResult{}, fmt.Errorf("missing baseUrl")
@@ -73,72 +77,51 @@ func (c *Client) Probe(ctx context.Context, protocol, baseURL, apiKey, apiVersio
 	}
 	protocol = normalizeProtocol(protocol)
 	start := time.Now()
-	req, err := c.buildProbeRequest(ctx, protocol, baseURL, apiKey, apiVersion, deployment)
-	if err != nil {
-		return ProbeResult{}, err
-	}
-	res, err := c.httpClient().Do(req)
-	latency := time.Since(start).Milliseconds()
-	if err != nil {
-		if ctx.Err() == context.DeadlineExceeded || strings.Contains(err.Error(), "Timeout") {
-			return ProbeResult{LatencyMS: latency, Detail: "timeout"}, fmt.Errorf("timeout: %w", err)
+	var last ProbeResult
+	var lastErr error
+	for _, path := range DiscoverCandidates(protocol, baseURL, apiVersion) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			lastErr = err
+			continue
 		}
-		return ProbeResult{LatencyMS: latency, Detail: err.Error()}, fmt.Errorf("unreachable: %w", err)
-	}
-	defer res.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 1<<20))
-	out := ProbeResult{LatencyMS: latency, StatusCode: res.StatusCode}
-	switch {
-	case res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden:
-		out.Detail = "auth failed"
-		return out, fmt.Errorf("auth: status %d", res.StatusCode)
-	case res.StatusCode >= 200 && res.StatusCode < 300:
-		out.Healthy = true
-		out.Detail = "ok"
-		return out, nil
-	case res.StatusCode == http.StatusNotFound:
-		// Some gateways 404 on /models but accept traffic; treat as soft-ok when auth passed.
-		out.Healthy = true
-		out.Detail = "endpoint responded"
-		return out, nil
-	default:
-		out.Detail = fmt.Sprintf("status %d", res.StatusCode)
-		return out, fmt.Errorf("bad status %d", res.StatusCode)
-	}
-}
-
-func (c *Client) buildProbeRequest(ctx context.Context, protocol, baseURL, apiKey, apiVersion, deployment string) (*http.Request, error) {
-	_ = deployment
-	base := strings.TrimRight(baseURL, "/")
-	var path string
-	switch protocol {
-	case "azure_openai":
-		ver := apiVersion
-		if ver == "" {
-			ver = "2024-10-21"
+		applyAuthHeaders(req, protocol, apiKey)
+		res, err := c.httpClient().Do(req)
+		latency := time.Since(start).Milliseconds()
+		if err != nil {
+			if ctx.Err() == context.DeadlineExceeded || strings.Contains(err.Error(), "Timeout") {
+				return ProbeResult{LatencyMS: latency, Detail: "timeout"}, fmt.Errorf("timeout: %w", err)
+			}
+			last = ProbeResult{LatencyMS: latency, Detail: err.Error()}
+			lastErr = fmt.Errorf("unreachable: %w", err)
+			continue
 		}
-		path = base + "/openai/models?api-version=" + urlQueryEscape(ver)
-	case "anthropic":
-		path = base + "/v1/models"
-	case "ollama":
-		path = base + "/api/tags"
-	case "dashscope":
-		path = base + "/compatible-mode/v1/models"
-		if !strings.Contains(base, "dashscope") && !strings.HasSuffix(base, "/v1") {
-			path = base + "/v1/models"
-		}
-	default: // openai_compatible, custom
-		path = base + "/v1/models"
-		if strings.HasSuffix(base, "/v1") {
-			path = base + "/models"
+		_, _ = io.Copy(io.Discard, io.LimitReader(res.Body, 1<<20))
+		res.Body.Close()
+		out := ProbeResult{LatencyMS: latency, StatusCode: res.StatusCode}
+		switch {
+		case res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden:
+			out.Detail = "auth failed"
+			return out, fmt.Errorf("auth: status %d", res.StatusCode)
+		case res.StatusCode >= 200 && res.StatusCode < 300:
+			out.Healthy = true
+			out.Detail = "ok"
+			return out, nil
+		case res.StatusCode == http.StatusNotFound:
+			last = out
+			last.Detail = "not found"
+			lastErr = fmt.Errorf("bad status %d", res.StatusCode)
+			continue
+		default:
+			out.Detail = fmt.Sprintf("status %d", res.StatusCode)
+			last = out
+			lastErr = fmt.Errorf("bad status %d", res.StatusCode)
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
+	if lastErr == nil {
+		lastErr = fmt.Errorf("unreachable")
 	}
-	applyAuthHeaders(req, protocol, apiKey)
-	return req, nil
+	return last, lastErr
 }
 
 func urlQueryEscape(s string) string {
@@ -161,8 +144,8 @@ func applyAuthHeaders(req *http.Request, protocol, apiKey string) {
 	}
 }
 
-// Discover lists models from the remote endpoint; falls back to static catalog on parse failure
-// when DE_MODEL_DISCOVER_FALLBACK=1 (default true for non-strict mode).
+// Discover lists models from the remote endpoint.
+// Catalog fallback only when DE_MODEL_DISCOVER_FALLBACK=1 (default: off — real providers only).
 func (c *Client) Discover(ctx context.Context, protocol, baseURL, apiKey, apiVersion string) (DiscoverResult, error) {
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
@@ -173,68 +156,92 @@ func (c *Client) Discover(ctx context.Context, protocol, baseURL, apiKey, apiVer
 	}
 	protocol = normalizeProtocol(protocol)
 	fetched := time.Now().UTC().Format(time.RFC3339)
-	models, err := c.discoverRemote(ctx, protocol, baseURL, apiKey, apiVersion)
+	suggested := InferProtocolFromURL(baseURL)
+	models, resolved, err := c.discoverRemote(ctx, protocol, baseURL, apiKey, apiVersion)
 	if err != nil || len(models) == 0 {
 		if discoverFallbackEnabled() {
-			models = Catalog(protocol)
-		} else if err != nil {
+			return DiscoverResult{
+				Protocol: protocol, BaseURL: baseURL, Models: Catalog(protocol),
+				FetchedAt: fetched, Source: "catalog", SuggestedProt: suggested,
+			}, nil
+		}
+		if err != nil {
 			return DiscoverResult{}, err
 		}
+		return DiscoverResult{}, fmt.Errorf("empty model list from provider")
 	}
 	return DiscoverResult{
-		Protocol:  protocol,
-		BaseURL:   baseURL,
-		Models:    models,
-		FetchedAt: fetched,
+		Protocol: protocol, BaseURL: baseURL, Models: models,
+		FetchedAt: fetched, Source: "remote", ResolvedURL: resolved, SuggestedProt: suggested,
 	}, nil
 }
 
 func discoverFallbackEnabled() bool {
 	v := strings.TrimSpace(os.Getenv("DE_MODEL_DISCOVER_FALLBACK"))
-	if v == "" {
-		return true
-	}
 	return v == "1" || strings.EqualFold(v, "true")
 }
 
-func (c *Client) discoverRemote(ctx context.Context, protocol, baseURL, apiKey, apiVersion string) ([]map[string]string, error) {
-	base := strings.TrimRight(baseURL, "/")
-	var path string
-	switch protocol {
-	case "ollama":
-		path = base + "/api/tags"
-	case "azure_openai":
-		ver := apiVersion
-		if ver == "" {
-			ver = "2024-10-21"
-		}
-		path = base + "/openai/models?api-version=" + urlQueryEscape(ver)
-	case "anthropic":
-		path = base + "/v1/models"
-	default:
-		path = base + "/v1/models"
-		if strings.HasSuffix(base, "/v1") {
-			path = base + "/models"
+func (c *Client) discoverRemote(ctx context.Context, protocol, baseURL, apiKey, apiVersion string) ([]map[string]string, string, error) {
+	var lastErr error
+	candidates := DiscoverCandidates(protocol, baseURL, apiVersion)
+	// Also try inferred protocol paths when URL hints differ (e.g. DeepSeek + Claude preset).
+	if inferred := InferProtocolFromURL(baseURL); inferred != "" && inferred != protocol {
+		for _, u := range DiscoverCandidates(inferred, baseURL, apiVersion) {
+			dup := false
+			for _, x := range candidates {
+				if x == u {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				candidates = append(candidates, u)
+			}
 		}
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, err
+	for _, path := range candidates {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, path, nil)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		// Prefer auth matching selected protocol; for openai listing on anthropic-compat hosts Bearer also works.
+		applyAuthHeaders(req, protocol, apiKey)
+		if protocol == "anthropic" && (strings.Contains(path, "/v1/models") || strings.HasSuffix(path, "/models")) {
+			// Dual-auth: many gateways accept Bearer even on anthropic-shaped URLs.
+			if req.Header.Get("Authorization") == "" && apiKey != "" {
+				req.Header.Set("Authorization", "Bearer "+apiKey)
+			}
+		}
+		res, err := c.httpClient().Do(req)
+		if err != nil {
+			lastErr = fmt.Errorf("unreachable: %w", err)
+			continue
+		}
+		raw, _ := io.ReadAll(io.LimitReader(res.Body, 2<<20))
+		res.Body.Close()
+		if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
+			lastErr = fmt.Errorf("auth: status %d", res.StatusCode)
+			continue
+		}
+		if res.StatusCode >= 300 {
+			lastErr = fmt.Errorf("status %d", res.StatusCode)
+			continue
+		}
+		models := parseModelList(protocol, raw)
+		if len(models) == 0 {
+			models = parseModelList("openai_compatible", raw)
+		}
+		if len(models) == 0 {
+			lastErr = fmt.Errorf("empty model list")
+			continue
+		}
+		return models, path, nil
 	}
-	applyAuthHeaders(req, protocol, apiKey)
-	res, err := c.httpClient().Do(req)
-	if err != nil {
-		return nil, err
+	if lastErr == nil {
+		lastErr = fmt.Errorf("no candidate endpoint succeeded")
 	}
-	defer res.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(res.Body, 2<<20))
-	if res.StatusCode == http.StatusUnauthorized || res.StatusCode == http.StatusForbidden {
-		return nil, fmt.Errorf("auth: status %d", res.StatusCode)
-	}
-	if res.StatusCode >= 300 {
-		return nil, fmt.Errorf("status %d", res.StatusCode)
-	}
-	return parseModelList(protocol, raw), nil
+	return nil, "", lastErr
 }
 
 func parseModelList(protocol string, raw []byte) []map[string]string {

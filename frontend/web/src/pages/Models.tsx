@@ -10,6 +10,9 @@ import { useWorkspaceStore } from '@/stores/workspaceStore';
 import {
   budgetRiskLabel,
   modelQueryState,
+  normalizeModelProviders,
+  normalizeProviderImpact,
+  normalizeRoutingPolicies,
   parseModelTab,
   policyStatusLabel,
   providerLifecycleAction,
@@ -31,6 +34,8 @@ import {
   createProviderConnectDraft,
   draftFromProvider,
   getProviderConnectPreset,
+  pickModelAfterDiscover,
+  protocolBaseUrlHint,
   protocolLabel,
   providerConnectToPayload,
   validateProviderConnectDraft,
@@ -84,8 +89,11 @@ export default function Models() {
   const policiesQuery = useApiQuery<RoutingPolicyDraft[]>(['model-routing-policies', scopeKey], '/api/model-routing/policies');
   const governanceQuery = useApiQuery<ModelGovernanceSnapshot>(['model-governance', scopeKey], '/api/model-governance/overview');
   const auditQuery = useApiQuery<ModelAuditEvent[]>(['model-audit', scopeKey], '/api/model-audit');
-  const activeProvider = providerModal && providerModal !== 'new' ? providersQuery.data?.find((item) => item.id === providerModal) : undefined;
+  const providers = useMemo(() => normalizeModelProviders(providersQuery.data), [providersQuery.data]);
+  const policies = useMemo(() => normalizeRoutingPolicies(policiesQuery.data), [policiesQuery.data]);
+  const activeProvider = providerModal && providerModal !== 'new' ? providers.find((item) => item.id === providerModal) : undefined;
   const impactQuery = useApiQuery<ProviderImpact>(['model-provider-impact', scopeKey, activeProvider?.id], `/api/model-providers/${activeProvider?.id ?? '__none__'}/impact`, undefined, { enabled: Boolean(activeProvider) });
+  const activeImpact = useMemo(() => normalizeProviderImpact(impactQuery.data), [impactQuery.data]);
   const versionsQuery = useApiQuery<RoutingPolicyVersion[]>(['model-policy-versions', scopeKey, policyDrawer], `/api/model-routing/policies/${policyDrawer ?? '__none__'}/versions`, undefined, { enabled: Boolean(policyDrawer) });
 
   const createProvider = useApiMutation<ModelProvider, Record<string, unknown>>('/api/model-providers');
@@ -100,18 +108,20 @@ export default function Models() {
   const rollback = useApiMutation<RoutingPolicyVersion, { id: string; versionId: string; reason: string }>((value) => `/api/model-routing/policies/${value.id}/rollback`);
   const runDrill = useApiMutation<{ status: string }, { policyId: string; scope: 'sandbox'; reason: string }>('/api/model-routing/failover-tests');
 
-  const models = useMemo(() => providersQuery.data?.flatMap((provider) => provider.models) ?? [], [providersQuery.data]);
-  const selectedPolicy = policiesQuery.data?.find((item) => item.id === policyDrawer);
-  const publishedPolicies = (policiesQuery.data ?? []).filter((policy) => policy.status === 'published' && policy.fallbackModelIds.length > 0);
+  const models = useMemo(() => providers.flatMap((provider) => provider.models), [providers]);
+  const selectedPolicy = policies.find((item) => item.id === policyDrawer);
+  const publishedPolicies = policies.filter((policy) => policy.status === 'published' && policy.fallbackModelIds.length > 0);
   const auditActions = useMemo(() => Array.from(new Set((auditQuery.data ?? []).map((event) => event.action))), [auditQuery.data]);
   const filteredAudit = (auditQuery.data ?? []).filter((event) => (
     (auditResultFilter === 'all' || event.result === auditResultFilter)
     && (auditActionFilter === 'all' || event.action === auditActionFilter)
   ));
+  const controlPlaneError = providersQuery.error ?? policiesQuery.error ?? governanceQuery.error ?? auditQuery.error;
   const queryState = modelQueryState({
     isLoading: providersQuery.isLoading || policiesQuery.isLoading,
     isError: providersQuery.isError || policiesQuery.isError || governanceQuery.isError || auditQuery.isError,
-    data: [...(providersQuery.data ?? []), ...(policiesQuery.data ?? [])],
+    data: [...providers, ...policies],
+    errorDetail: controlPlaneError instanceof Error ? controlPlaneError.message : undefined,
   });
   const reportError = (error: unknown) => toast.error(error instanceof Error ? error.message.replace(/^E_[A-Z_]+:\s*/, '') : '模型控制面操作失败');
   const refetchControlPlane = () => { void providersQuery.refetch(); void policiesQuery.refetch(); void governanceQuery.refetch(); void auditQuery.refetch(); };
@@ -130,7 +140,7 @@ export default function Models() {
 
   const activeWorkspace = WORKSPACES.find((item) => item.key === workspace) ?? WORKSPACES[0];
   const budgetTone = governanceQuery.data?.budgetRisk === 'normal' ? 'success' : 'warn';
-  const routingSummary = summarizeRoutingPolicies(policiesQuery.data ?? []);
+  const routingSummary = summarizeRoutingPolicies(policies);
 
   return (
     <div className="models-page h-full min-w-0 overflow-y-auto bg-[var(--bg-elevated)] p-3 md:p-4 lg:p-5">
@@ -227,6 +237,9 @@ export default function Models() {
             <div className="p-8 text-center">
               <AlertTriangle className="mx-auto h-6 w-6 text-[var(--danger)]" />
               <p className="mt-3 text-sm font-medium">{queryState.label}</p>
+              {queryState.detail ? (
+                <p className="mx-auto mt-2 max-w-md text-xs leading-5 text-[var(--text-muted)]">{queryState.detail}</p>
+              ) : null}
               <Button className="mt-4" size="sm" variant="secondary" onClick={refetchControlPlane}>重新读取</Button>
             </div>
           ) : queryState.kind === 'empty' ? (
@@ -234,10 +247,16 @@ export default function Models() {
               <EmptyState icon={Cloud} title={queryState.label} description="请先接入供应商或创建路由草稿。" />
             </div>
           ) : workspace === 'access' ? (
-            <AccessWorkspace providers={providersQuery.data ?? []} description={activeWorkspace.description} onSelect={setProviderModal} />
+            <AccessWorkspace
+              providers={providers}
+              description={activeWorkspace.description}
+              canWrite={canWrite}
+              onSelect={setProviderModal}
+              onDelete={(provider) => setDeleteProvider(provider)}
+            />
           ) : workspace === 'routing' ? (
             <RoutingWorkspace
-              policies={policiesQuery.data ?? []}
+              policies={policies}
               models={models}
               description={activeWorkspace.description}
               canWrite={canWrite}
@@ -249,7 +268,7 @@ export default function Models() {
               canWrite={canWrite}
               snapshot={governanceQuery.data}
               models={models}
-              policies={policiesQuery.data ?? []}
+              policies={policies}
               description={activeWorkspace.description}
               publishedPolicies={publishedPolicies}
               lastDrillResult={lastDrillResult}
@@ -279,9 +298,20 @@ export default function Models() {
         <ProviderForm
           canWrite={canWrite}
           workspaceId={currentWorkspaceId}
+          creating={createProvider.isPending}
           onCancel={() => setProviderModal(null)}
           onSubmit={(payload) => createProvider.mutate(payload, {
-            onSuccess: () => { toast.success('供应商已接入，等待连通性验证'); setProviderModal(null); },
+            onSuccess: (provider) => {
+              toast.success('供应商已接入，正在验证连通性…');
+              setProviderModal(null);
+              testProvider.mutate(
+                { id: provider.id, reason: '接入后自动连通性验证' },
+                {
+                  onSuccess: (result) => toast.success(result.providerStatus === 'active' ? '连通性验证通过，供应商已可用' : '连通性验证通过'),
+                  onError: reportError,
+                },
+              );
+            },
             onError: reportError,
           })}
         />
@@ -297,7 +327,7 @@ export default function Models() {
           <ProviderDetail
             key={activeProvider.id}
             provider={activeProvider}
-            impact={impactQuery.data}
+            impact={activeImpact}
             canWrite={canWrite}
             workspaceId={currentWorkspaceId}
             onClose={() => setProviderModal(null)}
@@ -403,9 +433,22 @@ export default function Models() {
       <ConfirmDialog
         open={Boolean(deleteProvider)}
         onClose={() => setDeleteProvider(null)}
-        onConfirm={() => { if (deleteProvider) removeProvider.mutate({ id: deleteProvider.id, reason: '人工确认删除' }, { onSuccess: () => { toast.success('供应商已删除'); setProviderModal(null); }, onError: reportError }); }}
-        title="删除未被引用的供应商？"
-        description="已被已发布路由引用的供应商将被 API 拒绝删除。"
+        onConfirm={() => {
+          if (!deleteProvider) return;
+          removeProvider.mutate(
+            { id: deleteProvider.id, reason: '人工确认删除' },
+            {
+              onSuccess: () => {
+                toast.success('供应商已删除');
+                setDeleteProvider(null);
+                setProviderModal(null);
+              },
+              onError: reportError,
+            },
+          );
+        }}
+        title={`删除供应商「${deleteProvider?.name ?? ''}」？`}
+        description="删除后凭据引用一并清理。若仍被已发布路由引用，服务端会拒绝删除。"
         confirmText="删除"
         tone="danger"
       />
@@ -413,7 +456,15 @@ export default function Models() {
   );
 }
 
-function AccessWorkspace({ providers, description, onSelect }: { providers: ModelProvider[]; description: string; onSelect: (id: string) => void }) {
+function AccessWorkspace({
+  providers, description, canWrite, onSelect, onDelete,
+}: {
+  providers: ModelProvider[];
+  description: string;
+  canWrite: boolean;
+  onSelect: (id: string) => void;
+  onDelete: (provider: ModelProvider) => void;
+}) {
   return (
     <div>
       <div className="flex flex-wrap items-end justify-between gap-3 px-4 pt-3">
@@ -430,22 +481,37 @@ function AccessWorkspace({ providers, description, onSelect }: { providers: Mode
       ) : (
         <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 md:p-4">
           {providers.map((provider) => (
-            <button type="button" key={provider.id} onClick={() => onSelect(provider.id)} className="de-employee-card rounded-xl bg-[var(--surface-1)] p-3.5 text-left">
+            <div key={provider.id} className="de-employee-card rounded-xl bg-[var(--surface-1)] p-3.5 text-left">
               <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
+                <button type="button" onClick={() => onSelect(provider.id)} className="min-w-0 flex-1 text-left">
                   <div className="truncate text-sm font-semibold text-[var(--text)]">{provider.name}</div>
                   <div className="mt-1 text-[11px] text-[var(--text-muted)]">
                     {protocolLabel(provider.protocol)} · {TIER_LABEL[provider.tier]} · {provider.cloudRegion}
                   </div>
+                </button>
+                <div className="flex shrink-0 items-center gap-1">
+                  <Badge tone={providerStatusTone(provider.status)}>{providerStatusLabel(provider.status)}</Badge>
+                  {canWrite && (
+                    <button
+                      type="button"
+                      title="删除供应商"
+                      aria-label={`删除 ${provider.name}`}
+                      className="grid h-7 w-7 place-items-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--danger-bg)] hover:text-[var(--danger)]"
+                      onClick={() => onDelete(provider)}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
                 </div>
-                <Badge tone={providerStatusTone(provider.status)}>{providerStatusLabel(provider.status)}</Badge>
               </div>
-              <div className="mt-2 truncate font-mono text-[10px] text-[var(--text-muted)]">{provider.baseUrl ?? '未配置 Endpoint'}</div>
-              <div className="mt-1.5 text-[11px] leading-5 text-[var(--text-secondary)]">{provider.models.map((model) => model.name).join(' · ') || '未配置模型'}</div>
-              <div className="mt-2 flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
-                <FileKey2 className="h-3 w-3" />{provider.credentialMasked} · {provider.lastVerifiedAt ? '已验证' : '待验证'}
-              </div>
-            </button>
+              <button type="button" onClick={() => onSelect(provider.id)} className="mt-2 w-full text-left">
+                <div className="truncate font-mono text-[10px] text-[var(--text-muted)]">{provider.baseUrl ?? '未配置 Endpoint'}</div>
+                <div className="mt-1.5 text-[11px] leading-5 text-[var(--text-secondary)]">{provider.models.map((model) => model.name).join(' · ') || '未配置模型'}</div>
+                <div className="mt-2 flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+                  <FileKey2 className="h-3 w-3" />{provider.credentialMasked} · {provider.lastVerifiedAt ? '已验证' : '待验证'}
+                </div>
+              </button>
+            </div>
           ))}
         </div>
       )}
@@ -874,25 +940,53 @@ function AuditWorkspace({
   );
 }
 
-function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit }: {
+type DiscoverModelsResult = {
+  models: Array<{ id: string; name: string }>;
+  source?: 'remote' | 'catalog';
+  suggestedProtocol?: string;
+  resolvedUrl?: string;
+};
+
+function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit, creating }: {
   canWrite: boolean;
   workspaceId: string;
   onCancel: () => void;
   onSubmit: (payload: Record<string, unknown>) => void;
+  creating?: boolean;
 }) {
   const [draft, setDraft] = useState<ProviderConnectDraft>(() => createProviderConnectDraft('openai_compatible'));
   const [discovered, setDiscovered] = useState<Array<{ id: string; name: string }>>([]);
   const [discoverHint, setDiscoverHint] = useState<string | null>(null);
+  const [probeResult, setProbeResult] = useState<null | {
+    ok: boolean;
+    title: string;
+    detail?: string;
+    latencyMs?: number;
+    suggestProtocol?: string;
+  }>(null);
   const preset = getProviderConnectPreset(draft.protocol);
   const issues = validateProviderConnectDraft(draft);
   const discoverGate = canDiscoverModels(draft);
-  const discoverModels = useApiMutation<{ models: Array<{ id: string; name: string }> }, Record<string, unknown>>(
+  const protocolHint = protocolBaseUrlHint(draft.protocol, draft.baseUrl);
+  const discoverModels = useApiMutation<DiscoverModelsResult, Record<string, unknown>>(
     '/api/model-providers/discover-models',
+  );
+  const testConnection = useApiMutation<{ status: string; latencyMs?: number; suggestedProtocol?: string }, Record<string, unknown>>(
+    '/api/model-providers/test-connection',
   );
   const patch = <K extends keyof ProviderConnectDraft>(key: K, value: ProviderConnectDraft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
   };
   const show = (key: (typeof preset.fields)[number]) => preset.fields.includes(key);
+  const discoverBody = () => ({
+    workspaceId,
+    protocol: draft.protocol,
+    baseUrl: draft.baseUrl.trim(),
+    credential: draft.apiKey,
+    apiKey: draft.apiKey,
+    apiVersion: draft.apiVersion || undefined,
+    deploymentName: draft.deploymentName || undefined,
+  });
   return (
     <div className="space-y-3">
       <div>
@@ -907,6 +1001,7 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit }: {
                 setDraft((current) => applyProviderConnectProtocol(current, item.protocol));
                 setDiscovered([]);
                 setDiscoverHint(null);
+                setProbeResult(null);
               }}
               className={cn(
                 'rounded-lg px-2.5 py-1.5 text-[11px] transition-colors',
@@ -921,6 +1016,11 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit }: {
           ))}
         </div>
         <p className="mt-1.5 text-[11px] leading-5 text-[var(--text-muted)]">{preset.hint}</p>
+        {protocolHint && (
+          <p className="mt-1.5 rounded-lg bg-[var(--warning-bg)] px-2.5 py-1.5 text-[11px] leading-5 text-[var(--warning)]">
+            {protocolHint}
+          </p>
+        )}
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -937,7 +1037,11 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit }: {
           <Input
             className="h-9 font-mono text-xs"
             value={draft.baseUrl}
-            onChange={(event) => { patch('baseUrl', event.target.value); setDiscovered([]); }}
+            onChange={(event) => {
+              patch('baseUrl', event.target.value);
+              setDiscovered([]);
+              setProbeResult(null);
+            }}
             placeholder="https://your-api-endpoint.com/v1"
           />
           <p className="mt-1.5 rounded-lg bg-[var(--warning-bg)] px-2.5 py-1.5 text-[11px] leading-5 text-[var(--warning)]">
@@ -952,7 +1056,10 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit }: {
             className="h-9 font-mono text-xs"
             type="password"
             value={draft.apiKey}
-            onChange={(event) => patch('apiKey', event.target.value)}
+            onChange={(event) => {
+              patch('apiKey', event.target.value);
+              setProbeResult(null);
+            }}
             placeholder={preset.credentialPlaceholder}
             autoComplete="new-password"
           />
@@ -988,33 +1095,34 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit }: {
               variant="secondary"
               className="h-9 shrink-0 px-2.5"
               disabled={!canWrite || !discoverGate.ok || discoverModels.isPending}
-              title={discoverGate.ok ? '从端点拉取可用模型名称' : discoverGate.reason}
+              title={discoverGate.ok ? '从供应商端点真实拉取模型列表' : discoverGate.reason}
               loading={discoverModels.isPending}
               onClick={() => {
                 setDiscoverHint(null);
-                discoverModels.mutate(
-                  {
-                    workspaceId,
-                    protocol: draft.protocol,
-                    baseUrl: draft.baseUrl.trim(),
-                    apiKey: draft.apiKey,
-                    apiVersion: draft.apiVersion || undefined,
+                discoverModels.mutate(discoverBody(), {
+                  onSuccess: (result) => {
+                    const models = result.models ?? [];
+                    setDiscovered(models);
+                    setDraft((current) => ({
+                      ...current,
+                      modelId: pickModelAfterDiscover(current.modelId, models),
+                    }));
+                    const sourceHint = result.source === 'remote'
+                      ? `已从供应商拉取 ${models.length} 个模型`
+                      : `已获取 ${models.length} 个模型（目录回落，非实时）`;
+                    const suggest = result.suggestedProtocol && result.suggestedProtocol !== draft.protocol
+                      ? `；地址更像 ${result.suggestedProtocol}，可切换协议后重试`
+                      : '';
+                    setDiscoverHint(`${sourceHint}${suggest}。点选下方标签或继续手写。`);
+                    toast.success(sourceHint);
                   },
-                  {
-                    onSuccess: (result) => {
-                      setDiscovered(result.models);
-                      if (!draft.modelId && result.models[0]) patch('modelId', result.models[0].id);
-                      setDiscoverHint(`已获取 ${result.models.length} 个模型，可从列表选择或继续手写`);
-                      toast.success(`已拉取 ${result.models.length} 个模型名称`);
-                    },
-                    onError: (error) => {
-                      setDiscovered([]);
-                      const message = error instanceof Error ? error.message.replace(/^E_[A-Z_]+:\s*/, '') : '拉取模型失败';
-                      setDiscoverHint(message);
-                      toast.error(message);
-                    },
+                  onError: (error) => {
+                    setDiscovered([]);
+                    const message = error instanceof Error ? error.message.replace(/^E_[A-Z_]+:\s*/, '') : '拉取模型失败';
+                    setDiscoverHint(message);
+                    toast.error(message);
                   },
-                );
+                });
               }}
             >
               <Download className="h-3.5 w-3.5" />拉取
@@ -1024,7 +1132,7 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit }: {
             {discovered.map((model) => <option key={model.id} value={model.id}>{model.name}</option>)}
           </datalist>
           <p className="mt-1 text-[11px] leading-5 text-[var(--text-muted)]">
-            {discoverHint ?? 'Codec/路由默认请求的模型，可随时改；点击「拉取」从端点获取可用名称。'}
+            {discoverHint ?? '点击「拉取」向供应商真实请求模型目录；点选标签即可填入默认模型。'}
           </p>
           {discovered.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1060,17 +1168,95 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit }: {
         )}
       </div>
 
+      {probeResult && (
+        <div
+          role="status"
+          className={cn(
+            'rounded-lg px-3 py-2.5 text-[11px] leading-5',
+            probeResult.ok
+              ? 'bg-[var(--success-bg)] text-[var(--success)]'
+              : 'bg-[var(--danger-bg)] text-[var(--danger)]',
+          )}
+        >
+          <div className="flex items-start gap-2">
+            {probeResult.ok
+              ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+              : <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />}
+            <div className="min-w-0 flex-1 space-y-1">
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge tone={probeResult.ok ? 'success' : 'error'}>
+                  {probeResult.ok ? '连接成功' : '连接失败'}
+                </Badge>
+                <strong className="text-xs font-semibold">{probeResult.title}</strong>
+                {typeof probeResult.latencyMs === 'number' && (
+                  <span className="font-mono text-[10px] opacity-90">延迟 {probeResult.latencyMs}ms</span>
+                )}
+              </div>
+              {probeResult.detail && (
+                <p className="text-[11px] leading-5 opacity-95">{probeResult.detail}</p>
+              )}
+              {probeResult.ok && probeResult.suggestProtocol && (
+                <p className="rounded-md bg-[var(--warning-bg)] px-2 py-1 text-[var(--warning)]">
+                  当前协议可连通，但地址更像 <code className="font-mono">{probeResult.suggestProtocol}</code>
+                  ，建议切换后再创建，避免后续拉取/路由异常。
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {issues.length > 0 && (
         <div className="rounded-lg bg-[var(--danger-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--danger)]">
           {issues.map((issue) => <div key={issue}>• {issue}</div>)}
         </div>
       )}
 
-      <div className="flex justify-end gap-2 border-t border-[var(--border)] pt-3">
+      <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--border)] pt-3">
         <Button size="sm" variant="ghost" onClick={onCancel}>取消</Button>
         <Button
           size="sm"
-          disabled={!canWrite || issues.length > 0}
+          variant="secondary"
+          disabled={!canWrite || !discoverGate.ok || testConnection.isPending}
+          loading={testConnection.isPending}
+          title={discoverGate.ok ? '不落库，仅向供应商发起连通性探测' : discoverGate.reason}
+          onClick={() => {
+            setProbeResult(null);
+            testConnection.mutate(discoverBody(), {
+              onSuccess: (result) => {
+                const latencyMs = typeof result.latencyMs === 'number' ? result.latencyMs : undefined;
+                const suggestProtocol = result.suggestedProtocol && result.suggestedProtocol !== draft.protocol
+                  ? result.suggestedProtocol
+                  : undefined;
+                setProbeResult({
+                  ok: true,
+                  title: '供应商端点可达，鉴权通过',
+                  latencyMs,
+                  suggestProtocol,
+                  detail: suggestProtocol
+                    ? undefined
+                    : '可继续创建受管接入；凭据仅保存在服务端。',
+                });
+                toast.success(latencyMs != null ? `连接测试通过（${latencyMs}ms）` : '连接测试通过');
+              },
+              onError: (error) => {
+                const message = error instanceof Error ? error.message.replace(/^E_[A-Z_]+:\s*/, '') : '连接测试失败';
+                setProbeResult({
+                  ok: false,
+                  title: '无法连通或鉴权失败',
+                  detail: message,
+                });
+                toast.error(message);
+              },
+            });
+          }}
+        >
+          <RefreshCw className="h-3.5 w-3.5" />测试连接
+        </Button>
+        <Button
+          size="sm"
+          disabled={!canWrite || issues.length > 0 || creating}
+          loading={creating}
           onClick={() => {
             onSubmit(providerConnectToPayload(draft, workspaceId));
             patch('apiKey', '');
@@ -1096,7 +1282,8 @@ function ProviderDetail({
   onDisable: () => void;
   onDelete: () => void;
 }) {
-  const deletion = providerLifecycleAction(impact ?? { deletionAllowed: false });
+  const deletion = providerLifecycleAction(impact);
+  const routeReferences = impact?.routeReferences ?? [];
   const [draft, setDraft] = useState<ProviderConnectDraft>(() => draftFromProvider(provider));
   const [discovered, setDiscovered] = useState<Array<{ id: string; name: string }>>([]);
   const [discoverHint, setDiscoverHint] = useState<string | null>(null);
@@ -1119,11 +1306,11 @@ function ProviderDetail({
         <div className="flex flex-wrap items-center gap-2">
           <Badge tone={providerStatusTone(provider.status)}>{providerStatusLabel(provider.status)}</Badge>
           <Badge tone="neutral">{protocolLabel(provider.protocol)}</Badge>
-          <Badge tone="neutral">{TIER_LABEL[provider.tier]}</Badge>
+          <Badge tone="neutral">{TIER_LABEL[provider.tier] ?? provider.tier}</Badge>
           <span className="text-[var(--text-muted)]">{provider.lastVerifiedAt ? `最近验证 ${new Date(provider.lastVerifiedAt).toLocaleString('zh-CN')}` : '尚未验证'}</span>
         </div>
         <div className="mt-2 text-[11px] text-[var(--text-secondary)]">
-          当前模型：{provider.models.map((model) => model.name).join(' · ') || '未配置'}
+          当前模型：{(provider.models ?? []).map((model) => model.name).join(' · ') || '未配置'}
         </div>
       </div>
 
@@ -1234,14 +1421,20 @@ function ProviderDetail({
                     providerId: provider.id,
                     protocol: draft.protocol,
                     baseUrl: draft.baseUrl.trim(),
+                    credential: draft.apiKey || undefined,
                     apiKey: draft.apiKey || undefined,
                     apiVersion: draft.apiVersion || undefined,
                   },
                   {
                     onSuccess: (result) => {
-                      setDiscovered(result.models);
-                      setDiscoverHint(`已获取 ${result.models.length} 个模型，可点选更新默认模型`);
-                      toast.success(`已拉取 ${result.models.length} 个模型名称`);
+                      const models = result.models ?? [];
+                      setDiscovered(models);
+                      setDraft((current) => ({
+                        ...current,
+                        modelId: pickModelAfterDiscover(current.modelId, models),
+                      }));
+                      setDiscoverHint(`已从供应商拉取 ${models.length} 个模型，可点选更新默认模型`);
+                      toast.success(`已拉取 ${models.length} 个模型名称`);
                     },
                     onError: (error) => {
                       setDiscovered([]);
@@ -1299,10 +1492,14 @@ function ProviderDetail({
 
       <div className="rounded-xl bg-[var(--bg)] p-3 text-xs" style={{ boxShadow: 'var(--saas-ring)' }}>
         <div className="font-medium text-[var(--text)]">退役影响</div>
-        <p className="mt-1 text-[var(--text-muted)]">{impact?.blockedReason ?? '未发现已发布路由引用，可执行删除。'}</p>
-        {impact?.routeReferences.map((item) => (
-          <div key={item.versionId} className="mt-1.5 flex items-center gap-1 text-[var(--text-secondary)]">
-            <Network className="h-3 w-3" />{item.level} · {item.versionId}
+        <p className="mt-1 text-[var(--text-muted)]">
+          {!impact
+            ? '正在检查已发布路由引用…'
+            : (impact.blockedReason ?? '未发现已发布路由引用，可执行删除。')}
+        </p>
+        {routeReferences.map((item) => (
+          <div key={`${item.policyId}:${item.versionId}`} className="mt-1.5 flex items-center gap-1 text-[var(--text-secondary)]">
+            <Network className="h-3 w-3" />{item.level} · {item.versionId || item.policyId}
           </div>
         ))}
       </div>

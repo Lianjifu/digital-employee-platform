@@ -183,6 +183,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.createModelProviderFE(r)
 	case path == "/api/model-providers/discover-models" && method == http.MethodPost:
 		data, err = s.discoverModels(r)
+	case path == "/api/model-providers/test-connection" && method == http.MethodPost:
+		data, err = s.testModelConnection(r)
 	case strings.HasPrefix(path, "/api/model-providers/") && (method == http.MethodGet || method == http.MethodPost || method == http.MethodPatch || method == http.MethodDelete):
 		data, err = s.modelProviderAction(r)
 	case path == "/api/model-routing/policies" && method == http.MethodGet:

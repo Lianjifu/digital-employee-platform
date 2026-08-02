@@ -29,7 +29,8 @@
 | Method | Path |
 |--------|------|
 | GET/POST | `/api/model-providers` |
-| POST | `/api/model-providers/discover-models` → `{ models:[{id,name}], protocol, baseUrl, fetchedAt }` |
+| POST | `/api/model-providers/discover-models` → `{ models:[{id,name}], source, suggestedProtocol, … }`（真实拉取） |
+| POST | `/api/model-providers/test-connection` → `{ status:healthy, latencyMs }`（接入前探活，不落库） |
 | GET | `/api/model-providers/:id/impact` |
 | POST | `/api/model-providers/:id/{test,disable}` |
 | PATCH/DELETE | `/api/model-providers/:id` |

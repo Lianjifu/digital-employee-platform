@@ -71,10 +71,10 @@ pnpm --filter web dev
 
 ```env
 VITE_USE_MOCK=false
-VITE_API_BASE=http://127.0.0.1:8080
+VITE_API_BASE=
 ```
 
-使用 Vite 代理时可置空 `VITE_API_BASE=`（`vite.config.ts` 将 `/api` 转到 `127.0.0.1:8080`）。
+开发态默认走同源 `/api`（Vite 代理到 `127.0.0.1:8080`）。需浏览器直连后端时设 `VITE_API_DIRECT=true` 并填写 `VITE_API_BASE`。
 
 演示登录（密码任意非空）：
 

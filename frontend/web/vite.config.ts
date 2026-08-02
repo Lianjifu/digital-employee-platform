@@ -22,15 +22,17 @@ export default defineConfig({
     host: true,
     port: 5173,
     strictPort: false,
-    // 联调：VITE_USE_MOCK=false 且 VITE_API_BASE 为空时，将 /api 转到本地 de-core
+    // 联调：VITE_API_BASE 为空时，浏览器走同源 /api，由此代理到本机 de-core
     proxy: {
       '/api': {
         target: process.env.VITE_PROXY_TARGET ?? 'http://127.0.0.1:8080',
         changeOrigin: true,
+        secure: false,
       },
       '/healthz': {
         target: process.env.VITE_PROXY_TARGET ?? 'http://127.0.0.1:8080',
         changeOrigin: true,
+        secure: false,
       },
     },
   },

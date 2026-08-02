@@ -81,7 +81,8 @@ export async function streamCopilotTurn(input: StreamTurnInput): Promise<void> {
           ? {
               'x-tenant-id': user.tenantId,
               'x-mock-role': user.role,
-              'x-mock-actor': user.name,
+              // fetch headers must be ISO-8859-1; Chinese display names need encoding
+              'x-mock-actor': encodeURIComponent(user.name),
               'x-mock-user-id': user.id,
               'x-mock-permissions': user.permissions.join(','),
             }

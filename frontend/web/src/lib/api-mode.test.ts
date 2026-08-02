@@ -7,8 +7,9 @@ describe('api-mode', () => {
     expect(isMockApiMode()).toBe(false);
   });
 
-  it('apiBaseURL trims trailing slash', () => {
-    // 依赖当前环境；至少保证函数可调用
+  it('apiBaseURL uses same-origin proxy in DEV for loopback bases', () => {
+    // vitest 默认 DEV=true；loopback 直连会被折叠为空字符串（走 Vite proxy）
     expect(typeof apiBaseURL()).toBe('string');
+    expect(apiBaseURL()).toBe('');
   });
 });

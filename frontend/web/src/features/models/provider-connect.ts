@@ -243,6 +243,33 @@ export function canDiscoverModels(
   return { ok: true as const };
 }
 
+/** Soft guidance when URL host and selected protocol look mismatched. */
+export function protocolBaseUrlHint(protocol: ModelConnectProtocol, baseUrl: string): string | null {
+  const u = baseUrl.trim().toLowerCase();
+  if (!u) return null;
+  if (protocol === 'anthropic' && u.includes('deepseek.com')) {
+    return 'DeepSeek 请改用「OpenAI」协议；Base URL 推荐 https://api.deepseek.com 或 …/v1';
+  }
+  if (protocol === 'anthropic' && !u.includes('anthropic') && (u.includes('/v1') || u.includes('openai'))) {
+    return '当前地址更像 OpenAI 兼容端点，建议切换到「OpenAI」协议后再拉取';
+  }
+  if (protocol === 'openai_compatible' && u.includes('anthropic.com')) {
+    return '官方 Anthropic 地址请使用「Claude」协议';
+  }
+  return null;
+}
+
+export function pickModelAfterDiscover(
+  currentModelId: string,
+  models: Array<{ id: string; name: string }>,
+): string {
+  if (!models.length) return currentModelId;
+  if (currentModelId && models.some((m) => m.id === currentModelId || m.name === currentModelId)) {
+    return currentModelId;
+  }
+  return models[0].id;
+}
+
 export function providerConnectToPayload(draft: ProviderConnectDraft, workspaceId: string, options: { includeCredential?: boolean } = {}) {
   const preset = getProviderConnectPreset(draft.protocol);
   const includeCredential = options.includeCredential ?? true;

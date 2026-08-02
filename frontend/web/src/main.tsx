@@ -11,27 +11,37 @@ import { useWorkspaceStore } from './stores/workspaceStore';
 import { useAuthStore } from './stores/authStore';
 import { apiBaseURL, isMockApiMode } from './lib/api-mode';
 
-// 默认真实 de-core；仅 VITE_USE_MOCK=true 时注入 Mock
-setApiClient(
-  new ApiClient(
-    apiBaseURL(),
-    () => localStorage.getItem('token'),
-    isMockApiMode() ? mockHandler : undefined,
-    () => {
-      const user = useAuthStore.getState().user;
-      return {
-        'x-workspace-id': useWorkspaceStore.getState().currentWorkspaceId ?? user?.workspaceId ?? 'w1',
-        ...(user ? {
-          'x-tenant-id': user.tenantId,
-          'x-mock-role': user.role,
-          'x-mock-actor': user.name,
-          'x-mock-user-id': user.id,
-          'x-mock-permissions': user.permissions.join(','),
-        } : {}),
-      };
-    },
-  ),
-);
+function installApiClient() {
+  // 默认真实 de-core；开发态走同源 /api（Vite proxy）。仅 VITE_USE_MOCK=true 时注入 Mock。
+  setApiClient(
+    new ApiClient(
+      apiBaseURL(),
+      () => localStorage.getItem('token'),
+      isMockApiMode() ? mockHandler : undefined,
+      () => {
+        const user = useAuthStore.getState().user;
+        return {
+          'x-workspace-id': useWorkspaceStore.getState().currentWorkspaceId ?? user?.workspaceId ?? 'w1',
+          ...(user ? {
+            'x-tenant-id': user.tenantId,
+            'x-mock-role': user.role,
+            'x-mock-actor': user.name,
+            'x-mock-user-id': user.id,
+            'x-mock-permissions': user.permissions.join(','),
+          } : {}),
+        };
+      },
+    ),
+  );
+}
+
+installApiClient();
+
+if (import.meta.hot) {
+  import.meta.hot.accept('./lib/api-mode', () => {
+    installApiClient();
+  });
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {

@@ -5,6 +5,8 @@ import {
   catalogModelsForProtocol,
   createProviderConnectDraft,
   draftFromProvider,
+  pickModelAfterDiscover,
+  protocolBaseUrlHint,
   providerConnectToPayload,
   validateProviderConnectDraft,
 } from './provider-connect';
@@ -59,5 +61,15 @@ describe('provider-connect', () => {
   it('exposes discoverable model catalogs per protocol', () => {
     expect(catalogModelsForProtocol('dashscope').some((item) => item.id === 'qwen-max')).toBe(true);
     expect(catalogModelsForProtocol('anthropic').length).toBeGreaterThan(1);
+  });
+
+  it('warns when Claude protocol is used with DeepSeek base URL', () => {
+    expect(protocolBaseUrlHint('anthropic', 'https://api.deepseek.com/anthropic')).toMatch(/OpenAI/);
+  });
+
+  it('picks first discovered model when current id is missing from list', () => {
+    expect(pickModelAfterDiscover('', [{ id: 'deepseek-chat', name: 'deepseek-chat' }])).toBe('deepseek-chat');
+    expect(pickModelAfterDiscover('deepseek-chat', [{ id: 'deepseek-chat', name: 'deepseek-chat' }])).toBe('deepseek-chat');
+    expect(pickModelAfterDiscover('claude-x', [{ id: 'deepseek-chat', name: 'deepseek-chat' }])).toBe('deepseek-chat');
   });
 });

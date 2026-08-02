@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   budgetRiskLabel,
   modelQueryState,
+  normalizeProviderImpact,
   parseModelTab,
   policyStatusLabel,
   providerLifecycleAction,
@@ -18,6 +19,20 @@ import {
 describe('model control-plane UI state', () => {
   it('blocks destructive provider removal when published routes still reference it', () => {
     expect(providerLifecycleAction({ deletionAllowed: false })).toEqual({ disabled: true, label: '已被路由引用' });
+    expect(providerLifecycleAction(undefined)).toEqual({ disabled: true, label: '检查引用中…' });
+    expect(providerLifecycleAction({ deletionAllowed: true })).toEqual({ disabled: false, label: '删除供应商' });
+  });
+
+  it('normalizes null routeReferences from de-core so detail drawers do not crash', () => {
+    expect(normalizeProviderImpact({
+      providerId: 'mp-23',
+      deletionAllowed: true,
+      routeReferences: null as unknown as [],
+    })).toEqual({
+      providerId: 'mp-23',
+      deletionAllowed: true,
+      routeReferences: [],
+    });
   });
 
   it('surfaces ready policies as pending publication rather than published', () => {
@@ -44,8 +59,16 @@ describe('model control-plane UI state', () => {
   });
 
   it('does not present query failures as empty model-control-plane data', () => {
-    expect(modelQueryState({ isLoading: false, isError: true, data: [] })).toEqual({ kind: 'error', label: '模型控制面数据读取失败' });
-    expect(modelQueryState({ isLoading: false, isError: false, data: [] })).toEqual({ kind: 'empty', label: '暂无模型控制面数据' });
+    expect(modelQueryState({ isLoading: false, isError: true, data: [], errorDetail: 'E_NETWORK: 无法连接' })).toEqual({
+      kind: 'error',
+      label: '模型控制面数据读取失败',
+      detail: '无法连接',
+    });
+    expect(modelQueryState({ isLoading: false, isError: false, data: [] })).toEqual({
+      kind: 'empty',
+      label: '暂无模型控制面数据',
+      detail: undefined,
+    });
   });
 
   it('explains routing level purpose and next lifecycle action', () => {
