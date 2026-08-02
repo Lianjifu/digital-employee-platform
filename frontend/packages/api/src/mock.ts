@@ -1,6 +1,6 @@
 /**
  * Mock 适配器 — 前端可独立运行
- * 后续切真实后端：删除 mockHandler 注入，baseURL 指向 Connect-RPC 网关即可。
+ * 运行时默认不注入；仅 VITE_USE_MOCK=true 时由 web/main.tsx 挂载。单元测试可直接 import mockHandler。
  */
 import type {
   Agent,
@@ -1814,7 +1814,7 @@ export const mockChannels: Channel[] = [
 
 // 模型、渠道与技能的运行时 Mock 域。所有可写操作汇聚在这里，并写入审计，
 // 让运营台的刷新查询、详情抽屉和操作反馈指向同一份数据。
-const mockControlPlaneAudit: Array<{ id: string; time: string; actor: string; domain: 'model' | 'channel' | 'skill'; action: string; target: string; result: 'success' | 'failed' }> = [];
+const mockControlPlaneAudit: Array<{ id: string; time: string; actor: string; domain: 'model' | 'channel' | 'skill' | 'tenant' | 'backup' | 'settings'; action: string; target: string; result: 'success' | 'failed' }> = [];
 const mockSkillRuntime: Record<string, SkillRuntimeConfig> = {};
 const mockSkillIntegrations: SkillIntegration[] = [
   { id: 'integration_mcp_gitlab', name: '企业 GitLab MCP', type: 'mcp', environment: 'production', status: 'enabled', owner: '李婷', endpoint: 'https://gitlab.internal.example.com/mcp', credentialRef: 'vault://integrations/gitlab/oauth', lastVerifiedAt: '4 分钟前', health: 'healthy', discoveredCapabilities: 18, writeApprovalRequired: true, allowedEgress: ['gitlab.internal.example.com'] },
@@ -1964,7 +1964,7 @@ function validateDeliveryPolicy(policy: DeliveryPolicyDraft) {
 }
 function maskTarget(value: string) { return value.length < 5 ? '***' : `${value.slice(0, 2)}***${value.slice(-2)}`; }
 
-function appendControlPlaneAudit(domain: 'model' | 'channel' | 'skill', action: string, target: string, result: 'success' | 'failed' = 'success') {
+function appendControlPlaneAudit(domain: 'model' | 'channel' | 'skill' | 'tenant' | 'backup' | 'settings', action: string, target: string, result: 'success' | 'failed' = 'success') {
   const event = { id: mockId('control_audit'), time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }), actor: '当前用户', domain, action, target, result };
   mockControlPlaneAudit.unshift(event);
   return event;
@@ -2127,6 +2127,21 @@ export const mockNotificationChannels = [
   { id: 'n3', name: '日报', channels: ['邮件'], frequency: '每天 9:00', enabled: true },
   { id: 'n4', name: '营销活动', channels: ['邮件'], frequency: '每周', enabled: false },
 ];
+
+export const mockTenantProfile: {
+  name: string;
+  tenantId: string;
+  region: string;
+  createdAt: string;
+  status: string;
+  updatedAt?: string;
+} = {
+  name: 'ACME Corp',
+  tenantId: 'tenant-acme',
+  region: 'cn-east-1',
+  createdAt: '2024-03-12',
+  status: 'active',
+};
 
 export const mockAudits: AuditItem[] = mockComplianceChecks.map((c) => ({ ...c, updatedAt: '2026-07-12' })) as unknown as AuditItem[];
 
@@ -4612,10 +4627,50 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/audits') return mockComplianceChecks;
   if (path === '/api/api-keys') return mockApiKeys;
   if (path === '/api/webhooks-config') return mockWebhooks;
-  if (path === '/api/backups') return mockBackups;
+  if (path === '/api/tenant/profile' && method === 'GET') {
+    return mockTenantProfile;
+  }
+  if (path === '/api/tenant/profile' && method === 'PATCH') {
+    requireAdministrator('更新组织资料');
+    const body = (opts.body ?? {}) as { name?: string; region?: string; status?: string };
+    if (body.name?.trim()) mockTenantProfile.name = body.name.trim();
+    if (body.region?.trim()) mockTenantProfile.region = body.region.trim();
+    if (body.status?.trim()) mockTenantProfile.status = body.status.trim();
+    mockTenantProfile.updatedAt = new Date().toISOString();
+    appendControlPlaneAudit('tenant', '更新组织资料', mockTenantProfile.name);
+    return { ...mockTenantProfile };
+  }
+  if (path === '/api/backups' && method === 'GET') return mockBackups;
+  if (path === '/api/backups' && method === 'POST') {
+    requireAdministrator('申请备份');
+    const body = (opts.body ?? {}) as { scope?: string };
+    const item = {
+      id: mockId('bk'),
+      time: new Date().toISOString().replace('T', ' ').slice(0, 16),
+      type: '手动',
+      size: '—',
+      duration: '—',
+      status: 'pending_approval',
+      scope: body.scope ?? 'full',
+    };
+    mockBackups.unshift(item);
+    appendControlPlaneAudit('backup', '申请备份', item.scope);
+    return item;
+  }
   if (path === '/api/audit-stream') return mockDomain.audits;
   if (path === '/api/billing') return mockBilling;
-  if (path === '/api/notification-channels') return mockNotificationChannels;
+  if (path === '/api/notification-channels' && method === 'GET') return mockNotificationChannels;
+  if (path.startsWith('/api/notification-channels/') && method === 'PATCH') {
+    requireAdministrator('更新通知渠道');
+    const id = path.split('/')[3];
+    const ch = mockNotificationChannels.find((item) => item.id === id);
+    if (!ch) throw new Error('通知渠道不存在');
+    const body = (opts.body ?? {}) as { enabled?: boolean; name?: string };
+    if (typeof body.enabled === 'boolean') ch.enabled = body.enabled;
+    if (body.name?.trim()) ch.name = body.name.trim();
+    appendControlPlaneAudit('settings', '更新通知渠道', id);
+    return ch;
+  }
 
   // 会话
   if (path === `/api/conversations/${mockConversation.id}`) {

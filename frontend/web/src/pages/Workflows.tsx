@@ -160,8 +160,11 @@ function recommendedNodeKinds(sourceKind?: WorkflowNodeKind): WorkflowNodeKind[]
   return ['audit', 'notify', 'task', 'compensate'];
 }
 
-/* ============ 初始工作流数据（mock） ============ */
-const INITIAL_NODES: Node[] = [
+/* ============ 画布空白起点（数据来自 API 草稿/版本；不再预填 Mock 图） ============ */
+const EMPTY_NODES: Node[] = [];
+const EMPTY_EDGES: Edge[] = [];
+/** 可选示例模板（仅「加载示例」动作使用，不作为默认数据） */
+const SAMPLE_NODES: Node[] = [
   { id: 'n1', type: 'custom', position: { x: 60, y: 80 }, data: { kind: 'trigger', label: 'Webhook 触发' } },
   { id: 'n2', type: 'custom', position: { x: 280, y: 80 }, data: { kind: 'retrieve', label: '知识检索' } },
   { id: 'n3', type: 'custom', position: { x: 500, y: 80 }, data: { kind: 'decision', label: '数字员工研判' } },
@@ -173,7 +176,7 @@ const INITIAL_NODES: Node[] = [
   { id: 'n9', type: 'custom', position: { x: 1420, y: 100 }, data: { kind: 'audit', label: '审计留痕' } },
   { id: 'n10', type: 'custom', position: { x: 1660, y: 100 }, data: { kind: 'notify', label: '飞书 / 企微通知' } },
 ];
-const INITIAL_EDGES: Edge[] = [
+const SAMPLE_EDGES: Edge[] = [
   { id: 'e1-2', source: 'n1', target: 'n2' },
   { id: 'e2-3', source: 'n2', target: 'n3' },
   { id: 'e3-4', source: 'n3', target: 'n4' },
@@ -191,10 +194,7 @@ function draftToFlow(draft: { nodes?: any[]; edges?: any[] } | null | undefined)
   const rawNodes = draft?.nodes ?? [];
   const rawEdges = draft?.edges ?? [];
   if (!rawNodes.length) {
-    return {
-      nodes: INITIAL_NODES.map((node) => ({ ...node, data: { ...node.data }, position: { ...node.position } })),
-      edges: INITIAL_EDGES.map((edge) => ({ ...edge })),
-    };
+    return { nodes: [], edges: [] };
   }
   const nodes: Node[] = rawNodes.map((n: any, i: number) => {
     if (n?.type === 'custom' && n.position && n.data) {
@@ -738,8 +738,8 @@ export default function Workflows() {
   const [canvasSearchQ, setCanvasSearchQ] = useState('');
 
   // 节点数据（可增删）
-  const [nodes, setNodes] = useState<Node[]>(INITIAL_NODES);
-  const [edges, setEdges] = useState<Edge[]>(INITIAL_EDGES);
+  const [nodes, setNodes] = useState<Node[]>(EMPTY_NODES);
+  const [edges, setEdges] = useState<Edge[]>(EMPTY_EDGES);
 
   // 选中 / 右键菜单
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
@@ -949,7 +949,7 @@ export default function Workflows() {
   const [draggedKind, setDraggedKind] = useState<WorkflowNodeKind | null>(null);
 
   // 撤销/重做栈
-  const historyRef = useRef<{ stack: Snapshot[]; idx: number }>({ stack: [{ nodes: INITIAL_NODES, edges: INITIAL_EDGES }], idx: 0 });
+  const historyRef = useRef<{ stack: Snapshot[]; idx: number }>({ stack: [{ nodes: EMPTY_NODES, edges: EMPTY_EDGES }], idx: 0 });
   useEffect(() => {
     if (!remoteVersions.length) return;
     const mapped = remoteVersions.map(mapRemoteVersion);
@@ -1200,13 +1200,16 @@ export default function Workflows() {
 
   const resetCanvas = useCallback(() => {
     if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
-    const snapshot = cloneSnapshot({ nodes: INITIAL_NODES, edges: INITIAL_EDGES });
+    const snapshot = cloneSnapshot({
+      nodes: SAMPLE_NODES.map((node) => ({ ...node, data: { ...node.data }, position: { ...node.position } })),
+      edges: SAMPLE_EDGES.map((edge) => ({ ...edge })),
+    });
     setNodes(snapshot.nodes);
     setEdges(snapshot.edges);
     pushHistory(snapshot);
     setSelectedNodeId(null);
     setDraftGate(null);
-    showToast('画布已重置为初始状态（本地草稿）', 'success');
+    showToast('已加载示例编排模板（需保存草稿才会写入服务端）', 'success');
   }, [canWrite, showToast, pushHistory]);
 
   const saveCanvas = useCallback(() => {

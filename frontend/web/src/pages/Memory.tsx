@@ -752,7 +752,7 @@ function GovernanceProgressive({
         <div className="memory-panel__head">
           <div>
             <h3>每日渐进提炼策略</h3>
-            <p>生产环境由调度器按策略运行；此处可进行 Mock 演练。</p>
+            <p>生产环境由调度器按策略运行；此处触发一次提炼演练并写入审计。</p>
           </div>
           <Button size="sm" loading={running} onClick={onRun}>立即演练</Button>
         </div>

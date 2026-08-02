@@ -1,7 +1,6 @@
 /**
- * API 客户端层
- * 目标：与后端 Go + Python 双栈通过 Connect-RPC（gRPC + REST 双协议）互通
- * 当前阶段：内置 mock 适配器，前端可独立运行；后续切到真实 Connect-RPC 客户端只需替换 transport。
+ * API 客户端层 — 默认请求真实后端（de-core）。
+ * Mock 适配器仅在应用入口显式注入时启用（VITE_USE_MOCK=true）。
  */
 import type { ApiResponse } from '@de/web-types';
 
@@ -22,6 +21,24 @@ export class ApiError extends Error {
 
 const DEFAULT_TIMEOUT = 15_000;
 
+function resolveRequestURL(baseURL: string, path: string, query?: RequestOptions['query']): string {
+  let href: string;
+  if (!baseURL) {
+    href = path.startsWith('/') ? path : `/${path}`;
+  } else {
+    href = new URL(path, baseURL.endsWith('/') ? baseURL : `${baseURL}/`).toString();
+  }
+  if (!query) return href;
+  const u = href.startsWith('http') ? new URL(href) : new URL(href, 'http://local.invalid');
+  for (const [k, v] of Object.entries(query)) {
+    if (v !== undefined) u.searchParams.set(k, String(v));
+  }
+  if (!href.startsWith('http')) {
+    return `${u.pathname}${u.search}`;
+  }
+  return u.toString();
+}
+
 export class ApiClient {
   constructor(
     private baseURL: string,
@@ -38,25 +55,19 @@ export class ApiClient {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     };
     if (this.mockHandler) {
-      // Mock 也接收同一认证上下文，避免演示路径绕过控制面权限校验。
       const data = await this.mockHandler(path, { ...opts, headers: requestHeaders });
       return data as T;
     }
     const controller = new AbortController();
     const t = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT);
     try {
-      const url = new URL(path, this.baseURL);
-      if (opts.query) {
-        for (const [k, v] of Object.entries(opts.query)) {
-          if (v !== undefined) url.searchParams.set(k, String(v));
-        }
-      }
+      const url = resolveRequestURL(this.baseURL, path, opts.query);
       const headers: Record<string, string> = {
         'Content-Type': 'application/json',
         ...requestHeaders,
       };
 
-      const res = await fetch(url.toString(), {
+      const res = await fetch(url, {
         method: opts.method ?? 'GET',
         headers,
         body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,

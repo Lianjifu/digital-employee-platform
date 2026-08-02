@@ -3,7 +3,7 @@
  */
 import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { useApiQuery } from '@/services/query';
+import { useApiMutation, useApiQuery } from '@/services/query';
 import { Badge, Button, KpiCard, Progress, toast } from '@de/web-ui';
 import {
   Building2, ShieldCheck, Bell, CreditCard, Database, Clock3, HardDrive,
@@ -56,6 +56,12 @@ export default function Settings() {
   );
 
   const { data: billing } = useApiQuery<any>(['billing'], '/api/billing');
+  const { data: tenantProfile } = useApiQuery<any>(
+    ['tenant-profile'],
+    '/api/tenant/profile',
+    undefined,
+    { enabled: active === 'tenant' },
+  );
   const { data: notifChannels = [] } = useApiQuery<any[]>(
     ['notification-channels'],
     '/api/notification-channels',
@@ -134,8 +140,8 @@ export default function Settings() {
         {active === 'tenant' && (
           <TenantPanel
             billing={billing}
+            tenantProfile={tenantProfile}
             notifChannels={notifChannels}
-            onSave={() => toast.success('组织资料已保存，并写入审计')}
             onGotoAccess={() => selectTab('access')}
           />
         )}
@@ -217,13 +223,13 @@ function FeatureCard({
 
 function TenantPanel({
   billing,
+  tenantProfile,
   notifChannels,
-  onSave,
   onGotoAccess,
 }: {
   billing: any;
+  tenantProfile?: any;
   notifChannels: any[];
-  onSave: () => void;
   onGotoAccess: () => void;
 }) {
   const seats = billing?.usage?.seats ?? 18;
@@ -233,10 +239,34 @@ function TenantPanel({
   const seatPct = Math.round((seats / seatLimit) * 100);
   const agentPct = Math.round((agents / agentLimit) * 100);
   const [enabledMap, setEnabledMap] = useState<Record<string, boolean>>({});
+  const [tenantName, setTenantName] = useState('ACME Corp');
+  const [region, setRegion] = useState('cn-east-1');
 
   useEffect(() => {
     setEnabledMap(Object.fromEntries(notifChannels.map((n) => [n.id, Boolean(n.enabled)])));
   }, [notifChannels]);
+
+  useEffect(() => {
+    if (tenantProfile?.name) setTenantName(String(tenantProfile.name));
+    if (tenantProfile?.region) setRegion(String(tenantProfile.region));
+  }, [tenantProfile]);
+
+  const saveProfile = useApiMutation<any, { name: string; region: string }>(
+    '/api/tenant/profile',
+    {
+      onSuccess: () => toast.success('组织资料已保存，并写入审计'),
+      onError: (error) => toast.error(error instanceof Error ? error.message : '保存失败'),
+    },
+    'PATCH',
+  );
+  const patchChannel = useApiMutation<any, { id: string; enabled: boolean }>(
+    ({ id }) => `/api/notification-channels/${id}`,
+    {
+      onSuccess: () => toast.success('通知渠道已更新'),
+      onError: (error) => toast.error(error instanceof Error ? error.message : '更新失败'),
+    },
+    'PATCH',
+  );
 
   return (
     <div className="settings-section">
@@ -284,13 +314,35 @@ function TenantPanel({
             icon={Building2}
             title="租户信息"
             description="租户档案与配额边界；数字员工上限受套餐约束。"
-            trailing={<Button size="sm" onClick={onSave}>保存</Button>}
+            trailing={(
+              <Button
+                size="sm"
+                loading={saveProfile.isPending}
+                onClick={() => saveProfile.mutate({ name: tenantName.trim() || 'ACME Corp', region: region.trim() || 'cn-east-1' })}
+              >
+                保存
+              </Button>
+            )}
           />
           <div className="settings-facts">
-            <Field label="租户名" value="ACME Corp" />
-            <Field label="租户 ID" value={<span className="font-mono">tnt_a7f9****</span>} />
-            <Field label="区域" value={<Badge tone="info">cn-east-1</Badge>} />
-            <Field label="创建时间" value="2024-03-12" />
+            <label className="settings-fact">
+              <span className="settings-fact__label">租户名</span>
+              <input
+                className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs"
+                value={tenantName}
+                onChange={(e) => setTenantName(e.target.value)}
+              />
+            </label>
+            <Field label="租户 ID" value={<span className="font-mono">{tenantProfile?.tenantId ?? 'tenant-acme'}</span>} />
+            <label className="settings-fact">
+              <span className="settings-fact__label">区域</span>
+              <input
+                className="h-8 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 font-mono text-xs"
+                value={region}
+                onChange={(e) => setRegion(e.target.value)}
+              />
+            </label>
+            <Field label="创建时间" value={tenantProfile?.createdAt ?? '2024-03-12'} />
             <Field label="席位" value={<span className="font-mono">{seats} / {seatLimit}</span>} />
             <Field label="数字员工" value={<span className="font-mono">{agents} / {agentLimit}</span>} />
             <Field label="订阅" value={<span className="font-mono">{billing?.price ?? '$5,000'} / 月</span>} />
@@ -336,7 +388,10 @@ function TenantPanel({
                   </div>
                   <SettingsToggle
                     checked={on}
-                    onChange={(value) => setEnabledMap((prev) => ({ ...prev, [n.id]: value }))}
+                    onChange={(value) => {
+                      setEnabledMap((prev) => ({ ...prev, [n.id]: value }));
+                      patchChannel.mutate({ id: n.id, enabled: value });
+                    }}
                     label={n.name}
                   />
                 </div>
@@ -430,6 +485,13 @@ function SecurityPanel({ onGotoAccess }: { onGotoAccess: () => void }) {
 function BackupPanel({ backups }: { backups: any[] }) {
   const latest = backups[0];
   const autoCount = backups.filter((b) => b.type === '自动').length;
+  const requestBackup = useApiMutation<any, { scope: string }>(
+    '/api/backups',
+    {
+      onSuccess: () => toast.success('已提交备份申请，等待审批'),
+      onError: (error) => toast.error(error instanceof Error ? error.message : '备份申请失败'),
+    },
+  );
 
   return (
     <div className="settings-section">
@@ -446,7 +508,7 @@ function BackupPanel({ backups }: { backups: any[] }) {
           title="数据保留与恢复"
           description="覆盖数字员工运行记忆索引、知识与配置快照；恢复需管理员审批。"
           trailing={(
-            <Button size="sm" onClick={() => toast.success('已触发立即备份')}>
+            <Button size="sm" loading={requestBackup.isPending} onClick={() => requestBackup.mutate({ scope: 'full' })}>
               <RotateCcw className="h-3 w-3" />立即备份
             </Button>
           )}

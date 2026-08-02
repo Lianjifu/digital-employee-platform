@@ -23,6 +23,7 @@ import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { getApiClient } from '@de/web-api';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useAuthStore } from '@/stores/authStore';
+import { isMockChatMode, streamCopilotTurn, type CopilotSSEEvent } from '@/features/copilot/copilot-stream';
 import type {
   ChatMessageEx,
   ChatSession,
@@ -755,6 +756,7 @@ export function useChat(agentMeta?: { name: string }) {
       reply: ReplyMock,
       ctrl: AbortController,
       correlationIdStr: string,
+      opts?: { skipAppend?: boolean },
     ) => {
       // 1) 占位
       const placeholder: ChatMessageEx = {
@@ -771,7 +773,9 @@ export function useChat(agentMeta?: { name: string }) {
         metrics: { model: reply.metrics?.model ?? 'Sonnet-4', provider: reply.metrics?.provider ?? 'anthropic' },
         createdAt: new Date().toISOString(),
       };
-      dispatch({ type: 'append_msg', sid, msg: placeholder });
+      if (!opts?.skipAppend) {
+        dispatch({ type: 'append_msg', sid, msg: placeholder });
+      }
 
       // 2) 写请求日志
       const reqId = uid('req_');
@@ -869,6 +873,239 @@ export function useChat(agentMeta?: { name: string }) {
       setTimeout(injectStep, 80);
     },
     [],
+  );
+
+  /** 对接 de-core SSE（VITE_USE_MOCK=false） */
+  const startBackendStream = useCallback(
+    (
+      sid: string,
+      replyId: string,
+      text: string,
+      ctrl: AbortController,
+      correlationIdStr: string,
+      digitalEmployeeId?: string,
+      opts?: { skipAppend?: boolean; agentName?: string },
+    ) => {
+      const agentName = opts?.agentName ?? '岗位专家';
+      const placeholder: ChatMessageEx = {
+        id: replyId,
+        role: 'assistant',
+        agentName,
+        content: '',
+        reasoningSteps: [],
+        toolCalls: [],
+        citations: [],
+        clientMsgId: uid('c_'),
+        correlationId: correlationIdStr,
+        status: 'streaming',
+        metrics: { model: 'de-runtime', provider: 'de-core' },
+        createdAt: new Date().toISOString(),
+      };
+      if (!opts?.skipAppend) {
+        dispatch({ type: 'append_msg', sid, msg: placeholder });
+      }
+
+      const reqId = uid('req_');
+      const startedAt = Date.now();
+      let firstChunkAt = 0;
+      let content = '';
+      const reasoningSteps: ReasoningStep[] = [];
+      const toolCalls: ToolCall[] = [];
+      const citations: Citation[] = [];
+
+      dispatch({
+        type: 'log_request',
+        log: {
+          id: reqId,
+          correlationId: correlationIdStr,
+          ts: startedAt,
+          op: 'send',
+          mid: replyId,
+          sid,
+          model: 'de-runtime',
+          promptTokens: 0,
+          completionTokens: 0,
+          durationMs: 0,
+          ttftMs: 0,
+          status: 'streaming',
+        },
+      });
+
+      const finishError = (message: string, category: ErrorCategory = 'internal') => {
+        dispatch({
+          type: 'replace_msg',
+          sid,
+          mid: replyId,
+          msg: {
+            ...placeholder,
+            content: content || `请求失败：${message}`,
+            reasoningSteps,
+            toolCalls,
+            citations,
+            status: 'failed',
+            error: { category, message, retryable: category === 'network' || category === 'timeout' },
+          },
+        });
+        dispatch({
+          type: 'update_request',
+          id: reqId,
+          patch: {
+            status: 'error',
+            durationMs: Date.now() - startedAt,
+            error: message,
+            errorCategory: category,
+          },
+        });
+        dispatch({ type: 'set_typing', typing: false });
+        dispatch({ type: 'set_abort', ctrl: null });
+        dispatch({ type: 'set_active_correlation', id: null });
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      };
+
+      const onEvent = (event: string, data: CopilotSSEEvent) => {
+        if (ctrl.signal.aborted) return;
+        const typ = data.type || event;
+        if (typ === 'stage') {
+          const step: ReasoningStep = {
+            id: uid('rs_'),
+            kind: 'plan',
+            title: `阶段 ${data.stage ?? '?'}`,
+            detail: data.status ? `status=${data.status}` : undefined,
+          };
+          reasoningSteps.push(step);
+          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          return;
+        }
+        if (typ === 'tool') {
+          const tc: ToolCall = {
+            id: uid('tc_'),
+            name: data.name ?? 'tool',
+            args: {},
+            status: data.status === 'ok' || data.status === 'success' ? 'success' : data.status === 'running' ? 'running' : 'success',
+            durationMs: 0,
+          };
+          toolCalls.push(tc);
+          dispatch({
+            type: 'replace_msg',
+            sid,
+            mid: replyId,
+            msg: { ...placeholder, content, reasoningSteps: [...reasoningSteps], toolCalls: [...toolCalls], citations, status: 'streaming' },
+          });
+          const hits = data.hits as { results?: Array<{ title?: string; snippet?: string; score?: number; docId?: string }> } | undefined;
+          const results = hits?.results ?? (Array.isArray(data.hits) ? (data.hits as Array<{ title?: string; snippet?: string; score?: number; docId?: string }>) : []);
+          for (const h of results.slice(0, 5)) {
+            citations.push({
+              id: uid('cite_'),
+              docId: h.docId ?? 'doc',
+              source: h.title ?? h.docId ?? 'knowledge',
+              text: h.snippet ?? '',
+              score: typeof h.score === 'number' ? h.score : 0.5,
+            });
+          }
+          return;
+        }
+        if (typ === 'delta' && data.text) {
+          if (!firstChunkAt) firstChunkAt = Date.now();
+          content += data.text;
+          dispatch({
+            type: 'replace_msg',
+            sid,
+            mid: replyId,
+            msg: {
+              ...placeholder,
+              content,
+              reasoningSteps: [...reasoningSteps],
+              toolCalls: [...toolCalls],
+              citations: [...citations],
+              status: 'streaming',
+            },
+          });
+          return;
+        }
+        if (typ === 'error') {
+          finishError(data.message || '策略或运行时拒绝', 'tool_denied');
+          ctrl.abort();
+          return;
+        }
+        if (typ === 'done') {
+          const finalMsg: ChatMessageEx = {
+            ...placeholder,
+            content,
+            reasoningSteps: [...reasoningSteps],
+            toolCalls: [...toolCalls],
+            citations: [...citations],
+            metrics: {
+              model: 'de-runtime',
+              provider: 'de-core',
+              ttftMs: firstChunkAt ? firstChunkAt - startedAt : Date.now() - startedAt,
+              durationMs: Date.now() - startedAt,
+              completionTokens: Math.round(content.length * 0.4),
+            },
+            status: 'succeeded',
+            serverMsgId: uid('srv_'),
+          };
+          dispatch({ type: 'replace_msg', sid, mid: replyId, msg: finalMsg });
+          dispatch({
+            type: 'update_request',
+            id: reqId,
+            patch: {
+              status: 'success',
+              durationMs: Date.now() - startedAt,
+              ttftMs: firstChunkAt ? firstChunkAt - startedAt : 0,
+              completionTokens: Math.round(content.length * 0.4),
+            },
+          });
+          dispatch({ type: 'set_typing', typing: false });
+          dispatch({ type: 'set_abort', ctrl: null });
+          dispatch({ type: 'set_active_correlation', id: null });
+          if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        }
+      };
+
+      void streamCopilotTurn({
+        conversationId: sid,
+        content: text,
+        correlationId: correlationIdStr,
+        digitalEmployeeId,
+        signal: ctrl.signal,
+        onEvent,
+      }).catch((err: unknown) => {
+        if (ctrl.signal.aborted) {
+          dispatch({ type: 'update_request', id: reqId, patch: { status: 'aborted', durationMs: Date.now() - startedAt } });
+          dispatch({ type: 'set_msg_status', sid, mid: replyId, status: 'cancelled' });
+          dispatch({ type: 'set_typing', typing: false });
+          dispatch({ type: 'set_abort', ctrl: null });
+          return;
+        }
+        const message = err instanceof Error ? err.message : '网络错误';
+        const category: ErrorCategory = /timeout|abort/i.test(message) ? 'timeout' : /401|认证|令牌/i.test(message) ? 'auth' : 'network';
+        finishError(message, category);
+      });
+    },
+    [],
+  );
+
+  const launchReply = useCallback(
+    (
+      sid: string,
+      text: string,
+      ctrl: AbortController,
+      corr: string,
+      digitalEmployeeId?: string,
+      opts?: { replyId?: string; skipAppend?: boolean; agentName?: string },
+    ) => {
+      const replyId = opts?.replyId ?? uid('m_');
+      if (isMockChatMode()) {
+        const reply = generateMockReply(text);
+        startStream(sid, replyId, { ...reply, id: replyId }, ctrl, corr, { skipAppend: opts?.skipAppend });
+      } else {
+        startBackendStream(sid, replyId, text, ctrl, corr, digitalEmployeeId, {
+          skipAppend: opts?.skipAppend,
+          agentName: opts?.agentName,
+        });
+      }
+    },
+    [startStream, startBackendStream],
   );
 
   /* ==================== 公共 API ==================== */
@@ -969,13 +1206,11 @@ export function useChat(agentMeta?: { name: string }) {
       ctrl.abort();
     }, DEFAULT_TIMEOUT_MS);
 
+    const deId = state.sessions[state.activeId]?.digitalEmployeeId;
     setTimeout(() => {
-      const reply = generateMockReply(text);
-      const replyId = uid('m_');
-      const replyWithCorr: ReplyMock = { ...reply, id: replyId };
-      startStream(state.activeId, replyId, replyWithCorr, ctrl, corr);
-    }, 300);
-  }, [state.activeId, state.typing, startStream]);
+      launchReply(state.activeId, text, ctrl, corr, deId);
+    }, isMockChatMode() ? 300 : 0);
+  }, [state.activeId, state.sessions, state.typing, launchReply]);
 
   const sendMessage = send; // 兼容别名
 
@@ -989,8 +1224,12 @@ export function useChat(agentMeta?: { name: string }) {
     dispatch({ type: 'replace_from_message', sid: state.activeId, mid, msg: userMsg });
     dispatch({ type: 'set_draft', value: '' }); dispatch({ type: 'set_active_correlation', id: corr }); dispatch({ type: 'set_typing', typing: true });
     const ctrl = new AbortController(); dispatch({ type: 'set_abort', ctrl });
-    setTimeout(() => { const reply = generateMockReply(text); const replyId = uid('m_'); startStream(state.activeId, replyId, { ...reply, id: replyId }, ctrl, corr); }, 200);
-  }, [state.activeId, state.sessions, state.typing, startStream]);
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
+    setTimeout(() => {
+      launchReply(state.activeId, text, ctrl, corr, sess.digitalEmployeeId);
+    }, isMockChatMode() ? 200 : 0);
+  }, [state.activeId, state.sessions, state.typing, launchReply]);
 
   const regenerate = useCallback((mid: string) => {
     const sess = state.sessions[state.activeId];
@@ -1003,12 +1242,12 @@ export function useChat(agentMeta?: { name: string }) {
     const corr = correlationId();
     dispatch({ type: 'set_active_correlation', id: corr });
 
-    const reply = generateMockReply(userMsg.content);
     const replyId = uid('m_');
+    const agentName = sess.digitalEmployeeName ?? sess.agent ?? '岗位专家';
     const placeholder: ChatMessageEx = {
       id: replyId,
       role: 'assistant',
-      agentName: reply.agentName,
+      agentName,
       content: '',
       reasoningSteps: [],
       toolCalls: [],
@@ -1030,9 +1269,13 @@ export function useChat(agentMeta?: { name: string }) {
     timeoutRef.current = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
 
     setTimeout(() => {
-      startStream(state.activeId, replyId, { ...reply, id: replyId }, ctrl, corr);
-    }, 200);
-  }, [state.activeId, state.sessions, startStream]);
+      launchReply(state.activeId, userMsg.content, ctrl, corr, sess.digitalEmployeeId, {
+        replyId,
+        skipAppend: true,
+        agentName,
+      });
+    }, isMockChatMode() ? 200 : 0);
+  }, [state.activeId, state.sessions, launchReply]);
 
   const delMessage = useCallback((mid: string) => {
     if (state.activeId) dispatch({ type: 'del_msg', sid: state.activeId, mid });

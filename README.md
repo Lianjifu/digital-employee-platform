@@ -1,13 +1,17 @@
 # 数字员工平台
 
-企业级数字员工平台前端工程，提供数字员工的协同执行、能力编排、企业资源管理与安全治理控制面。当前阶段为可交互的前端原型，使用本地 Mock API 模拟领域行为、权限与审计结果。
+企业级数字员工控制台与控制面后端。前端为 React 控制台；后端为 Go 控制面 `de-core`（及 de-policy / de-audit / de-workflow）与 Python Runtime / RAG / Skill 侧车。
+
+**默认联调真实 API**（`VITE_USE_MOCK=false`）。仅本地无后端时才开启 Mock。
 
 ## 技术栈
 
-- React 18、TypeScript、Vite 5
-- pnpm Workspace Monorepo
-- TanStack Query、Zustand、React Flow
-- 本地 Mock API 与 Vitest
+| 层 | 技术 |
+|---|---|
+| 前端 | React 18、TypeScript、Vite 5、pnpm Workspace、TanStack Query、Zustand、React Flow |
+| 控制面 | Go 1.24、Connect/Protobuf、PostgreSQL、Redis |
+| 侧车 | Python（agent-runtime / RAG / skill-runtime） |
+| 可选基建 | Dex/Authentik OIDC、OPA、OpenSearch、Temporal、Vault、Envoy、Milvus、Kafka |
 
 ## 目录结构
 
@@ -16,120 +20,127 @@ digital-employee-platform/
 ├── frontend/
 │   ├── web/                 # React 控制台
 │   └── packages/
-│       ├── api/             # API Client 与 Mock 领域实现
-│       ├── types/           # 跨模块领域类型
-│       ├── ui/              # 共享 UI 组件
-│       └── utils/           # 共享工具函数
-└── docs/                    # 后端架构规划 / 功能 / 技术规格 / 视觉规范
+│       ├── api/             # API Client（可选 Mock）
+│       ├── types/ · ui/ · utils/ · hooks/
+├── backend/
+│   ├── cmd/                 # de-core · de-policy · de-audit · de-workflow
+│   ├── internal/ · api/ · pkg/ · gen/
+│   ├── runtimes/            # de_agent_runtime · de_rag · de_skill_runtime
+│   └── deploy/              # compose · envoy · obs · staging env
+└── docs/                    # 架构规划 / 功能规格 / 视觉规范
 ```
 
 ## 快速开始
+
+### 1. 后端
+
+要求：Docker（或 Colima）、Go 1.24+（可用 `backend/.tools` 引导）。
+
+```bash
+cd backend
+make compose-up    # PostgreSQL :5432 · Redis :6379
+make run           # de-core :8080
+# 可选侧车
+make runtime       # :8091
+make rag           # :8092
+make skill         # :8093
+```
+
+健康检查：`GET http://127.0.0.1:8080/healthz`  
+详情见 [`backend/README.md`](backend/README.md)。
+
+预发硬化栈：
+
+```bash
+cd backend && make compose-up-staging   # apps + Dex + OPA + OpenSearch + obs
+```
+
+### 2. 前端
 
 要求：Node.js 20+、pnpm 11+。
 
 ```bash
 cd frontend
 pnpm install
-pnpm dev
+pnpm --filter web dev
 ```
 
-默认访问地址：<http://localhost:5173>
+默认访问：<http://localhost:5173>
 
-当前前端默认使用本地 Mock API；设置 `VITE_USE_MOCK=false` 后可切换至实际后端网关。
+环境见 [`frontend/web/.env.example`](frontend/web/.env.example)：
+
+```env
+VITE_USE_MOCK=false
+VITE_API_BASE=http://127.0.0.1:8080
+```
+
+使用 Vite 代理时可置空 `VITE_API_BASE=`（`vite.config.ts` 将 `/api` 转到 `127.0.0.1:8080`）。
+
+演示登录（密码任意非空）：
+
+| 邮箱前缀 | 角色 |
+|---------|------|
+| `admin@` | admin |
+| `audit@` | auditor |
+| 其他 | user |
 
 ## 常用命令
 
 ```bash
+# 前端
 cd frontend
-
-# 类型检查
 pnpm --filter web typecheck
-
-# 生产构建
 pnpm --filter web build
-
-# Web 测试
 pnpm --filter web test
+pnpm --filter @de/web-api test   # Mock 适配器单测（可选）
 
-# Mock API 测试
-pnpm --filter @de/web-api test
-
-# 全部包的类型检查
-pnpm typecheck
+# 后端
+cd backend
+make test
 ```
 
-## 已实现功能
+## 已实现能力（摘要）
 
-| 模块 | 当前实现 |
+| 区域 | 说明 |
 |---|---|
-| 登录与访问控制 | 登录、受保护路由、角色权限、错误边界、全局通知与主题状态；首次登录向导覆盖能力接入 → 编排上岗 → 受控运营。 |
-| 运营总览 | KPI 置顶运营台：待处置 / 在岗 / 完成 / 进行中；待办与投入产出；工作流三列；运行细节默认折叠。 |
-| 专家协作 | 固定会话记录与统一时间展示；消息上下文（概览/证据/任务/审批/审计）；工具调用、证据引用、人工交接与导出；生产写操作采用身份绑定的受控双签。 |
-| 任务中心 | 任务生命周期看板、列表视图、状态流转、执行控制、人工治理、审计追溯与风险状态。 |
-| 工作区 | 业务域工作区切换、资源目录、环境与发布、配额与成本、负责人移交和冻结。权限、策略与审计统一由安全治理承担，避免重复控制面。 |
-| 数字员工 | 以岗位身份、职责边界、能力装配、三层记忆、受控上岗、运行运营、质量评测和审计证据为核心的数字员工全生命周期控制台；底层智能体作为执行内核独立引用。 |
-| 工作流程 | 模板库、可视化编排画布、版本 Diff、执行历史、工作流生成、校验、受控发布与能力绑定。 |
-| 模型服务 | 模型供应商接入与凭据引用、连通性校验、路由策略、校验/发布/回滚、隔离故障切换演练、预算与模型审计。 |
-| 知识中心 | 全量知识内容目录、文档上传与复核、知识包、接入加工、检索评测、图谱关联、引用治理与审计；支持与记忆候选深链。 |
-| 技能中心 | 已接入技能、技能商店、集成配置、运行治理；安装、权限、依赖预检、版本与治理事件。 |
-| 记忆中心 | 短期、工作与长期三层记忆；按数字员工筛选、岗位策略对照、知识候选流转、容量与过期预警、审计与详情。 |
-| 消息渠道 | 渠道接入、模板、投递路由与降级链、健康 SLO、死信处置与渠道审计；可与平台通知订阅联动。 |
-| 平台设置 | 统一设置壳：组织信息、身份认证、数据保留、开发集成、套餐用量；嵌入访问控制、持续验证与审计中心。 |
-| 访问控制 | 用户与访问范围、生产发布审批、职责分离、权限复核与风险提示（可独立路由或嵌入平台设置）。 |
-| 持续验证 | 安全概览、访问策略、临时授权、策略命中事件；按身份、资源、环境和数据范围执行零信任持续验证。 |
-| 审计中心 | 授权、发布、策略与运行事件的只读追溯，支持故事线筛选与脱敏证据包导出。 |
+| 控制台页面 | 运营总览、专家协作、任务、工作区、数字员工、工作流、模型/知识/技能/记忆/渠道、平台设置与治理 |
+| 契约联调 | P0/P1 首屏 GET + 关键写路径对齐 de-core；见 [`backend/api/contract-gap.md`](backend/api/contract-gap.md) |
+| Copilot | `VITE_USE_MOCK=false` 时走 `/api/copilot/.../stream` SSE（policy→employee→rag→runtime→meter） |
+| 策略 / 审计 | 内嵌 baseline + 可选 OPA；de-policy / de-audit 进程；Audit Center 优先 `DE_AUDIT_URL` |
+| 执行面 | Runtime OpenAI 兼容适配、RAG ingest、Skill RunToken、Workflow 试跑活动 |
+| 观测 | `/metrics` + Prometheus/Grafana；含 Copilot SSE / 审计 fanout 告警 |
 
-## 信息架构与命名
-
-平台按照用户工作顺序组织导航：
+## 信息架构
 
 ```text
 运营总览
 协作：专家协作 → 任务中心
 编排：数字员工 → 工作流程
-能力：模型服务 → 知识中心 → 技能中心 → 记忆中心 → 消息渠道
-账号菜单：工作区、平台设置（含访问控制 / 持续验证 / 审计中心）
+能力：模型 · 知识 · 技能 · 记忆 · 渠道
+账号：工作区 · 平台设置（访问控制 / 持续验证 / 审计中心）
 ```
 
-控制型模块的二级菜单遵循统一顺序：`概览或资产 → 接入与配置 → 验证与发布 → 运行与处置 → 治理与审计`。
-
-页面壳层统一采用 `de-employee-page` / `de-employee-shell` / KPI 卡片与品牌色（靛紫 `#4f46e5`）交互；中英文界面使用同一套词条。组织、工作区、模型和用户创建的资产名称保持原样，不进行机器翻译。视觉验收见 [`docs/视觉设计规范.md`](./docs/视觉设计规范.md)；后端架构规划见 [`docs/后端架构规划.md`](./docs/后端架构规划.md)。
+视觉规范：[`docs/视觉设计规范.md`](./docs/视觉设计规范.md)  
+后端架构：[`docs/后端架构规划.md`](./docs/后端架构规划.md)
 
 ## 角色边界
 
-| 角色 | 可见能力 |
+| 角色 | 能力 |
 |---|---|
-| 普通用户 | 专家协作、任务、已授权的数字员工、知识、技能和记忆能力。 |
-| 管理员 | 普通用户能力，以及模型、消息渠道、工作区、访问控制、持续验证和平台设置。 |
-| 审计用户 | 授权范围内的持续验证事件和审计中心，只读查看，不具备配置、发布、删除或授权能力。 |
+| 普通用户 | 协作、任务、已授权数字员工与能力页 |
+| 管理员 | 另含模型、渠道、工作区、治理与平台设置 |
+| 审计用户 | 持续验证与审计中心只读 |
 
-### 控制面安全规则
+## 当前边界
 
-- 模型与渠道的 Mock 控制面按工作区范围和读写权限校验；跨工作区引用会被拒绝。
-- 凭据在接口返回中仅显示引用或掩码，不返回明文。
-- 已发布的模型路由、渠道投递策略和已引用能力受依赖影响保护，不能被直接删除。
-- 受限数据的模型/渠道策略会进行地域与出口校验；高风险操作写入关联审计事件。
-- 工作区请求携带当前工作区上下文，查询缓存按工作区隔离。
-- 访问控制、持续验证和审计中心分别负责授权、持续策略决策与只读追溯；可从平台设置一站式进入，独立路由仍保留。
-- 长期记忆按策略提炼为知识候选；审核通过后才进入知识资产，运行记忆不直接等同于权威知识。
-- 受控双签以登录用户 ID 和职责席位为依据：先由执行复核签发，再由管理员完成变更审批；接口同时校验工作区范围、签发顺序、重复签发与职责分离。审计用户保持只读，仅复核证据与审计记录，不参与生产写操作签发。
-- 数字员工以岗位职责为边界：模型、知识、技能、工具、工作流和渠道仍由各自控制面治理；数字员工只引用已发布版本并保留装配、评测、发布和运行证据。长期记忆只能形成待审核知识候选，不直接成为权威知识。
-
-### 当前实现边界
-
-前端默认运行本地 Mock API，覆盖页面交互、领域校验、角色/作用域行为、零信任策略事件、模型供应商控制面和双签审批测试。生产接入仍需要由后端提供真实身份源、数据库行级隔离、持久化审计、KMS/Vault、异步任务和网络策略执行。
+- 前端默认打真实 de-core；`mock.ts` 仅作可选离线与单测。
+- 数据多为控制面内存 + PG 快照（`kv_documents`），非完整关系型业务库。
+- LangGraph 全图编排、真 gVisor runsc、SPIRE SDS、de-platform / de-collab 拆分仍属后续。
 
 ## 验证提交
 
-提交前建议至少运行：
-
 ```bash
-cd frontend
-pnpm --filter web typecheck
-pnpm --filter web build
-pnpm --filter @de/web-api test
-
-# 中英文导航与词条契约测试包含在 Web 测试中
-pnpm --filter web test
+cd frontend && pnpm --filter web typecheck && pnpm --filter web test
+cd ../backend && make test
 git diff --check
 ```

@@ -4,8 +4,9 @@
  */
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { useApiMutation, useApiQuery } from '@/services/query';
-import { Badge, Button, Progress } from '@de/web-ui';
+import { Badge, Button, Progress, toast } from '@de/web-ui';
 import {
   Plus, Bot, Wrench, Activity, History, Lock,
   CheckCircle2, Settings, ArrowRight,
@@ -192,8 +193,16 @@ export default function Workspaces() {
 
       </main></div>
 
-      {/* Todo 7: 创建向导 Modal */}
-      {showWizard && <CreateWizard onClose={() => setShowWizard(false)} />}
+      {showWizard && (
+        <CreateWizard
+          onClose={() => setShowWizard(false)}
+          onCreated={(ws) => {
+            setCurrent(ws);
+            setShowWizard(false);
+            setGovernanceNotice(`工作区「${ws.name}」已创建。`);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -219,8 +228,33 @@ function Mini({ label, value, tone }: { label: string; value: string; tone?: 'su
   );
 }
 
-function CreateWizard({ onClose }: { onClose: () => void }) {
+function CreateWizard({ onClose, onCreated }: { onClose: () => void; onCreated: (ws: Workspace) => void }) {
+  const qc = useQueryClient();
   const [step, setStep] = useState(1);
+  const [name, setName] = useState('');
+  const [region, setRegion] = useState('cn-east-1');
+  const [plan, setPlan] = useState('enterprise');
+  const create = useApiMutation<Workspace, { name: string; region: string; plan: string }>(
+    '/api/workspaces',
+    {
+      onSuccess: (ws) => {
+        void qc.invalidateQueries({ queryKey: ['workspaces'] });
+        toast.success(`工作区「${ws.name}」已创建`);
+        onCreated(ws);
+      },
+      onError: (error) => toast.error(error instanceof Error ? error.message : '创建失败'),
+    },
+  );
+
+  const submit = () => {
+    if (!name.trim()) {
+      toast.error('工作区名称必填');
+      setStep(1);
+      return;
+    }
+    create.mutate({ name: name.trim(), region: region.trim() || 'cn-east-1', plan: plan.trim() || 'enterprise' });
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
       <div className="rounded-xl bg-[var(--surface-1)] border border-[var(--border)] shadow-xl w-[560px]" onClick={(e) => e.stopPropagation()}>
@@ -229,7 +263,6 @@ function CreateWizard({ onClose }: { onClose: () => void }) {
           <button onClick={onClose} className="text-[var(--text-muted)] hover:text-[var(--text)]">✕</button>
         </div>
         <div className="p-5 space-y-4">
-          {/* Stepper */}
           <div className="flex items-center gap-2">
             {['基本信息', '资源配额', '合规基线'].map((s, i) => (
               <div key={s} className="flex items-center gap-2 flex-1">
@@ -245,9 +278,9 @@ function CreateWizard({ onClose }: { onClose: () => void }) {
 
           {step === 1 && (
             <div className="space-y-3">
-              <Field label="工作区名称" placeholder="例如 ACME 预发" />
-              <Field label="区域" placeholder="cn-east-1" mono />
-              <Field label="订阅" placeholder="Enterprise" />
+              <Field label="工作区名称" placeholder="例如 ACME 预发" value={name} onChange={setName} />
+              <Field label="区域" placeholder="cn-east-1" mono value={region} onChange={setRegion} />
+              <Field label="订阅" placeholder="enterprise" value={plan} onChange={setPlan} />
             </div>
           )}
           {step === 2 && (
@@ -275,7 +308,11 @@ function CreateWizard({ onClose }: { onClose: () => void }) {
           <Button size="sm" variant="secondary" onClick={() => step > 1 ? setStep(step - 1) : onClose()}>
             {step > 1 ? '上一步' : '取消'}
           </Button>
-          <Button size="sm" onClick={() => step < 3 ? setStep(step + 1) : onClose()}>
+          <Button
+            size="sm"
+            loading={create.isPending}
+            onClick={() => (step < 3 ? setStep(step + 1) : submit())}
+          >
             {step < 3 ? '下一步' : '完成创建'}
           </Button>
         </div>
@@ -284,12 +321,18 @@ function CreateWizard({ onClose }: { onClose: () => void }) {
   );
 }
 
-function Field({ label, placeholder, mono }: { label: string; placeholder: string; mono?: boolean }) {
+function Field({
+  label, placeholder, mono, value, onChange,
+}: {
+  label: string; placeholder: string; mono?: boolean; value: string; onChange: (v: string) => void;
+}) {
   return (
     <div>
       <div className="text-[10px] text-[var(--text-muted)] mb-1">{label}</div>
       <input
         type="text"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         className={cn('h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 text-sm', mono && 'font-mono')}
       />

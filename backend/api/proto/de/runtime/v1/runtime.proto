@@ -1,0 +1,23 @@
+syntax = "proto3";
+
+package de.runtime.v1;
+
+option go_package = "github.com/digital-employee-platform/backend/gen/de/runtime/v1;runtimev1";
+
+service RuntimeService {
+  rpc Invoke(InvokeRequest) returns (InvokeResponse);
+}
+
+message InvokeRequest {
+  string input = 1;
+  string workspace_id = 2;
+  string correlation_id = 3;
+  string model_route_id = 4;
+}
+
+message InvokeResponse {
+  string output = 1;
+  string graph = 2;
+  string correlation_id = 3;
+  int32 tokens = 4;
+}

@@ -1,0 +1,35 @@
+# Local OIDC IdP for de-core (compose profile: oidc)
+# Issuer: http://127.0.0.1:5556/dex
+# Users: admin@acme.com / password, user@acme.com / password, audit@acme.com / password
+
+issuer: http://127.0.0.1:5556/dex
+storage:
+  type: memory
+web:
+  http: 0.0.0.0:5556
+telemetry:
+  http: 0.0.0.0:5558
+staticClients:
+  - id: de-core
+    redirectURIs:
+      - http://127.0.0.1:8080/api/auth/oidc/callback
+    name: de-core
+    secret: de-core-secret
+enablePasswordDB: true
+staticPasswords:
+  - email: admin@acme.com
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W" # password
+    username: admin
+    userID: "u1"
+  - email: user@acme.com
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W" # password
+    username: user
+    userID: "u2"
+  - email: audit@acme.com
+    hash: "$2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W" # password
+    username: audit
+    userID: "u3"
+oauth2:
+  skipApprovalScreen: true
+  alwaysShowLoginScreen: false
+connectors: []

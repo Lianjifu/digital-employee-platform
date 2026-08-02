@@ -148,7 +148,7 @@ export default function Models() {
             </div>
             <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
               <span className="de-employee-hint hidden items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[11px] text-[var(--warning)] sm:inline-flex">
-                <AlertTriangle className="h-3 w-3" />Mock 治理演示 · KMS 由服务端执行
+                <AlertTriangle className="h-3 w-3" />控制面治理 · KMS 由服务端执行
               </span>
               {workspace === 'access' && (
                 <button type="button" className="de-employee-btn de-employee-btn--primary" disabled={!canWrite} onClick={() => setProviderModal('new')}>
@@ -273,7 +273,7 @@ export default function Models() {
         open={providerModal === 'new'}
         onClose={() => setProviderModal(null)}
         title="接入供应商"
-        description="按主流大模型协议填写连接信息；凭据仅提交时写入 Mock 引用，成功后不回显。"
+        description="按主流大模型协议填写连接信息；凭据仅提交时写入服务端引用，成功后不回显。"
         size="lg"
       >
         <ProviderForm
@@ -382,7 +382,7 @@ export default function Models() {
         onClose={() => setPublishPolicy(null)}
         onConfirm={() => { if (publishPolicy) publish.mutate({ id: publishPolicy.id, reason: '人工确认发布' }, { onSuccess: () => toast.success('路由版本已发布'), onError: reportError }); }}
         title="发布路由版本？"
-        description={publishPolicy ? `将为 ${publishPolicy.level} 生成不可变版本快照并写入审计。此为 Mock 治理演示，不构成生产结算或合规证明。` : ''}
+        description={publishPolicy ? `将为 ${publishPolicy.level} 生成不可变版本快照并写入审计。` : ''}
         confirmText="确认发布"
       />
       <ConfirmDialog
@@ -396,7 +396,7 @@ export default function Models() {
           });
         }}
         title="回滚到历史版本？"
-        description={rollbackTarget ? `将基于 ${rollbackTarget.label} 创建新的已发布版本，历史快照不会被改写（Mock）。` : ''}
+        description={rollbackTarget ? `将基于 ${rollbackTarget.label} 创建新的已发布版本，历史快照不会被改写。` : ''}
         confirmText="确认回滚"
         tone="danger"
       />
@@ -405,7 +405,7 @@ export default function Models() {
         onClose={() => setDeleteProvider(null)}
         onConfirm={() => { if (deleteProvider) removeProvider.mutate({ id: deleteProvider.id, reason: '人工确认删除' }, { onSuccess: () => { toast.success('供应商已删除'); setProviderModal(null); }, onError: reportError }); }}
         title="删除未被引用的供应商？"
-        description="已被已发布路由引用的供应商将被 API 拒绝删除。此为 Mock 演示删除。"
+        description="已被已发布路由引用的供应商将被 API 拒绝删除。"
         confirmText="删除"
         tone="danger"
       />
@@ -605,7 +605,7 @@ function GovernanceWorkspace({
         </div>
         <div>
           <div className="font-semibold text-[var(--text)]">边界</div>
-          <p className="mt-1">Mock 指标非真实结算；演练仅 sandbox/canary，不切生产流量。策略改动请到「模型路由」。</p>
+          <p className="mt-1">用量指标供运营预警，非财务结算；演练仅 sandbox/canary，不切生产流量。策略改动请到「模型路由」。</p>
         </div>
       </div>
 
@@ -614,7 +614,7 @@ function GovernanceWorkspace({
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-xs font-semibold text-[var(--text)]">预算占用</div>
-              <p className="mt-1 text-[11px] text-[var(--text-muted)]">汇总已发布与草稿策略的月度上限 vs Mock 消耗，用于预警而非扣费。</p>
+              <p className="mt-1 text-[11px] text-[var(--text-muted)]">汇总已发布与草稿策略的月度上限 vs 计量消耗，用于预警而非扣费。</p>
             </div>
             <Badge tone={snapshot?.budgetRisk === 'normal' ? 'success' : snapshot?.budgetRisk === 'attention' ? 'warn' : 'error'}>
               {budgetRiskLabel(snapshot?.budgetRisk ?? 'normal')}
@@ -1564,7 +1564,7 @@ function PolicyDetail({
       {tab === 'validate' && (
         <>
           <div className="rounded-lg bg-[var(--bg)] p-3 text-[11px] leading-5 text-[var(--text-muted)]" style={{ boxShadow: 'var(--saas-ring)' }}>
-            校验检查：主/降级模型可用、供应商未停用、出境与数据范围一致、降级链无环且不指向主模型。Mock 演示不构成生产合规证明。
+            校验检查：主/降级模型可用、供应商未停用、出境与数据范围一致、降级链无环且不指向主模型。
           </div>
           {policy.validationIssues.length > 0 ? (
             <div className="rounded-lg border border-[var(--danger)]/40 bg-[var(--danger-bg)] p-3 text-xs text-[var(--danger)]">{policy.validationIssues.map((issue) => <div key={issue}>• {issue}</div>)}</div>

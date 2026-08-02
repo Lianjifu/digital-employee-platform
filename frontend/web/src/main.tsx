@@ -6,17 +6,17 @@ import App from './App';
 import { I18nProvider } from './i18n';
 import './styles/global.css';
 import 'reactflow/dist/style.css';
-import { setApiClient, ApiClient } from '@de/web-api';
-import { mockHandler } from '@de/web-api';
+import { setApiClient, ApiClient, mockHandler } from '@de/web-api';
 import { useWorkspaceStore } from './stores/workspaceStore';
 import { useAuthStore } from './stores/authStore';
+import { apiBaseURL, isMockApiMode } from './lib/api-mode';
 
-// 初始化 API 客户端（mock 模式 — 前端可独立运行）
+// 默认真实 de-core；仅 VITE_USE_MOCK=true 时注入 Mock
 setApiClient(
   new ApiClient(
-    import.meta.env.VITE_API_BASE ?? '/api',
+    apiBaseURL(),
     () => localStorage.getItem('token'),
-    import.meta.env.VITE_USE_MOCK !== 'false' ? mockHandler : undefined,
+    isMockApiMode() ? mockHandler : undefined,
     () => {
       const user = useAuthStore.getState().user;
       return {

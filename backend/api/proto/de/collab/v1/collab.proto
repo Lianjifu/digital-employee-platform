@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package de.collab.v1;
+
+option go_package = "github.com/digital-employee-platform/backend/gen/de/collab/v1;collabv1";
+
+// Collaboration / Copilot control-plane service (Connect-RPC).
+service CollabService {
+  rpc CreateConversation(CreateConversationRequest) returns (Conversation);
+  rpc StreamTurn(StreamTurnRequest) returns (stream StreamTurnEvent);
+}
+
+message CreateConversationRequest {
+  string workspace_id = 1;
+  string title = 2;
+  string digital_employee_id = 3;
+}
+
+message Conversation {
+  string id = 1;
+  string workspace_id = 2;
+  string title = 3;
+  string digital_employee_id = 4;
+  string updated_at = 5;
+}
+
+message StreamTurnRequest {
+  string conversation_id = 1;
+  string workspace_id = 2;
+  string content = 3;
+  string correlation_id = 4;
+  string digital_employee_id = 5;
+}
+
+message StreamTurnEvent {
+  string type = 1; // stage|delta|tool|done|error
+  string stage = 2; // policy|employee|rag|runtime|meter
+  string text = 3;
+  string correlation_id = 4;
+  map<string, string> meta = 5;
+}

@@ -1,0 +1,59 @@
+groups:
+  - name: de-core-slo
+    rules:
+      - alert: DeCoreDown
+        expr: de_core_up == 0 or absent(de_core_up)
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "de-core metrics missing or down"
+          description: "Prometheus cannot scrape de_core_up from :8080/metrics"
+
+      - alert: DeCorePostgresMissing
+        expr: de_postgres_configured == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "de-core has no Postgres pool"
+
+      - alert: DeCoreChannelDLQGrowing
+        expr: de_channel_dlq_size > 20
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Channel DLQ size high"
+          description: "de_channel_dlq_size={{ $value }}"
+
+      - alert: DeCoreHighGoroutines
+        expr: de_go_goroutines > 500
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "de-core goroutine count elevated"
+
+      - alert: DeCoreCopilotStreamErrorRate
+        expr: |
+          (
+            rate(de_copilot_stream_errors_total[5m])
+            /
+            clamp_min(rate(de_copilot_stream_total[5m]), 1e-9)
+          ) > 0.2
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Copilot SSE error rate elevated"
+          description: "More than 20% of Copilot streams failed in the last 5m window"
+
+      - alert: DeCoreAuditWriteFailures
+        expr: increase(de_audit_write_failures_total[10m]) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Durable audit fanout failures"
+          description: "de_audit_write_failures_total increased by {{ $value }} in 10m"

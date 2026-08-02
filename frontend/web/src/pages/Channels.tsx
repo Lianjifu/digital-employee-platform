@@ -146,7 +146,7 @@ export default function Channels() {
             </div>
             <div className="channels-guardrail shrink-0">
               <ShieldCheck className="h-3.5 w-3.5" />
-              <span>Mock 控制面演示 · 服务端负责真实凭据与授权</span>
+              <span>渠道控制面 · 服务端负责凭据与授权</span>
             </div>
           </div>
           <div className="de-employee-tabs flex overflow-x-auto px-3" role="tablist" aria-label={t('module.channels.title')}>

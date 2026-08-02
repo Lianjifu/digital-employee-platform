@@ -18,7 +18,22 @@ export default defineConfig({
       { find: '@de/web-utils', replacement: PKG('utils/src/index.ts') },
     ],
   },
-  server: { host: true, port: 5173, strictPort: false },
+  server: {
+    host: true,
+    port: 5173,
+    strictPort: false,
+    // 联调：VITE_USE_MOCK=false 且 VITE_API_BASE 为空时，将 /api 转到本地 de-core
+    proxy: {
+      '/api': {
+        target: process.env.VITE_PROXY_TARGET ?? 'http://127.0.0.1:8080',
+        changeOrigin: true,
+      },
+      '/healthz': {
+        target: process.env.VITE_PROXY_TARGET ?? 'http://127.0.0.1:8080',
+        changeOrigin: true,
+      },
+    },
+  },
   preview: { host: true, port: 4173 },
   build: { target: 'es2022', sourcemap: true },
   test: { environment: 'jsdom' },

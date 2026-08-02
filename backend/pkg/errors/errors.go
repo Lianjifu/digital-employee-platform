@@ -1,0 +1,93 @@
+// Package errors 定义与前端 Mock / 架构规划 §11 对齐的 E_* 错误码。
+package errors
+
+import "fmt"
+
+// Code 为稳定机器可读错误码。
+type Code string
+
+const (
+	Unknown                 Code = "E_UNKNOWN"
+	Unauthorized            Code = "E_UNAUTHORIZED"
+	AuditorReadOnly         Code = "E_AUDITOR_READ_ONLY"
+	RoleForbidden           Code = "E_ROLE_FORBIDDEN"
+	AdminRequired           Code = "E_ADMIN_REQUIRED"
+	WorkspaceScope          Code = "E_WORKSPACE_SCOPE"
+	WorkspaceNotFound       Code = "E_WORKSPACE_NOT_FOUND"
+	WorkspaceWriteForbidden Code = "E_WORKSPACE_WRITE_FORBIDDEN"
+	WorkspaceNameRequired   Code = "E_WORKSPACE_NAME_REQUIRED"
+	WorkspaceInUse          Code = "E_WORKSPACE_IN_USE"
+	WorkspaceOwnerRequired  Code = "E_WORKSPACE_OWNER_REQUIRED"
+	AccessReadForbidden     Code = "E_ACCESS_READ_FORBIDDEN"
+	AccessWriteForbidden    Code = "E_ACCESS_WRITE_FORBIDDEN"
+	AccessGrantInvalid      Code = "E_ACCESS_GRANT_INVALID"
+	AccessGrantNotFound     Code = "E_ACCESS_GRANT_NOT_FOUND"
+	AccessSelfEscalation    Code = "E_ACCESS_SELF_ESCALATION"
+	AccessReviewNotFound    Code = "E_ACCESS_REVIEW_NOT_FOUND"
+	SODSelfApproval         Code = "E_SOD_SELF_APPROVAL"
+	ReleaseReadForbidden    Code = "E_RELEASE_READ_FORBIDDEN"
+	ReleaseRequestForbidden Code = "E_RELEASE_REQUEST_FORBIDDEN"
+	ReleaseRequestInvalid   Code = "E_RELEASE_REQUEST_INVALID"
+	ReleaseRequestRequired  Code = "E_RELEASE_REQUEST_REQUIRED"
+	ReleaseApproveForbidden Code = "E_RELEASE_APPROVE_FORBIDDEN"
+	ReleaseNotFound         Code = "E_RELEASE_NOT_FOUND"
+	ZeroTrustDeny           Code = "E_ZERO_TRUST_DENY"
+	ZeroTrustPolicyInvalid  Code = "E_ZERO_TRUST_POLICY_INVALID"
+	ZeroTrustPolicyNotFound Code = "E_ZERO_TRUST_POLICY_NOT_FOUND"
+	ZeroTrustBaselineLocked Code = "E_ZERO_TRUST_BASELINE_LOCKED"
+	ZeroTrustEvalInvalid    Code = "E_ZERO_TRUST_EVALUATION_INVALID"
+	TemporaryAuthInvalid    Code = "E_TEMPORARY_AUTH_INVALID"
+	TemporaryAuthTTLInvalid Code = "E_TEMPORARY_AUTH_TTL_INVALID"
+	TemporaryAuthNotFound   Code = "E_TEMPORARY_AUTH_NOT_FOUND"
+	TemporaryAuthProdDual   Code = "E_TEMPORARY_AUTH_PRODUCTION_REQUIRES_DUAL_APPROVAL"
+	AuditReadForbidden      Code = "E_AUDIT_READ_FORBIDDEN"
+	AuditExportForbidden    Code = "E_AUDIT_EXPORT_FORBIDDEN"
+	ModelReadForbidden      Code = "E_MODEL_READ_FORBIDDEN"
+	ModelWriteForbidden     Code = "E_MODEL_WRITE_FORBIDDEN"
+	ModelUnavailable        Code = "E_MODEL_UNAVAILABLE"
+	EgressBlocked           Code = "E_EGRESS_BLOCKED"
+	BudgetExceeded          Code = "E_BUDGET_EXCEEDED"
+	ChannelReadForbidden    Code = "E_CHANNEL_READ_FORBIDDEN"
+	ChannelWriteForbidden   Code = "E_CHANNEL_WRITE_FORBIDDEN"
+	TaskScope               Code = "E_TASK_SCOPE"
+	TaskOwnerScope          Code = "E_TASK_OWNER_SCOPE"
+	DigitalEmployeeNotFound              Code = "E_DIGITAL_EMPLOYEE_NOT_FOUND"
+	DigitalEmployeeInvalid               Code = "E_DIGITAL_EMPLOYEE_INVALID"
+	DigitalEmployeePublish               Code = "E_DIGITAL_EMPLOYEE_PUBLISH_FORBIDDEN"
+	DigitalEmployeeBinding               Code = "E_DIGITAL_EMPLOYEE_UNPUBLISHED_CAPABILITY"
+	DigitalEmployeeConfigurationRequired Code = "E_DIGITAL_EMPLOYEE_CONFIGURATION_REQUIRED"
+	DigitalEmployeeBoundaryRequired      Code = "E_DIGITAL_EMPLOYEE_BOUNDARY_REQUIRED"
+	DigitalEmployeeCapabilityRequired    Code = "E_DIGITAL_EMPLOYEE_CAPABILITY_REQUIRED"
+	DigitalEmployeeProfileIncomplete     Code = "E_DIGITAL_EMPLOYEE_PROFILE_INCOMPLETE"
+	DigitalEmployeeEvaluationRequired    Code = "E_DIGITAL_EMPLOYEE_EVALUATION_REQUIRED"
+	MemoryWriteForbidden    Code = "E_MEMORY_WRITE_FORBIDDEN"
+	HomeAlertNotFound       Code = "E_HOME_ALERT_NOT_FOUND"
+	AckNoteRequired         Code = "E_ACK_NOTE_REQUIRED"
+	CredentialsRequired     Code = "E_CREDENTIALS_REQUIRED"
+	NotFound                Code = "E_NOT_FOUND"
+	BadRequest              Code = "E_BAD_REQUEST"
+)
+
+// AppError 携带错误码与 HTTP 状态。
+type AppError struct {
+	Code    Code
+	Message string
+	Status  int
+}
+
+func (e *AppError) Error() string {
+	if e.Message == "" {
+		return string(e.Code)
+	}
+	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+}
+
+func New(code Code, status int, msg string) *AppError {
+	return &AppError{Code: code, Status: status, Message: msg}
+}
+
+func Forbidden(code Code, msg string) *AppError { return New(code, 403, msg) }
+func NotFoundErr(code Code, msg string) *AppError { return New(code, 404, msg) }
+func BadReq(code Code, msg string) *AppError      { return New(code, 400, msg) }
+func Conflict(code Code, msg string) *AppError    { return New(code, 409, msg) }
+func UnauthorizedErr(msg string) *AppError        { return New(Unauthorized, 401, msg) }
