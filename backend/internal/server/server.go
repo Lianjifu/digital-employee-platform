@@ -9,11 +9,12 @@ import (
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
+	"github.com/digital-employee-platform/backend/internal/deworkflow"
 	"github.com/digital-employee-platform/backend/internal/infra"
+	"github.com/digital-employee-platform/backend/internal/modelprov"
 	"github.com/digital-employee-platform/backend/internal/policy"
 	"github.com/digital-employee-platform/backend/internal/store"
 	"github.com/digital-employee-platform/backend/internal/vault"
-	"github.com/digital-employee-platform/backend/internal/deworkflow"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 	"github.com/digital-employee-platform/backend/pkg/response"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -33,6 +34,7 @@ type Server struct {
 	Vault      *vault.Client
 	OIDC       auth.OIDCConfig
 	Workflows  *deworkflow.Engine
+	ModelProbe *modelprov.Client
 }
 
 func New(st *store.Store) *Server {
@@ -44,6 +46,7 @@ func New(st *store.Store) *Server {
 		Vault:      vault.NewFromEnv(),
 		OIDC:       auth.LoadOIDC(),
 		Workflows:  deworkflow.New(),
+		ModelProbe: modelprov.NewClient(),
 	}
 }
 

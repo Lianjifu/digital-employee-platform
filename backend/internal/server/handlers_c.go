@@ -384,9 +384,16 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	}
 	emit("stage", "runtime", map[string]any{"status": "ok"})
 
-	// 5) meter
+	// 5) meter (+ optional model budget hard gate)
 	emit("stage", "meter", map[string]any{"status": "running"})
 	units := len([]rune(reply))
+	s.Store.Lock()
+	budgetErr := s.checkModelBudgetLocked(ws)
+	s.Store.Unlock()
+	if budgetErr != nil {
+		emit("error", "meter", map[string]any{"message": budgetErr.Error()})
+		return
+	}
 	s.recordUsageWS(ws, "copilot", units, corr)
 	emit("stage", "meter", map[string]any{"status": "ok", "units": units})
 	emit("done", "done", map[string]any{"ok": true})

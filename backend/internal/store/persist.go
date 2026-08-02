@@ -12,6 +12,10 @@ type PersistFunc func(ctx context.Context, collection string, items []map[string
 var DurableCollections = []string{
 	"workspaces",
 	"model_providers",
+	"routing_policies",
+	"policy_versions",
+	"model_audit",
+	"model_budgets",
 	"workflows",
 	"workflow_runs",
 	"employees",
@@ -65,6 +69,14 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 		return s.Workspaces
 	case "model_providers":
 		return s.ModelProviders
+	case "routing_policies":
+		return s.RoutingPolicies
+	case "policy_versions":
+		return s.PolicyVersions
+	case "model_audit":
+		return s.ModelAudit
+	case "model_budgets":
+		return s.ModelBudgets
 	case "workflows":
 		return s.Workflows
 	case "workflow_runs":
@@ -145,6 +157,14 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 		s.Workspaces = items
 	case "model_providers":
 		s.ModelProviders = items
+	case "routing_policies":
+		s.RoutingPolicies = items
+	case "policy_versions":
+		s.PolicyVersions = items
+	case "model_audit":
+		s.ModelAudit = items
+	case "model_budgets":
+		s.ModelBudgets = items
 	case "workflows":
 		s.Workflows = items
 	case "workflow_runs":

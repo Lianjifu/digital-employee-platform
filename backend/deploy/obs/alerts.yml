@@ -57,3 +57,32 @@ groups:
         annotations:
           summary: "Durable audit fanout failures"
           description: "de_audit_write_failures_total increased by {{ $value }} in 10m"
+
+      - alert: DeCoreModelProbeErrorRate
+        expr: |
+          (
+            rate(de_model_provider_probe_errors_total[10m])
+            /
+            clamp_min(rate(de_model_provider_probe_total[10m]), 1e-9)
+          ) > 0.5
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model provider probe failure rate elevated"
+
+      - alert: DeCoreModelVaultErrors
+        expr: increase(de_model_vault_errors_total[15m]) > 3
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model credential Vault errors"
+
+      - alert: DeCoreModelBudgetDenies
+        expr: increase(de_model_budget_denies_total[30m]) > 10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model budget hard denies elevated"

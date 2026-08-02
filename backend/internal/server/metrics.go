@@ -15,6 +15,27 @@ var copilotStreamTotal atomic.Uint64
 var copilotStreamErrors atomic.Uint64
 var auditWriteFailures atomic.Uint64
 var policyDeniesTotal atomic.Uint64
+var modelProbeTotal atomic.Uint64
+var modelProbeErrors atomic.Uint64
+var modelProbeLatencyMS atomic.Uint64
+var modelVaultErrors atomic.Uint64
+var modelPolicyPublishTotal atomic.Uint64
+var modelBudgetDenies atomic.Uint64
+
+// IncModelProbe records a provider connectivity probe.
+func IncModelProbe(ok bool, latencyMS int64) {
+	modelProbeTotal.Add(1)
+	if latencyMS > 0 {
+		modelProbeLatencyMS.Add(uint64(latencyMS))
+	}
+	if !ok {
+		modelProbeErrors.Add(1)
+	}
+}
+
+func IncModelVaultError()       { modelVaultErrors.Add(1) }
+func IncModelPolicyPublish()    { modelPolicyPublishTotal.Add(1) }
+func IncModelBudgetDeny()       { modelBudgetDenies.Add(1) }
 
 // IncCopilotStream records a completed Copilot SSE turn.
 func IncCopilotStream(ok bool) {
@@ -99,4 +120,10 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_stream_errors_total Copilot SSE turns that ended in error\n# TYPE de_copilot_stream_errors_total counter\nde_copilot_stream_errors_total %d\n", copilotStreamErrors.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_audit_write_failures_total durable audit fanout failures\n# TYPE de_audit_write_failures_total counter\nde_audit_write_failures_total %d\n", auditWriteFailures.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_policy_denies_total policy deny on write paths\n# TYPE de_policy_denies_total counter\nde_policy_denies_total %d\n", policyDeniesTotal.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_model_provider_probe_total model provider probes\n# TYPE de_model_provider_probe_total counter\nde_model_provider_probe_total %d\n", modelProbeTotal.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_model_provider_probe_errors_total failed model provider probes\n# TYPE de_model_provider_probe_errors_total counter\nde_model_provider_probe_errors_total %d\n", modelProbeErrors.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_model_provider_probe_latency_ms_sum cumulative probe latency ms\n# TYPE de_model_provider_probe_latency_ms_sum counter\nde_model_provider_probe_latency_ms_sum %d\n", modelProbeLatencyMS.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_model_vault_errors_total vault errors on model credential paths\n# TYPE de_model_vault_errors_total counter\nde_model_vault_errors_total %d\n", modelVaultErrors.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_model_policy_publish_total routing policy publishes\n# TYPE de_model_policy_publish_total counter\nde_model_policy_publish_total %d\n", modelPolicyPublishTotal.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_model_budget_denies_total model budget hard denies\n# TYPE de_model_budget_denies_total counter\nde_model_budget_denies_total %d\n", modelBudgetDenies.Load())
 }

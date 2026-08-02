@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/digital-employee-platform/backend/internal/auth"
 	"github.com/digital-employee-platform/backend/internal/policy"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
@@ -352,5 +351,3 @@ func (s *Server) emptyOK(r *http.Request) (any, error) { return []any{}, nil }
 func (s *Server) skillsGovernanceEmpty(r *http.Request) (any, error) {
 	return []any{}, nil
 }
-
-func (s *Server) requireModelWrite(_ *auth.Identity) {}

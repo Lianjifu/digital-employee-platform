@@ -29,10 +29,20 @@
 | Method | Path |
 |--------|------|
 | GET/POST | `/api/model-providers` |
+| POST | `/api/model-providers/discover-models` → `{ models:[{id,name}], protocol, baseUrl, fetchedAt }` |
+| GET | `/api/model-providers/:id/impact` |
+| POST | `/api/model-providers/:id/{test,disable}` |
+| PATCH/DELETE | `/api/model-providers/:id` |
 | GET/POST | `/api/model-routing/policies` |
+| PATCH | `/api/model-routing/policies/:id/draft` |
+| POST | `/api/model-routing/policies/:id/{validate,publish,rollback}` |
+| GET | `/api/model-routing/policies/:id/versions` |
+| POST | `/api/model-routing/failover-tests` → `{ fromModelId, toModelId, correlationId, status }` |
 | GET | `/api/model-governance/overview`、`/api/model-audit` |
 | GET/POST | `/api/channel-control/deployments`、`policies` |
 | GET | `/api/channel-control/overview`、`dead-letters`、`audit` |
+
+模型错误码：`E_PROVIDER_*`、`E_POLICY_*`、`E_BUDGET_EXCEEDED`、`E_EGRESS_BLOCKED`、`E_RATE_LIMITED` 等（见 `pkg/errors`）。
 
 ## 协作
 

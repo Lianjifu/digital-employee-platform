@@ -74,7 +74,8 @@ backend/
 | P1 写路径 | tenant profile、通知渠道、备份申请 | **已交付** |
 | P2 执行面 | Runtime 适配、RAG ingest、Skill 审计、Workflow 活动 | **已交付** |
 | P3 硬化 | staging、evaluateWrite 扩展、SSE/审计指标告警、DE 门禁 | **已交付** |
-| 后续 | de-platform/collab、SPIRE SDS、真 runsc、字段级 100% Mock 对齐 | 未完成 |
+| Models M0–M7 | 契约/租户隔离/Vault 凭据/真探活/路由门禁/审计预算/持久化指标 | **已交付** |
+| 后续 | de-platform/collab、SPIRE SDS、真 runsc | 未完成 |
 
 契约缺口：[`api/contract-gap.md`](api/contract-gap.md)
 
@@ -98,4 +99,17 @@ CI：`.github/workflows/backend-contract.yml`
 | `DE_OPA_URL` / `DE_OPENSEARCH_URL` | 远程策略 / 审计检索 |
 | `DE_AGENT_RUNTIME_URL` / `DE_RAG_URL` / `DE_SKILL_RUNTIME_URL` | 侧车 |
 | `DE_LLM_*` | Runtime OpenAI 兼容上游 |
+| `DE_VAULT_*` / `DE_REQUIRE_VAULT` | 模型凭据；staging/prod 建议开启 Require |
+| `DE_MODEL_PROBE_TIMEOUT` | 探活超时秒数（默认 8） |
+| `DE_MODEL_ALLOW_PRIVATE` | 允许探活/discover 访问内网（ollama） |
+| `DE_MODEL_DISCOVER_FALLBACK` | 远端解析失败时回落静态目录（默认 1） |
+| `DE_MODEL_BUDGET_ENFORCE` | Copilot 用量硬门禁（默认 0） |
+
+### 模型服务（生产语义）
+
+- 契约真相源：`frontend/packages/api/src/mock.ts`；实现：`internal/server/handlers_models.go` + `internal/modelprov/`
+- 凭据：请求体 `credential`（兼容 `apiKey`）→ Vault；落库仅 `credentialRef` / `credentialMasked`
+- 写路径校验 workspace + `model.write`；删除前 impact；路由 validate→ready→publish；failover 返回 `fromModelId`/`toModelId`
+- 持久化：`model_providers` / `routing_policies` / `policy_versions` / `model_audit` / `model_budgets`
+- 指标：`de_model_provider_probe_*`、`de_model_vault_errors_total`、`de_model_policy_publish_total`、`de_model_budget_denies_total`
 | `DE_SKILL_RUN_SECRET` | Skill RunToken HMAC |

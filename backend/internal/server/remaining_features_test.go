@@ -39,16 +39,31 @@ func TestOIDCStubCallback(t *testing.T) {
 }
 
 func TestModelProviderTestResolvesVault(t *testing.T) {
+	t.Setenv("DE_MODEL_ALLOW_PRIVATE", "1")
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/models", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer sk-live" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	})
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
 	st := store.New()
 	srv := server.New(st)
 	srv.Vault = vault.NewFromEnv()
-	ref := "vault:secret/data/models/test-1"
+	srv.ModelProbe.HTTP = ts.Client()
+	ref := "vault://model-providers/mp-vault/credential"
 	if err := srv.Vault.Put(context.Background(), ref, "sk-live"); err != nil {
 		t.Fatal(err)
 	}
 	st.Lock()
 	st.ModelProviders = append([]map[string]any{{
-		"id": "mp-vault", "workspaceId": "w1", "name": "v", "status": "draft", "credentialRef": ref,
+		"id": "mp-vault", "workspaceId": "w1", "name": "v", "status": "draft",
+		"protocol": "openai_compatible", "baseUrl": ts.URL, "credentialRef": ref,
 	}}, st.ModelProviders...)
 	st.Unlock()
 
@@ -57,11 +72,15 @@ func TestModelProviderTestResolvesVault(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/model-providers/mp-vault/test", bytes.NewBufferString(`{}`))
 	req.Header.Set("Authorization", "Bearer mock-admin-token")
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-workspace-id", "w1")
 	h.ServeHTTP(rr, req)
 	if rr.Code != 200 {
 		t.Fatalf("test %d %s", rr.Code, rr.Body.String())
 	}
 	if !bytes.Contains(rr.Body.Bytes(), []byte(`"credentialResolved":true`)) {
 		t.Fatalf("expected credentialResolved: %s", rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte(`"status":"healthy"`)) {
+		t.Fatalf("expected healthy: %s", rr.Body.String())
 	}
 }

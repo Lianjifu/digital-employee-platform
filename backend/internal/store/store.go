@@ -279,15 +279,20 @@ func (s *Store) seed() {
 	}
 
 	s.ModelProviders = []map[string]any{
-		{"id": "mp-1", "workspaceId": "w1", "name": "Azure OpenAI CN", "tier": "enterprise", "protocol": "azure_openai", "baseUrl": "https://example.openai.azure.com", "cloudRegion": "cn-east", "dataResidency": "cn", "status": "active", "credentialRef": "vault://mp-1", "credentialMasked": "sk-****abcd", "lastVerifiedAt": "2026-07-20T00:00:00Z", "models": []map[string]any{{"id": "mdl-gpt4", "providerId": "mp-1", "name": "gpt-4o", "cloudRegion": "cn-east", "dataResidency": "cn", "capabilities": []string{"chat", "reasoning"}, "status": "available", "contextWindow": 128000}}},
-		{"id": "mp-2", "workspaceId": "w1", "name": "本地 Embedding", "tier": "standard", "protocol": "ollama", "baseUrl": "http://127.0.0.1:11434", "cloudRegion": "cn-east", "dataResidency": "cn", "status": "standby", "credentialRef": "", "credentialMasked": "", "models": []map[string]any{{"id": "mdl-emb", "providerId": "mp-2", "name": "bge-m3", "cloudRegion": "cn-east", "dataResidency": "cn", "capabilities": []string{"embedding"}, "status": "available", "contextWindow": 8192}}},
+		{"id": "mp-1", "workspaceId": "w1", "name": "Azure OpenAI CN", "tier": "official", "protocol": "azure_openai", "baseUrl": "https://example.openai.azure.com", "cloudRegion": "cn-east", "dataResidency": "cn", "status": "active", "credentialRef": "vault://model-providers/mp-1/credential", "credentialMasked": "••••abcd", "lastVerifiedAt": "2026-07-20T00:00:00Z", "lastProbeLatencyMs": 420, "models": []map[string]any{{"id": "mdl-gpt4", "providerId": "mp-1", "name": "gpt-4o", "cloudRegion": "cn-east", "dataResidency": "cn", "capabilities": []string{"chat", "reasoning"}, "status": "available", "contextWindow": 128000}}},
+		{"id": "mp-2", "workspaceId": "w1", "name": "本地 Embedding", "tier": "self_hosted", "protocol": "ollama", "baseUrl": "http://127.0.0.1:11434", "cloudRegion": "cn-east", "dataResidency": "cn", "status": "standby", "credentialRef": "vault://model-providers/mp-2/credential", "credentialMasked": "••••••••", "models": []map[string]any{{"id": "mdl-emb", "providerId": "mp-2", "name": "bge-m3", "cloudRegion": "cn-east", "dataResidency": "cn", "capabilities": []string{"embedding"}, "status": "available", "contextWindow": 8192}}},
+		{"id": "mp-9", "workspaceId": "w2", "name": "隔离工作区供应商", "tier": "self_hosted", "protocol": "custom", "baseUrl": "http://isolated-llm.internal/v1", "cloudRegion": "cn-east", "dataResidency": "cn", "status": "active", "credentialRef": "vault://model-providers/mp-9/credential", "credentialMasked": "••••••••", "models": []map[string]any{{"id": "mdl-w2", "providerId": "mp-9", "name": "local-chat", "cloudRegion": "cn-east", "dataResidency": "cn", "capabilities": []string{"chat"}, "status": "available", "contextWindow": 32000}}},
 	}
 	s.RoutingPolicies = []map[string]any{
 		{"id": "rp-p0", "workspaceId": "w1", "level": "P0", "primaryModelId": "mdl-gpt4", "fallbackModelIds": []string{"mdl-emb"}, "dataScope": "internal", "egressAllowed": false, "budgetLimitUsd": 500, "status": "published", "validationIssues": []string{}},
 		{"id": "rp-draft", "workspaceId": "w1", "level": "P1", "primaryModelId": "mdl-gpt4", "fallbackModelIds": []string{}, "dataScope": "internal", "egressAllowed": false, "budgetLimitUsd": 200, "status": "draft", "validationIssues": []string{}},
 	}
 	s.PolicyVersions = []map[string]any{
-		{"id": "rpv-1", "policyId": "rp-p0", "version": 1, "snapshot": map[string]any{"id": "rp-p0", "level": "P0"}, "publishedAt": "2026-07-18T00:00:00Z", "publishedBy": "平台管理员"},
+		{"id": "rpv-1", "policyId": "rp-p0", "version": 1, "snapshot": map[string]any{
+			"id": "rp-p0", "workspaceId": "w1", "level": "P0", "primaryModelId": "mdl-gpt4",
+			"fallbackModelIds": []string{"mdl-emb"}, "dataScope": "internal", "egressAllowed": false,
+			"budgetLimitUsd": 500, "status": "published", "validationIssues": []string{},
+		}, "publishedAt": "2026-07-18T00:00:00Z", "publishedBy": "平台管理员"},
 	}
 	s.ModelAudit = []map[string]any{
 		{"id": "ma-1", "time": "2026-07-18T00:00:00Z", "workspaceId": "w1", "actor": "平台管理员", "action": "发布路由策略", "target": "P0", "result": "success", "correlationId": "corr-model-1"},

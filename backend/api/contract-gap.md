@@ -20,7 +20,7 @@
 | `POST /api/home/alerts/:id/acknowledge` | OK（`/ack` 兼容） |
 | `GET /api/digital-employees*` + lifecycle/release/configuration | OK（简化校验） |
 | `POST /api/tasks/:id/transition` | OK（`stage`） |
-| `GET /api/model-providers`、`/api/model-routing/*` | OK |
+| Models 控制面（providers/routing/governance/audit）字段级 | OK（M0–M7：credential 别名、discover 形状、租户隔离、impact、failover、ModelAudit、预算门禁开关） |
 | `GET /api/channel-control/*` | OK |
 | `GET /api/sessions`、`/api/conversations/*` | OK |
 
@@ -40,7 +40,7 @@
 - Agents 遗留运行时写路径（import/live calls/evaluations）
 - Digital employee 配置边界的完整 Mock 校验规则
 - SPIRE SDS / 真 runsc OCI / de-platform·collab 拆分
-- 字段级与 Mock 100% 一致（当前以保证首屏可开、关键动作可走为主）
+- 非 Models 域的字段级与 Mock 100% 一致（Models 已字段级对齐）
 
 已推进：控制面持久化、生产禁密码登录、apps 镜像、OPA/OpenSearch、Authentik、观测基线、RunToken HMAC、SPIFFE、路径拆分网关、skill 隔离、**de-policy / de-audit 微服务**、**P3 staging**（`make compose-up-staging` + `.env.staging`）、写路径 `evaluateWrite`（release/employee/skill/workflow）、Copilot/审计失败指标与告警、数字员工配置/上岗门禁向 Mock 靠拢。
 

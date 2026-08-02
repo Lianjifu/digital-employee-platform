@@ -179,6 +179,42 @@ func (c *Client) kvPath(ref string) (string, error) {
 	}
 }
 
+// Delete removes a secret from the local stub and best-effort from Vault KV v2.
+func (c *Client) Delete(ctx context.Context, ref string) error {
+	if c == nil {
+		return errors.New("vault client nil")
+	}
+	if ref == "" {
+		return nil
+	}
+	path, err := c.kvPath(ref)
+	if err != nil {
+		return err
+	}
+	c.mu.Lock()
+	delete(c.stub, ref)
+	c.mu.Unlock()
+	if !c.Enabled() || c.token == "" {
+		return nil
+	}
+	url := strings.TrimRight(c.addr, "/") + "/v1/" + c.mount + "/data/" + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("X-Vault-Token", c.token)
+	res, err := c.http.Do(req)
+	if err != nil {
+		return fmt.Errorf("vault delete: %w", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 && res.StatusCode != http.StatusNotFound {
+		raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+		return fmt.Errorf("vault delete %d: %s", res.StatusCode, string(raw))
+	}
+	return nil
+}
+
 // Redact ensures logs never contain secret values.
 func Redact(s string) string {
 	if s == "" {
