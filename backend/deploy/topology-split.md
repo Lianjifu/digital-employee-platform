@@ -1,45 +1,50 @@
-# 服务拆分与 mTLS（M5 目标拓扑）
+# 服务拆分与 mTLS（粗粒度 v4）
 
-当前：`de-core` 单体 + Docker PG/Redis（+ 可选 Envoy/Vault/Temporal）。
+当前：`de-core` 兼容壳（ModeAll :8080）+ 可选粗粒度进程。
 
-目标拆分（对齐架构 §5）：
+## 目标部署单元（一类一端口）
 
-| 单元 | 职责 | 入口 |
-|------|------|------|
-| de-gateway (Envoy) | TLS / 限流 / `/api` vs `/agent` | 公网唯一入口 |
-| de-platform | 工作区 / 成员 / 配额 | mTLS 内网 |
-| de-policy | OPA / SoD / 零信任 | mTLS |
-| de-audit | 审计写入 / 检索 | mTLS + Kafka |
-| de-collab | 协作会话 / SSE | mTLS |
-| de-employee | 数字员工生命周期 | mTLS |
-| de-workflow | Temporal Worker | 内网 |
-| de-agent-runtime / rag / de-skill-runtime | 执行面 | skill 节点无控制面 DSN |
+| 单元 | 端口 | 内含模块 |
+|------|------|----------|
+| de-gateway | 8089 | Envoy `envoy.coarse.yaml` |
+| **de-sys** | **8100** | platform · policy · audit · ops |
+| **de-collab** | **8101** | collab · employee |
+| **de-cap** | **8102** | model · knowledge · memory · skill · channel |
+| **de-workflow** | **8103** | workflow HTTP + Temporal Worker |
+| de-agent-runtime | 8091 | FastAPI |
+| de-rag | 8092 | FastAPI |
+| de-skill-runtime | 8093 | FastAPI（`de_exec_net`） |
+
+遗留细端口（可选 profile）：`de-policy:8094` · `de-audit:8095` —— 粗粒度模式下由 **de-sys** 吸收。
+
+## 启动
+
+```bash
+cd backend
+make compose-up-coarse   # PG/Redis + sys/collab/cap/workflow + FastAPI + gateway:8089
+# 或本机：
+make run-sys      # :8100
+make run-collab   # :8101
+make run-cap      # :8102
+make run-workflow # :8103 HTTP（Worker 需 DE_TEMPORAL_HOST）
+```
+
+FE：`VITE_API_BASE=http://127.0.0.1:8089`（经 gateway）或继续用 `:8080` de-core。
 
 ## mTLS / SPIFFE 清单
 
-- [x] 本地 CA + SPIFFE URI SAN：`make certs` / `make certs-rotate`（TTL=1d）
-- [x] Envoy mTLS 入口：`make compose-up-mtls`（`:8443`）
-- [x] Envoy SPIFFE 校验：`make compose-up-spiffe`（`:8444`，见 `deploy/spiffe/`）
-- [x] 路径拆分网关骨架：`make compose-up-split`（`:8089`，命名 cluster 仍指 de-core）
-- [ ] SPIRE Workload API / SDS 动态 SVID（生产签发）
-- [x] de-skill-runtime：独立 `de_exec_net` + seccomp/cap_drop + HMAC RunToken
-- [x] skill 隔离探测（`DE_SKILL_REQUIRE_ISOLATION=1`）；真 `runsc` OCI 需宿主机安装 gVisor
-- [x] Authentik Compose + OIDC discovery（`deploy/authentik/`）
-- [x] 审计 Topic：Redis Stream + 可选 Kafka（`DE_KAFKA_BROKERS`）
+- [x] 本地 CA + SPIFFE URI SAN：`make certs` / `make certs-rotate`
+- [x] Envoy mTLS：`make compose-up-mtls`（`:8443`）
+- [x] Envoy SPIFFE：`make compose-up-spiffe`（`:8444`）
+- [x] 粗粒度网关：`make compose-up-coarse`（`:8089` → 8100–8103）
+- [ ] SPIRE Workload API / SDS（生产）
+- [x] de-skill-runtime 隔离网 + RunToken
+- [x] Authentik / Kafka / Obs 等见 compose profiles
 
-### 拆分落地顺序
+## 切流说明
 
-1. Envoy `envoy.split.yaml` 已按前缀分流到命名 cluster  
-2. **de-policy 已独立**：`make de-policy` / `make compose-up-policy`（`:8094`）；Envoy `de_policy` → `:8094`  
-3. de-core 经 `DE_POLICY_URL` 调用 `POST /v1/evaluate`（失败回退本地/OPA）  
-4. **de-audit 已独立**：`make de-audit` / `make compose-up-audit`（`:8095`）；Envoy `de_audit` → `:8095`  
-5. de-core 经 `DE_AUDIT_URL` fanout 写入；审计中心可走远程列表  
-6. 下一刀：de-platform / de-collab；SPIFFE → SPIRE SDS
-
-## 等保 / 多活（签字项）
-
-- [x] 身份：生产禁 mock-token（`DE_BAN_MOCK_TOKEN=1`）
-- [x] 备份双签 + 恢复演练（`/api/backups/:id/{approve,restore-drill}`）
-- [x] 跨工作区访问 403 用例
-- [x] 受限数据出境拒绝用例
-- [x] SLO：`/readyz`、`/metrics` + `make compose-up-obs`（Prometheus/Grafana 基线告警）
+- 各 Go 单元通过 `ServiceMode` 过滤路由；共享 PG KV 水合（多副本最终一致，强一致后续事件化）。
+- `DE_POLICY_URL` 在 coarse 下指向 `http://de-sys:8100`（`/v1/evaluate`）；也可用 `DE_SERVICE` 覆盖模式。
+- Envoy coarse 使用 **Docker 服务名**（`de-sys` 等），不再依赖 `host.docker.internal`。
+- 目录：`services/de-*`（含六边形骨架）· `infra/*` · `obs/*` · `libs/hexkit`。
+- 退役：`services/de-core/RETIRE.md`。

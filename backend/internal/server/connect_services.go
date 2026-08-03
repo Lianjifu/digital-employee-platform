@@ -16,23 +16,24 @@ import (
 	"github.com/digital-employee-platform/backend/gen/de/runtime/v1/runtimev1connect"
 )
 
-// mountConnectRPC registers buf-generated Connect handlers at /de.*.Service/*.
-// Legacy FE envelope clients keep using /connect/... (handleConnect).
+// mountConnectRPC registers buf-generated Connect handlers for ModeAll (compat shell).
 func (s *Server) mountConnectRPC(mux *http.ServeMux) {
-	{
+	s.mountConnectRPCForMode(mux, ModeAll)
+}
+
+// mountConnectRPCForMode registers Connect handlers owned by this deployment unit.
+func (s *Server) mountConnectRPCForMode(mux *http.ServeMux, mode ServiceMode) {
+	all := mode == ModeAll
+	if all || mode == ModeCap {
 		p, h := ragv1connect.NewRagServiceHandler(&ragConnect{s})
 		mux.Handle(p, h)
+		p, h = runtimev1connect.NewRuntimeServiceHandler(&runtimeConnect{s})
+		mux.Handle(p, h)
 	}
-	{
+	if all || mode == ModeCollab {
 		p, h := collabv1connect.NewCollabServiceHandler(&collabConnect{s})
 		mux.Handle(p, h)
-	}
-	{
-		p, h := employeev1connect.NewEmployeeServiceHandler(&employeeConnect{s})
-		mux.Handle(p, h)
-	}
-	{
-		p, h := runtimev1connect.NewRuntimeServiceHandler(&runtimeConnect{s})
+		p, h = employeev1connect.NewEmployeeServiceHandler(&employeeConnect{s})
 		mux.Handle(p, h)
 	}
 }

@@ -41,20 +41,21 @@ make run
 
 ```bash
 make compose-up-full       # + Vault(:8200) + Envoy(:8088)
+make compose-up-coarse     # ★ 粗粒度：sys/collab/cap/workflow + FastAPI + gateway:8089
 make compose-up-temporal   # + Temporal(:7233)，再 make worker
 make compose-up-oidc       # + Dex OIDC(:5556)（轻量）
 make compose-up-authentik  # + Authentik(:9000)（生产形 IdP，见 deploy/authentik/）
 make compose-up-kafka      # + Redpanda(:19092)
 make compose-up-mtls       # + Envoy mTLS(:8443)，先 make certs
 make compose-up-spiffe     # + Envoy SPIFFE mTLS(:8444)
-make compose-up-split      # + Envoy 路径拆分网关(:8089；policy→:8094)
-make compose-up-policy     # + de-policy 微服务(:8094)
-make compose-up-audit      # + de-audit 微服务(:8095)
+make compose-up-split      # + Envoy 路径拆分网关(:8089；遗留 policy→:8094)
+make compose-up-policy     # + de-policy 微服务(:8094)（遗留；prefer de-sys）
+make compose-up-audit      # + de-audit 微服务(:8095)（遗留；prefer de-sys）
 make compose-up-milvus     # + Milvus standalone(:19530) + etcd/minio
 make compose-up-opa        # + OPA(:8181)，Rego: deploy/opa/policies
 make compose-up-search     # + OpenSearch(:9200)，审计索引 de-audit
 make compose-up-obs        # + Prometheus(:9090) + Grafana(:3000)
-make compose-up-apps       # + de-core / runtime / rag / skill（镜像；skill 在 de_exec_net）
+make compose-up-apps       # + de-core / runtime / rag / skill（兼容壳）
 ```
 
 | 变量 | 说明 |

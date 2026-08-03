@@ -48,6 +48,7 @@ func workspaceFrom(ctx context.Context) *WorkspaceCtx {
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" ||
+			r.URL.Path == "/v1/evaluate" ||
 			r.URL.Path == "/api/auth/login" ||
 			r.URL.Path == "/api/auth/oidc/login" || r.URL.Path == "/api/auth/oidc/callback" {
 			next.ServeHTTP(w, r)

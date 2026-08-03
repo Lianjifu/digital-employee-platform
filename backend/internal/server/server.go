@@ -22,6 +22,7 @@ import (
 
 type Server struct {
 	Store      *store.Store
+	Mode       ServiceMode
 	RuntimeURL string
 	RAGURL     string
 	PG         *pgxpool.Pool
@@ -40,6 +41,7 @@ type Server struct {
 func New(st *store.Store) *Server {
 	return &Server{
 		Store:      st,
+		Mode:       ModeAll,
 		RuntimeURL: envOr("DE_AGENT_RUNTIME_URL", "http://127.0.0.1:8091"),
 		RAGURL:     envOr("DE_RAG_URL", "http://127.0.0.1:8092"),
 		Policy:     policy.New(),
@@ -58,12 +60,22 @@ func envOr(k, def string) string {
 }
 
 func (s *Server) Handler() http.Handler {
+	mode := s.Mode
+	if mode == "" {
+		mode = ModeAll
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		response.OK(w, map[string]any{"status": "ok", "service": "de-core"})
+		response.OK(w, map[string]any{"status": "ok", "service": mode.String(), "mode": string(mode)})
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
-		status := map[string]any{"status": "ready", "postgres": s.PG != nil, "redis": s.Cache != nil && s.Cache.Available()}
+		status := map[string]any{
+			"status":   "ready",
+			"service":  mode.String(),
+			"mode":     string(mode),
+			"postgres": s.PG != nil,
+			"redis":    s.Cache != nil && s.Cache.Available(),
+		}
 		if s.PG != nil {
 			if err := s.PG.Ping(r.Context()); err != nil {
 				status["status"] = "degraded"
@@ -78,8 +90,14 @@ func (s *Server) Handler() http.Handler {
 		}
 		response.OK(w, status)
 	})
-	s.mountConnectRPC(mux)
-	mux.HandleFunc("/connect/", s.handleConnect)
+	if mode == ModeAll || mode == ModeSys || mode == ModeCollab || mode == ModeCap {
+		s.mountConnectRPCForMode(mux, mode)
+		mux.HandleFunc("/connect/", s.handleConnect)
+	}
+	if mode == ModeAll || mode == ModeSys {
+		// Local policy evaluate (absorbs former de-policy :8094)
+		mux.HandleFunc("/v1/evaluate", s.handleLocalPolicyEvaluate)
+	}
 	mux.HandleFunc("/metrics", s.metricsPrometheus)
 	mux.HandleFunc("/", s.route)
 	return cors(s.withHTTPMetrics(s.requireAuth(mux)))
@@ -88,6 +106,14 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Path
 	method := r.Method
+	mode := s.Mode
+	if mode == "" {
+		mode = ModeAll
+	}
+	if !mode.OwnsPath(path) {
+		writeErr(w, apperr.NotFoundErr(apperr.NotFound, fmt.Sprintf("route owned by other unit: %s %s (this=%s)", method, path, mode.String())))
+		return
+	}
 	var (
 		data any
 		err  error
@@ -471,6 +497,12 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.listAPIKeys(r)
 	case path == "/api/webhooks-config" && method == http.MethodGet:
 		data, err = s.listWebhooksConfig(r)
+
+	// Aliases absorbed from former de-policy / de-audit proxy surfaces
+	case path == "/api/governance" && method == http.MethodGet:
+		data, err = s.accessGovernance(r)
+	case (path == "/api/audit" || path == "/api/audits") && method == http.MethodGet:
+		data, err = s.auditCenter(r)
 
 	default:
 		if d, e, ok := s.alias(path, method, r); ok {

@@ -1,12 +1,18 @@
-# Build from backend/runtimes:
-#   docker build --build-arg SERVICE=de_rag -t de-rag .
+# Legacy unified Dockerfile — build from backend/ root:
+#   docker build -f runtimes/Dockerfile --build-arg SERVICE=de-rag -t de-rag .
+#
+# Prefer per-service Dockerfiles under services/de-*/ (see each SERVICE.md).
+ARG SERVICE=de-agent-runtime
 FROM python:3.12-slim
 WORKDIR /app
-ARG SERVICE=de_agent_runtime
-COPY . /src
-WORKDIR /src/${SERVICE}
-RUN if [ "$SERVICE" = "de_rag" ]; then pip install --no-cache-dir -r /src/de_rag/requirements.txt; fi
+COPY services/${SERVICE}/requirements.txt ./
+COPY services/${SERVICE}/requirements-milvus.txt* ./
+RUN pip install --no-cache-dir -r requirements.txt \
+    && if [ -f requirements-milvus.txt ]; then pip install --no-cache-dir -r requirements-milvus.txt; fi
+COPY services/${SERVICE}/app ./app/
 ENV PYTHONUNBUFFERED=1
 ENV DE_BIND_HOST=0.0.0.0
-EXPOSE 8091 8092 8093
-CMD ["python3", "main.py"]
+ARG PORT=8091
+ENV DE_BIND_PORT=${PORT}
+EXPOSE ${PORT}
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT}

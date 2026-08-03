@@ -1,6 +1,6 @@
 # 数字员工平台
 
-企业级数字员工控制台与控制面后端。前端为 React 控制台；后端为 Go 控制面 `de-core`（及 de-policy / de-audit / de-workflow）与 Python Runtime / RAG / Skill 侧车。
+企业级数字员工控制台与控制面后端。前端为 React 控制台；后端为 **粗粒度 Go 控制面**（de-sys / de-collab / de-cap / de-workflow）与 **FastAPI** 执行面（agent-runtime / RAG / skill-runtime）。`de-core:8080` 仍可作为过渡兼容壳。
 
 **默认联调真实 API**（`VITE_USE_MOCK=false`）。仅本地无后端时才开启 Mock。
 
@@ -9,9 +9,23 @@
 | 层 | 技术 |
 |---|---|
 | 前端 | React 18、TypeScript、Vite 5、pnpm Workspace、TanStack Query、Zustand、React Flow |
-| 控制面 | Go 1.24、Connect/Protobuf、PostgreSQL、Redis |
-| 侧车 | Python（agent-runtime / RAG / skill-runtime） |
-| 可选基建 | Dex/Authentik OIDC、OPA、OpenSearch、Temporal、Vault、Envoy、Milvus、Kafka |
+| 控制面 | Go 1.24、Connect/Protobuf、PostgreSQL、Redis（ServiceMode 粗粒度进程） |
+| 执行面 | Python FastAPI（agent-runtime / RAG / skill-runtime） |
+| 网关 / 基建 | Envoy、Dex/Authentik、OPA、OpenSearch、Temporal、Vault、Milvus、Kafka |
+
+## 后端部署单元（一类一端口）
+
+| 单元 | 端口 | 内含模块 |
+|------|------|----------|
+| **de-sys** | 8100 | platform · policy · audit · ops |
+| **de-collab** | 8101 | collab · employee |
+| **de-cap** | 8102 | model · knowledge · memory · skill · channel |
+| **de-workflow** | 8103 | workflow HTTP + Temporal Worker |
+| de-agent-runtime / de-rag / de-skill-runtime | 8091–8093 | FastAPI |
+| de-gateway | 8089 | Envoy 粗粒度路由 |
+| de-core | 8080 | 过渡兼容壳（ModeAll） |
+
+方案：[`docs/后端微服务重构方案.md`](docs/后端微服务重构方案.md) · 架构：[`docs/后端架构规划.md`](docs/后端架构规划.md)
 
 ## 目录结构
 
@@ -19,15 +33,15 @@
 digital-employee-platform/
 ├── frontend/
 │   ├── web/                 # React 控制台
-│   └── packages/
-│       ├── api/             # API Client（可选 Mock）
-│       ├── types/ · ui/ · utils/ · hooks/
+│   └── packages/            # api · types · ui · utils · hooks
 ├── backend/
-│   ├── cmd/                 # de-core · de-policy · de-audit · de-workflow
-│   ├── internal/ · api/ · pkg/ · gen/
-│   ├── runtimes/            # de_agent_runtime · de_rag · de_skill_runtime
-│   └── deploy/              # compose · envoy · obs · staging env
-└── docs/                    # 架构规划 / 功能规格 / 视觉规范
+│   ├── cmd/                 # de-sys · de-collab · de-cap · de-workflow · de-core …
+│   ├── services/            # 一部署单元一目录（Dockerfile · SERVICE.md · FastAPI）
+│   ├── infra/ · obs/        # 基础服务与可观测目录
+│   ├── internal/            # apprun · server(ServiceMode) · store …
+│   ├── runtimes/            # 兼容入口 → services/de-*-runtime
+│   └── deploy/              # compose · envoy.coarse.yaml · topology-split
+└── docs/                    # 架构规划 / 微服务重构方案 / 功能规格 / 视觉规范
 ```
 
 ## 快速开始
@@ -38,16 +52,22 @@ digital-employee-platform/
 
 ```bash
 cd backend
-make compose-up    # PostgreSQL :5432 · Redis :6379
-make run           # de-core :8080
-# 可选侧车
-make runtime       # :8091
-make rag           # :8092
-make skill         # :8093
+make compose-up          # PostgreSQL :5432 · Redis :6379
+
+# 推荐：粗粒度四进程 + FastAPI + gateway
+make compose-up-coarse   # :8089 → 8100–8103 + 8091–8093
+
+# 或兼容壳单进程
+make run                 # de-core :8080
+make runtime && make rag && make skill
 ```
 
-健康检查：`GET http://127.0.0.1:8080/healthz`  
-详情见 [`backend/README.md`](backend/README.md)。
+| 入口 | URL |
+|------|-----|
+| 粗粒度网关 | `http://127.0.0.1:8089` |
+| 兼容壳 | `http://127.0.0.1:8080/healthz` |
+
+详情见 [`backend/README.md`](backend/README.md) · 拓扑 [`backend/deploy/topology-split.md`](backend/deploy/topology-split.md)。
 
 预发硬化栈：
 
@@ -72,6 +92,9 @@ pnpm --filter web dev
 ```env
 VITE_USE_MOCK=false
 VITE_API_BASE=
+# 粗粒度网关直连示例：
+# VITE_API_DIRECT=true
+# VITE_API_BASE=http://127.0.0.1:8089
 ```
 
 开发态默认走同源 `/api`（Vite 代理到 `127.0.0.1:8080`）。需浏览器直连后端时设 `VITE_API_DIRECT=true` 并填写 `VITE_API_BASE`。
@@ -92,11 +115,14 @@ cd frontend
 pnpm --filter web typecheck
 pnpm --filter web build
 pnpm --filter web test
-pnpm --filter @de/web-api test   # Mock 适配器单测（可选）
+pnpm --filter @de/web-api test
 
 # 后端
 cd backend
 make test
+make test-python
+make smoke              # BASE 默认 :8080
+make smoke-coarse       # 经 gateway :8089（需先 compose-up-coarse）
 ```
 
 ## 已实现能力（摘要）
@@ -104,16 +130,12 @@ make test
 | 区域 | 说明 |
 |---|---|
 | 控制台页面 | 运营总览、专家协作、任务、工作区、数字员工、工作流、模型/知识/技能/记忆/渠道、平台设置与治理 |
-| 契约联调 | P0/P1 首屏 GET + 关键写路径对齐 de-core；见 [`backend/api/contract-gap.md`](backend/api/contract-gap.md) |
-| Copilot | `VITE_USE_MOCK=false` 时走 `/api/copilot/.../stream` SSE（policy→employee→rag→runtime→meter）；回合写入短期记忆 |
-| 模型服务 | 供应商接入/探活/discover、路由发布门禁、Vault 凭据、预算与审计（M0–M7） |
-| 知识中心 | 知识包草稿/发布、文档软删、来源同步、RAG ingest/retrieve、评测与治理门禁 |
-| 技能中心 | 商店货源（builtin/registry）、晋升上架、签名/漏洞门禁、`.skill` 包导入、RunToken→skill-runtime |
-| 记忆中心 | 三层记忆 + 候选审核晋升草稿知识包；TTL 调度；长期容量门禁；会话/任务运行时写入 |
-| 消息渠道 | 部署接入/连通性验证、投递策略校验发布、死信处置、运行健康、模板与黑名单 |
-| 策略 / 审计 | 内嵌 baseline + 可选 OPA；de-policy / de-audit 进程；Audit Center 优先 `DE_AUDIT_URL` |
-| 执行面 | Runtime OpenAI 兼容适配、RAG ingest、Skill RunToken、Workflow 试跑活动 |
-| 观测 | `/metrics` + Prometheus/Grafana；含 Copilot SSE / 审计 fanout 告警 |
+| 契约联调 | 首屏 GET + 关键写路径；见 [`backend/api/contract-gap.md`](backend/api/contract-gap.md) |
+| Copilot | `/api/copilot/.../stream` SSE；回合写入短期记忆 |
+| 模型 / 知识 / 技能 / 记忆 / 渠道 | 控制面已对齐 Mock 契约（详见各中心交付说明） |
+| 粗粒度切流 | ServiceMode + `compose-up-coarse`；policy evaluate 并入 de-sys；Python→FastAPI |
+| 策略 / 审计 | 内嵌 baseline + 可选 OPA；遗留细端口 8094/8095 可选 |
+| 观测 | `/metrics`（含 `service` label）+ Prometheus/Grafana |
 
 ## 信息架构
 
@@ -125,8 +147,7 @@ make test
 账号：工作区 · 平台设置（访问控制 / 持续验证 / 审计中心）
 ```
 
-视觉规范：[`docs/视觉设计规范.md`](./docs/视觉设计规范.md)  
-后端架构：[`docs/后端架构规划.md`](./docs/后端架构规划.md)
+视觉规范：[`docs/视觉设计规范.md`](./docs/视觉设计规范.md)
 
 ## 角色边界
 
@@ -138,16 +159,17 @@ make test
 
 ## 当前边界
 
-- 前端默认打真实 de-core；`mock.ts` 仅作可选离线与单测。
+- 前端默认可打真实 API；`mock.ts` 仅作可选离线与单测。
 - 数据多为控制面内存 + PG 快照（`kv_documents`），非完整关系型业务库。
-- 记忆不会直接发布知识；审核通过仅创建**草稿知识包**，正式发布仍走知识中心门禁。
-- `.github/workflows/` 已加入 `.gitignore`，CI 工作流草稿仅保留在本地，不随仓库推送。
-- LangGraph 全图编排、真 gVisor runsc、SPIRE SDS、de-platform / de-collab 拆分仍属后续。
+- 记忆审核通过仅创建**草稿知识包**，正式发布仍走知识中心门禁。
+- `.github/workflows/` 已加入 `.gitignore`，CI 草稿不入库。
+- 六边形目录骨架已就位；handler 仍集中在 `internal/server`，物理迁包与 `de-core` 退役见 [`backend/services/de-core/RETIRE.md`](backend/services/de-core/RETIRE.md)。
+- LangGraph 全图编排、真 gVisor runsc、SPIRE SDS 仍属后续。
 
 ## 验证提交
 
 ```bash
 cd frontend && pnpm --filter web typecheck && pnpm --filter web test
-cd ../backend && make test
+cd ../backend && make test && make test-python
 git diff --check
 ```

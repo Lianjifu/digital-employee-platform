@@ -1,4 +1,5 @@
-.PHONY: run test tidy build compose-up compose-up-full compose-up-temporal compose-up-oidc compose-up-authentik compose-up-kafka compose-up-mtls compose-up-spiffe compose-up-split compose-up-milvus compose-up-opa compose-up-search compose-up-obs compose-up-policy compose-up-audit compose-up-apps compose-up-staging compose-down compose-ps compose-logs infra-env smoke runtime rag skill policy audit de-policy de-audit de-workflow docker-engine buf-generate worker certs certs-rotate
+.PHONY: run test tidy build compose-up compose-up-full compose-up-temporal compose-up-oidc compose-up-authentik compose-up-kafka compose-up-mtls compose-up-spiffe compose-up-split compose-up-coarse compose-up-milvus compose-up-opa compose-up-search compose-up-obs compose-up-policy compose-up-audit compose-up-apps compose-up-staging compose-down compose-ps compose-logs infra-env smoke smoke-coarse test-python runtime rag skill policy audit de-policy de-audit de-workflow docker-engine buf-generate worker certs certs-rotate run-sys run-collab run-cap run-workflow
+
 
 export DE_CORE_ADDR ?= :8080
 export DE_DATABASE_URL ?= postgres://de:de@127.0.0.1:5432/digital_employee?sslmode=disable
@@ -12,6 +13,18 @@ COMPOSE := docker compose -f deploy/compose.yml
 run: infra-env
 	$(GO) run ./cmd/de-core
 
+run-sys: infra-env
+	$(GO) run ./cmd/de-sys
+
+run-collab: infra-env
+	$(GO) run ./cmd/de-collab
+
+run-cap: infra-env
+	$(GO) run ./cmd/de-cap
+
+run-workflow: infra-env
+	DE_WORKFLOW_HTTP=1 DE_WORKFLOW_WORKER=$${DE_WORKFLOW_WORKER:-0} $(GO) run ./cmd/de-workflow
+
 test:
 	$(GO) test ./...
 
@@ -20,6 +33,10 @@ tidy:
 
 build:
 	$(GO) build -o ./bin/de-core ./cmd/de-core
+	$(GO) build -o ./bin/de-sys ./cmd/de-sys
+	$(GO) build -o ./bin/de-collab ./cmd/de-collab
+	$(GO) build -o ./bin/de-cap ./cmd/de-cap
+	$(GO) build -o ./bin/de-workflow ./cmd/de-workflow
 
 docker-engine:
 	@command -v docker >/dev/null || { echo "docker CLI missing; brew install docker colima"; exit 1; }
@@ -93,6 +110,12 @@ compose-up-split: docker-engine
 	$(COMPOSE) --profile split up -d
 	@echo "Envoy path-split gateway: http://127.0.0.1:8089"
 
+compose-up-coarse: docker-engine
+	@$(MAKE) compose-up
+	$(COMPOSE) --profile coarse up -d --build
+	@echo "coarse: gateway:8089 → sys:8100 collab:8101 cap:8102 workflow:8103 + FastAPI 8091-8093"
+	@echo "  FE: VITE_API_BASE=http://127.0.0.1:8089"
+
 compose-up-milvus: docker-engine
 	$(COMPOSE) --profile milvus up -d
 	@echo "waiting for Milvus healthy..."
@@ -102,7 +125,7 @@ compose-up-milvus: docker-engine
 		if [ "$$ok" = "healthy" ]; then \
 			echo "Milvus ready: http://127.0.0.1:19530"; \
 			echo "  export DE_MILVUS_URI=http://127.0.0.1:19530"; \
-			echo "  pip install -r runtimes/de_rag/requirements.txt && make rag"; \
+			echo "  pip install -r services/de-rag/requirements-milvus.txt && make rag"; \
 			exit 0; \
 		fi; \
 		sleep 3; \
@@ -154,7 +177,7 @@ compose-up-staging: docker-engine
 	@echo "env file: deploy/.env.staging (override before make if needed)"
 
 compose-down:
-	$(COMPOSE) --profile full --profile temporal --profile oidc --profile authentik --profile kafka --profile mtls --profile spiffe --profile split --profile milvus --profile opa --profile search --profile obs --profile policy --profile audit --profile apps down
+	$(COMPOSE) --profile full --profile temporal --profile oidc --profile authentik --profile kafka --profile mtls --profile spiffe --profile split --profile coarse --profile milvus --profile opa --profile search --profile obs --profile policy --profile audit --profile apps down
 
 buf-generate:
 	@command -v buf >/dev/null || { echo "install buf CLI into PATH"; exit 1; }
@@ -189,13 +212,16 @@ infra-env:
 	@echo "using DE_REDIS_URL=$(DE_REDIS_URL)"
 
 runtime:
+	pip install -q -r services/de-agent-runtime/requirements.txt
 	python3 runtimes/de_agent_runtime/main.py
 
 rag:
 	@echo "RAG backend: $${DE_MILVUS_URI:-vector-memory}"
+	pip install -q -r services/de-rag/requirements.txt
 	python3 runtimes/de_rag/main.py
 
 skill:
+	pip install -q -r services/de-skill-runtime/requirements.txt
 	python3 runtimes/de_skill_runtime/main.py
 
 BASE ?= http://127.0.0.1:8080
@@ -205,3 +231,13 @@ smoke:
 	@TOKEN=$$(curl -sf -X POST $(BASE)/api/auth/login -H 'Content-Type: application/json' -d '{"email":"admin@acme.com","password":"x"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["token"])') && \
 	curl -sf -H "Authorization: Bearer $$TOKEN" $(BASE)/api/workspaces >/dev/null && echo "workspaces ok" && \
 	curl -sf -X POST -H "Authorization: Bearer $$TOKEN" -H 'Content-Type: application/json' -d '{"resource":"workflow","action":"publish"}' $(BASE)/api/zero-trust/evaluate >/dev/null && echo "evaluate ok"
+
+smoke-coarse:
+	@$(MAKE) smoke BASE=http://127.0.0.1:8089
+	@curl -sf http://127.0.0.1:8100/healthz >/dev/null && echo "sys healthz ok"
+	@TOKEN=$$(curl -sf -X POST http://127.0.0.1:8089/api/auth/login -H 'Content-Type: application/json' -d '{"email":"admin@acme.com","password":"x"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["token"])') && \
+	curl -sf -H "Authorization: Bearer $$TOKEN" http://127.0.0.1:8102/api/channel/deployments >/dev/null && echo "cap channel ok"
+
+test-python:
+	python3 runtimes/de_rag/test_vector.py
+	python3 runtimes/de_skill_runtime/test_runtoken.py

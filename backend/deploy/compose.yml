@@ -447,8 +447,153 @@ services:
     networks:
       - de_net
 
-  # Second extracted microservice: durable audit append/list + audit-center.
-  # Profiles: audit (standalone) or apps. Port :8095
+  # —— Coarse-grained control plane (v4) ——
+  # Profile: coarse — de-sys:8100 de-collab:8101 de-cap:8102 de-workflow:8103 (+ gateway)
+  # Legacy fine ports de-policy:8094 / de-audit:8095 optional via profiles policy|audit.
+  de-sys:
+    build:
+      context: ..
+      dockerfile: services/de-sys/Dockerfile
+      args: { CMD: de-sys }
+    image: de-sys:local
+    container_name: de-sys
+    restart: unless-stopped
+    profiles: ["coarse"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      DE_SYS_ADDR: ":8100"
+      DE_SERVICE: sys
+      DE_DATABASE_URL: postgres://de:de@postgres:5432/digital_employee?sslmode=disable
+      DE_REDIS_URL: redis://redis:6379/0
+      DE_BAN_MOCK_TOKEN: ${DE_BAN_MOCK_TOKEN:-0}
+      DE_OPA_URL: ${DE_OPA_URL:-}
+      DE_OPENSEARCH_URL: ${DE_OPENSEARCH_URL:-}
+      DE_KAFKA_BROKERS: ${DE_KAFKA_BROKERS:-}
+      DE_JWT_SECRET: ${DE_JWT_SECRET:-}
+      DE_OIDC_ISSUER: ${DE_OIDC_ISSUER:-}
+      DE_OIDC_CLIENT_ID: ${DE_OIDC_CLIENT_ID:-}
+      DE_OIDC_CLIENT_SECRET: ${DE_OIDC_CLIENT_SECRET:-}
+      DE_OIDC_REDIRECT_URL: ${DE_OIDC_REDIRECT_URL:-http://127.0.0.1:8089/api/auth/oidc/callback}
+      # Prefer local evaluate; do not point at retired :8094 in coarse mode
+      DE_POLICY_URL: ${DE_POLICY_URL:-}
+      DE_AUDIT_URL: ${DE_AUDIT_URL:-}
+    ports:
+      - "8100:8100"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8100/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    networks:
+      - de_net
+
+  de-collab:
+    build:
+      context: ..
+      dockerfile: services/de-collab/Dockerfile
+      args: { CMD: de-collab }
+    image: de-collab:local
+    container_name: de-collab
+    restart: unless-stopped
+    profiles: ["coarse"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      de-sys:
+        condition: service_healthy
+    environment:
+      DE_COLLAB_ADDR: ":8101"
+      DE_SERVICE: collab
+      DE_DATABASE_URL: postgres://de:de@postgres:5432/digital_employee?sslmode=disable
+      DE_REDIS_URL: redis://redis:6379/0
+      DE_AGENT_RUNTIME_URL: http://de-agent-runtime:8091
+      DE_RAG_URL: http://de-rag:8092
+      DE_SKILL_RUNTIME_URL: http://de-skill-runtime:8093
+      DE_BAN_MOCK_TOKEN: ${DE_BAN_MOCK_TOKEN:-0}
+      DE_POLICY_URL: ${DE_COLLAB_POLICY_URL:-http://de-sys:8100}
+      DE_SKILL_RUN_SECRET: ${DE_SKILL_RUN_SECRET:-de-skill-run-dev}
+      DE_JWT_SECRET: ${DE_JWT_SECRET:-}
+    ports:
+      - "8101:8101"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8101/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    networks:
+      - de_net
+      - de_exec_net
+
+  de-cap:
+    build:
+      context: ..
+      dockerfile: services/de-cap/Dockerfile
+      args: { CMD: de-cap }
+    image: de-cap:local
+    container_name: de-cap
+    restart: unless-stopped
+    profiles: ["coarse"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      de-sys:
+        condition: service_healthy
+    environment:
+      DE_CAP_ADDR: ":8102"
+      DE_SERVICE: cap
+      DE_DATABASE_URL: postgres://de:de@postgres:5432/digital_employee?sslmode=disable
+      DE_REDIS_URL: redis://redis:6379/0
+      DE_RAG_URL: http://de-rag:8092
+      DE_SKILL_RUNTIME_URL: http://de-skill-runtime:8093
+      DE_BAN_MOCK_TOKEN: ${DE_BAN_MOCK_TOKEN:-0}
+      DE_VAULT_ADDR: ${DE_VAULT_ADDR:-}
+      DE_VAULT_TOKEN: ${DE_VAULT_TOKEN:-}
+      DE_SKILL_RUN_SECRET: ${DE_SKILL_RUN_SECRET:-de-skill-run-dev}
+      DE_POLICY_URL: ${DE_CAP_POLICY_URL:-http://de-sys:8100}
+      DE_JWT_SECRET: ${DE_JWT_SECRET:-}
+    ports:
+      - "8102:8102"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8102/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+    networks:
+      - de_net
+      - de_exec_net
+
+  envoy-coarse:
+    image: envoyproxy/envoy:v1.31-latest
+    container_name: de-envoy-coarse
+    restart: unless-stopped
+    profiles: ["coarse"]
+    depends_on:
+      de-sys:
+        condition: service_healthy
+      de-collab:
+        condition: service_healthy
+      de-cap:
+        condition: service_healthy
+      de-workflow:
+        condition: service_healthy
+    volumes:
+      - ./envoy/envoy.coarse.yaml:/etc/envoy/envoy.yaml:ro
+    ports:
+      - "8089:8089"
+      - "9902:9901"
+    networks:
+      - de_net
+
+  # Legacy fine microservice: durable audit append/list + audit-center.
+  # Profiles: audit (standalone) or apps. Port :8095 — prefer de-sys:8100 in coarse mode.
   de-audit:
     build:
       context: ..
@@ -567,48 +712,55 @@ services:
 
   de-agent-runtime:
     build:
-      context: ../runtimes
+      context: ../services/de-agent-runtime
       dockerfile: Dockerfile
-      args: { SERVICE: de_agent_runtime }
     image: de-agent-runtime:local
     container_name: de-agent-runtime
     restart: unless-stopped
-    profiles: ["apps"]
+    profiles: ["apps", "coarse"]
     environment:
       DE_BIND_HOST: "0.0.0.0"
       DE_BIND_PORT: "8091"
     ports:
       - "8091:8091"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
     networks:
       - de_net
 
   de-rag:
     build:
-      context: ../runtimes
+      context: ../services/de-rag
       dockerfile: Dockerfile
-      args: { SERVICE: de_rag }
     image: de-rag:local
     container_name: de-rag
     restart: unless-stopped
-    profiles: ["apps"]
+    profiles: ["apps", "coarse"]
     environment:
       DE_BIND_HOST: "0.0.0.0"
       DE_BIND_PORT: "8092"
       DE_MILVUS_URI: ${DE_MILVUS_URI:-}
     ports:
       - "8092:8092"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8092/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
     networks:
       - de_net
 
   de-skill-runtime:
     build:
-      context: ../runtimes
+      context: ../services/de-skill-runtime
       dockerfile: Dockerfile
-      args: { SERVICE: de_skill_runtime }
     image: de-skill-runtime:local
     container_name: de-skill-runtime
     restart: unless-stopped
-    profiles: ["apps"]
+    profiles: ["apps", "coarse"]
     # Isolated from control-plane network (no route to postgres/redis).
     # Intentionally no DE_DATABASE_URL / DE_REDIS_URL
     environment:
@@ -619,6 +771,11 @@ services:
       DE_SKILL_REQUIRE_ISOLATION: "1"
     ports:
       - "8093:8093"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8093/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
     read_only: true
     tmpfs:
       - /tmp
@@ -633,15 +790,37 @@ services:
   de-workflow:
     build:
       context: ..
-      dockerfile: Dockerfile
+      dockerfile: services/de-workflow/Dockerfile
       args: { CMD: de-workflow }
     image: de-workflow:local
     container_name: de-workflow
     restart: unless-stopped
-    # Enable with: --profile apps --profile temporal
-    profiles: ["apps"]
+    # Enable with: --profile apps|coarse (+ temporal for worker)
+    profiles: ["apps", "coarse"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
-      DE_TEMPORAL_HOST: ${DE_TEMPORAL_HOST:-temporal:7233}
+      DE_WORKFLOW_ADDR: ":8103"
+      DE_WORKFLOW_HTTP: "1"
+      DE_WORKFLOW_WORKER: ${DE_WORKFLOW_WORKER:-0}
+      DE_TEMPORAL_HOST: ${DE_TEMPORAL_HOST:-}
+      DE_DATABASE_URL: postgres://de:de@postgres:5432/digital_employee?sslmode=disable
+      DE_REDIS_URL: redis://redis:6379/0
+      DE_AGENT_RUNTIME_URL: http://de-agent-runtime:8091
+      DE_RAG_URL: http://de-rag:8092
+      DE_BAN_MOCK_TOKEN: ${DE_BAN_MOCK_TOKEN:-0}
+      DE_JWT_SECRET: ${DE_JWT_SECRET:-}
+      DE_SERVICE: workflow
+    ports:
+      - "8103:8103"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8103/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
     networks:
       - de_net
 
