@@ -4,6 +4,7 @@ import type { ControlledTask, TaskAuditEvent, TaskLifecycleStage } from '@de/web
 import { Badge, Input } from '@de/web-ui';
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { conversationHref, employeeLabel, getPrimaryAction, getStageMeta, nextStepLabel, riskLabel, sourceLabel, dispatchKindLabel, assistStatusLabel } from './task-ui';
+import { roleCanMutate } from '@/features/role-nav/role-nav';
 import { useAuthStore } from '@/stores/authStore';
 
 type Tab = 'overview' | 'execution' | 'governance' | 'audit';
@@ -22,9 +23,10 @@ function time(value: string) {
 
 export function TaskLifecycleDrawer({ task: summary, onPendingChange }: Props) {
   const user = useAuthStore((state) => state.user);
-  const isAdmin = user?.role === 'admin';
+  const canMutate = roleCanMutate(user?.role);
+  const isAdmin = user?.role === 'admin' && canMutate;
   const actor = user?.name ?? '当前用户';
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>(() => (canMutate ? 'overview' : 'audit'));
   const [reason, setReason] = useState('');
   const [confirming, setConfirming] = useState<'approve' | 'reject' | 'takeover' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -63,6 +65,7 @@ export function TaskLifecycleDrawer({ task: summary, onPendingChange }: Props) {
     request();
   };
   const runPrimary = () => {
+    if (!canMutate) return;
     setActionError(null);
     if (primary.key === 'retry') return requestRetry('请求重试协同');
     if (primary.key === 'takeover') return setConfirming('takeover');
@@ -70,7 +73,7 @@ export function TaskLifecycleDrawer({ task: summary, onPendingChange }: Props) {
     if (stage) requestTransition(stage);
   };
   const confirmAction = () => {
-    if (!confirming || !reason.trim()) return;
+    if (!canMutate || !confirming || !reason.trim()) return;
     setActionError(null);
     if (confirming === 'takeover') requestTakeover(reason.trim());
     else requestApproval(confirming === 'approve', reason.trim());
@@ -102,9 +105,9 @@ export function TaskLifecycleDrawer({ task: summary, onPendingChange }: Props) {
       {actionError && <div className="task-drawer-error" role="alert"><AlertCircle size={15} />{actionError}<button type="button" onClick={() => retryAction?.()} disabled={pending || !retryAction}>重试</button></div>}
       {tab === 'overview' && <Overview task={task} />}
       {tab === 'execution' && <Execution task={task} />}
-      {tab === 'governance' && <Governance task={task} pending={pending} canManage={isAdmin} onApprove={() => setConfirming('approve')} onReject={() => setConfirming('reject')} onTakeover={() => setConfirming('takeover')} onRetry={() => requestRetry('治理页请求重试')} />}
+      {tab === 'governance' && <Governance task={task} pending={pending} canManage={isAdmin} canMutate={canMutate} onApprove={() => setConfirming('approve')} onReject={() => setConfirming('reject')} onTakeover={() => setConfirming('takeover')} onRetry={() => requestRetry('治理页请求重试')} />}
       {tab === 'audit' && <Audit events={auditEvents} />}
-      {confirming && <section className="task-confirm" aria-label="确认操作">
+      {confirming && canMutate && <section className="task-confirm" aria-label="确认操作">
         <strong>{confirming === 'approve' ? '确认双重审批放行' : confirming === 'reject' ? '确认拒绝任务' : '确认专家接管'}</strong>
         <p>{confirming === 'reject' ? '拒绝原因会写入不可变审计记录。' : confirming === 'approve' ? '任务域放行将记入审计；高风险写操作仍以会话双重审批为准。' : '请填写接管原因，系统会记录操作者和时间。'}</p>
         <Input autoFocus value={reason} onChange={(event) => setReason(event.target.value)} placeholder="请输入原因" />
@@ -115,14 +118,20 @@ export function TaskLifecycleDrawer({ task: summary, onPendingChange }: Props) {
       </section>}
     </div>
 
-    <div className="task-drawer-primary">
-      <button type="button" className="task-saas-btn task-saas-btn--primary" disabled={pending || primary.key === 'human_action'} onClick={runPrimary}>
-        {primary.key === 'retry' && <RotateCcw size={15} />}
-        {primary.key === 'start' && <Play size={15} />}
-        {primary.key === 'pause' && <Pause size={15} />}
-        {pending ? '处理中…' : primary.label}
-      </button>
-    </div>
+    {canMutate ? (
+      <div className="task-drawer-primary">
+        <button type="button" className="task-saas-btn task-saas-btn--primary" disabled={pending || primary.key === 'human_action'} onClick={runPrimary}>
+          {primary.key === 'retry' && <RotateCcw size={15} />}
+          {primary.key === 'start' && <Play size={15} />}
+          {primary.key === 'pause' && <Pause size={15} />}
+          {pending ? '处理中…' : primary.label}
+        </button>
+      </div>
+    ) : (
+      <div className="task-drawer-primary">
+        <p className="task-governance-muted" style={{ margin: 0 }}>审计角色只读核查，不执行任务处置。</p>
+      </div>
+    )}
   </div>;
 }
 
@@ -170,7 +179,7 @@ function Execution({ task }: { task: ControlledTask }) {
   </section>;
 }
 
-function Governance({ task, pending, canManage, onApprove, onReject, onTakeover, onRetry }: { task: ControlledTask; pending: boolean; canManage: boolean; onApprove: () => void; onReject: () => void; onTakeover: () => void; onRetry: () => void }) {
+function Governance({ task, pending, canManage, canMutate, onApprove, onReject, onTakeover, onRetry }: { task: ControlledTask; pending: boolean; canManage: boolean; canMutate: boolean; onApprove: () => void; onReject: () => void; onTakeover: () => void; onRetry: () => void }) {
   const approval = task.governance.approvalStatus === 'pending' ? '待双重审批' : task.governance.approvalStatus === 'approved' ? '已批准' : task.governance.approvalStatus === 'rejected' ? '已拒绝' : '无需审批';
   return <section className="task-drawer-section">
     <h3><Gavel size={15} />治理控制</h3>
@@ -180,7 +189,7 @@ function Governance({ task, pending, canManage, onApprove, onReject, onTakeover,
       ['策略', task.governance.policyBlocked ? '策略拦截' : '策略允许'],
       ['专家接管', task.governance.takeoverBy ? `${task.governance.takeoverBy}：${task.governance.takeoverReason ?? '未说明'}` : '未接管'],
     ]} />
-    {canManage ? <>
+    {!canMutate ? <p className="task-governance-muted">审计角色只读核查治理状态，不执行放行、接管或重试。</p> : canManage ? <>
       {task.governance.approvalStatus === 'pending' && <div className="task-governance-actions">
         <button type="button" className="task-saas-btn task-saas-btn--primary" disabled={pending} onClick={onApprove}><ShieldCheck size={15} />{task.dispatchKind === 'assist' ? '接受协办' : '确认放行'}</button>
         <button type="button" className="task-saas-btn" disabled={pending} onClick={onReject}>{task.dispatchKind === 'assist' ? '拒绝协办' : '拒绝'}</button>

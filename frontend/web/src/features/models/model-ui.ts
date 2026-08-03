@@ -1,12 +1,22 @@
-import type { ModelLevel, ModelProviderStatus, ProviderImpact, RoutingPolicyDraft, RoutingPolicyStatus } from '@de/web-types';
+import type { ModelLevel, ModelProviderStatus, ProviderImpact, RoutingPolicyDraft, RoutingPolicyStatus, Role } from '@de/web-types';
+import { resolveAppRole } from '@/features/role-nav/role-nav';
 
 export type ModelWorkspaceTab = 'access' | 'routing' | 'governance' | 'audit';
 export type RoutingPolicyLevel = Exclude<ModelLevel, 'audit'>;
 
-const TAB_KEYS: ModelWorkspaceTab[] = ['access', 'routing', 'governance', 'audit'];
+/** 管理员管接入/路由/治理；审计员只读模型审计。 */
+export function visibleModelTabs(role?: Role | null): ModelWorkspaceTab[] {
+  return resolveAppRole(role) === 'auditor' ? ['audit'] : ['access', 'routing', 'governance'];
+}
 
-export function parseModelTab(value: string | null | undefined): ModelWorkspaceTab {
-  return TAB_KEYS.includes(value as ModelWorkspaceTab) ? (value as ModelWorkspaceTab) : 'access';
+export function defaultModelTab(role?: Role | null): ModelWorkspaceTab {
+  return resolveAppRole(role) === 'auditor' ? 'audit' : 'access';
+}
+
+export function parseModelTab(value: string | null | undefined, role?: Role | null): ModelWorkspaceTab {
+  const visible = visibleModelTabs(role);
+  if (visible.includes(value as ModelWorkspaceTab)) return value as ModelWorkspaceTab;
+  return defaultModelTab(role);
 }
 
 /** 路由等级用途：调度优先级与可用性期望，不是会话里的模型选择器。 */
@@ -48,9 +58,56 @@ export function budgetUtilizationPercent(spendUsd: number, budgetUsd: number): n
   return Math.min(100, Math.round((spendUsd / budgetUsd) * 100));
 }
 
+/** 已发布策略不可演练时的原因（有降级链则返回 null）。 */
+export function governanceDrillBlockReason(policy: Pick<RoutingPolicyDraft, 'status' | 'fallbackModelIds' | 'level'>): string | null {
+  if (policy.status !== 'published') return '仅已发布路由可演练';
+  if (policy.fallbackModelIds.length === 0) {
+    return policy.level === 'P3'
+      ? '未配置降级链（P3 可先单模型发布，演练需至少一级备选）'
+      : '未配置降级链，无法验证故障切流';
+  }
+  return null;
+}
+
 export function governanceDrillEligibility(policies: RoutingPolicyDraft[]) {
-  const drillable = policies.filter((item) => item.status === 'published' && item.fallbackModelIds.length > 0);
-  return { drillable, count: drillable.length, total: policies.length };
+  const published = policies.filter((item) => item.status === 'published');
+  const drillable = published.filter((item) => item.fallbackModelIds.length > 0);
+  const blocked = published
+    .filter((item) => item.fallbackModelIds.length === 0)
+    .map((policy) => ({
+      policy,
+      reason: governanceDrillBlockReason(policy) ?? '不可演练',
+    }));
+  // total = 已发布条数；已替代不计入分母，避免「0/2」误导。
+  return {
+    drillable,
+    blocked,
+    count: drillable.length,
+    total: published.length,
+    ready: drillable.length > 0,
+    guidance: drillable.length > 0
+      ? `可对 ${drillable.length} 条已发布路由执行 sandbox 降级演练`
+      : published.length === 0
+        ? '暂无已发布路由；请先到「模型路由」完成校验并发布'
+        : '已发布路由均无降级链；请到「模型路由」配置备选后重新校验发布',
+  };
+}
+
+/** 治理预算口径：占用上限=已发布；草稿仅作规划参考；已替代不计。 */
+export function governanceBudgetBreakdown(policies: Array<Pick<RoutingPolicyDraft, 'status' | 'budgetLimitUsd'>>) {
+  let publishedUsd = 0;
+  let draftUsd = 0;
+  for (const policy of policies) {
+    if (policy.status === 'published') publishedUsd += policy.budgetLimitUsd;
+    else if (policy.status === 'draft' || policy.status === 'ready') draftUsd += policy.budgetLimitUsd;
+  }
+  return {
+    publishedUsd,
+    draftUsd,
+    /** 与强制限额 / 占用分母一致 */
+    effectiveUsd: publishedUsd,
+    planningUsd: publishedUsd + draftUsd,
+  };
 }
 
 export function providerLifecycleAction(impact: Pick<ProviderImpact, 'deletionAllowed'> | null | undefined) {

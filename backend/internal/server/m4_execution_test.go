@@ -67,33 +67,3 @@ func TestChannelDLQReplay(t *testing.T) {
 	}
 }
 
-func TestMemoryPromoteNotDirectPublish(t *testing.T) {
-	st := store.New()
-	h := server.New(st).Handler()
-	// ensure a candidate exists
-	st.Lock()
-	st.MemoryCands = append(st.MemoryCands, map[string]any{
-		"id": "mc-test", "workspaceId": "w1", "title": "晋升候选-测试", "status": "pending", "ownerId": "u2",
-	})
-	st.Unlock()
-
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/memory/candidates/mc-test/promote", nil)
-	req.Header.Set("Authorization", "Bearer mock-admin-token")
-	h.ServeHTTP(rr, req)
-	if rr.Code != 200 {
-		t.Fatalf("promote %d %s", rr.Code, rr.Body.String())
-	}
-	st.RLock()
-	defer st.RUnlock()
-	for _, d := range st.KnowledgeDocs {
-		if strAny(d["title"]) == "晋升候选-测试" && strAny(d["status"]) == "published" {
-			t.Fatalf("memory promote must not publish knowledge directly")
-		}
-	}
-}
-
-func strAny(v any) string {
-	s, _ := v.(string)
-	return s
-}

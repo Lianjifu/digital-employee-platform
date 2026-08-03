@@ -123,7 +123,8 @@ type Action =
 /* ============ 常量 ============ */
 
 const STORAGE_KEY = 'de-chat-state';
-const STORAGE_VERSION = 4;
+/** v5：清理与 de-core 会话契约不一致的本地残留，避免错误深链与会话详情 404 死循环 */
+const STORAGE_VERSION = 5;
 const MAX_SESSIONS = 200; // 总会话上限
 const MAX_MESSAGES_PER_SESSION = 500; // 单会话消息上限
 const MAX_REQUESTS = 200; // 请求日志上限
@@ -198,16 +199,33 @@ function reducer(s: State, a: Action): State {
     }
     case 'merge_sessions': {
       // 服务端历史只补充缺失记录；浏览器本地的草稿、新会话和消息绝不被覆盖。
+      let changed = false;
       const merged = { ...s.sessions };
       a.sessions.forEach((session) => {
-        if (!merged[session.id]) merged[session.id] = session;
+        if (!session.id || merged[session.id]) return;
+        merged[session.id] = session;
+        changed = true;
       });
-      return { ...s, sessions: merged };
+      return changed ? { ...s, sessions: merged } : s;
     }
     case 'sync_session': {
       const existing = s.sessions[a.session.id];
+      if (!a.session.id) return s;
       // 服务端详情覆盖会话事实字段；正在输入的草稿不属于会话详情，仍保留在全局 state。
-      return { ...s, sessions: { ...s.sessions, [a.session.id]: existing ? { ...existing, ...a.session } : a.session } };
+      const next = existing ? { ...existing, ...a.session } : a.session;
+      if (
+        existing
+        && existing.messages === next.messages
+        && existing.preview === next.preview
+        && existing.title === next.title
+        && existing.status === next.status
+        && existing.lifecycle === next.lifecycle
+        && existing.digitalEmployeeId === next.digitalEmployeeId
+        && (existing.unread ?? 0) === (next.unread ?? 0)
+      ) {
+        return s;
+      }
+      return { ...s, sessions: { ...s.sessions, [a.session.id]: next } };
     }
     case 'del_session': {
       const next = { ...s.sessions };
@@ -216,8 +234,19 @@ function reducer(s: State, a: Action): State {
       const firstId = ids[0] ?? '';
       return { ...s, sessions: next, activeId: s.activeId === a.id ? firstId : s.activeId };
     }
-    case 'switch':
-      return { ...s, activeId: a.id };
+    case 'switch': {
+      if (!a.id || s.activeId === a.id) return s;
+      const target = s.sessions[a.id];
+      if (!target) return s;
+      const needsClear = (target.unread ?? 0) > 0;
+      return {
+        ...s,
+        activeId: a.id,
+        sessions: needsClear
+          ? { ...s.sessions, [a.id]: { ...target, unread: 0 } }
+          : s.sessions,
+      };
+    }
     case 'pin':
       return { ...s, sessions: { ...s.sessions, [a.id]: { ...s.sessions[a.id], pinned: a.pinned } } };
     case 'star':
@@ -271,8 +300,12 @@ function reducer(s: State, a: Action): State {
       return { ...s, typing: false, abortRef: { current: null } };
     case 'set_abort':
       return { ...s, abortRef: { current: a.ctrl } };
-    case 'clear_unread':
-      return { ...s, sessions: { ...s.sessions, [a.id]: { ...s.sessions[a.id], unread: 0 } } };
+    case 'clear_unread': {
+      const sess = s.sessions[a.id];
+      // 缺失会话不得写入幽灵对象；已清零则保持引用，避免触发更新环
+      if (!sess || (sess.unread ?? 0) === 0) return s;
+      return { ...s, sessions: { ...s.sessions, [a.id]: { ...sess, unread: 0 } } };
+    }
     case 'log_request':
       return { ...s, requests: [a.log, ...s.requests].slice(0, MAX_REQUESTS) };
     case 'update_request': {
@@ -647,12 +680,15 @@ function loadState(): State | null {
     if (!stored) return null;
     const parsed = JSON.parse(stored);
     if (!parsed || !parsed.sessions) return null;
-    // v4 清理旧版自动生成的演示会话（s_ 前缀）；服务端会在页面加载后补齐正式历史。
-    // 用户主动输入的草稿不在 session 中，仍由 draftInput 保留。
+    // 版本升级：丢弃本地会话缓存（保留输入草稿），由 /api/sessions 重新灌入，
+    // 避免 mock 时代的 s1/s_* 与 de-core 会话 id 错位引发深链振荡与 404。
     if ((parsed.schemaVersion ?? 1) < STORAGE_VERSION) {
-      const sessions = Object.fromEntries(Object.entries(parsed.sessions as Record<string, ChatSession>).filter(([id]) => !id.startsWith('s_')));
-      const activeId = sessions[parsed.activeId] ? parsed.activeId : '';
-      return { ...initial, ...parsed, sessions, activeId, schemaVersion: STORAGE_VERSION, abortRef: { current: null }, typing: false, activeCorrelationId: null } as State;
+      return {
+        ...initial,
+        draftInput: typeof parsed.draftInput === 'string' ? parsed.draftInput : '',
+        inputHistory: Array.isArray(parsed.inputHistory) ? parsed.inputHistory.filter((x: unknown) => typeof x === 'string') : [],
+        schemaVersion: STORAGE_VERSION,
+      };
     }
     return {
       ...parsed,
@@ -738,11 +774,6 @@ export function useChat(agentMeta?: { name: string }) {
   useEffect(() => {
     saveState(state);
   }, [state]);
-
-  // 切换会话时清未读
-  useEffect(() => {
-    if (state.activeId) dispatch({ type: 'clear_unread', id: state.activeId });
-  }, [state.activeId]);
 
   // 超时监控：超时自动 abort + 写错误
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1133,6 +1164,7 @@ export function useChat(agentMeta?: { name: string }) {
       ownerId: 'u1',
       ownerName: '王昊',
       workspaceId: useWorkspaceStore.getState().currentWorkspaceId ?? 'w1',
+      conversationId: id,
       encrypted: true,
     };
     dispatch({ type: 'new_session', session: sess });

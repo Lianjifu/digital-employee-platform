@@ -167,35 +167,118 @@ export function StoreSkillDetail({
 }
 
 export function ImportSkillModal({
-  open, onClose, onSubmit,
-}: { open: boolean; onClose: () => void; onSubmit: (raw: string) => void }) {
+  open, onClose, onSubmitText, onSubmitFile, uploading = false,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onSubmitText: (raw: string) => void;
+  onSubmitFile: (file: File) => void;
+  uploading?: boolean;
+}) {
+  const [mode, setMode] = useState<'file' | 'text'>('file');
   const [text, setText] = useState('');
-  const valid = text.trim().length > 0;
+  const [file, setFile] = useState<File | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+
+  const acceptFile = (next?: File | null) => {
+    if (!next) return;
+    const name = next.name.toLowerCase();
+    const ok = name.endsWith('.skill') || name.endsWith('.zip') || name.endsWith('.tgz') || name.endsWith('.tar.gz');
+    if (!ok) {
+      setFileError('仅支持 .skill / .zip / .tgz / .tar.gz');
+      setFile(null);
+      return;
+    }
+    if (next.size > 10 * 1024 * 1024) {
+      setFileError('技能包不能超过 10 MB');
+      setFile(null);
+      return;
+    }
+    setFileError(null);
+    setFile(next);
+  };
+
+  const valid = mode === 'file' ? Boolean(file) && !fileError : text.trim().length > 0;
+  const busy = uploading;
+
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={() => { if (!busy) onClose(); }}
       title="导入技能"
-      description="粘贴 OpenAPI / MCP / Skill 描述 JSON，或每行一个技能名称"
+      description="上传符合 Agent Skills 规范的 .skill / 压缩包，或粘贴 JSON / 名称列表"
       size="lg"
       footer={(
         <>
-          <Button variant="ghost" onClick={onClose}>取消</Button>
-          <Button disabled={!valid} onClick={() => { onSubmit(text); setText(''); }}>导入</Button>
+          <Button variant="ghost" disabled={busy} onClick={onClose}>取消</Button>
+          <Button
+            disabled={!valid || busy}
+            loading={busy}
+            onClick={() => {
+              if (mode === 'file' && file) onSubmitFile(file);
+              else if (mode === 'text') { onSubmitText(text); setText(''); }
+            }}
+          >
+            {busy ? '导入中…' : '导入'}
+          </Button>
         </>
       )}
     >
       <div className="space-y-3">
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder={'# JSON 格式示例：\n{"name": "my-tool", "kind": "skill", "description": "...", "version": "0.1.0"}\n\n# 或每行一个名称：\nteam-redis-tool\nteam-k8s-helper'}
-          className="h-48 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 font-mono text-[11px]"
-        />
-        <p className="text-[10px] text-[var(--text-muted)]">
-          <FileCode2 className="mr-1 inline h-3 w-3" />
-          支持 JSON 数组 / 对象 / 纯文本名称，每行解析为一条技能。
-        </p>
+        <div className="flex gap-1 rounded-lg bg-[var(--bg-elevated)] p-1">
+          <button type="button" className={cn('flex-1 rounded-md px-3 py-1.5 text-xs font-medium', mode === 'file' ? 'bg-[var(--surface-1)] text-[var(--text)] shadow-sm' : 'text-[var(--text-muted)]')} onClick={() => setMode('file')}>上传技能包</button>
+          <button type="button" className={cn('flex-1 rounded-md px-3 py-1.5 text-xs font-medium', mode === 'text' ? 'bg-[var(--surface-1)] text-[var(--text)] shadow-sm' : 'text-[var(--text-muted)]')} onClick={() => setMode('text')}>粘贴文本</button>
+        </div>
+
+        {mode === 'file' ? (
+          <div className="space-y-2">
+            <label
+              className={cn('knowledge-upload-dropzone', dragging && 'is-dragging', file && 'has-file')}
+              onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+              onDragLeave={() => setDragging(false)}
+              onDrop={(e) => { e.preventDefault(); setDragging(false); acceptFile(e.dataTransfer.files?.[0]); }}
+            >
+              <span className="knowledge-upload-dropzone__icon"><Upload className="h-4 w-4" /></span>
+              <span className="mt-2 text-xs font-medium text-[var(--text)]">拖拽或点击选择技能包</span>
+              <span className="mt-1 text-[10px] text-[var(--text-muted)]">.skill · .zip · .tgz · .tar.gz · 最大 10 MB</span>
+              <input
+                type="file"
+                accept=".skill,.zip,.tgz,.tar.gz,application/zip,application/gzip"
+                className="hidden"
+                onChange={(e) => acceptFile(e.target.files?.[0])}
+              />
+            </label>
+            {file && (
+              <div className="knowledge-upload-file">
+                <span className="knowledge-upload-file__icon"><FileCode2 className="h-4 w-4" /></span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-medium">{file.name}</div>
+                  <div className="text-[10px] text-[var(--text-muted)]">{(file.size / 1024).toFixed(1)} KB</div>
+                </div>
+                <button type="button" className="text-[10px] text-[var(--danger)]" onClick={() => setFile(null)}>移除</button>
+              </div>
+            )}
+            {fileError && <p className="text-[10px] text-[var(--danger)]">{fileError}</p>}
+            <div className="rounded-md border border-[var(--border)] bg-[var(--bg)] p-2.5 text-[10px] leading-5 text-[var(--text-muted)]">
+              <div className="mb-1 font-medium text-[var(--text-secondary)]">包结构（Agent Skills）</div>
+              <pre className="font-mono">{`my-skill.skill\n└── my-skill/\n    ├── SKILL.md      # 必填：YAML name/description\n    ├── scripts/      # 可选：可执行脚本\n    ├── references/\n    └── assets/`}</pre>
+            </div>
+          </div>
+        ) : (
+          <>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={'# JSON 格式示例：\n{"name": "my-tool", "kind": "skill", "description": "...", "version": "0.1.0"}\n\n# 或每行一个名称：\nteam-redis-tool\nteam-k8s-helper'}
+              className="h-48 w-full resize-none rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2 font-mono text-[11px]"
+            />
+            <p className="text-[10px] text-[var(--text-muted)]">
+              <FileCode2 className="mr-1 inline h-3 w-3" />
+              支持 JSON 数组 / 对象 / 纯文本名称；生产环境请优先上传 .skill 包以便沙箱真实执行。
+            </p>
+          </>
+        )}
       </div>
     </Modal>
   );
@@ -207,11 +290,12 @@ export function CapabilityConfigModal({
   open: boolean;
   onClose: () => void;
   kind: 'MCP' | 'Tool';
-  onSubmit: (form: { name: string; endpoint: string; authMode?: string; schema?: string }) => void;
+  onSubmit: (form: { name: string; endpoint: string; authMode?: string; protocol?: string; schema?: string }) => void;
 }) {
   const [name, setName] = useState('');
   const [endpoint, setEndpoint] = useState('');
   const [detail, setDetail] = useState(kind === 'MCP' ? 'OAuth' : '');
+  const [protocol, setProtocol] = useState('mcp-streamable-http');
   const [schemaError, setSchemaError] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
   const validateToolSchema = (raw: string) => {
@@ -236,7 +320,15 @@ export function CapabilityConfigModal({
     if (!file.name.toLowerCase().endsWith('.json') && file.type !== 'application/json') { setSchemaError('请上传 .json 格式文件'); return; }
     try { handleSchemaChange(await file.text(), file.name); } catch { setSchemaError('无法读取上传文件'); }
   };
-  const valid = Boolean(name.trim() && endpoint.trim() && (kind === 'MCP' || (!schemaError && detail.trim())));
+  const protocolError = kind === 'MCP' && protocol === 'mcp-stdio' && endpoint.trim().startsWith('https://')
+    ? 'stdio 适用于本地进程，远程 HTTPS 请改用 Streamable HTTP 或 SSE'
+    : null;
+  const valid = Boolean(
+    name.trim()
+    && endpoint.trim()
+    && (kind !== 'MCP' || (protocol && !protocolError))
+    && (kind === 'MCP' || (!schemaError && detail.trim())),
+  );
   return (
     <Modal
       open={open}
@@ -247,7 +339,16 @@ export function CapabilityConfigModal({
       footer={(
         <>
           <Button variant="ghost" onClick={onClose}>取消</Button>
-          <Button disabled={!valid} onClick={() => onSubmit(kind === 'MCP' ? { name: name.trim(), endpoint: endpoint.trim(), authMode: detail } : { name: name.trim(), endpoint: endpoint.trim(), schema: detail })}>预检并接入</Button>
+          <Button
+            disabled={!valid}
+            onClick={() => onSubmit(
+              kind === 'MCP'
+                ? { name: name.trim(), endpoint: endpoint.trim(), authMode: detail, protocol }
+                : { name: name.trim(), endpoint: endpoint.trim(), schema: detail },
+            )}
+          >
+            预检并接入
+          </Button>
         </>
       )}
     >
@@ -255,7 +356,35 @@ export function CapabilityConfigModal({
         <Field label="名称" required><Input value={name} onChange={(event) => setName(event.target.value)} placeholder={kind === 'MCP' ? '例如：企业 GitLab MCP' : '例如：变更工单 API'} /></Field>
         <Field label={kind === 'MCP' ? '服务地址' : 'API 地址'} required><Input value={endpoint} onChange={(event) => setEndpoint(event.target.value)} placeholder="https://service.example.com" /></Field>
         {kind === 'MCP' ? (
-          <Field label="认证方式"><Input value={detail} onChange={(event) => setDetail(event.target.value)} /></Field>
+          <>
+            <Field label="协议规范" required>
+              <select
+                value={protocol}
+                onChange={(event) => setProtocol(event.target.value)}
+                className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs outline-none focus:border-[var(--brand)]"
+              >
+                <option value="mcp-streamable-http">MCP Streamable HTTP（2025-03-26，推荐）</option>
+                <option value="mcp-sse">MCP SSE（2024-11-05）</option>
+                <option value="mcp-stdio">MCP stdio（本地进程）</option>
+              </select>
+              <p className="mt-1 text-[10px] text-[var(--text-muted)]">
+                决定客户端如何与 MCP Server 握手与传讯；远程 HTTPS 服务优先 Streamable HTTP。
+              </p>
+              {protocolError && <p className="mt-1 text-[10px] text-[var(--danger)]">{protocolError}</p>}
+            </Field>
+            <Field label="认证方式">
+              <select
+                value={detail}
+                onChange={(event) => setDetail(event.target.value)}
+                className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs outline-none focus:border-[var(--brand)]"
+              >
+                <option value="OAuth">OAuth</option>
+                <option value="API Key">API Key</option>
+                <option value="mTLS">mTLS</option>
+                <option value="None">None（仅内网）</option>
+              </select>
+            </Field>
+          </>
         ) : (
           <Field label="OpenAPI / JSON Schema" required>
             <div className="space-y-2">

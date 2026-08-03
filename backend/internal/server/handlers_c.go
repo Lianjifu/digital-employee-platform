@@ -154,11 +154,45 @@ func (s *Server) listKnowledgeDocs(r *http.Request) (any, error) {
 	ws := s.workspaceID(r)
 	s.Store.RLock()
 	defer s.Store.RUnlock()
-	var out []map[string]any
+	out := make([]map[string]any, 0)
 	for _, d := range s.Store.KnowledgeDocs {
-		if str(d["workspaceId"]) == ws {
-			out = append(out, d)
+		if str(d["workspaceId"]) != ws {
+			continue
 		}
+		cp := map[string]any{}
+		for k, v := range d {
+			cp[k] = v
+		}
+		// 对齐前端 KnowledgeDoc：补齐来源/状态/规模字段，避免列表渲染缺 key、Invalid Date 等
+		if str(cp["source"]) == "" {
+			cp["source"] = "平台知识库"
+		}
+		status := str(cp["status"])
+		switch status {
+		case "published", "ready":
+			cp["status"] = "ready"
+		case "indexing", "processing", "queued":
+			cp["status"] = "indexing"
+		case "review", "draft":
+			cp["status"] = "indexing"
+		default:
+			if status == "" {
+				cp["status"] = "ready"
+			}
+		}
+		if cp["sizeKb"] == nil {
+			cp["sizeKb"] = 0
+		}
+		if cp["chunks"] == nil {
+			cp["chunks"] = 0
+		}
+		if cp["citeCount"] == nil {
+			cp["citeCount"] = 0
+		}
+		if str(cp["updatedAt"]) == "" {
+			cp["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
+		}
+		out = append(out, cp)
 	}
 	return out, nil
 }
@@ -203,7 +237,7 @@ func (s *Server) syncRAGIndex(workspaceID string) int {
 	s.Store.RLock()
 	var docs []map[string]any
 	for _, d := range s.Store.KnowledgeDocs {
-		if str(d["workspaceId"]) == workspaceID && str(d["status"]) == "published" {
+		if str(d["workspaceId"]) == workspaceID && (str(d["status"]) == "published" || str(d["status"]) == "ready") {
 			docs = append(docs, map[string]any{
 				"docId": d["id"], "title": d["title"],
 				"snippet": coalesce(str(d["snippet"]), "已发布："+str(d["title"])),
@@ -399,14 +433,26 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	emit("done", "done", map[string]any{"ok": true})
 	streamOK = true
 
+	resolvedDE := deID
+	if resolvedDE == "" && empMap != nil {
+		resolvedDE = str(empMap["id"])
+	}
 	s.Store.Lock()
 	s.Store.Messages[cid] = append(s.Store.Messages[cid], map[string]any{
 		"id": s.Store.ID("msg"), "role": "assistant", "content": reply,
 		"createdAt": time.Now().UTC().Format(time.RFC3339), "correlationId": corr,
 	})
 	s.Store.AppendAudit(ws, id.Name, "协作回合", cid, "success", corr)
+	_, _ = s.ingestRuntimeMemoryLocked(runtimeMemoryInput{
+		WorkspaceID: ws, OwnerID: id.ID, OwnerName: id.Name, DigitalEmployeeID: resolvedDE,
+		Title: "会话上下文 · " + truncateRunes(userMsg, 40),
+		Content: "用户：" + userMsg + "\n助手：" + reply,
+		SourceType: "conversation", SourceID: cid, CorrelationID: corr,
+		Layer: "short_term", Scope: "user", Confidence: 0.85,
+	})
 	s.Store.Unlock()
 	s.Store.Persist("messages")
+	go s.persistMemory()
 }
 
 func (s *Server) runtimeReply(prompt string) string {

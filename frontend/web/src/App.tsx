@@ -3,7 +3,7 @@ import { lazy, Suspense, type ReactNode } from 'react';
 import { AppLayout } from './layouts/AppLayout';
 import { ProtectedRoute } from './router/ProtectedRoute';
 import { ToastHost, Spinner } from '@de/web-ui';
-import { ErrorBoundary } from './components/ErrorBoundary';
+import { ErrorBoundary, RouteErrorBoundary } from './components/ErrorBoundary';
 import { NotFound } from './pages/NotFound';
 import { useAuthStore } from './stores/authStore';
 
@@ -49,27 +49,27 @@ export default function App() {
           <Route
             element={
               <ProtectedRoute>
-                <ErrorBoundary>
+                <RouteErrorBoundary>
                   <AppLayout />
-                </ErrorBoundary>
+                </RouteErrorBoundary>
               </ProtectedRoute>
             }
           >
             <Route index element={<Navigate to="/home" replace />} />
-            <Route path="/home" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Home /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/copilot" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Copilot /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/copilot/:id" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Copilot /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/tasks" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Tasks /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/home" element={<ProtectedRoute roles={['user', 'admin', 'auditor']}><ErrorBoundary><Home /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/copilot" element={<ProtectedRoute roles={['user', 'admin', 'auditor']}><ErrorBoundary><Copilot /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/copilot/:id" element={<ProtectedRoute roles={['user', 'admin', 'auditor']}><ErrorBoundary><Copilot /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/tasks" element={<ProtectedRoute roles={['user', 'admin', 'auditor']}><ErrorBoundary><Tasks /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/workspaces" element={<ProtectedRoute roles={['admin']}><ErrorBoundary><Workspaces /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/agents" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><DigitalEmployees /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/agents" element={<ProtectedRoute roles={['user', 'admin', 'auditor']}><ErrorBoundary><DigitalEmployees /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/digital-employees" element={<Navigate to="/agents" replace />} />
-            <Route path="/workflows" element={<ProtectedRoute permission="workflow.read" roles={['user', 'admin']}><ErrorBoundary><Workflows /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/workflows" element={<ProtectedRoute permission="workflow.read" roles={['user', 'admin', 'auditor']}><ErrorBoundary><Workflows /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/workflows/orchestration" element={<ProtectedRoute permission="workflow.read" roles={['user', 'admin']}><ErrorBoundary><WorkflowOrchestrationSession /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/workflows/orchestration/:sessionId" element={<ProtectedRoute permission="workflow.read" roles={['user', 'admin']}><ErrorBoundary><WorkflowOrchestrationSession /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/knowledge" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Knowledge /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/memory" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Memory /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/skills" element={<ProtectedRoute roles={['user', 'admin']}><ErrorBoundary><Skills /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/models" element={<ProtectedRoute permission="model.read" roles={['admin']}><ErrorBoundary><Models /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/knowledge" element={<ProtectedRoute roles={['user', 'admin', 'auditor']}><ErrorBoundary><Knowledge /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/memory" element={<ProtectedRoute roles={['admin', 'auditor']}><ErrorBoundary><Memory /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/skills" element={<ProtectedRoute roles={['user', 'admin', 'auditor']}><ErrorBoundary><Skills /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/models" element={<ProtectedRoute permission="model.read" roles={['admin', 'auditor']}><ErrorBoundary><Models /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/channels" element={<ProtectedRoute permission="channel.read" roles={['admin']}><ErrorBoundary><Channels /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/governance" element={<ProtectedRoute roles={['admin']}><Navigate to="/settings?tab=access" replace /></ProtectedRoute>} />
             <Route

@@ -31,17 +31,37 @@
 | Knowledge 首屏 GET 全集 | OK（种子/空数组） |
 | `POST /api/knowledge/docs` + `reindex` → RAG `/v1/ingest` | OK（最小闭环） |
 | Workflows `:id`/versions/draft/publish/run | OK（试跑可调 runtime/rag） |
-| Skills catalog + governance overview + execute 审计 | OK |
-| Memory expire/candidate/approve + refinement | OK |
+| Skills 全中心（见下表） | OK（P0–P3） |
+| Skills 商店货源（builtin / registry sync / promote）+ scope/channel | OK |
+| Memory 中心（overview/records/candidates/policy/audit） | OK（P0–P2） |
+| Memory expire/candidate/approve→草稿知识包 + refinement 实跑 | OK |
+| Memory TTL 调度 / 长期容量门禁 / 运行时写入钩子 | OK |
+| Memory 运行时接线：Copilot 流式→短期记忆；任务 completed/review→工作记忆 | OK |
 | Settings notification-channels / api-keys / webhooks-config | OK |
+
+### Skills 中心对齐明细
+
+| 能力 | 状态 |
+|------|------|
+| catalog / install / uninstall / lifecycle / upgrade / import | OK（持久化 + 工作区隔离） |
+| governance overview/health + 详情 permissions/governance/runtime/impact/audit | OK |
+| 供应链门禁（未签名 / 高危漏洞）+ 安装预检 checks | OK |
+| 沙箱策略：熔断 / 限流 / 高危命令 / egress / 输出脱敏 | OK（PATCH 立即生效） |
+| `POST .../test` → Mint RunToken → `de-skill-runtime`；不可达时 `DE_SKILL_TEST_SIM` 降级 | OK（生产建议 `DE_SKILL_TEST_SIM=0`） |
+| `POST /api/skills/import-package`（`.skill`/`.zip`/`.tgz`，Agent Skills `SKILL.md`）落盘 + 沙箱执行 scripts | OK |
+| `GET /api/skills/catalog` → `{ items, meta }`；`channel`/`syncedAt`/`visibilityScope`/`releaseChannel` | OK |
+| `POST /api/skills/catalog/publish` 工作区晋升上架（审批/可见性） | OK |
+| `POST /api/skills/catalog/sync` Registry 同步 + 签名/漏洞门禁 | OK |
+| `POST /api/skills/execute` 无假成功 fallback | OK |
 
 ## 仍属后续
 
-- Agents 遗留运行时写路径（import/live calls/evaluations）
+- Agents 遗留运行时写路径（import/live calls/evaluations）——会话/任务记忆写入已接线 (`IngestRuntimeMemory`)
 - Digital employee 配置边界的完整 Mock 校验规则
 - SPIRE SDS / 真 runsc OCI / de-platform·collab 拆分
-- 非 Models 域的字段级与 Mock 100% 一致（Models 已字段级对齐）
+- Skills：真 Vault secretRef、生产 gVisor runsc、去掉本地 policy-sim
+- 非 Models/Memory 域的字段级与 Mock 100% 一致（Models/Memory 已字段级对齐）
 
-已推进：控制面持久化、生产禁密码登录、apps 镜像、OPA/OpenSearch、Authentik、观测基线、RunToken HMAC、SPIFFE、路径拆分网关、skill 隔离、**de-policy / de-audit 微服务**、**P3 staging**（`make compose-up-staging` + `.env.staging`）、写路径 `evaluateWrite`（release/employee/skill/workflow）、Copilot/审计失败指标与告警、数字员工配置/上岗门禁向 Mock 靠拢。
+已推进：控制面持久化、生产禁密码登录、apps 镜像、OPA/OpenSearch、Authentik、观测基线、RunToken HMAC、SPIFFE、路径拆分网关、skill 隔离与策略供应链、**de-policy / de-audit 微服务**、**P3 staging**（`make compose-up-staging` + `.env.staging`）、写路径 `evaluateWrite`（release/employee/skill/workflow）、Copilot/审计失败指标与告警、数字员工配置/上岗门禁向 Mock 靠拢、**记忆中心 P0–P2**（approve→草稿知识包、TTL、容量门禁、refinement 实跑）。
 
-回归：`make test` 含 `TestPageSmokeGETs` / `TestEvaluateFailsIncompleteEmployee`。
+回归：`make test` 含 `TestPageSmokeGETs` / `TestEvaluateFailsIncompleteEmployee` / `TestSkillCenterP0|P1|P2|P3*` / `TestMemory*`。

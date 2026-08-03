@@ -1509,6 +1509,8 @@ export const mockEvalMetrics = {
   precision: 88,
   p95Latency: 320,
   hitRate: 32,
+  recallAtK: 0.92,
+  citationAccuracy: 0.88,
 };
 
 export const mockKnowledgeDocs: KnowledgeDoc[] = [
@@ -1520,7 +1522,18 @@ export const mockKnowledgeDocs: KnowledgeDoc[] = [
   { id: 'k7', title: '网关灰度发布流程', source: 'Runbook', sizeKb: 64, chunks: 48, citeCount: 78, status: 'ready', updatedAt: '2026-07-02T00:00:00Z' },
   { id: 'k8', title: 'ATT&CK 检测用例', source: 'SIEM', sizeKb: 540, chunks: 380, citeCount: 95, status: 'ready', updatedAt: '2026-07-09T00:00:00Z' },
 ];
-mockKnowledgeDocs.forEach((doc, index) => Object.assign(doc, { workspaceId: index === 1 || index === 5 ? 'w2' : index === 6 ? 'w3' : 'w1', ownerId: index === 6 ? 'u3' : 'u1', classification: index === 1 || index === 6 ? 'restricted' : 'internal', correlationId: `corr_knowledge_${doc.id}` }));
+mockKnowledgeDocs.forEach((doc, index) => Object.assign(doc, {
+  workspaceId: index === 1 || index === 5 ? 'w2' : index === 6 ? 'w3' : 'w1',
+  ownerId: index === 6 ? 'u3' : 'u1',
+  classification: index === 1 || index === 6 ? 'restricted' : 'internal',
+  correlationId: `corr_knowledge_${doc.id}`,
+  packageId: index === 1 || index === 5 || index === 6 ? undefined : (index === 2 || index === 3 ? 'kp-runbook' : index === 0 || index === 4 ? 'kp-runbook' : undefined),
+}));
+// Align package membership for primary workspace fixtures.
+['k1', 'k4', 'k5', 'k8'].forEach((id) => {
+  const doc = mockKnowledgeDocs.find((item) => item.id === id);
+  if (doc) doc.packageId = id === 'k8' ? 'kp-security' : 'kp-runbook';
+});
 
 export const mockKnowledgeChunks: KnowledgeRetrievalResult[] = [
   { idx: 1, source: 'Redis Runbook v3.2 §3.1', page: 12, score: 0.92, docId: 'k1', text: '当触发 OOM 时，优先检查 maxmemory-policy 与最近写入速率；建议在维护窗口执行 volatile-lru 切换。' },
@@ -1531,9 +1544,9 @@ export const mockKnowledgeChunks: KnowledgeRetrievalResult[] = [
 ];
 
 export const mockKnowledgeSources: KnowledgeSourceConnection[] = [
-  { id: 'source-runbook', name: 'Runbook 文档中心', kind: 'Git / Markdown', schedule: '每 6 小时', lastSync: '12 分钟前', documents: 86, status: 'healthy' },
-  { id: 'source-cmdb', name: 'CMDB 资产目录', kind: 'REST API', schedule: '每 30 分钟', lastSync: '4 分钟前', documents: 1280, status: 'healthy' },
-  { id: 'source-siem', name: 'SIEM 检测规则', kind: 'Webhook', schedule: '每 1 小时', lastSync: '同步失败 · 36 分钟前', documents: 380, status: 'attention' },
+  { id: 'source-runbook', name: 'Runbook 文档中心', kind: 'Git / Markdown', schedule: '每 6 小时', endpoint: 'git@github.com:acme/runbooks.git', lastSync: '12 分钟前', documents: 86, status: 'healthy' },
+  { id: 'source-cmdb', name: 'CMDB 资产目录', kind: 'REST API', schedule: '每 30 分钟', endpoint: 'https://cmdb.example.com/api/v1/assets', lastSync: '4 分钟前', documents: 1280, status: 'healthy' },
+  { id: 'source-siem', name: 'SIEM 检测规则', kind: 'Webhook', schedule: '事件推送', endpoint: '/hooks/knowledge/w3/wh-siem', lastSync: '同步失败 · 36 分钟前', documents: 380, status: 'attention' },
 ];
 (mockSearchHistory as any[]).forEach((item, index) => Object.assign(item, { workspaceId: index === 1 || index === 3 ? 'w2' : 'w1' }));
 (mockCitationTrace as any[]).forEach((item) => Object.assign(item, { workspaceId: item.docId === 'k3' ? 'w2' : 'w1' }));
@@ -1550,7 +1563,7 @@ export const mockKnowledgeGovernance: KnowledgeGovernancePolicy = {
 // 知识工程中心的领域状态：知识包是唯一可被运行时消费者绑定的交付物。
 export const mockKnowledgePackages: KnowledgePackage[] = [
   {
-    id: 'kp-runbook', name: '生产故障处置知识包', description: 'Redis、K8s 与告警处置 Runbook 的受控知识集合。', domain: 'SRE', classification: 'restricted', owner: 'SRE 平台组', status: 'published', documentCount: 42, consumers: 5,
+    id: 'kp-runbook', name: '生产故障处置知识包', description: 'Redis、K8s 与告警处置 Runbook 的受控知识集合。', domain: 'SRE', classification: 'restricted', owner: 'SRE 平台组', status: 'published', documentCount: 3, documentIds: ['k1', 'k4', 'k5'], consumers: 5,
     currentVersion: { id: 'kpv-runbook-32', version: 'v3.2', status: 'published', indexVersion: 'idx-20260718-02', publishedAt: '2026-07-18T09:30:00Z', qualityScore: 94, changeSummary: '补齐 Redis OOM 处置与双签步骤' },
     versions: [
       { id: 'kpv-runbook-32', version: 'v3.2', status: 'published', indexVersion: 'idx-20260718-02', publishedAt: '2026-07-18T09:30:00Z', qualityScore: 94, changeSummary: '补齐 Redis OOM 处置与双签步骤' },
@@ -1558,12 +1571,12 @@ export const mockKnowledgePackages: KnowledgePackage[] = [
     ],
   },
   {
-    id: 'kp-cmdb', name: '生产资产与依赖知识包', description: '受权限过滤的 CMDB 资产、服务依赖与负责人信息。', domain: 'IT 运营', classification: 'confidential', owner: '基础架构组', status: 'published', documentCount: 1280, consumers: 3,
+    id: 'kp-cmdb', name: '生产资产与依赖知识包', description: '受权限过滤的 CMDB 资产、服务依赖与负责人信息。', domain: 'IT 运营', classification: 'confidential', owner: '基础架构组', status: 'published', documentCount: 0, documentIds: [], consumers: 3,
     currentVersion: { id: 'kpv-cmdb-18', version: 'v1.8', status: 'published', indexVersion: 'idx-20260719-01', publishedAt: '2026-07-19T06:10:00Z', qualityScore: 92, changeSummary: '同步生产服务依赖关系' },
     versions: [{ id: 'kpv-cmdb-18', version: 'v1.8', status: 'published', indexVersion: 'idx-20260719-01', publishedAt: '2026-07-19T06:10:00Z', qualityScore: 92, changeSummary: '同步生产服务依赖关系' }],
   },
   {
-    id: 'kp-security', name: '安全漏洞处置知识包', description: 'CVE、加固基线与漏洞修复流程。', domain: '安全', classification: 'restricted', owner: '安全运营组', status: 'review', documentCount: 26, consumers: 0,
+    id: 'kp-security', name: '安全漏洞处置知识包', description: 'CVE、加固基线与漏洞修复流程。', domain: '安全', classification: 'restricted', owner: '安全运营组', status: 'review', documentCount: 1, documentIds: ['k8'], consumers: 0,
     currentVersion: { id: 'kpv-security-14', version: 'v1.4', status: 'review', indexVersion: 'idx-20260719-03', qualityScore: 88, changeSummary: '新增 CVE-2026 风险与修复依据' },
     versions: [{ id: 'kpv-security-14', version: 'v1.4', status: 'review', indexVersion: 'idx-20260719-03', qualityScore: 88, changeSummary: '新增 CVE-2026 风险与修复依据' }],
   },
@@ -1623,11 +1636,14 @@ function appendKnowledgeAudit(action: string, target: string, result: KnowledgeA
   return event;
 }
 
+const knowledgeDocContents = new Map<string, string>();
+
 function knowledgeDocDetail(doc: KnowledgeDoc) {
   const ownerLabels: Record<string, string> = { u1: '平台管理员', u2: '业务构建者', u3: '合规审计员' };
   const versionMatch = doc.title.match(/v[\d.]+/i);
   const version = versionMatch?.[0] ?? 'v1.0';
   const author = ownerLabels[doc.ownerId ?? 'u1'] ?? '未指定责任人';
+  const stored = knowledgeDocContents.get(doc.id);
   return {
     id: doc.id,
     title: doc.title,
@@ -1644,7 +1660,8 @@ function knowledgeDocDetail(doc: KnowledgeDoc) {
     chunkStrategy: doc.source === 'CMDB' ? '表格切片' : '结构切片',
     quality: { completeness: 96, freshness: 92, citationAccuracy: 97 },
     versions: [{ version, time: doc.updatedAt.slice(0, 10), note: '当前发布版本' }, { version: 'v3.1', time: '2026-06-18', note: '补充处置步骤与引用证据' }],
-    content: doc.id === 'k1' ? mockDocDetail.content : `# ${doc.title}\n\n该知识资产由企业知识运营工作台管理，已纳入版本、权限和引用审计。`,
+    content: stored
+      ?? (doc.id === 'k1' ? mockDocDetail.content : `# ${doc.title}\n\n该知识资产由企业知识运营工作台管理，已纳入版本、权限和引用审计。`),
   };
 }
 
@@ -1880,7 +1897,17 @@ const mockSkillCatalog: Array<Skill & { publisher: string; signed: boolean; depe
   { id: 'st9', name: 'approval-center-tool', kind: 'tool', description: '发起、查询和回收企业审批；支持双人复核策略', version: '2.0.0', status: 'available', rating: 4.7, installCount: 1450, riskLevel: 'high', cacheable: false, publisher: '流程平台组', signed: true, dependencies: ['approval-api-v2'], license: '内部许可', lastScannedAt: '6 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
   { id: 'st10', name: 'message-delivery-tool', kind: 'tool', description: '向飞书、企微和邮件渠道投递可审计的业务通知', version: '1.8.1', status: 'available', rating: 4.8, installCount: 2660, riskLevel: 'low', cacheable: true, publisher: '消息平台组', signed: true, dependencies: [], license: '内部许可', lastScannedAt: '3 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
 ];
-mockSkillCatalog.forEach((skill, index) => Object.assign(skill, { workspaceId: index === 2 ? 'w2' : index === 5 ? 'w3' : 'w1', ownerId: 'u1', environment: index === 2 ? 'staging' : 'production', classification: skill.riskLevel === 'high' ? 'restricted' : 'internal' }));
+mockSkillCatalog.forEach((skill, index) => Object.assign(skill, {
+  workspaceId: index === 2 ? 'w2' : index === 5 ? 'w3' : 'w1',
+  ownerId: 'u1',
+  environment: index === 2 ? 'staging' : 'production',
+  classification: skill.riskLevel === 'high' ? 'restricted' : 'internal',
+  channel: 'builtin',
+  channelLabel: '平台内置（演示）',
+  syncedAt: '种子目录',
+  visibilityScope: skill.riskLevel === 'high' ? 'workspace' : 'global',
+  releaseChannel: skill.riskLevel === 'high' ? 'beta' : 'stable',
+}));
 const mockAgentSkillBindings: Record<string, Array<{ skillId: string; skillName: string; status: 'active' | 'pending_approval'; installedAt: string }>> = {
   a1: [{ skillId: 's1', skillName: 'redis-cli', status: 'active', installedAt: '2026-07-19 09:40' }],
   a3: [{ skillId: 's2', skillName: 'kubectl', status: 'active', installedAt: '2026-07-19 10:10' }],
@@ -4000,12 +4027,61 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   // 知识运营工作台：所有写操作回写到同一份 mock 领域状态，便于前端验证完整交互链路。
   if (path === '/api/knowledge/docs' && method === 'GET') return mockKnowledgeDocs.filter(inCurrentWorkspace).filter(canReadScopedResource);
   if (path === '/api/knowledge/docs' && method === 'POST') {
-    const body = (opts.body ?? {}) as { title?: string; source?: string; tags?: string };
+    const body = (opts.body ?? {}) as { title?: string; source?: string; tags?: string; content?: string; fileName?: string; packageId?: string };
     if (!body.title?.trim()) throw new Error('文档标题不能为空');
-    const doc: KnowledgeDoc = { id: mockId('knowledge_doc'), workspaceId: currentWorkspaceId, ownerId: identity?.id ?? 'u1', classification: 'internal', correlationId: mockId('knowledge_corr'), title: body.title.trim(), source: body.source ?? 'Runbook', sizeKb: 0, chunks: 0, citeCount: 0, status: 'parsing', updatedAt: new Date().toISOString() };
+    const content = String(body.content ?? '').trim();
+    if (!content) throw new Error('文档正文不能为空，请上传 Markdown / 文本文件');
+    const sizeKb = Math.max(1, Math.round(content.length / 1024));
+    let packageId = body.packageId?.trim();
+    if (packageId) {
+      const target = mockKnowledgePackages.find((item) => item.id === packageId && inCurrentWorkspace(item));
+      if (!target) throw new Error('目标知识包不存在');
+    } else {
+      const draft = mockKnowledgePackages.find((item) => inCurrentWorkspace(item) && (item.status === 'draft' || item.status === 'review'));
+      if (draft) packageId = draft.id;
+      else {
+        const version = { id: mockId('knowledge_package_version'), version: 'v0.1', status: 'draft' as const, indexVersion: `idx-${Date.now()}`, qualityScore: 0, changeSummary: '初始草稿' };
+        const created: KnowledgePackage = {
+          id: mockId('knowledge_package'), workspaceId: currentWorkspaceId, ownerId: identity?.id ?? 'u1', environment: 'sandbox',
+          name: '默认知识包', description: '自动创建的工作区知识包', domain: '通用', classification: 'internal',
+          owner: identity?.name ?? '当前用户', status: 'draft', documentCount: 0, documentIds: [], consumers: 0,
+          currentVersion: version, versions: [version],
+        };
+        mockKnowledgePackages.unshift(created);
+        packageId = created.id;
+      }
+    }
+    const doc: KnowledgeDoc = {
+      id: mockId('knowledge_doc'),
+      workspaceId: currentWorkspaceId,
+      ownerId: identity?.id ?? 'u1',
+      packageId,
+      classification: 'internal',
+      correlationId: mockId('knowledge_corr'),
+      title: body.title.trim(),
+      source: body.source ?? 'Runbook',
+      sizeKb,
+      chunks: 0,
+      citeCount: 0,
+      status: 'parsing',
+      updatedAt: new Date().toISOString(),
+    };
+    knowledgeDocContents.set(doc.id, content);
     mockKnowledgeDocs.unshift(doc);
+    const pkg = mockKnowledgePackages.find((item) => item.id === packageId);
+    if (pkg) {
+      const ids = [...(pkg.documentIds ?? [])];
+      if (!ids.includes(doc.id)) ids.push(doc.id);
+      pkg.documentIds = ids;
+      pkg.documentCount = ids.length;
+    }
     appendKnowledgeAudit('上传知识文档', doc.title);
-    setTimeout(() => { doc.status = 'ready'; doc.sizeKb = 64; doc.chunks = 42; doc.updatedAt = new Date().toISOString(); appendKnowledgeAudit('文档解析与索引完成', doc.title); }, 1000);
+    setTimeout(() => {
+      doc.status = 'ready';
+      doc.chunks = Math.max(1, Math.ceil(content.length / 400));
+      doc.updatedAt = new Date().toISOString();
+      appendKnowledgeAudit('文档解析与索引完成', doc.title);
+    }, 1000);
     return doc;
   }
   if (path === '/api/knowledge/docs/review' && method === 'POST') {
@@ -4015,11 +4091,47 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     appendKnowledgeAudit('发起知识复核', `${ids.length} 项资产`);
     return { ids, status: 'review_requested' };
   }
+  const deleteKnowledgeDocsByIds = (ids: string[]) => {
+    const want = new Set(ids.filter(Boolean));
+    if (!want.size) throw new Error('请至少选择一项知识资产');
+    const removed: KnowledgeDoc[] = [];
+    for (let i = mockKnowledgeDocs.length - 1; i >= 0; i -= 1) {
+      const doc = mockKnowledgeDocs[i];
+      if (!want.has(doc.id) || !inCurrentWorkspace(doc)) continue;
+      removed.push(doc);
+      mockKnowledgeDocs.splice(i, 1);
+      knowledgeDocContents.delete(doc.id);
+    }
+    if (!removed.length) throw new Error('文档不存在或不在当前工作区');
+    for (const pkg of mockKnowledgePackages) {
+      if (!pkg.documentIds?.length) continue;
+      const next = pkg.documentIds.filter((id) => !want.has(id));
+      if (next.length !== pkg.documentIds.length) {
+        pkg.documentIds = next;
+        pkg.documentCount = next.length;
+      }
+    }
+    for (let i = mockKnowledgeChunks.length - 1; i >= 0; i -= 1) {
+      if (want.has((mockKnowledgeChunks[i] as { docId?: string }).docId ?? '')) mockKnowledgeChunks.splice(i, 1);
+    }
+    for (let i = mockCitationTrace.length - 1; i >= 0; i -= 1) {
+      if (want.has(mockCitationTrace[i].docId)) mockCitationTrace.splice(i, 1);
+    }
+    appendKnowledgeAudit('删除知识文档', removed.map((doc) => doc.title).join(','));
+    return { deleted: removed.length, ids: removed.map((doc) => doc.id) };
+  };
+  if (path === '/api/knowledge/docs/delete' && method === 'POST') {
+    const body = (opts.body ?? {}) as { ids?: string[] };
+    return deleteKnowledgeDocsByIds(body.ids ?? []);
+  }
   const knowledgeDetailPath = path.match(/^\/api\/knowledge\/doc\/([^/]+)$/);
   if (knowledgeDetailPath && method === 'GET') {
     const doc = mockKnowledgeDocs.find((item) => item.id === knowledgeDetailPath[1]);
     if (!doc || !inCurrentWorkspace(doc)) throw new Error('E_WORKSPACE_SCOPE: 无权读取其他工作区知识文档');
     return knowledgeDocDetail(doc);
+  }
+  if (knowledgeDetailPath && method === 'DELETE') {
+    return deleteKnowledgeDocsByIds([knowledgeDetailPath[1]]);
   }
   if (path === '/api/knowledge/kb-list' && method === 'GET') return mockKbList;
   if (path === '/api/knowledge/kb-list' && method === 'POST') {
@@ -4061,9 +4173,27 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   }
   if (path === '/api/knowledge/sources' && method === 'GET') return (mockKnowledgeSources as any[]).filter(inCurrentWorkspace);
   if (path === '/api/knowledge/sources' && method === 'POST') {
-    const body = (opts.body ?? {}) as Partial<KnowledgeSourceConnection>;
+    const body = (opts.body ?? {}) as Partial<KnowledgeSourceConnection> & { credentialHint?: string; syncNow?: boolean };
     if (!body.name?.trim()) throw new Error('数据源名称不能为空');
-    const source: KnowledgeSourceConnection = { id: mockId('knowledge_source'), name: body.name.trim(), kind: body.kind ?? 'REST API', schedule: body.schedule ?? '每 1 小时', lastSync: '尚未同步', documents: 0, status: 'attention' }; Object.assign(source, { workspaceId: currentWorkspaceId });
+    const kind = body.kind ?? 'REST API';
+    let endpoint = (body.endpoint ?? '').trim();
+    if (kind === 'Webhook') {
+      endpoint = `/hooks/knowledge/${currentWorkspaceId}/${mockId('wh')}`;
+    } else if (!endpoint) {
+      throw new Error('连接地址不能为空');
+    }
+    const source: KnowledgeSourceConnection = {
+      id: mockId('knowledge_source'),
+      name: body.name.trim(),
+      kind,
+      schedule: kind === 'Webhook' ? '事件推送' : (body.schedule ?? '每 1 小时'),
+      endpoint,
+      credentialHint: body.credentialHint?.trim() || undefined,
+      lastSync: '尚未同步',
+      documents: 0,
+      status: 'attention',
+    };
+    Object.assign(source, { workspaceId: currentWorkspaceId });
     mockKnowledgeSources.unshift(source);
     appendKnowledgeAudit('接入知识数据源', source.name);
     return source;
@@ -4072,7 +4202,9 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (knowledgeSourceSync && method === 'POST') {
     const source = mockKnowledgeSources.find((item) => item.id === knowledgeSourceSync[1]);
     if (!source || !inCurrentWorkspace(source as any)) throw new Error('E_WORKSPACE_SCOPE: 无权操作其他工作区数据源');
-    source.status = 'healthy'; source.lastSync = '刚刚';
+    source.status = 'healthy';
+    source.lastSync = '刚刚';
+    source.documents = Math.max(1, source.documents + 1);
     appendKnowledgeAudit('执行数据源同步', source.name);
     return source;
   }
@@ -4091,20 +4223,80 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     const body = (opts.body ?? {}) as Partial<KnowledgePackage>;
     if (!body.name?.trim()) throw new Error('知识包名称不能为空');
     const version = { id: mockId('knowledge_package_version'), version: 'v0.1', status: 'draft' as const, indexVersion: `idx-${Date.now()}`, qualityScore: 0, changeSummary: '首次创建，等待加工与评测' };
-    const item: KnowledgePackage = { id: mockId('knowledge_package'), workspaceId: currentWorkspaceId, ownerId: identity?.id ?? 'u1', environment: 'sandbox', name: body.name.trim(), description: body.description?.trim() ?? '待补充知识包说明', domain: body.domain?.trim() ?? '通用', classification: body.classification ?? 'internal', owner: identity?.name ?? '当前用户', status: 'draft', documentCount: 0, consumers: 0, currentVersion: version, versions: [version] };
+    const item: KnowledgePackage = {
+      id: mockId('knowledge_package'), workspaceId: currentWorkspaceId, ownerId: identity?.id ?? 'u1', environment: 'sandbox',
+      name: body.name.trim(), description: body.description?.trim() ?? '待补充知识包说明', domain: body.domain?.trim() ?? '通用',
+      classification: body.classification ?? 'internal', owner: identity?.name ?? '当前用户', status: 'draft',
+      documentCount: 0, documentIds: [], consumers: 0, currentVersion: version, versions: [version],
+    };
     mockKnowledgePackages.unshift(item);
     appendKnowledgeAudit('创建知识包', item.name);
+    return item;
+  }
+  const bumpMockPackageVersion = (version: string) => {
+    const prefix = version.startsWith('v') || version.startsWith('V') ? version[0] : '';
+    const body = prefix ? version.slice(1) : version;
+    const parts = body.split('.').map((part) => Number.parseInt(part, 10));
+    if (parts.some((n) => Number.isNaN(n))) return `${prefix}${body || '0.1'}.1`;
+    while (parts.length < 3) parts.push(0);
+    parts[parts.length - 1] += 1;
+    return `${prefix}${parts.join('.')}`;
+  };
+  const knowledgePackageAttach = path.match(/^\/api\/knowledge\/packages\/([^/]+)\/attach$/);
+  if (knowledgePackageAttach && method === 'POST') {
+    const item = mockKnowledgePackages.find((record) => record.id === knowledgePackageAttach[1]);
+    if (!item || !inCurrentWorkspace(item)) throw new Error('E_WORKSPACE_SCOPE: 无权操作其他工作区知识包');
+    const body = (opts.body ?? {}) as { docIds?: string[] };
+    const ids = body.docIds ?? [];
+    if (!ids.length) throw new Error('请至少选择一篇文档');
+    const before = item.documentIds?.length ?? 0;
+    const merged = [...(item.documentIds ?? [])];
+    let matched = 0;
+    ids.forEach((docId) => {
+      const doc = mockKnowledgeDocs.find((record) => record.id === docId && inCurrentWorkspace(record));
+      if (!doc) return;
+      matched += 1;
+      doc.packageId = item.id;
+      if (!merged.includes(docId)) merged.push(docId);
+    });
+    if (!matched) throw new Error('未找到可纳管的工作区文档');
+    item.documentIds = merged;
+    item.documentCount = merged.length;
+    if (item.status === 'published' && merged.length > before) item.status = 'review';
+    appendKnowledgeAudit('纳管知识文档', `${item.name} · ${matched} 篇`);
     return item;
   }
   const knowledgePackagePublish = path.match(/^\/api\/knowledge\/packages\/([^/]+)\/publish$/);
   if (knowledgePackagePublish && method === 'POST') {
     const item = mockKnowledgePackages.find((record) => record.id === knowledgePackagePublish[1]);
     if (!item || !inCurrentWorkspace(item)) throw new Error('E_WORKSPACE_SCOPE: 无权操作其他工作区知识包');
-    const latestEvaluation = mockKnowledgeEvaluations.find((evaluation) => evaluation.packageId === item.id && evaluation.evaluatedVersion === item.currentVersion.version);
-    if (item.documentCount === 0) throw new Error('E_KNOWLEDGE_PACKAGE_EMPTY');
+    if (item.status === 'archived' || item.status === 'deprecated') throw new Error('已归档/废弃的知识包不可发布');
+    const memberIds = item.documentIds?.length
+      ? item.documentIds
+      : mockKnowledgeDocs.filter((doc) => inCurrentWorkspace(doc) && doc.packageId === item.id).map((doc) => doc.id);
+    item.documentIds = memberIds;
+    item.documentCount = memberIds.length;
+    if (!memberIds.length) throw new Error('知识包内无可发布文档，请先纳管并完成索引');
+    const ready = mockKnowledgeDocs.filter((doc) => memberIds.includes(doc.id) && (doc.status === 'ready' || doc.status === 'published'));
+    if (!ready.length) throw new Error('知识包内无可发布文档，请先纳管并完成索引');
+    const latestEvaluation = mockKnowledgeEvaluations.find((evaluation) => evaluation.packageId === item.id);
     if (latestEvaluation?.status === 'failed') throw new Error('E_KNOWLEDGE_EVALUATION_FAILED');
-    const published = { ...item.currentVersion, status: 'published' as const, publishedAt: new Date().toISOString(), qualityScore: latestEvaluation ? Math.round(latestEvaluation.ndcg * 100) : item.currentVersion.qualityScore || 90, changeSummary: item.currentVersion.changeSummary || '已通过发布检查' };
-    item.currentVersion = published; item.status = 'published'; item.versions = item.versions.map((version) => version.id === published.id ? published : version);
+    const prev = item.currentVersion;
+    prev.status = 'deprecated';
+    const verName = bumpMockPackageVersion(prev.version);
+    const published = {
+      id: mockId('knowledge_package_version'),
+      version: verName,
+      status: 'published' as const,
+      publishedAt: new Date().toISOString(),
+      indexVersion: `idx-${verName.replace(/[^\d]/g, '') || Date.now()}`,
+      qualityScore: latestEvaluation ? Math.round(latestEvaluation.ndcg * 100) : prev.qualityScore || 90,
+      changeSummary: prev.changeSummary || '已通过发布检查',
+    };
+    item.currentVersion = published;
+    item.status = 'published';
+    item.versions = [published, ...item.versions.map((version) => (version.id === prev.id ? prev : version))];
+    ready.forEach((doc) => { if (doc.status === 'ready') doc.status = 'published'; });
     appendKnowledgeAudit('发布知识包版本', `${item.name} · ${published.version}`);
     return item;
   }
@@ -4112,11 +4304,42 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (knowledgePackageProcess && method === 'POST') {
     const item = mockKnowledgePackages.find((record) => record.id === knowledgePackageProcess[1]);
     if (!item || !inCurrentWorkspace(item)) throw new Error('E_WORKSPACE_SCOPE: 无权操作其他工作区知识包');
+    const memberCount = item.documentIds?.length ?? item.documentCount;
+    if (!memberCount) throw new Error('知识包尚未纳管文档，无法启动加工');
     const body = (opts.body ?? {}) as { strategy?: KnowledgeProcessingJob['strategy'] };
-    const job: KnowledgeProcessingJob = { id: mockId('knowledge_job'), packageId: item.id, source: item.name, strategy: body.strategy ?? 'structured', status: 'running', documentCount: Math.max(item.documentCount, 8), chunkCount: 0, indexVersion: `idx-${Date.now()}`, startedAt: new Date().toISOString() };
+    item.status = 'review';
+    const job: KnowledgeProcessingJob = {
+      id: mockId('knowledge_job'), packageId: item.id, source: item.name, strategy: body.strategy ?? 'semantic',
+      status: 'running', documentCount: memberCount, chunkCount: 0, indexVersion: `idx-${Date.now()}`, startedAt: new Date().toISOString(),
+    };
     mockKnowledgeProcessingJobs.unshift(job);
     appendKnowledgeAudit('启动知识加工', `${item.name} · ${job.strategy}`);
     return job;
+  }
+  const knowledgePackageDelete = path.match(/^\/api\/knowledge\/packages\/([^/]+)\/delete$/);
+  if (knowledgePackageDelete && method === 'POST') {
+    const index = mockKnowledgePackages.findIndex((record) => record.id === knowledgePackageDelete[1]);
+    const item = index >= 0 ? mockKnowledgePackages[index] : undefined;
+    if (!item || !inCurrentWorkspace(item)) throw new Error('E_WORKSPACE_SCOPE: 无权操作其他工作区知识包');
+    if ((item.consumers ?? 0) > 0) throw new Error('知识包仍有运行时引用方，请先解除绑定再删除');
+    if (mockKnowledgeBindings.some((binding) => binding.packageId === item.id && inCurrentWorkspace(binding))) {
+      throw new Error('知识包仍有运行时绑定，请先解除绑定再删除');
+    }
+    mockKnowledgePackages.splice(index, 1);
+    mockKnowledgeDocs.forEach((doc) => {
+      if (doc.packageId === item.id) delete doc.packageId;
+    });
+    for (let i = mockKnowledgeProcessingJobs.length - 1; i >= 0; i -= 1) {
+      if (mockKnowledgeProcessingJobs[i].packageId === item.id) mockKnowledgeProcessingJobs.splice(i, 1);
+    }
+    for (let i = mockKnowledgeProfiles.length - 1; i >= 0; i -= 1) {
+      if (mockKnowledgeProfiles[i].packageId === item.id) mockKnowledgeProfiles.splice(i, 1);
+    }
+    for (let i = mockKnowledgeEvaluations.length - 1; i >= 0; i -= 1) {
+      if (mockKnowledgeEvaluations[i].packageId === item.id) mockKnowledgeEvaluations.splice(i, 1);
+    }
+    appendKnowledgeAudit('删除知识包', item.name);
+    return { id: item.id, deleted: true };
   }
   const knowledgeJobRetry = path.match(/^\/api\/knowledge\/processing-jobs\/([^/]+)\/retry$/);
   if (knowledgeJobRetry && method === 'POST') {
@@ -4187,15 +4410,111 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     if (integrationAction[2] === 'lifecycle' && method === 'PATCH') { Object.assign(integration, body); appendControlPlaneAudit('skill', '更新接入任务状态', `${integration.name}:${integration.status}`); return integration; }
   }
   if (path === '/api/skills' && method === 'GET') return mockSkills.filter(inCurrentWorkspace).map(skillAsset);
-  if (path === '/api/skills/catalog' && method === 'GET') return mockSkillCatalog.filter(inCurrentWorkspace);
+  if (path === '/api/skills/catalog' && method === 'GET') {
+    const channel = String((opts as any).query?.channel ?? '');
+    const releaseChannel = String((opts as any).query?.releaseChannel ?? '');
+    const items = mockSkillCatalog.filter((item: any) => {
+      const scope = item.visibilityScope ?? (item.workspaceId && !['w1'].includes(item.workspaceId) ? 'workspace' : 'global');
+      if (scope === 'workspace' && item.workspaceId && item.workspaceId !== currentWorkspaceId) return false;
+      if (scope === 'org' && item.workspaceId && item.workspaceId !== currentWorkspaceId) return false;
+      if (channel && (item.channel ?? 'builtin') !== channel) return false;
+      if (releaseChannel && (item.releaseChannel ?? 'stable') !== releaseChannel) return false;
+      return true;
+    }).map((item: any) => ({
+      ...item,
+      channel: item.channel ?? 'builtin',
+      channelLabel: item.channel === 'registry' ? '企业 Registry' : item.channel === 'promoted' ? '工作区晋升' : '平台内置（演示）',
+      syncedAt: item.syncedAt ?? '种子目录',
+      visibilityScope: item.visibilityScope ?? 'global',
+      releaseChannel: item.releaseChannel ?? 'stable',
+    }));
+    return {
+      items,
+      meta: {
+        demoNotice: '平台内置条目仅用于演示与冷启动；生产货源以 Registry 同步与工作区晋升为主。',
+        channels: [
+          { id: 'builtin', label: '平台内置（演示）' },
+          { id: 'registry', label: '企业 Registry' },
+          { id: 'promoted', label: '工作区晋升' },
+        ],
+        releaseChannels: ['stable', 'beta'],
+      },
+    };
+  }
+  if (path === '/api/skills/catalog/publish' && method === 'POST') {
+    if (identity && !identity.permissions.includes('skill.write')) throw new Error('E_FORBIDDEN: 缺少 skill.write');
+    const body = (opts.body ?? {}) as { skillId?: string; releaseChannel?: string; visibilityScope?: string; approvalTicket?: string };
+    const skill = mockSkills.find((item) => item.id === body.skillId && (!item.workspaceId || inCurrentWorkspace(item)));
+    if (!skill) throw new Error('工作区技能不存在，无法晋升上架');
+    const scope = body.visibilityScope === 'global' || body.visibilityScope === 'org' ? body.visibilityScope : 'workspace';
+    if ((skill.riskLevel === 'high' || scope !== 'workspace') && !body.approvalTicket?.trim()) {
+      throw new Error('E_APPROVAL_REQUIRED: 晋升上架需要审批单号（高风险/全局可见/需复核）');
+    }
+    if (scope !== 'workspace') requireAdministrator('全局/组织晋升上架');
+    const entry = {
+      id: mockId('sc'), workspaceId: currentWorkspaceId,
+      name: skill.name, kind: skill.kind, description: skill.description, version: skill.version,
+      status: 'available' as const, rating: skill.rating, installCount: skill.installCount,
+      riskLevel: skill.riskLevel, cacheable: skill.cacheable, publisher: skill.owner ?? '当前用户',
+      signed: true, dependencies: [] as string[], license: '内部许可', lastScannedAt: '刚刚',
+      vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'],
+      channel: 'promoted', channelLabel: '工作区晋升', syncedAt: new Date().toISOString(),
+      visibilityScope: scope, releaseChannel: body.releaseChannel === 'beta' ? 'beta' : 'stable',
+      sourceSkillId: skill.id,
+    };
+    mockSkillCatalog.unshift(entry as any);
+    appendControlPlaneAudit('skill', '晋升技能上架', `${skill.name}@${skill.version}`);
+    return entry;
+  }
+  if (path === '/api/skills/catalog/sync' && method === 'POST') {
+    if (identity && !identity.permissions.includes('skill.write')) throw new Error('E_FORBIDDEN: 缺少 skill.write');
+    requireAdministrator('同步技能商店 Registry');
+    const body = (opts.body ?? {}) as { items?: any[]; seedDemo?: boolean };
+    let items = body.items ?? [];
+    if (!items.length && body.seedDemo) {
+      items = [{ name: 'registry-demo-cli', version: '1.0.0', description: '从企业 Registry 同步的演示技能', publisher: '企业能力商店', signed: true, vulnerabilityCount: 0, releaseChannel: 'stable', visibilityScope: 'global' }];
+    }
+    if (!items.length) throw new Error('请提供 items[] 或 seedDemo=true');
+    const accepted: any[] = [];
+    const rejected: any[] = [];
+    for (const item of items) {
+      if (item.signed === false) { rejected.push({ name: item.name, reason: '制品签名校验未通过，禁止安装' }); continue; }
+      if ((item.vulnerabilityCount ?? 0) >= 3) { rejected.push({ name: item.name, reason: '存在高危漏洞（≥3），禁止安装' }); continue; }
+      const entry = {
+        id: mockId('sc'), workspaceId: currentWorkspaceId, name: item.name, kind: item.kind ?? 'skill',
+        description: item.description ?? `Registry 同步 · ${item.name}`, version: item.version ?? '0.1.0',
+        status: 'available' as const, rating: 4, installCount: 0, riskLevel: item.riskLevel ?? 'low',
+        cacheable: false, publisher: item.publisher ?? '企业能力商店', signed: true, dependencies: [],
+        license: item.license ?? '内部许可', lastScannedAt: '刚刚', vulnerabilityCount: item.vulnerabilityCount ?? 0,
+        supportedEnvironments: ['测试', '生产'], channel: 'registry', channelLabel: '企业 Registry',
+        syncedAt: new Date().toISOString(), visibilityScope: item.visibilityScope ?? 'global',
+        releaseChannel: item.releaseChannel === 'beta' ? 'beta' : 'stable',
+      };
+      mockSkillCatalog.unshift(entry as any);
+      accepted.push(entry);
+    }
+    appendControlPlaneAudit('skill', '同步技能商店 Registry', `${accepted.length} 接受/${rejected.length} 拒绝`);
+    return { accepted, rejected, acceptedCount: accepted.length, rejectedCount: rejected.length, syncedAt: new Date().toISOString() };
+  }
   if (path === '/api/skills/audit' && method === 'GET') return skillAuditEvents();
   if (path === '/api/mcp-connections' && method === 'POST') {
     evaluateZeroTrust({ resource: 'skill', action: 'connect', external: true });
     requireAdministrator('接入外部 MCP');
-    const body = (opts.body ?? {}) as { name?: string; endpoint?: string; authMode?: string };
+    const body = (opts.body ?? {}) as { name?: string; endpoint?: string; authMode?: string; protocol?: string };
     if (!body.name?.trim() || !/^https:\/\//.test(body.endpoint ?? '')) throw new Error('MCP 名称和 HTTPS 服务地址不能为空');
+    const protocolRaw = String(body.protocol ?? 'mcp-streamable-http').toLowerCase();
+    const protocol = protocolRaw === 'mcp-sse' || protocolRaw === 'sse'
+      ? 'mcp-sse'
+      : protocolRaw === 'mcp-stdio' || protocolRaw === 'stdio'
+        ? 'mcp-stdio'
+        : protocolRaw === 'mcp-streamable-http' || protocolRaw === 'streamable-http' || protocolRaw === 'streamable_http' || !body.protocol
+          ? 'mcp-streamable-http'
+          : '';
+    if (!protocol) throw new Error('不支持的协议规范，可选：mcp-streamable-http / mcp-sse / mcp-stdio');
+    if (protocol === 'mcp-stdio') throw new Error('远程 HTTPS 接入不支持 stdio，请选择 Streamable HTTP 或 SSE');
     const skill: Skill = { id: mockId('mcp'), name: body.name.trim(), kind: 'mcp', description: `MCP · ${body.endpoint}`, version: '1.0.0', status: 'installed', rating: 0, installCount: 0, riskLevel: 'mid', cacheable: false };
-    mockSkills.unshift(skill); mockSkillPermissions[skill.id] = mockSkillPerms.map((item) => ({ ...item, skillId: skill.id })); mockSkillIntegrations.unshift({ id: mockId('integration'), name: skill.name, type: 'mcp', environment: 'test', status: 'validating', owner: '当前用户', endpoint: body.endpoint!, credentialRef: `vault://integrations/${skill.id}/oauth`, lastVerifiedAt: '刚刚', health: 'unknown', discoveredCapabilities: 0, writeApprovalRequired: true, allowedEgress: [new URL(body.endpoint!).host] }); appendControlPlaneAudit('skill', '配置 MCP 并预检', `${skill.name}:${body.authMode ?? 'OAuth'}`); return skill;
+    Object.assign(skill, { protocol, authMode: body.authMode ?? 'OAuth' });
+    mockSkills.unshift(skill); mockSkillPermissions[skill.id] = mockSkillPerms.map((item) => ({ ...item, skillId: skill.id })); mockSkillIntegrations.unshift({ id: mockId('integration'), name: skill.name, type: 'mcp', environment: 'test', status: 'validating', owner: '当前用户', endpoint: body.endpoint!, credentialRef: `vault://integrations/${skill.id}/oauth`, lastVerifiedAt: '刚刚', health: 'unknown', discoveredCapabilities: 0, writeApprovalRequired: true, allowedEgress: [new URL(body.endpoint!).host], protocol, authMode: body.authMode ?? 'OAuth' } as any); appendControlPlaneAudit('skill', '配置 MCP 并预检', `${skill.name}:${body.authMode ?? 'OAuth'}:${protocol}`); return skill;
   }
   if (path === '/api/tools' && method === 'POST') {
     evaluateZeroTrust({ resource: 'skill', action: 'connect', external: true });
@@ -4232,6 +4551,34 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     if (!items.length) throw new Error('未识别到可导入的技能');
     appendControlPlaneAudit('skill', '批量导入技能', `${items.length} 项`); return items;
   }
+  if (path === '/api/skills/import-package' && method === 'POST') {
+    const body = (opts.body ?? {}) as { fileName?: string; contentBase64?: string };
+    if (!body.fileName || !body.contentBase64) throw new Error('请上传 .skill / .zip / .tgz 文件');
+    const lower = body.fileName.toLowerCase();
+    if (!lower.endsWith('.skill') && !lower.endsWith('.zip') && !lower.endsWith('.tgz') && !lower.endsWith('.tar.gz')) {
+      throw new Error('仅支持 .skill / .zip / .tgz / .tar.gz');
+    }
+    // Mock：从文件名推导技能名，并标记为可执行包技能
+    const base = body.fileName.replace(/\.(skill|zip|tgz|tar\.gz)$/i, '');
+    const name = base.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'imported-skill';
+    if (body.contentBase64.length > 14_000_000) throw new Error('技能包不能超过 10 MB');
+    const skill: Skill = {
+      id: mockId('skill'), name, kind: 'skill', workspaceId: currentWorkspaceId,
+      description: `从技能包 ${body.fileName} 导入的 Agent Skill`,
+      version: '0.1.0', status: 'installed', rating: 0, installCount: 0, riskLevel: 'mid',
+      cacheable: false, source: 'package', hasScripts: true,
+      packageFileName: body.fileName, scripts: ['scripts/main.py'], packageFiles: ['SKILL.md', 'scripts/main.py'],
+    };
+    mockSkills.unshift(skill);
+    mockSkillPermissions[skill.id] = mockSkillPerms.map((permission) => ({ ...permission, skillId: skill.id }));
+    mockSkillIntegrations.unshift({
+      id: mockId('integration'), name: skill.name, type: 'skill', environment: 'test', status: 'enabled', owner: '当前用户',
+      endpoint: `package://${skill.name}@${skill.version}`, credentialRef: `vault://skills/${skill.id}/runtime`,
+      lastVerifiedAt: '刚刚', health: 'healthy', discoveredCapabilities: 1, writeApprovalRequired: false, allowedEgress: [],
+    });
+    appendControlPlaneAudit('skill', '导入技能包', `${skill.name}@${skill.version}`);
+    return skill;
+  }
   const skillAction = path.match(/^\/api\/skills\/([^/]+)\/(install|uninstall|upgrade|test|runtime|permissions|impact|preflight|lifecycle|governance|upgrade-plan)$/);
   if (skillAction) {
     const [, id, action] = skillAction;
@@ -4242,17 +4589,38 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       const candidate = skill ?? catalogSkill;
       if (!candidate) throw new Error('技能或市场制品不存在');
       const missingDependency = (catalogSkill?.dependencies ?? []).filter((dependency) => dependency === 'jenkins-mcp').map((name) => ({ name, status: 'missing' as const }));
-      const requiresApproval = candidate.riskLevel === 'high';
-      const result: SkillInstallPreflight = { skillId: id, trustedPublisher: catalogSkill?.publisher === '企业能力商店' || !catalogSkill, signatureValid: catalogSkill?.signed ?? true, dependencies: missingDependency, requiresApproval, decision: missingDependency.length ? 'blocked' : requiresApproval ? 'review_required' : 'approved', reason: missingDependency.length ? '缺少受控 Jenkins 连接器，禁止安装' : requiresApproval ? '高风险能力需要安全负责人审批' : undefined };
+      const signed = catalogSkill?.signed ?? true;
+      const vuln = catalogSkill?.vulnerabilityCount ?? 0;
+      const publisher = catalogSkill?.publisher ?? '';
+      const trusted = !catalogSkill || publisher === '企业能力商店' || publisher === 'SRE 平台组' || publisher === '安全运营组' || publisher === '流程平台组' || publisher === '消息平台组';
+      const checks = [
+        { label: '发布方信任', status: trusted ? 'passed' as const : 'review' as const },
+        { label: '制品签名', status: signed ? 'passed' as const : 'failed' as const },
+        { label: '漏洞扫描', status: vuln === 0 ? 'passed' as const : vuln >= 3 ? 'failed' as const : 'review' as const },
+      ];
+      let decision: SkillInstallPreflight['decision'] = 'approved';
+      let reason: string | undefined;
+      const requiresApproval = candidate.riskLevel === 'high' || !trusted || vuln > 0;
+      if (missingDependency.length) { decision = 'blocked'; reason = '缺少受控 Jenkins 连接器，禁止安装'; }
+      else if (!signed) { decision = 'blocked'; reason = '制品签名校验未通过，禁止安装'; }
+      else if (vuln >= 3) { decision = 'blocked'; reason = '存在高危漏洞（≥3），禁止安装'; }
+      else if (requiresApproval) { decision = 'review_required'; reason = !trusted ? '非受信发布方，需要安全负责人审批' : vuln > 0 ? '存在待修复漏洞，需要安全复核后安装' : '高风险能力需要安全负责人审批'; }
+      const result: SkillInstallPreflight = { skillId: id, trustedPublisher: trusted, signatureValid: signed, dependencies: missingDependency, requiresApproval: decision === 'review_required', decision, reason, vulnerabilityCount: vuln, checks };
       appendControlPlaneAudit('skill', '安装预检', candidate.name, result.decision === 'blocked' ? 'failed' : 'success');
       return result;
     }
     if (action === 'install' && method === 'POST') {
       if (skill) return skill;
       const candidate = catalogSkill ?? body;
-      if (candidate.riskLevel === 'high' && !body.approvalTicket) throw new Error('E_APPROVAL_REQUIRED: 高风险技能安装需要安全负责人审批');
+      const signed = catalogSkill?.signed ?? true;
+      const vuln = catalogSkill?.vulnerabilityCount ?? 0;
+      if (!signed) throw new Error('制品签名校验未通过，禁止安装');
+      if (vuln >= 3) throw new Error('存在高危漏洞（≥3），禁止安装');
+      const needsApproval = candidate.riskLevel === 'high' || vuln > 0 || (catalogSkill && catalogSkill.publisher !== '企业能力商店' && catalogSkill.publisher !== 'SRE 平台组' && catalogSkill.publisher !== '安全运营组' && catalogSkill.publisher !== '流程平台组' && catalogSkill.publisher !== '消息平台组');
+      if (needsApproval && !body.approvalTicket) throw new Error('E_APPROVAL_REQUIRED: 高风险技能安装需要安全负责人审批');
       if ((catalogSkill?.dependencies ?? []).includes('jenkins-mcp')) throw new Error('E_DEPENDENCY_BLOCKED: 缺少受控 Jenkins 连接器');
       const installedSkill: Skill = { id: mockId('skill'), name: candidate.name ?? '未命名技能', kind: candidate.kind ?? 'skill', description: candidate.description ?? '', version: candidate.version ?? '0.1.0', status: 'installed', rating: candidate.rating ?? 0, installCount: candidate.installCount ?? 0, riskLevel: candidate.riskLevel ?? 'mid', cacheable: Boolean(candidate.cacheable) };
+      Object.assign(installedSkill, { publisher: catalogSkill?.publisher, signed: catalogSkill?.signed, license: catalogSkill?.license, vulnerabilityCount: catalogSkill?.vulnerabilityCount, lastScannedAt: catalogSkill?.lastScannedAt });
       mockSkills.unshift(installedSkill);
       mockSkillPermissions[installedSkill.id] = mockSkillPerms.map((permission) => ({ ...permission, skillId: installedSkill.id }));
       appendControlPlaneAudit('skill', '安装技能', installedSkill.name); return installedSkill;
@@ -4524,7 +4892,13 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     const policies = routingPolicies.filter((policy) => policy.workspaceId === context.workspaceId);
     const regionMap = new Map<string, number>();
     providers.forEach((provider) => regionMap.set(provider.cloudRegion, (regionMap.get(provider.cloudRegion) ?? 0) + 1));
-    const monthlyBudgetUsd = policies.reduce((sum, policy) => sum + (policy.budgetLimitUsd || 0), 0);
+    const publishedBudgetUsd = policies
+      .filter((policy) => policy.status === 'published')
+      .reduce((sum, policy) => sum + (policy.budgetLimitUsd || 0), 0);
+    const draftBudgetUsd = policies
+      .filter((policy) => policy.status === 'draft' || policy.status === 'ready')
+      .reduce((sum, policy) => sum + (policy.budgetLimitUsd || 0), 0);
+    const monthlyBudgetUsd = publishedBudgetUsd;
     const monthlySpendUsd = Math.round(monthlyBudgetUsd * 0.42);
     const budgetRisk = monthlyBudgetUsd <= 0 ? 'attention' : monthlySpendUsd / monthlyBudgetUsd > 0.85 ? 'critical' : monthlySpendUsd / monthlyBudgetUsd > 0.65 ? 'attention' : 'normal';
     const activeProviders = providers.filter((provider) => provider.status === 'active').length;
@@ -4536,6 +4910,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       draftRoutes: policies.filter((policy) => policy.status === 'draft' || policy.status === 'ready').length,
       budgetRisk,
       monthlyBudgetUsd,
+      draftBudgetUsd,
       monthlySpendUsd,
       healthyShare: providers.length ? Math.round((activeProviders / providers.length) * 100) : 0,
       avgLatencyMs: 420,
@@ -4673,9 +5048,29 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   }
 
   // 会话
-  if (path === `/api/conversations/${mockConversation.id}`) {
-    if (!inCurrentWorkspace(mockConversation)) throw new Error('E_WORKSPACE_SCOPE: 无权读取其他工作区会话');
-    return mockConversation;
+  if (path.startsWith('/api/conversations/') && !path.slice('/api/conversations/'.length).includes('/') && (opts.method ?? 'GET') === 'GET') {
+    const id = path.split('/')[3];
+    if (id === mockConversation.id) {
+      if (!inCurrentWorkspace(mockConversation)) throw new Error('E_WORKSPACE_SCOPE: 无权读取其他工作区会话');
+      return mockConversation;
+    }
+    const session = mockSessions.find((item) => item.id === id);
+    if (session) {
+      if (!inCurrentWorkspace(session)) throw new Error('E_WORKSPACE_SCOPE: 无权读取其他工作区会话');
+      return {
+        id: session.id,
+        workspaceId: session.workspaceId,
+        ownerId: session.ownerId,
+        correlationId: session.correlationId,
+        digitalEmployeeId: session.digitalEmployeeId,
+        title: session.title,
+        preview: session.preview,
+        status: session.status,
+        updatedAt: session.updatedAt,
+        messages: [],
+      };
+    }
+    throw new Error('E_NOT_FOUND: 会话不存在');
   }
   if (path === `/api/conversations/${mockConversation.id}/ex`) return mockConversationEx;
   if (path === '/api/sessions') return mockSessions.filter(inCurrentWorkspace);

@@ -137,14 +137,18 @@ describe('workflow canvas orchestration', () => {
     expect(mockSource).toContain('治理发布工作流技能');
   });
 
-  it('keeps version governance under canvas capsule rather than primary tab', () => {
-    expect(workflowsSource).toContain("labelKey: 'module.workflows.tabs.history'");
-    expect(workflowsSource).not.toContain("labelKey: 'module.workflows.tabs.versions'");
+  it('exposes version center for auditors while keepers reach it from canvas capsule', () => {
+    expect(workflowsSource).toContain("t('module.workflows.tabs.history')");
+    expect(workflowsSource).toContain("t('module.workflows.tabs.versions')");
+    expect(workflowsSource).toContain('visibleWorkflowTabs');
+    expect(workflowsSource).toContain('defaultWorkflowTab');
     expect(workflowsSource).toContain('打开版本中心');
     expect(workflowsSource).toContain('回滚并生成新草稿');
     expect(workflowsSource).toContain('WorkflowLifecycleStrip');
     expect(workflowsSource).toContain('wf-boundary');
-    expect(workflowsSource).toContain('/api/workflows/${workflowId}');
+    expect(workflowsSource).toContain('/api/workflows/${workflowId || \'__none__\'}');
+    expect(workflowsSource).toContain('enabled: Boolean(workflowId)');
+    expect(workflowsSource).not.toContain("?? 'wf1'");
     expect(workflowsSource).not.toContain("'/api/workflows/wf1'");
   });
 

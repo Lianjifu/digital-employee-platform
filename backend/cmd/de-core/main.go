@@ -107,6 +107,7 @@ func main() {
 	srv.UsageSink = &infra.UsageSink{Pool: pg}
 	srv.KV = kv
 	srv.Search = search
+	srv.StartMemoryMaintenance()
 
 	httpServer := &http.Server{
 		Addr:              addr,

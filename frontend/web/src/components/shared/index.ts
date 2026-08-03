@@ -8,3 +8,4 @@ export { EmptyState } from './EmptyState';
 export type { EmptyStateProps } from './EmptyState';
 export { Sparkline } from './Sparkline';
 export type { SparklineProps } from './Sparkline';
+export { RoleReadonlyBanner } from './RoleReadonlyBanner';

@@ -6,19 +6,37 @@ import {
 } from 'lucide-react';
 import { Button } from '@de/web-ui';
 import { cn } from '@de/web-utils';
+import type { Role } from '@de/web-types';
+import { resolveAppRole, type AppRole } from '@/features/role-nav/role-nav';
 
 type OnboardingGuideProps = {
   open: boolean;
   onClose: () => void;
+  role?: Role;
 };
 
-/** 与 AppLayout 当前侧栏 IA 对齐的预览导航 */
+/** 管理员侧栏预览（默认向导） */
 export const PREVIEW_NAV_GROUPS = [
   { label: null, items: ['运营总览'] },
   { label: '协作', items: ['专家协作', '任务中心'] },
   { label: '编排', items: ['数字员工', '工作流程'] },
   { label: '能力', items: ['模型服务', '知识中心', '技能中心', '记忆中心', '消息渠道'] },
 ] as const;
+
+export const PREVIEW_NAV_BY_ROLE: Record<AppRole, ReadonlyArray<{ label: string | null; items: readonly string[] }>> = {
+  admin: PREVIEW_NAV_GROUPS,
+  user: [
+    { label: null, items: ['运营总览'] },
+    { label: '协作', items: ['专家协作', '我的待办'] },
+    { label: '编排', items: ['数字员工', '工作流程'] },
+    { label: '能力', items: ['知识检索', '技能清单'] },
+  ],
+  auditor: [
+    { label: null, items: ['运营总览'] },
+    { label: '审计', items: ['审计中心', '持续验证'] },
+    { label: '核查', items: ['任务核查', '协作记录', '员工档案', '流程版本', '知识引用', '技能权限', '记忆策略', '模型审计'] },
+  ],
+};
 
 export const VALUE_CARDS = [
   {
@@ -56,10 +74,34 @@ export const JOURNEY_CARDS = [
   },
 ];
 
+const ROLE_WELCOME: Record<AppRole, { title: string; body: string; journeyTitle: string; journeyBody: string }> = {
+  user: {
+    title: '从专家协作与待办开始',
+    body: '日常以专家协作为主入口，用「我的待办」处理审批，用知识检索与技能清单辅助调用。',
+    journeyTitle: '完成一次受控协作',
+    journeyBody: '发起协作 → 处理待办 → 引用知识与技能，全程可追溯。',
+  },
+  admin: {
+    title: '让数字员工在受控边界内协同工作',
+    body: '从能力接入、编排上岗到受控运营，统一身份权限、记忆渠道与审计证据。',
+    journeyTitle: '建立数字员工执行闭环',
+    journeyBody: '沿「能力 → 编排 → 运营」完成企业级数字员工启用。',
+  },
+  auditor: {
+    title: '以审计与核查为中心',
+    body: '侧栏直达审计中心与持续验证，并对任务、协作与能力进行只读核查。',
+    journeyTitle: '完成一次合规核查',
+    journeyBody: '审计中心检索证据 → 持续验证看裁决 → 任务/能力核查复核。',
+  },
+};
+
 const BRAND = 'var(--brand)';
 
-export function OnboardingGuide({ open, onClose }: OnboardingGuideProps) {
+export function OnboardingGuide({ open, onClose, role }: OnboardingGuideProps) {
   const [page, setPage] = useState<1 | 2>(1);
+  const appRole = resolveAppRole(role);
+  const welcome = ROLE_WELCOME[appRole];
+  const previewNav = PREVIEW_NAV_BY_ROLE[appRole];
 
   useEffect(() => {
     if (open) setPage(1);
@@ -76,7 +118,7 @@ export function OnboardingGuide({ open, onClose }: OnboardingGuideProps) {
       aria-labelledby="onboarding-title"
     >
       <section className="grid w-full max-w-6xl grid-cols-1 overflow-hidden rounded-[24px] border border-white/80 bg-white/70 shadow-[0_24px_72px_rgba(15,23,42,0.28)] backdrop-blur-2xl sm:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)] lg:grid-cols-[minmax(0,1.1fr)_minmax(400px,0.9fr)]">
-        <PlatformPreview page={page} />
+        <PlatformPreview page={page} navGroups={previewNav} />
 
         <div className="relative flex flex-col border-l border-white/70 bg-[color-mix(in_srgb,var(--brand)_6%,white)] p-4 sm:p-5 lg:p-7">
           <button
@@ -96,20 +138,20 @@ export function OnboardingGuide({ open, onClose }: OnboardingGuideProps) {
               </div>
               <p className="mt-3 text-xs font-medium text-[var(--text-secondary)] sm:mt-4 sm:text-sm">欢迎进入数字员工平台</p>
               <h1 id="onboarding-title" className="mt-1.5 max-w-md text-base font-semibold leading-snug text-[var(--brand)] sm:text-[26px] sm:leading-tight">
-                让数字员工在受控边界内协同工作
+                {welcome.title}
               </h1>
               <p className="mt-2 max-w-md text-[11px] leading-5 text-[var(--text-secondary)] sm:mt-3 sm:text-[13px] sm:leading-5">
-                从能力接入、编排上岗到受控运营，统一身份权限、记忆渠道与审计证据，让智能能力可复用、可度量、可审计。
+                {welcome.body}
               </p>
             </div>
           ) : (
             <div className="pr-7 sm:pr-9">
               <div className="text-[10px] font-semibold text-[var(--brand)] sm:text-xs">核心路径</div>
               <h1 id="onboarding-title" className="mt-3 text-base font-semibold leading-snug text-[var(--brand)] sm:mt-4 sm:text-[26px] sm:leading-tight">
-                建立数字员工执行闭环
+                {welcome.journeyTitle}
               </h1>
               <p className="mt-2 max-w-md text-[11px] leading-5 text-[var(--text-secondary)] sm:mt-3 sm:text-[13px] sm:leading-5">
-                沿「能力 → 编排 → 运营」完成企业级数字员工启用，平台设置中集中管理访问、持续验证与审计。
+                {welcome.journeyBody}
               </p>
             </div>
           )}
@@ -181,21 +223,28 @@ export function OnboardingGuide({ open, onClose }: OnboardingGuideProps) {
   );
 }
 
-function PlatformPreview({ page }: { page: 1 | 2 }) {
-  const active = page === 1 ? '模型服务' : '数字员工';
+function PlatformPreview({
+  page,
+  navGroups,
+}: {
+  page: 1 | 2;
+  navGroups: ReadonlyArray<{ label: string | null; items: readonly string[] }>;
+}) {
+  const flat = navGroups.flatMap((g) => [...g.items]);
+  const active = page === 1 ? (flat.find((i) => /知识|技能|模型|审计/.test(i)) ?? flat[0]) : (flat.find((i) => /数字员工|任务|员工/.test(i)) ?? flat[1] ?? flat[0]);
   return (
     <div className="relative hidden self-stretch overflow-hidden bg-[color-mix(in_srgb,var(--brand)_8%,#f8fafc)] p-3 sm:block sm:p-5 lg:p-7">
       <div className="flex h-full min-h-0 overflow-hidden rounded-2xl border border-white/90 bg-white/85 shadow-[0_16px_36px_rgba(79,70,229,0.10)]">
-        <PreviewNavigation active={active} />
+        <PreviewNavigation active={active} navGroups={navGroups} />
         <div className="min-w-0 flex-1 overflow-hidden p-2.5 sm:p-4">
           {page === 1 ? (
             <>
-              <PreviewHeader title="能力资产" detail="模型 · 知识 · 技能 · 记忆 · 消息渠道" />
+              <PreviewHeader title="能力与核查" detail="按角色展示消费、供给或审计入口" />
               <CapabilitiesThumbnail />
             </>
           ) : (
             <>
-              <PreviewHeader title="数字员工" detail="编排上岗 · 任务协作 · 受控运营" />
+              <PreviewHeader title="协同闭环" detail="协作 · 待办 · 编排 · 受控运营" />
               <OrchestrationThumbnail />
             </>
           )}
@@ -205,7 +254,13 @@ function PlatformPreview({ page }: { page: 1 | 2 }) {
   );
 }
 
-function PreviewNavigation({ active }: { active: string }) {
+function PreviewNavigation({
+  active,
+  navGroups,
+}: {
+  active: string;
+  navGroups: ReadonlyArray<{ label: string | null; items: readonly string[] }>;
+}) {
   return (
     <aside className="hidden w-[112px] shrink-0 flex-col border-r border-[color-mix(in_srgb,var(--brand)_12%,transparent)] bg-white/80 p-2.5 lg:flex lg:w-[132px]">
       <div className="flex items-center gap-1.5 text-[10px] font-semibold text-[var(--brand)]">
@@ -213,7 +268,7 @@ function PreviewNavigation({ active }: { active: string }) {
         <span className="hidden lg:inline">Digital</span>
       </div>
       <div className="mt-4 space-y-2">
-        {PREVIEW_NAV_GROUPS.map((group) => (
+        {navGroups.map((group) => (
           <div key={group.label ?? 'root'}>
             {group.label && (
               <div className="mb-1 px-1.5 text-[8px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">

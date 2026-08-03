@@ -3,12 +3,15 @@
  * 任何子组件崩溃时显示降级页（不白屏）
  */
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Button } from '@de/web-ui';
-import { AlertTriangle, RotateCcw, Home, FileText } from 'lucide-react';
+import { AlertTriangle, RotateCcw, Home } from 'lucide-react';
 
 interface Props {
   children: ReactNode;
   fallbackTitle?: string;
+  /** 路由变化时自动清空错误，避免侧栏切换后仍卡在旧页崩溃态 */
+  resetKey?: string;
 }
 
 interface State {
@@ -27,7 +30,12 @@ export class ErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error('[ErrorBoundary]', error, errorInfo);
     this.setState({ errorInfo });
-    // 可在此处上报到 Sentry / 日志服务
+  }
+
+  componentDidUpdate(prevProps: Props) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.reset();
+    }
   }
 
   reset = () => {
@@ -74,6 +82,16 @@ export class ErrorBoundary extends Component<Props, State> {
       </div>
     );
   }
+}
+
+/** 随路由自动复位的 ErrorBoundary，用于布局级包裹 */
+export function RouteErrorBoundary({ children, fallbackTitle }: { children: ReactNode; fallbackTitle?: string }) {
+  const location = useLocation();
+  return (
+    <ErrorBoundary fallbackTitle={fallbackTitle} resetKey={`${location.pathname}${location.search}`}>
+      {children}
+    </ErrorBoundary>
+  );
 }
 
 /** 用于 ErrorBoundary 内显示路由错误的轻量回退（无标题） */

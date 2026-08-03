@@ -1,11 +1,11 @@
 /**
  * PSSP 主布局
  * - 顶部 60px Topbar（菜单 + Logo + Breadcrumb）
- * - 左侧 200px Sidebar（业务导航 + 用户菜单）
- * - 用户信息移到左下角，菜单按 Claude 风格分 3 组
+ * - 左侧 200px Sidebar（按角色分语义导航 + 用户菜单）
+ * - 用户信息在左下角
  */
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ComponentType } from 'react';
 import {
   Home, MessageSquare, ListChecks, Building2, BriefcaseBusiness, Workflow,
   BookOpen, Wrench, Brain, BrainCircuit, Send,
@@ -17,41 +17,17 @@ import { useT } from '@/i18n';
 import { useUiStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
-import { Avatar, Badge } from '@de/web-ui';
+import { Avatar } from '@de/web-ui';
 import { cn } from '@de/web-utils';
 import { useApiQuery } from '@/services/query';
 import { OnboardingGuide } from '@/features/onboarding/OnboardingGuide';
-import type { Permission, Workspace } from '@de/web-types';
+import { getRoleNavGroups, navLabelKeyForPath } from '@/features/role-nav/role-nav';
+import type { Workspace } from '@de/web-types';
 
-// 业务导航按工作场景分组；平台设置入口在左下角用户菜单。
-type NavItem = { to: string; i18n: string; icon: any; permission?: Permission; roles?: Array<'user' | 'admin' | 'auditor'> };
-const NAV_GROUPS: { labelKey: string | null; items: NavItem[] }[] = [
-  { labelKey: null, items: [{ to: '/home', i18n: 'nav.home', icon: Home, roles: ['user', 'admin'] }] },
-  {
-    labelKey: 'nav.group.operations',
-    items: [
-      { to: '/copilot', i18n: 'nav.copilot', icon: MessageSquare, roles: ['user', 'admin'] },
-      { to: '/tasks', i18n: 'nav.tasks', icon: ListChecks, roles: ['user', 'admin'] },
-    ],
-  },
-  {
-    labelKey: 'nav.group.orchestration',
-    items: [
-      { to: '/agents', i18n: 'nav.agents', icon: BriefcaseBusiness, roles: ['user', 'admin'] },
-      { to: '/workflows', i18n: 'nav.workflows', icon: Workflow, roles: ['user', 'admin'] },
-    ],
-  },
-  {
-    labelKey: 'nav.group.capabilities',
-    items: [
-      { to: '/models', i18n: 'nav.models', icon: Brain, roles: ['admin'] },
-      { to: '/knowledge', i18n: 'nav.knowledge', icon: BookOpen, roles: ['user', 'admin'] },
-      { to: '/skills', i18n: 'nav.skills', icon: Wrench, roles: ['user', 'admin'] },
-      { to: '/memory', i18n: 'nav.memory', icon: BrainCircuit, roles: ['user', 'admin'] },
-      { to: '/channels', i18n: 'nav.channels', icon: Send, roles: ['admin'] },
-    ],
-  },
-];
+const NAV_ICONS: Record<string, ComponentType<{ className?: string }>> = {
+  Home, MessageSquare, ListChecks, BriefcaseBusiness, Workflow,
+  BookOpen, Wrench, Brain, BrainCircuit, Send, ShieldAlert, ScrollText,
+};
 
 export function AppLayout() {
   const navigate = useNavigate();
@@ -67,10 +43,9 @@ export function AppLayout() {
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
 
   const { data: workspaces } = useApiQuery<Workspace[]>(['workspaces'], '/api/workspaces');
-  // v2：侧栏 IA（记忆/渠道/数字员工等）更新后，向导内容同步升版，已完成 v1 的账号再展示一次。
-  const onboardingStorageKey = user ? `de-onboarding-completed:v2:${user.id}` : null;
+  // v3：三角色侧栏 IA（待办/核查/审计主航）升版，已完成 v2 的账号再展示一次。
+  const onboardingStorageKey = user ? `de-onboarding-completed:v3:${user.id}` : null;
 
-  // 引导仅对每个账号的首次登录展示；刷新或后续登录不重复打扰用户。
   useEffect(() => {
     if (!onboardingStorageKey) {
       setOnboardingOpen(false);
@@ -91,7 +66,6 @@ export function AppLayout() {
     }
   }, [workspaces, current, setCurrent, setList]);
 
-  // 点击外部关闭用户菜单与工作区切换器
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
@@ -111,23 +85,14 @@ export function AppLayout() {
     navigate('/login', { replace: true });
   };
 
-  const canSeeNav = (item: { permission?: Permission; roles?: Array<'user' | 'admin' | 'auditor'> }) =>
-    !user || ((!item.permission || user.permissions.includes(item.permission)) && (!item.roles || item.roles.includes(user.role)));
-
-  const visibleNavGroups = NAV_GROUPS
-    .map((group) => ({
-      ...group,
-      items: group.items.filter(canSeeNav),
-    }))
-    .filter((group) => group.items.length > 0);
-  const activeNav = visibleNavGroups.flatMap((group) => group.items).find((n) => location.pathname.startsWith(n.to));
+  const visibleNavGroups = useMemo(() => getRoleNavGroups(user?.role), [user?.role]);
+  const breadcrumbKey = navLabelKeyForPath(location.pathname, user?.role);
 
   return (
     <div
       className="grid h-screen w-screen overflow-hidden bg-[var(--bg-elevated)] lg:[grid-template-columns:var(--sidebar-width)_1fr] lg:[grid-template-rows:60px_1fr]"
       style={{ '--sidebar-width': sidebarCollapsed ? '72px' : '200px', gridTemplateRows: '60px 1fr' } as CSSProperties}
     >
-      {/* Mobile Drawer Overlay */}
       {mobileDrawerOpen && (
         <div
           className="lg:hidden fixed inset-0 z-40 bg-black/40 backdrop-blur-sm"
@@ -135,7 +100,6 @@ export function AppLayout() {
           aria-hidden="true"
         />
       )}
-      {/* ============ Topbar ============ */}
       <header
         className="app-glass col-span-2 sticky top-0 z-30 flex h-[60px] items-center gap-2 border-b px-3 shadow-[var(--shadow-xs)] md:gap-6 md:px-6"
         style={{ gridColumn: '1 / -1' }}
@@ -152,7 +116,6 @@ export function AppLayout() {
           <Menu className="h-4 w-4" />
         </button>
 
-        {/* Logo */}
         <NavLink to="/home" className="flex items-center gap-3 text-[var(--text)] font-bold text-[17px]">
           <div className="grid h-9 w-9 place-items-center rounded-md bg-gradient-to-br from-[var(--brand)] to-[var(--purple)] text-sm font-bold text-white shadow-[0_2px_8px_rgba(79,70,229,0.3)]">
             DE
@@ -195,32 +158,25 @@ export function AppLayout() {
                   </button>
                 ))}
               </div>
-              <div className="border-t border-[var(--border)] p-1.5">
-                <button type="button" onClick={() => { setWorkspaceMenuOpen(false); navigate('/workspaces'); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-xs font-semibold text-[var(--brand)] hover:bg-[var(--brand-light)]"><Settings2 className="h-3.5 w-3.5" />{t('workspace.manage')}</button>
-              </div>
+              {user?.role === 'admin' && (
+                <div className="border-t border-[var(--border)] p-1.5">
+                  <button type="button" onClick={() => { setWorkspaceMenuOpen(false); navigate('/workspaces'); }} className="flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-xs font-semibold text-[var(--brand)] hover:bg-[var(--brand-light)]"><Settings2 className="h-3.5 w-3.5" />{t('workspace.manage')}</button>
+                </div>
+              )}
             </div>
           )}
         </div>
 
-        {/* Breadcrumb */}
         {!sidebarCollapsed && (
           <div className="hidden items-center gap-2 text-[13px] text-[var(--text-muted)] sm:flex">
             <span>·</span>
-            <span className="text-[var(--text-secondary)]">{t(activeNav?.i18n ?? (
-              location.pathname.startsWith('/settings') ? 'nav.settingsGeneral'
-              : location.pathname.startsWith('/governance') ? 'nav.accessControl'
-              : location.pathname.startsWith('/zero-trust') ? 'nav.zeroTrust'
-              : location.pathname.startsWith('/audit-center') ? 'nav.auditCenter'
-              : 'nav.home'
-            ))}</span>
+            <span className="text-[var(--text-secondary)]">{t(breadcrumbKey)}</span>
           </div>
         )}
 
-        {/* Right */}
         <div className="ml-auto" />
       </header>
 
-      {/* ============ Sidebar ============ */}
       <aside
         className={cn(
           'row-start-2 flex flex-col border-r border-[var(--border)] bg-[var(--bg)]',
@@ -230,57 +186,54 @@ export function AppLayout() {
           sidebarCollapsed ? 'items-center lg:w-[72px]' : 'lg:w-[200px]',
         )}
       >
-        {/* 主导航（占主要空间）*/}
         <nav className="flex-1 px-3 pt-4 pb-3 overflow-y-auto">
           {visibleNavGroups.map((group, groupIndex) => (
-            <div key={group.labelKey ?? 'home'} className={cn(groupIndex > 0 && (sidebarCollapsed ? 'mt-3 pt-3 border-t border-[var(--border)]' : 'mt-4'))}>
+            <div key={group.labelKey ?? `home-${groupIndex}`} className={cn(groupIndex > 0 && (sidebarCollapsed ? 'mt-3 pt-3 border-t border-[var(--border)]' : 'mt-4'))}>
               {!sidebarCollapsed && group.labelKey && (
                 <div className="mb-1.5 px-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                   {t(group.labelKey)}
                 </div>
               )}
               <div className="space-y-0.5">
-                {group.items.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    className={({ isActive }) =>
-                      cn(
-                        'group flex items-center gap-3 rounded-md text-[13px] transition-all duration-150',
-                        sidebarCollapsed ? 'h-10 w-10 justify-center mx-auto' : 'px-3 py-2.5',
-                        isActive
-                          ? 'bg-[var(--brand-light)] text-[var(--brand)] font-semibold'
-                          : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]',
-                      )
-                    }
-                    title={sidebarCollapsed ? t(item.i18n) : undefined}
-                  >
-                    <item.icon className="h-4 w-4 shrink-0 transition-colors group-hover:text-[var(--brand)]" />
-                    {!sidebarCollapsed && <span className="flex-1 truncate">{t(item.i18n)}</span>}
-                  </NavLink>
-                ))}
+                {group.items.map((item) => {
+                  const Icon = NAV_ICONS[item.icon] ?? Home;
+                  return (
+                    <NavLink
+                      key={`${item.to}:${item.i18n}`}
+                      to={item.to}
+                      onClick={closeMobileDrawer}
+                      className={({ isActive }) =>
+                        cn(
+                          'group flex items-center gap-3 rounded-md text-[13px] transition-all duration-150',
+                          sidebarCollapsed ? 'h-10 w-10 justify-center mx-auto' : 'px-3 py-2.5',
+                          isActive
+                            ? 'bg-[var(--brand-light)] text-[var(--brand)] font-semibold'
+                            : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]',
+                        )
+                      }
+                      title={sidebarCollapsed ? t(item.i18n) : undefined}
+                    >
+                      <Icon className="h-4 w-4 shrink-0 transition-colors group-hover:text-[var(--brand)]" />
+                      {!sidebarCollapsed && <span className="flex-1 truncate">{t(item.i18n)}</span>}
+                    </NavLink>
+                  );
+                })}
               </div>
             </div>
           ))}
         </nav>
 
-        {/* ============ 左下角：用户触发器 + 菜单 ============ */}
         {user && (
           <div ref={userMenuRef} className={cn('relative', sidebarCollapsed ? 'w-full' : '')}>
             {sidebarCollapsed ? (
-              // 收起态：纯圆形头像
               <button
                 onClick={() => setUserMenuOpen((v) => !v)}
-                className={cn(
-                  'user-trigger justify-center h-14',
-                  userMenuOpen && 'user-trigger--open',
-                )}
+                className={cn('user-trigger justify-center h-14', userMenuOpen && 'user-trigger--open')}
                 title={user.name}
               >
                 <Avatar name={user.name} size={30} />
               </button>
             ) : (
-              // 展开态：32px 头像 + 双行 + chevron
               <button
                 onClick={() => setUserMenuOpen((v) => !v)}
                 className={cn('user-trigger', userMenuOpen && 'user-trigger--open')}
@@ -292,27 +245,18 @@ export function AppLayout() {
                     {user.role.toUpperCase()} · {current?.name ?? 'ACME 生产'}
                   </div>
                 </div>
-                <ChevronDown
-                  className={cn(
-                    'user-trigger__chevron h-4 w-4',
-                    userMenuOpen && 'user-trigger__chevron--open',
-                  )}
-                />
+                <ChevronDown className={cn('user-trigger__chevron h-4 w-4', userMenuOpen && 'user-trigger__chevron--open')} />
               </button>
             )}
 
-            {/* ============ 用户菜单（精简 5 项）============ */}
             {userMenuOpen && (
               <div
                 className={cn(
                   'user-menu absolute z-50',
-                  sidebarCollapsed
-                    ? 'left-full ml-2 bottom-0'
-                    : 'left-2 right-2 bottom-full mb-2',
+                  sidebarCollapsed ? 'left-full ml-2 bottom-0' : 'left-2 right-2 bottom-full mb-2',
                 )}
                 style={sidebarCollapsed ? { bottom: 0 } : undefined}
               >
-                {/* 组 1：配置 */}
                 <div className="user-menu__group-title">{t('account.preferences')}</div>
                 {user.role === 'admin' && (
                   <UserMenuItem
@@ -322,21 +266,17 @@ export function AppLayout() {
                     onClick={() => { setUserMenuOpen(false); navigate('/settings'); }}
                   />
                 )}
-                {user.role === 'auditor' && (
-                  <>
-                    <UserMenuItem icon={ShieldAlert} label={t('nav.zeroTrust')} onClick={() => { setUserMenuOpen(false); navigate('/zero-trust'); }} />
-                    <UserMenuItem icon={ScrollText} label={t('nav.auditCenter')} onClick={() => { setUserMenuOpen(false); navigate('/audit-center'); }} />
-                  </>
+                {user.role === 'admin' && (
+                  <button
+                    className="user-menu__item"
+                    onClick={() => { setUserMenuOpen(false); navigate('/workspaces'); }}
+                  >
+                    <span className="user-menu__icon-box"><Building2 className="h-3.5 w-3.5" /></span>
+                    <span className="user-menu__label">{t('workspace.manage')}</span>
+                    <span className="user-menu__value">{current?.name ?? 'ACME'}</span>
+                    <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                  </button>
                 )}
-                {user.role === 'admin' && <button
-                  className="user-menu__item"
-                  onClick={() => { setUserMenuOpen(false); navigate('/workspaces'); }}
-                >
-                  <span className="user-menu__icon-box"><Building2 className="h-3.5 w-3.5" /></span>
-                  <span className="user-menu__label">{t('workspace.manage')}</span>
-                  <span className="user-menu__value">{current?.name ?? 'ACME'}</span>
-                  <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-                </button>}
                 <UserMenuItem icon={Sparkles} label="启用向导" onClick={() => { setUserMenuOpen(false); setOnboardingOpen(true); }} />
                 <button
                   className="user-menu__item"
@@ -349,14 +289,9 @@ export function AppLayout() {
                   <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                 </button>
 
-                {/* 分隔 */}
                 <div className="user-menu__divider" />
 
-                {/* 组 2：偏好（主题） */}
-                <button
-                  className="user-menu__item"
-                  onClick={() => { toggleTheme(); setUserMenuOpen(false); }}
-                >
+                <button className="user-menu__item" onClick={() => { toggleTheme(); setUserMenuOpen(false); }}>
                   <span className="user-menu__icon-box">
                     {theme === 'light' ? <Moon className="h-3.5 w-3.5" /> : <Sun className="h-3.5 w-3.5" />}
                   </span>
@@ -365,7 +300,6 @@ export function AppLayout() {
                   <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                 </button>
 
-                {/* 分隔 */}
                 <div className="user-menu__divider" />
 
                 <button onClick={onLogout} className="user-menu__item user-menu__item--danger">
@@ -378,16 +312,14 @@ export function AppLayout() {
         )}
       </aside>
 
-      {/* ============ Main ============ */}
       <main className={cn('row-start-2 col-span-2 min-w-0 bg-[var(--bg-elevated)] lg:col-start-2 lg:col-span-1', location.pathname.startsWith('/workflows') || location.pathname.startsWith('/agents') || location.pathname.startsWith('/copilot') ? 'overflow-hidden' : 'overflow-y-auto')}>
         <Outlet />
       </main>
-      <OnboardingGuide open={onboardingOpen} onClose={closeOnboarding} />
+      <OnboardingGuide open={onboardingOpen} onClose={closeOnboarding} role={user?.role} />
     </div>
   );
 }
 
-// ============ 菜单项（带 icon-box） ============
 function UserMenuItem({
   icon: Icon, label, shortcut, onClick,
 }: {

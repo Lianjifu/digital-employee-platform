@@ -33,6 +33,7 @@ export function ConfirmDialog({
       title={title}
       description={description}
       size="sm"
+      overlayClassName="z-[300]"
       footer={
         <ModalActions
           onCancel={onClose}

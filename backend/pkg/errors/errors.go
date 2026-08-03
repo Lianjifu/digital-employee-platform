@@ -44,6 +44,8 @@ const (
 	AuditExportForbidden    Code = "E_AUDIT_EXPORT_FORBIDDEN"
 	ModelReadForbidden      Code = "E_MODEL_READ_FORBIDDEN"
 	ModelWriteForbidden     Code = "E_MODEL_WRITE_FORBIDDEN"
+	KnowledgeReadForbidden  Code = "E_KNOWLEDGE_READ_FORBIDDEN"
+	KnowledgeWriteForbidden Code = "E_KNOWLEDGE_WRITE_FORBIDDEN"
 	ModelUnavailable        Code = "E_MODEL_UNAVAILABLE"
 	ModelScope              Code = "E_MODEL_SCOPE"
 	EgressBlocked           Code = "E_EGRESS_BLOCKED"

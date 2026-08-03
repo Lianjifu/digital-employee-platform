@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { JOURNEY_CARDS, PREVIEW_NAV_GROUPS, VALUE_CARDS } from './OnboardingGuide';
+import { JOURNEY_CARDS, PREVIEW_NAV_BY_ROLE, PREVIEW_NAV_GROUPS, VALUE_CARDS } from './OnboardingGuide';
 
 describe('OnboardingGuide copy', () => {
-  it('preview nav mirrors current sidebar IA', () => {
+  it('admin preview nav mirrors supply-side sidebar IA', () => {
     const flat = PREVIEW_NAV_GROUPS.flatMap((group) => [...group.items]);
     expect(flat).toEqual([
       '运营总览',
@@ -17,6 +17,19 @@ describe('OnboardingGuide copy', () => {
       '消息渠道',
     ]);
     expect(PREVIEW_NAV_GROUPS.map((g) => g.label)).toEqual([null, '协作', '编排', '能力']);
+  });
+
+  it('exposes role-specific four-character nav previews', () => {
+    expect(PREVIEW_NAV_BY_ROLE.user.flatMap((g) => [...g.items])).toEqual([
+      '运营总览', '专家协作', '我的待办', '数字员工', '工作流程', '知识检索', '技能清单',
+    ]);
+    expect(PREVIEW_NAV_BY_ROLE.auditor.flatMap((g) => [...g.items])).toContain('审计中心');
+    expect(PREVIEW_NAV_BY_ROLE.auditor.flatMap((g) => [...g.items])).toContain('任务核查');
+    for (const role of ['user', 'admin', 'auditor'] as const) {
+      for (const item of PREVIEW_NAV_BY_ROLE[role].flatMap((g) => g.items)) {
+        expect([...item].length).toBe(4);
+      }
+    }
   });
 
   it('value cards cover security, capability assets, and audit trail', () => {

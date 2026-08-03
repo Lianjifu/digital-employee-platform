@@ -36,6 +36,22 @@ describe('conversation dual approval mock', () => {
     ]);
   });
 
+  it('returns an empty conversation shell for other in-workspace sessions', async () => {
+    const conversation = await mockHandler('/api/conversations/s2', {
+      method: 'GET',
+      headers: admin,
+    }) as { id: string; messages: unknown[] };
+    expect(conversation.id).toBe('s2');
+    expect(conversation.messages).toEqual([]);
+  });
+
+  it('rejects cross-workspace conversation reads', async () => {
+    await expect(mockHandler('/api/conversations/s3', {
+      method: 'GET',
+      headers: admin,
+    })).rejects.toThrow(/E_WORKSPACE_SCOPE/);
+  });
+
   it('binds the pending approval seat to its authenticated identity and records a server-issued signature', async () => {
     const actionId = `approval-identity-${Date.now()}`;
     await expect(mockHandler(`/api/actions/${actionId}/approve`, {

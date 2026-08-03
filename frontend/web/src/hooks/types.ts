@@ -239,6 +239,8 @@ export interface ChatSession {
   lifecycle?: SessionStatus;
   /** 工作区 ID（RBAC） */
   workspaceId?: string;
+  /** 服务端会话详情 id；缺省时与 session.id 相同 */
+  conversationId?: string;
   /** 会话所有者 */
   ownerId?: string;
   ownerName?: string;

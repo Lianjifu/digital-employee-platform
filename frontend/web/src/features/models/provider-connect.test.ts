@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   applyProviderConnectProtocol,
   canDiscoverModels,
+  canTestConnectDraft,
+  canTestSavedProvider,
   catalogModelsForProtocol,
   createProviderConnectDraft,
   draftFromProvider,
@@ -71,5 +73,29 @@ describe('provider-connect', () => {
     expect(pickModelAfterDiscover('', [{ id: 'deepseek-chat', name: 'deepseek-chat' }])).toBe('deepseek-chat');
     expect(pickModelAfterDiscover('deepseek-chat', [{ id: 'deepseek-chat', name: 'deepseek-chat' }])).toBe('deepseek-chat');
     expect(pickModelAfterDiscover('claude-x', [{ id: 'deepseek-chat', name: 'deepseek-chat' }])).toBe('deepseek-chat');
+  });
+
+  it('blocks connection test when endpoint or credential is missing', () => {
+    const draft = createProviderConnectDraft('openai_compatible');
+    expect(canTestConnectDraft({ ...draft, apiKey: '' }).ok).toBe(false);
+    expect(canTestConnectDraft({ ...draft, apiKey: 'sk-test' }).ok).toBe(true);
+    expect(canTestSavedProvider({
+      protocol: 'openai_compatible',
+      baseUrl: '',
+      credentialRef: 'vault://x',
+      credentialMasked: '****2126',
+    }).ok).toBe(false);
+    expect(canTestSavedProvider({
+      protocol: 'openai_compatible',
+      baseUrl: 'https://api.deepseek.com',
+      credentialRef: 'vault://x',
+      credentialMasked: '****2126',
+    }).ok).toBe(true);
+    expect(canTestSavedProvider({
+      protocol: 'openai_compatible',
+      baseUrl: 'https://api.deepseek.com',
+      credentialRef: '',
+      credentialMasked: '',
+    }).reason).toMatch(/API Key/);
   });
 });

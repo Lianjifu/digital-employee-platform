@@ -3,15 +3,16 @@ package response
 import (
 	"encoding/json"
 	"net/http"
+	"reflect"
 
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
 // API envelope matching frontend ApiClient expectations.
 type Envelope struct {
-	OK    bool        `json:"ok"`
-	Data  any         `json:"data,omitempty"`
-	Error *ErrorBody  `json:"error,omitempty"`
+	OK    bool       `json:"ok"`
+	Data  any        `json:"data,omitempty"`
+	Error *ErrorBody `json:"error,omitempty"`
 }
 
 type ErrorBody struct {
@@ -25,12 +26,24 @@ func JSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// normalizeNilSlice 将 nil slice 转为空 slice，避免 JSON 输出 null 导致前端 .filter/.map 崩溃。
+func normalizeNilSlice(data any) any {
+	if data == nil {
+		return data
+	}
+	v := reflect.ValueOf(data)
+	if v.Kind() == reflect.Slice && v.IsNil() {
+		return reflect.MakeSlice(v.Type(), 0, 0).Interface()
+	}
+	return data
+}
+
 func OK(w http.ResponseWriter, data any) {
-	JSON(w, http.StatusOK, Envelope{OK: true, Data: data})
+	JSON(w, http.StatusOK, Envelope{OK: true, Data: normalizeNilSlice(data)})
 }
 
 func Created(w http.ResponseWriter, data any) {
-	JSON(w, http.StatusCreated, Envelope{OK: true, Data: data})
+	JSON(w, http.StatusCreated, Envelope{OK: true, Data: normalizeNilSlice(data)})
 }
 
 func Fail(w http.ResponseWriter, err error) {

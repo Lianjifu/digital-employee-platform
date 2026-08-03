@@ -32,12 +32,13 @@ import {
 } from 'lucide-react';
 import type { KnowledgePackage, KnowledgeRetrievalProfile, Workflow, WorkflowNodeKind, WorkflowSkill } from '@de/web-types';
 import { cn } from '@de/web-utils';
-import { Drawer, ConfirmDialog } from '@/components/shared';
+import { Drawer, ConfirmDialog, RoleReadonlyBanner } from '@/components/shared';
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useT } from '@/i18n';
 import { computeVersionDiff } from '@/features/workflows/version-diff';
+import { defaultWorkflowTab, roleCanMutate, rolePageCopy, visibleWorkflowTabs, type WorkflowTab } from '@/features/role-nav/role-nav';
 
 type SidePanelKey = 'library' | 'debug' | 'properties';
 type TabKey = 'canvas' | 'templates' | 'publishSkill' | 'history' | 'versions';
@@ -728,11 +729,14 @@ function templateSnapshot(template: WorkflowTemplateAsset): Snapshot {
 export default function Workflows() {
   const { t } = useT();
   const navigate = useNavigate();
-  const canWrite = useAuthStore((state) => state.hasPermission('workflow.write'));
-  const canExecute = useAuthStore((state) => state.hasPermission('workflow.execute'));
+  const userRole = useAuthStore((state) => state.user?.role);
+  const canWrite = useAuthStore((state) => state.hasPermission('workflow.write')) && roleCanMutate(userRole);
+  const canExecute = useAuthStore((state) => state.hasPermission('workflow.execute')) && roleCanMutate(userRole);
   const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
+  const pageCopy = rolePageCopy('workflows', userRole);
+  const workflowTabs = visibleWorkflowTabs(userRole);
   const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
-  const [tab, setTab] = useState<TabKey>('canvas');
+  const [tab, setTab] = useState<TabKey>(() => defaultWorkflowTab(userRole));
   const [sidePanel, setSidePanel] = useState<SidePanelKey>('library');
   const [librarySearchQ, setLibrarySearchQ] = useState('');
   const [canvasSearchQ, setCanvasSearchQ] = useState('');
@@ -772,12 +776,26 @@ export default function Workflows() {
   const [generationPrompt, setGenerationPrompt] = useState('当生产 Redis 触发 OOM 告警时，由数字员工研判处置路径，经双重审批后执行受控恢复，写入审计并通知值班负责人');
   const [generationConstraints, setGenerationConstraints] = useState<GenerationVars['constraints']>({ riskLevel: 'L2', requireApproval: true, requireAudit: true, requireRollback: true });
   const [generationModel, setGenerationModel] = useState('企业默认模型');
-  const { data: generationHistory = [] } = useApiQuery<GenerationResult[]>(['workflow-generations'], '/api/workflows/generations');
-  const { data: templateAssets = [] } = useApiQuery<Array<Partial<WorkflowTemplateAsset> & { id: string; name: string }>>(['workflow-templates'], '/api/workflow-templates');
-  const { data: workflowList = [] } = useApiQuery<Array<Pick<Workflow, 'id'>>>(['workflows', currentWorkspaceId], '/api/workflows');
-  const workflowId = workflowList[0]?.id ?? 'wf1';
-  const { data: workflowDraft } = useApiQuery<Workflow>(['workflow-draft', currentWorkspaceId, workflowId], `/api/workflows/${workflowId}`);
-  const { data: remoteVersions = [], refetch: refetchVersions } = useApiQuery<Array<Parameters<typeof mapRemoteVersion>[0]>>(['workflow-versions', currentWorkspaceId, workflowId], `/api/workflows/${workflowId}/versions`);
+  const { data: generationHistoryData } = useApiQuery<GenerationResult[]>(['workflow-generations'], '/api/workflows/generations');
+  const generationHistory = generationHistoryData ?? [];
+  const { data: templateAssetsData } = useApiQuery<Array<Partial<WorkflowTemplateAsset> & { id: string; name: string }>>(['workflow-templates'], '/api/workflow-templates');
+  const templateAssets = templateAssetsData ?? [];
+  const { data: workflowListData } = useApiQuery<Array<Pick<Workflow, 'id'>>>(['workflows', currentWorkspaceId], '/api/workflows');
+  const workflowList = workflowListData ?? [];
+  const workflowId = workflowList[0]?.id ?? '';
+  const { data: workflowDraft } = useApiQuery<Workflow>(
+    ['workflow-draft', currentWorkspaceId, workflowId],
+    `/api/workflows/${workflowId || '__none__'}`,
+    undefined,
+    { enabled: Boolean(workflowId) },
+  );
+  const { data: remoteVersionsData, refetch: refetchVersions } = useApiQuery<Array<Parameters<typeof mapRemoteVersion>[0]>>(
+    ['workflow-versions', currentWorkspaceId, workflowId],
+    `/api/workflows/${workflowId || '__none__'}/versions`,
+    undefined,
+    { enabled: Boolean(workflowId) },
+  );
+  const remoteVersions = remoteVersionsData ?? [];
   const draftHydratedRef = useRef(false);
   const [draftGate, setDraftGate] = useState<DraftGate | null>(null);
   const [preflightOpen, setPreflightOpen] = useState(false);
@@ -818,7 +836,8 @@ export default function Workflows() {
     },
   );
   const [focusRunId, setFocusRunId] = useState<string | null>(null);
-  const { data: workflowRuns = [] } = useApiQuery<WorkflowRunRecord[]>(['workflow-runs'], '/api/workflow-runs');
+  const { data: workflowRunsData } = useApiQuery<WorkflowRunRecord[]>(['workflow-runs'], '/api/workflow-runs');
+  const workflowRuns = workflowRunsData ?? [];
   const runWorkflowApi = useApiMutation<WorkflowRunRecord, Record<string, unknown>>(
     (vars) => `/api/workflows/${String((vars as { workflowId?: string }).workflowId ?? workflowId)}/run`,
     {
@@ -897,7 +916,8 @@ export default function Workflows() {
     onSuccess: () => { setVersionMenuOpen(false); showToast('已提交生产发布申请，等待管理员审批', 'success'); },
     onError: () => showToast('发布申请提交失败，请稍后重试', 'error'),
   });
-  const { data: workflowSkills = [], refetch: refetchWorkflowSkills } = useApiQuery<WorkflowSkill[]>(['workflow-skills'], '/api/workflow-skills');
+  const { data: workflowSkillsData, refetch: refetchWorkflowSkills } = useApiQuery<WorkflowSkill[]>(['workflow-skills'], '/api/workflow-skills');
+  const workflowSkills = workflowSkillsData ?? [];
   type PublishSkillVars = {
     workflowId: string;
     version: string;
@@ -1540,9 +1560,9 @@ export default function Workflows() {
               <div className="de-employee-icon-tile grid h-8 w-8 place-items-center rounded-lg text-[var(--text-secondary)]">
                 <GitBranch className="h-4 w-4" />
               </div>
-              <h1 className="text-base font-semibold text-[var(--text)]">{t('module.workflows.title')}</h1>
+              <h1 className="text-base font-semibold text-[var(--text)]">{pageCopy.title}</h1>
             </div>
-            <p className="mt-1.5 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">{t('module.workflows.subtitle')}</p>
+            <p className="mt-1.5 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">{pageCopy.subtitle}</p>
           </div>
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {tab === 'canvas' && (
@@ -1574,19 +1594,25 @@ export default function Workflows() {
                 <span className="inline-flex items-center gap-1.5 rounded-lg bg-[var(--brand-light)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--brand)]">
                   <GitCompare className="h-3.5 w-3.5" />版本中心
                 </span>
-                <Button size="sm" variant="ghost" onClick={() => setTab('canvas')}>返回画布</Button>
-                <Button size="sm" variant="secondary" onClick={() => setTab('publishSkill')}>去发布技能</Button>
+                {canWrite && (
+                  <>
+                    <Button size="sm" variant="ghost" onClick={() => setTab('canvas')}>返回画布</Button>
+                    <Button size="sm" variant="secondary" onClick={() => setTab('publishSkill')}>去发布技能</Button>
+                  </>
+                )}
               </div>
             )}
           </div>
         </div>
+        <div className="px-4 pt-1 md:px-5"><RoleReadonlyBanner className="mb-2 flex items-start gap-2 rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]" /></div>
         <div className="de-employee-tabs flex overflow-x-auto px-3" role="tablist" aria-label="工作流视图">
           {([
-            { k: 'templates' as TabKey, labelKey: 'module.workflows.tabs.templates', icon: Layers },
-            { k: 'canvas' as TabKey, labelKey: 'module.workflows.tabs.canvas', icon: GitBranch },
-            { k: 'publishSkill' as TabKey, labelKey: 'module.workflows.tabs.publishSkill', icon: Sparkles },
-            { k: 'history' as TabKey, labelKey: 'module.workflows.tabs.history', icon: History },
-          ]).map((v) => (
+            { k: 'templates' as TabKey, label: t('module.workflows.tabs.templates'), icon: Layers },
+            { k: 'canvas' as TabKey, label: t('module.workflows.tabs.canvas'), icon: GitBranch },
+            { k: 'publishSkill' as TabKey, label: t('module.workflows.tabs.publishSkill'), icon: Sparkles },
+            { k: 'versions' as TabKey, label: t('module.workflows.tabs.versions'), icon: GitCompare },
+            { k: 'history' as TabKey, label: t('module.workflows.tabs.history'), icon: History },
+          ]).filter((v) => workflowTabs.includes(v.k as WorkflowTab)).map((v) => (
             <button
               key={v.k}
               type="button"
@@ -1597,11 +1623,11 @@ export default function Workflows() {
               className={cn('de-employee-tab flex shrink-0 items-center gap-1.5 px-3 py-2.5 text-xs transition-colors', tab === v.k && 'is-active')}
             >
               <v.icon className="h-3.5 w-3.5" />
-              {t(v.labelKey)}
+              {v.label}
             </button>
           ))}
         </div>
-        {tab === 'versions' && (
+        {tab === 'versions' && canWrite && (
           <div className="flex flex-wrap items-center gap-2 border-t border-[var(--border)] px-4 py-2.5 md:px-5">
             <span className="text-[11px] text-[var(--text-muted)]">由画布「当前版本」胶囊进入 · 不与模板库并列为主导航</span>
           </div>

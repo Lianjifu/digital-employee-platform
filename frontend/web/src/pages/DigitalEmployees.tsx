@@ -3,12 +3,13 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { useAuthStore } from '@/stores/authStore';
 import { Badge, Button, KpiCard } from '@de/web-ui';
-import { EmptyState, Modal } from '@/components/shared';
+import { EmptyState, Modal, RoleReadonlyBanner } from '@/components/shared';
 import { cn } from '@de/web-utils';
 import { useT } from '@/i18n';
 import type { DigitalEmployee, DigitalEmployeeBoundaryPolicy, DigitalEmployeeConfigurationVersion, DigitalEmployeeExecutionMode, DigitalEmployeeLifecycle, DigitalEmployeeResponsibility, DigitalEmployeeTemplate, DigitalEmployeeTemplateAdoption } from '@de/web-types';
 import { DigitalEmployeeAvatar } from '@/components/DigitalEmployeeAvatar';
 import { DepartmentTeamPanel } from '@/components/DepartmentTeamPanel';
+import { roleCanMutate, rolePageCopy } from '@/features/role-nav/role-nav';
 import { capabilityAssemblyCompleteness, compareCapabilityAssemblyEmployees, compareDigitalEmployees, compareOperationsEmployees, compareReleaseOnboardingEmployees, compareRoleSetupEmployees, DIGITAL_EMPLOYEE_DEPARTMENT_ORDER, employeePrimaryLabel, employeeSecondaryLabel, isDepartmentHead, OPERATIONS_HANDOFF_THRESHOLD, operationsHealth, releaseOnboardingCompleteness, roleSetupCompleteness, type OperationsHealthStage, type ReleaseOnboardingStage } from '@/lib/digital-employees';
 import {
   ArrowUpRight, BriefcaseBusiness, CheckCircle2, ChevronLeft, ChevronRight, ClipboardCheck, Clock3, Database,
@@ -115,6 +116,9 @@ function Metric({ label, value, sub }: { label: string; value: string | number; 
 
 export default function DigitalEmployees() {
   const { t } = useT();
+  const user = useAuthStore((state) => state.user);
+  const canMutate = roleCanMutate(user?.role);
+  const pageCopy = rolePageCopy('agents', user?.role);
   const [searchParams] = useSearchParams();
   const [tab, setTab] = useState<ModuleTab>('catalog');
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -228,15 +232,18 @@ export default function DigitalEmployees() {
             <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <div className="de-employee-icon-tile grid h-8 w-8 place-items-center rounded-lg"><BriefcaseBusiness className="h-4 w-4" /></div>
-                <h1 className="text-base font-semibold text-[var(--text)]">{t('nav.agents')}</h1>
+                <h1 className="text-base font-semibold text-[var(--text)]">{pageCopy.title}</h1>
               </div>
-              <p className="mt-2 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">专家团队协同的数字员工：岗位边界清晰，双重审批与人工接管可追溯。</p>
+              <p className="mt-2 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">{pageCopy.subtitle}</p>
             </div>
-            <div className="flex shrink-0 gap-2">
-              <button type="button" className="de-employee-btn" onClick={() => { setTab('catalog'); setTemplateOpen(true); }}><Sparkles className="h-3.5 w-3.5" />从岗位蓝图创建</button>
-              <button type="button" className="de-employee-btn de-employee-btn--primary" onClick={() => { setTab('catalog'); setCreateOpen(true); }}><Plus className="h-3.5 w-3.5" />新建数字员工</button>
-            </div>
+            {canMutate && (
+              <div className="flex shrink-0 gap-2">
+                <button type="button" className="de-employee-btn" onClick={() => { setTab('catalog'); setTemplateOpen(true); }}><Sparkles className="h-3.5 w-3.5" />从岗位蓝图创建</button>
+                <button type="button" className="de-employee-btn de-employee-btn--primary" onClick={() => { setTab('catalog'); setCreateOpen(true); }}><Plus className="h-3.5 w-3.5" />新建数字员工</button>
+              </div>
+            )}
           </div>
+          <div className="px-5"><RoleReadonlyBanner className="mb-2 flex items-start gap-2 rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]" /></div>
           <div className="de-employee-tabs flex overflow-x-auto px-3" role="tablist" aria-label="数字员工功能">
             {tabs.map((item) => <button type="button" key={item.key} onClick={() => setTab(item.key)} className={cn('de-employee-tab flex shrink-0 items-center gap-1.5 px-3 py-3 text-xs transition-colors', tab === item.key && 'is-active')}><item.icon className="h-3.5 w-3.5" />{t(item.labelKey)}</button>)}
           </div>
@@ -446,6 +453,7 @@ function EmployeePlaza({ employees, onCreate, onAdopt, onClose }: { employees: D
   const [publishOpen, setPublishOpen] = useState(false);
   const [page, setPage] = useState(1);
   const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
+  const canMutate = roleCanMutate(useAuthStore((state) => state.user?.role));
   const { data: templates = [] } = useApiQuery<DigitalEmployeeTemplate[]>(['digital-employee-templates'], '/api/digital-employee-templates');
   const { data: adoptions = [] } = useApiQuery<DigitalEmployeeTemplateAdoption[]>(['digital-employee-template-adoptions'], '/api/digital-employee-template-adoptions');
   const adopt = useApiMutation<DigitalEmployee, { templateId: string }>((input) => `/api/digital-employee-templates/${input.templateId}/adopt`, { onSuccess: (employee) => onAdopt(employee.id) });
@@ -479,8 +487,8 @@ function EmployeePlaza({ employees, onCreate, onAdopt, onClose }: { employees: D
             <p className="mt-2 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">采用已认证蓝图生成草稿；仍需配置、评测与双重审批后上岗。步骤：选蓝图 → 生成草稿 → 完善门禁。</p>
           </div>
           <div className="flex flex-wrap gap-2">
-            {isAdmin && <Button size="sm" variant="secondary" onClick={() => setPublishOpen(true)}><Plus className="h-3.5 w-3.5" />发布部门蓝图</Button>}
-            <Button size="sm" variant="secondary" onClick={onCreate}><Plus className="h-3.5 w-3.5" />新建自定义员工</Button>
+            {isAdmin && canMutate && <Button size="sm" variant="secondary" onClick={() => setPublishOpen(true)}><Plus className="h-3.5 w-3.5" />发布部门蓝图</Button>}
+            {canMutate && <Button size="sm" variant="secondary" onClick={onCreate}><Plus className="h-3.5 w-3.5" />新建自定义员工</Button>}
             <Button size="sm" variant="ghost" onClick={onClose}>关闭</Button>
           </div>
         </div>
@@ -537,8 +545,8 @@ function EmployeePlaza({ employees, onCreate, onAdopt, onClose }: { employees: D
                   <span className="text-right">已采用 {template.adoptionCount} 次</span>
                 </div>
                 <div className="mt-3 flex items-center gap-2">
-                  <Button size="sm" className="flex-1" disabled={template.status === 'deprecated'} loading={adopt.isPending && adopt.variables?.templateId === template.id} onClick={() => adopt.mutate({ templateId: template.id })}>采用为草稿</Button>
-                  {isAdmin && template.source === 'department' && template.status !== 'deprecated' && (
+                  {canMutate && <Button size="sm" className="flex-1" disabled={template.status === 'deprecated'} loading={adopt.isPending && adopt.variables?.templateId === template.id} onClick={() => adopt.mutate({ templateId: template.id })}>采用为草稿</Button>}
+                  {isAdmin && canMutate && template.source === 'department' && template.status !== 'deprecated' && (
                     <Button size="sm" variant="secondary" loading={govern.isPending && govern.variables?.id === template.id} onClick={() => govern.mutate({ id: template.id, status: template.status === 'review' ? 'certified' : 'deprecated' })}>
                       {template.status === 'review' ? '认证' : '下架'}
                     </Button>
@@ -1652,6 +1660,7 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
   const [message, setMessage] = useState<string | null>(null);
   const user = useAuthStore((state) => state.user);
   const isAdmin = user?.role === 'admin';
+  const canMutate = roleCanMutate(user?.role);
   const { data: versions = [] } = useApiQuery<DigitalEmployeeConfigurationVersion[]>(['digital-employee', employee.id, 'configuration-versions'], `/api/digital-employees/${employee.id}/configuration-versions`, undefined, { enabled: open });
   const { data: capabilityCatalog } = useApiQuery<DigitalEmployeeCapabilityCatalog>(['digital-employee-capability-catalog'], '/api/digital-employee-capability-catalog', undefined, { enabled: open });
   const save = useApiMutation<EmployeeConfigurationResult, EmployeeConfigurationInput>(() => `/api/digital-employees/${employee.id}/configuration`, { onSuccess: (result) => setMessage(result.requiresApproval ? `${result.version} 已提交双重审批；批准前不会影响在岗员工。` : `${result.version} 已保存，可继续执行评测与上岗流程。`), onError: () => setMessage('保存未完成，请检查必填项与岗位边界。') });
@@ -1747,8 +1756,8 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
                 <Badge tone={version.status === 'current' ? 'success' : version.status === 'pending_approval' ? 'warn' : 'neutral'}>{version.status === 'current' ? '当前' : version.status === 'pending_approval' ? '待审批' : '已替代'}</Badge>
               </div>
               <p className="mt-1 leading-4 text-[var(--text-muted)]">{version.changeSummary}</p>
-              {version.status === 'pending_approval' && isAdmin && version.updatedById !== user?.id && version.updatedBy !== user?.name && <Button size="sm" className="mt-2 w-full" loading={approve.isPending && approve.variables?.versionId === version.id} onClick={() => approve.mutate({ versionId: version.id })}>批准并生效</Button>}
-              {version.status === 'pending_approval' && isAdmin && (version.updatedById === user?.id || version.updatedBy === user?.name) && <p className="mt-2 text-[10px] text-[var(--text-muted)]">您是提交人，须由另一名管理员批准</p>}
+              {version.status === 'pending_approval' && isAdmin && canMutate && version.updatedById !== user?.id && version.updatedBy !== user?.name && <Button size="sm" className="mt-2 w-full" loading={approve.isPending && approve.variables?.versionId === version.id} onClick={() => approve.mutate({ versionId: version.id })}>批准并生效</Button>}
+              {version.status === 'pending_approval' && isAdmin && canMutate && (version.updatedById === user?.id || version.updatedBy === user?.name) && <p className="mt-2 text-[10px] text-[var(--text-muted)]">您是提交人，须由另一名管理员批准</p>}
             </div>
           ))}
           {!versions.length && <p className="text-[11px] text-[var(--text-muted)]">正在读取配置版本…</p>}
@@ -1758,7 +1767,7 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
     </aside>
   );
   return (
-    <Modal open={open} onClose={onClose} title={workbenchTitle} description={workbenchDescription} size="xl" footer={<><Button variant="ghost" onClick={onClose}>取消</Button><Button loading={save.isPending} disabled={Boolean(blocking.length)} onClick={submit}><Save className="h-3.5 w-3.5" />{controlled ? '提交双重审批变更' : '保存配置草稿'}</Button></>}>
+    <Modal open={open} onClose={onClose} title={workbenchTitle} description={canMutate ? workbenchDescription : '只读核查岗位契约与能力装配证据，不提交变更。'} size="xl" footer={canMutate ? <><Button variant="ghost" onClick={onClose}>取消</Button><Button loading={save.isPending} disabled={Boolean(blocking.length)} onClick={submit}><Save className="h-3.5 w-3.5" />{controlled ? '提交双重审批变更' : '保存配置草稿'}</Button></> : <Button variant="ghost" onClick={onClose}>关闭</Button>}>
       <div className="space-y-4">
         <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[var(--bg-elevated)] px-4 py-3" style={{ boxShadow: 'var(--saas-ring)' }}>
           <div className="flex min-w-0 items-center gap-3">

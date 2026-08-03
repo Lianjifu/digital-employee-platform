@@ -214,51 +214,65 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 
 	// Knowledge
 	case path == "/api/knowledge/docs" && method == http.MethodGet:
-		data, err = s.listKnowledgeDocs(r)
+		data, err = s.listKnowledgeDocsAuth(r)
 	case path == "/api/knowledge/docs" && method == http.MethodPost:
-		data, err = s.createKnowledgeDoc(r)
+		data, err = s.createKnowledgeDocAuth(r)
+	case path == "/api/knowledge/docs/delete" && method == http.MethodPost:
+		data, err = s.deleteKnowledgeDocsAuth(r)
 	case path == "/api/knowledge/kb-list" && method == http.MethodGet:
-		data, err = s.listKB(r)
+		data, err = s.listKBAuth(r)
 	case path == "/api/knowledge/retrieve" && method == http.MethodPost:
-		data, err = s.knowledgeRetrieve(r)
+		data, err = s.knowledgeRetrieveAuth(r)
 	case strings.HasPrefix(path, "/api/knowledge/doc/") && method == http.MethodGet:
-		data, err = s.knowledgeDocDetail(r)
+		data, err = s.knowledgeDocDetailAuth(r)
+	case strings.HasPrefix(path, "/api/knowledge/doc/") && method == http.MethodDelete:
+		data, err = s.deleteKnowledgeDocAuth(r)
 	case path == "/api/knowledge/packages" && method == http.MethodGet:
-		data, err = s.knowledgeExtra("packages")
+		data, err = s.knowledgeExtraFiltered(r, "packages")
+	case path == "/api/knowledge/packages" && method == http.MethodPost:
+		data, err = s.createKnowledgePackage(r)
+	case strings.HasPrefix(path, "/api/knowledge/packages/") && method == http.MethodPost:
+		data, err = s.knowledgePackageAction(r)
 	case path == "/api/knowledge/sources" && method == http.MethodGet:
-		data, err = s.knowledgeExtra("sources")
+		data, err = s.knowledgeExtraFiltered(r, "sources")
+	case path == "/api/knowledge/sources" && method == http.MethodPost:
+		data, err = s.createKnowledgeSource(r)
+	case strings.HasPrefix(path, "/api/knowledge/sources/") && strings.HasSuffix(path, "/sync") && method == http.MethodPost:
+		data, err = s.syncKnowledgeSource(r)
 	case path == "/api/knowledge/governance" && method == http.MethodGet:
-		data, err = s.knowledgeExtra("governance")
+		data, err = s.knowledgeExtraFiltered(r, "governance")
 	case path == "/api/knowledge/governance" && method == http.MethodPatch:
-		data, err = s.patchKnowledgeGovernance(r)
+		data, err = s.patchKnowledgeGovernanceAuth(r)
 	case path == "/api/knowledge/audit" && method == http.MethodGet:
-		data, err = s.knowledgeExtra("audit")
+		data, err = s.knowledgeExtraFiltered(r, "audit")
 	case path == "/api/knowledge/processing-jobs" && method == http.MethodGet:
-		data, err = s.knowledgeExtra("processingJobs")
+		data, err = s.knowledgeExtraFiltered(r, "processingJobs")
+	case strings.HasPrefix(path, "/api/knowledge/processing-jobs/") && strings.HasSuffix(path, "/retry") && method == http.MethodPost:
+		data, err = s.retryKnowledgeJob(r)
 	case path == "/api/knowledge/retrieval-profiles" && method == http.MethodGet:
-		data, err = s.knowledgeExtra("retrievalProfiles")
+		data, err = s.knowledgeExtraFiltered(r, "retrievalProfiles")
 	case path == "/api/knowledge/evaluations" && method == http.MethodGet:
-		data, err = s.knowledgeExtra("evaluations")
+		data, err = s.knowledgeExtraFiltered(r, "evaluations")
 	case path == "/api/knowledge/graph/entities" && method == http.MethodGet:
-		data, err = s.knowledgeExtra("graphEntities")
+		data, err = s.knowledgeExtraFiltered(r, "graphEntities")
 	case path == "/api/knowledge/graph/relations" && method == http.MethodGet:
-		data, err = s.knowledgeExtra("graphRelations")
+		data, err = s.knowledgeExtraFiltered(r, "graphRelations")
 	case path == "/api/knowledge/bindings" && method == http.MethodGet:
-		data, err = s.knowledgeExtra("bindings")
+		data, err = s.knowledgeExtraFiltered(r, "bindings")
 	case path == "/api/knowledge/citation-trace" && method == http.MethodGet:
-		data, err = s.knowledgeExtra("citationTrace")
+		data, err = s.knowledgeExtraFiltered(r, "citationTrace")
 	case path == "/api/knowledge/eval" && method == http.MethodGet:
-		data, err = s.knowledgeExtra("eval")
+		data, err = s.knowledgeExtraFiltered(r, "eval")
 	case path == "/api/knowledge/chunks/top" && method == http.MethodGet:
-		data, err = s.knowledgeExtra("chunksTop")
+		data, err = s.knowledgeExtraFiltered(r, "chunksTop")
 	case path == "/api/knowledge/docs/review" && method == http.MethodPost:
-		data, err = map[string]any{"ids": []string{}}, error(nil)
+		data, err = s.reviewKnowledgeDocs(r)
 	case path == "/api/knowledge/reindex" && method == http.MethodPost:
-		data, err = s.reindexKnowledge(r)
+		data, err = s.reindexKnowledgeAuth(r)
 	case path == "/api/knowledge/chunks/rescore" && method == http.MethodPost:
-		data, err = s.knowledgeExtra("chunksTop")
+		data, err = s.rescoreKnowledgeChunks(r)
 	case path == "/api/knowledge/evaluations/run" && method == http.MethodPost:
-		data, err = map[string]any{"recallAtK": 0.8, "citationAccuracy": 0.9}, error(nil)
+		data, err = s.runKnowledgeEvaluation(r)
 
 	// Copilot — Mock sessions/conversations
 	case path == "/api/sessions" && method == http.MethodGet:
@@ -298,31 +312,61 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/workflows/generate" && method == http.MethodPost:
 		data, err = s.generateWorkflow(r)
 	case path == "/api/workflow-skills" && method == http.MethodGet:
-		data, err = s.listWorkflowSkills(r)
+		data, err = s.listWorkflowSkillsAligned(r)
+	case strings.HasPrefix(path, "/api/workflow-skills/") && strings.HasSuffix(path, "/publish") && method == http.MethodPost:
+		data, err = s.publishWorkflowSkill(r)
 	case path == "/api/workflow-runs" && method == http.MethodGet:
 		data, err = s.listWorkflowRuns(r)
 	case path == "/api/workflows/run" && method == http.MethodPost:
 		data, err = s.runWorkflow(r)
+	case strings.HasPrefix(path, "/api/workflows/") && strings.HasSuffix(path, "/capabilities") && method == http.MethodPost:
+		data, err = s.bindWorkflowCapability(r)
 	case strings.HasPrefix(path, "/api/workflows/") && (method == http.MethodGet || method == http.MethodPost || method == http.MethodPatch):
 		data, err = s.workflowByID(r)
 
 	// Skills
 	case path == "/api/skills" && method == http.MethodGet:
 		data, err = s.listSkillsAligned(r)
+	case path == "/api/skills" && method == http.MethodPost:
+		data, err = s.createSkill(r)
+	case path == "/api/skills/import" && method == http.MethodPost:
+		data, err = s.importSkills(r)
+	case path == "/api/skills/import-package" && method == http.MethodPost:
+		data, err = s.importSkillPackage(r)
 	case path == "/api/skills/catalog" && method == http.MethodGet:
 		data, err = s.listSkillCatalog(r)
+	case path == "/api/skills/catalog/publish" && method == http.MethodPost:
+		data, err = s.publishSkillToCatalog(r)
+	case path == "/api/skills/catalog/sync" && method == http.MethodPost:
+		data, err = s.syncSkillCatalog(r)
 	case path == "/api/skills/governance/overview" && method == http.MethodGet:
 		data, err = s.skillsGovernanceOverview(r)
 	case path == "/api/skills/governance/health" && method == http.MethodGet:
-		data, err = s.skillsGovernanceEmpty(r)
+		data, err = s.skillsGovernanceHealth(r)
 	case path == "/api/skills/governance/incidents" && method == http.MethodGet:
-		data, err = s.skillsGovernanceEmpty(r)
+		data, err = s.skillsGovernanceIncidents(r)
 	case path == "/api/skills/governance/events" && method == http.MethodGet:
-		data, err = s.skillsGovernanceEmpty(r)
+		data, err = s.skillsGovernanceEvents(r)
 	case path == "/api/skills/governance/trends" && method == http.MethodGet:
-		data, err = s.skillsGovernanceEmpty(r)
+		data, err = s.skillsGovernanceTrends(r)
+	case path == "/api/skills/governance/batch" && method == http.MethodPost:
+		data, err = s.skillsGovernanceBatch(r)
+	case path == "/api/skills/audit" && method == http.MethodGet:
+		data, err = s.listSkillAudit(r)
 	case path == "/api/skills/execute" && method == http.MethodPost:
 		data, err = s.executeSkill(r)
+	case strings.HasPrefix(path, "/api/skills/") && (method == http.MethodGet || method == http.MethodPost || method == http.MethodPatch):
+		data, err = s.skillByID(r)
+	case path == "/api/skill-integrations" && method == http.MethodGet:
+		data, err = s.listSkillIntegrations(r)
+	case strings.HasPrefix(path, "/api/skill-integrations/") && (method == http.MethodPost || method == http.MethodPatch):
+		data, err = s.skillIntegrationAction(r)
+	case path == "/api/mcp-connections" && method == http.MethodPost:
+		data, err = s.createMCPConnection(r)
+	case path == "/api/tools" && method == http.MethodPost:
+		data, err = s.createTool(r)
+	case strings.HasPrefix(path, "/api/agents/") && strings.HasSuffix(path, "/skills") && method == http.MethodPost:
+		data, err = s.bindAgentSkill(r)
 
 	// Memory
 	case path == "/api/memory/overview" && method == http.MethodGet:

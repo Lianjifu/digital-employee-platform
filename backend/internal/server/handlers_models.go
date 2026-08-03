@@ -1006,19 +1006,23 @@ func (s *Server) modelGovernanceOverview(r *http.Request) (any, error) {
 		}
 	}
 	published, draft := 0, 0
-	budget := 0.0
+	publishedBudget, draftBudget := 0.0, 0.0
 	for _, p := range s.Store.RoutingPolicies {
 		if str(p["workspaceId"]) != ws {
 			continue
 		}
-		budget += toFloat(p["budgetLimitUsd"])
-		switch str(p["status"]) {
+		status := str(p["status"])
+		switch status {
 		case "published":
 			published++
+			// 占用上限与强制限额一致：仅已发布；已替代/草稿不计入分母。
+			publishedBudget += toFloat(p["budgetLimitUsd"])
 		case "draft", "ready":
 			draft++
+			draftBudget += toFloat(p["budgetLimitUsd"])
 		}
 	}
+	budget := publishedBudget
 	spend := 0.0
 	for _, b := range s.Store.ModelBudgets {
 		if str(b["workspaceId"]) == ws {
@@ -1058,7 +1062,7 @@ func (s *Server) modelGovernanceOverview(r *http.Request) (any, error) {
 	return map[string]any{
 		"activeProviders": active, "standbyProviders": standby, "disabledProviders": disabled,
 		"publishedRoutes": published, "draftRoutes": draft, "budgetRisk": risk,
-		"monthlyBudgetUsd": budget, "monthlySpendUsd": spend,
+		"monthlyBudgetUsd": budget, "draftBudgetUsd": draftBudget, "monthlySpendUsd": spend,
 		"healthyShare": healthyShare, "avgLatencyMs": avgLat,
 		"regionDistribution": regions, "updatedAt": time.Now().UTC().Format(time.RFC3339),
 	}, nil

@@ -1,4 +1,5 @@
 .tools/
 bin/
+data/
 **/*.tgz
 *.log

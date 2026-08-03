@@ -4,6 +4,8 @@ import {
   modelQueryState,
   normalizeProviderImpact,
   parseModelTab,
+  visibleModelTabs,
+  defaultModelTab,
   policyStatusLabel,
   providerLifecycleAction,
   providerStatusLabel,
@@ -14,6 +16,8 @@ import {
   summarizeRoutingPolicies,
   budgetUtilizationPercent,
   governanceDrillEligibility,
+  governanceDrillBlockReason,
+  governanceBudgetBreakdown,
 } from './model-ui';
 
 describe('model control-plane UI state', () => {
@@ -47,10 +51,16 @@ describe('model control-plane UI state', () => {
     expect(providerStatusTone('standby')).toBe('warn');
   });
 
-  it('parses model workspace tabs from URL with a safe default', () => {
+  it('parses model workspace tabs from URL with role-scoped visibility', () => {
     expect(parseModelTab('governance')).toBe('governance');
     expect(parseModelTab('unknown')).toBe('access');
     expect(parseModelTab(null)).toBe('access');
+    expect(parseModelTab('audit')).toBe('access');
+    expect(parseModelTab('audit', 'auditor')).toBe('audit');
+    expect(parseModelTab('access', 'auditor')).toBe('audit');
+    expect(visibleModelTabs('admin')).toEqual(['access', 'routing', 'governance']);
+    expect(visibleModelTabs('auditor')).toEqual(['audit']);
+    expect(defaultModelTab('auditor')).toBe('audit');
   });
 
   it('maps budget risk labels for governance summary', () => {
@@ -89,9 +99,37 @@ describe('model control-plane UI state', () => {
   it('computes budget utilization and drill eligibility for governance', () => {
     expect(budgetUtilizationPercent(420, 1000)).toBe(42);
     expect(budgetUtilizationPercent(10, 0)).toBeNull();
-    expect(governanceDrillEligibility([
+    const eligibility = governanceDrillEligibility([
       { id: 'a', workspaceId: 'w1', level: 'P0', primaryModelId: 'm1', fallbackModelIds: ['m2'], dataScope: 'internal', egressAllowed: true, budgetLimitUsd: 100, status: 'published', validationIssues: [] },
-      { id: 'b', workspaceId: 'w1', level: 'P2', primaryModelId: 'm1', fallbackModelIds: [], dataScope: 'restricted', egressAllowed: false, budgetLimitUsd: 20, status: 'published', validationIssues: [] },
-    ]).count).toBe(1);
+      { id: 'b', workspaceId: 'w1', level: 'P3', primaryModelId: 'm1', fallbackModelIds: [], dataScope: 'restricted', egressAllowed: false, budgetLimitUsd: 20, status: 'published', validationIssues: [] },
+      { id: 'c', workspaceId: 'w1', level: 'P0', primaryModelId: 'm1', fallbackModelIds: ['m2'], dataScope: 'internal', egressAllowed: true, budgetLimitUsd: 100, status: 'superseded', validationIssues: [] },
+    ]);
+    expect(eligibility.count).toBe(1);
+    expect(eligibility.total).toBe(2);
+    expect(eligibility.ready).toBe(true);
+    expect(eligibility.blocked).toHaveLength(1);
+    expect(eligibility.blocked[0]?.reason).toContain('降级链');
+    expect(eligibility.drillable.map((item) => item.id)).toEqual(['a']);
+  });
+
+  it('explains why a published policy cannot be drilled', () => {
+    expect(governanceDrillBlockReason({
+      status: 'published',
+      fallbackModelIds: [],
+      level: 'P3',
+    })).toContain('P3');
+    expect(governanceDrillBlockReason({
+      status: 'published',
+      fallbackModelIds: ['m2'],
+      level: 'P0',
+    })).toBeNull();
+  });
+
+  it('breaks down governance budget without counting superseded policies', () => {
+    expect(governanceBudgetBreakdown([
+      { status: 'published', budgetLimitUsd: 200 },
+      { status: 'draft', budgetLimitUsd: 100 },
+      { status: 'superseded', budgetLimitUsd: 200 },
+    ])).toEqual({ publishedUsd: 200, draftUsd: 100, effectiveUsd: 200, planningUsd: 300 });
   });
 });

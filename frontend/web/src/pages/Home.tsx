@@ -19,8 +19,11 @@ import {
 } from 'recharts';
 import { cn } from '@de/web-utils';
 import type { Task } from '@de/web-types';
-import { EmptyState } from '@/components/shared';
+import { EmptyState, RoleReadonlyBanner } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
+import { roleCanMutate, rolePageCopy } from '@/features/role-nav/role-nav';
+
+const AUDITOR_SUGGESTION_PREFIXES = ['/audit-center', '/zero-trust', '/tasks', '/copilot', '/agents', '/workflows', '/knowledge', '/skills', '/memory', '/home'];
 
 const ICON_MAP: Record<string, typeof Activity> = {
   AlertTriangle, CheckCircle2, Activity, Bot, MessageSquare, ListChecks,
@@ -124,6 +127,9 @@ export default function Home() {
   const greeting = getGreeting();
   const { user } = useAuthStore();
   const isAdministrator = user?.role === 'admin';
+  const isAuditor = user?.role === 'auditor';
+  const canMutate = roleCanMutate(user?.role);
+  const homeCopy = rolePageCopy('home', user?.role);
 
   const { data: tasks, isLoading: lTasks } = useApiQuery<Task[]>(['home', 'tasks'], '/api/tasks');
   const { data: extra, isLoading: lExtra, isFetching: fetchingExtra, refetch: refetchExtra } = useApiQuery<any>(['home', 'extra'], '/api/home/extra');
@@ -187,6 +193,12 @@ export default function Home() {
   };
 
   const successRate = metrics?.taskSuccessRate ?? operations?.health?.taskSuccessRate ?? null;
+  const suggestions = (extra?.suggestion ?? []).filter((s: { to?: string }) => {
+    if (!isAuditor) return true;
+    const to = s.to ?? '';
+    if (!to) return false;
+    return AUDITOR_SUGGESTION_PREFIXES.some((prefix) => to === prefix || to.startsWith(`${prefix}?`) || to.startsWith(`${prefix}/`));
+  });
 
   return (
     <div className="de-employee-page home-page h-full min-w-0 overflow-y-auto bg-[var(--bg-elevated)] p-3 md:p-4 lg:p-5">
@@ -199,19 +211,32 @@ export default function Home() {
                 <Activity className="h-4 w-4" />
               </div>
               <div className="min-w-0">
-                <h1 className="text-base font-semibold text-[var(--text)]">运营总览</h1>
+                <h1 className="text-base font-semibold text-[var(--text)]">{homeCopy.title}</h1>
                 <p className="text-[11px] text-[var(--text-muted)]">
-                  {greeting}，{user?.name ?? '管理员'} · 先处置，再看投入产出
+                  {greeting}，{user?.name ?? '用户'} · {homeCopy.subtitle}
                 </p>
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" onClick={() => navigate('/copilot')}>
-                <MessageSquare className="h-3.5 w-3.5" />专家协作
-              </Button>
-              <Button size="sm" variant="secondary" onClick={() => navigate('/tasks')}>
-                <Plus className="h-3.5 w-3.5" />创建任务
-              </Button>
+              {isAuditor ? (
+                <>
+                  <Button size="sm" onClick={() => navigate('/audit-center')}>
+                    <ShieldCheck className="h-3.5 w-3.5" />审计中心
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => navigate('/tasks')}>
+                    <ListChecks className="h-3.5 w-3.5" />任务核查
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button size="sm" onClick={() => navigate('/copilot')}>
+                    <MessageSquare className="h-3.5 w-3.5" />专家协作
+                  </Button>
+                  <Button size="sm" variant="secondary" onClick={() => navigate('/tasks')}>
+                    <Plus className="h-3.5 w-3.5" />{user?.role === 'user' ? '我的待办' : '创建任务'}
+                  </Button>
+                </>
+              )}
               {isAdministrator && (
                 <div className="flex items-center gap-2 border-l border-[var(--border)] pl-2 text-[11px]">
                   <Link to="/agents" className="inline-flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--brand)]">
@@ -224,6 +249,7 @@ export default function Home() {
               )}
             </div>
           </div>
+          <RoleReadonlyBanner className="mt-3 flex items-start gap-2 rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]" />
         </header>
 
         {/* 2 · KPI 置顶 */}
@@ -416,6 +442,7 @@ export default function Home() {
           <SlaAlertPanel
             alerts={visibleAlerts}
             isAdministrator={isAdministrator}
+            canMutate={canMutate}
             acknowledging={acknowledgeAlert.isPending}
             onAcknowledge={(id) => acknowledgeAlert.mutate({ id, note: '已确认，待进入任务处置。' })}
           />
@@ -630,14 +657,14 @@ export default function Home() {
                 <div className="list-card__header">
                   <div className="list-card__title">
                     <Lightbulb className="h-3.5 w-3.5 text-[var(--warning)]" />智能建议
-                    <Badge tone="brand">{extra?.suggestion?.length ?? 0}</Badge>
+                    <Badge tone="brand">{suggestions.length}</Badge>
                   </div>
                   <span className="text-[10px] text-[var(--text-muted)]">基于当前运行数据</span>
                 </div>
                 <div className="space-y-2">
-                  {(extra?.suggestion ?? []).length === 0 ? (
+                  {suggestions.length === 0 ? (
                     <EmptyState icon={ShieldCheck} title="暂无新的运营建议" description="基于当前运行数据" />
-                  ) : (extra?.suggestion ?? []).map((s: any) => {
+                  ) : suggestions.map((s: any) => {
                     const Icon = s.tone === 'success' ? CheckCircle2 : s.tone === 'warn' ? AlertTriangle : Lightbulb;
                     const tone = s.tone === 'success' ? 'success' : s.tone === 'warn' ? 'warning' : 'info';
                     const label = s.tone === 'success' ? '运行良好' : s.tone === 'warn' ? '需要关注' : '建议优化';
@@ -670,11 +697,13 @@ export default function Home() {
 function SlaAlertPanel({
   alerts,
   isAdministrator,
+  canMutate,
   acknowledging,
   onAcknowledge,
 }: {
   alerts: any[];
   isAdministrator: boolean;
+  canMutate: boolean;
   acknowledging: boolean;
   onAcknowledge: (id: string) => void;
 }) {
@@ -719,7 +748,7 @@ function SlaAlertPanel({
               </div>
               <div className="alert-list__meta">{alert.time} · {alert.assignee} · {alert.taskCode}</div>
             </Link>
-            {isAdministrator && alert.level !== 'P0' && (
+            {isAdministrator && canMutate && alert.level !== 'P0' && (
               <button
                 type="button"
                 onClick={() => onAcknowledge(alert.id)}
@@ -729,7 +758,10 @@ function SlaAlertPanel({
                 <Check className="h-3 w-3" />确认并记录审计
               </button>
             )}
-            {alert.level === 'P0' && (
+            {!canMutate && (
+              <div className="mt-1.5 text-[10px] font-medium text-[var(--info)]">只读核查 · 请在任务核查中查看证据</div>
+            )}
+            {canMutate && alert.level === 'P0' && (
               <div className="mt-1.5 text-[10px] font-medium text-[var(--danger)]">需在任务中记录处置说明后确认</div>
             )}
           </div>

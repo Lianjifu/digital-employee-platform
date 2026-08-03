@@ -7,10 +7,11 @@ import {
 import { Badge, Button, Input, toast } from '@de/web-ui';
 import type { DigitalEmployee, MemoryAuditEvent, MemoryKnowledgeCandidate, MemoryLayer, MemoryPolicy, MemoryRecord, MemoryStatus } from '@de/web-types';
 import { useApiMutation, useApiQuery } from '@/services/query';
-import { ConfirmDialog, EmptyState, Modal } from '@/components/shared';
+import { ConfirmDialog, EmptyState, Modal, RoleReadonlyBanner } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
 import { useT } from '@/i18n';
 import { cn } from '@de/web-utils';
+import { defaultMemoryTab, roleCanMutate, rolePageCopy } from '@/features/role-nav/role-nav';
 
 type Tab = 'overview' | 'short_term' | 'working' | 'long_term' | 'candidates' | 'governance';
 type StatusFilter = 'active' | 'all' | MemoryStatus;
@@ -90,8 +91,12 @@ function capacityRatio(policy?: Pick<MemoryPolicy, 'usedCapacity' | 'longTermCap
 export default function Memory() {
   const { t } = useT();
   const navigate = useNavigate();
-  const isAdmin = useAuthStore((state) => state.user?.role === 'admin');
-  const [tab, setTab] = useState<Tab>('overview');
+  const user = useAuthStore((state) => state.user);
+  const isAdmin = user?.role === 'admin';
+  const canMutate = roleCanMutate(user?.role) && isAdmin;
+  const pageCopy = rolePageCopy('memory', user?.role);
+  const memoryDefault = defaultMemoryTab(user?.role);
+  const [tab, setTab] = useState<Tab>(() => (memoryDefault === 'governance' ? 'governance' : 'overview'));
   const [query, setQuery] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('active');
@@ -130,7 +135,10 @@ export default function Memory() {
   const detail = (records.data ?? []).find((record) => record.id === detailId) ?? null;
   const selectedEmployee = employeeFilter === 'all' ? undefined : employeeMap.get(employeeFilter);
   const report = (error: unknown) => toast.error(error instanceof Error ? error.message : '记忆操作失败');
-  const visibleTabs = TABS.filter((item) => isAdmin || item.key !== 'governance');
+  const visibleTabs = TABS.filter((item) => {
+    if (user?.role === 'auditor') return item.key === 'governance' || item.key === 'overview' || item.key === 'long_term';
+    return isAdmin || item.key !== 'governance';
+  });
   const activePolicy = overview.data?.policy ?? policy.data;
   const ratio = capacityRatio(activePolicy);
   const showCapacityWarn = ratio >= 0.8;
@@ -158,16 +166,17 @@ export default function Memory() {
                 <div className="de-employee-icon-tile grid h-8 w-8 place-items-center rounded-lg">
                   <BrainCircuit className="h-4 w-4" />
                 </div>
-                <h1 className="text-base font-semibold text-[var(--text)]">{t('module.memory.title')}</h1>
+                <h1 className="text-base font-semibold text-[var(--text)]">{pageCopy.title}</h1>
               </div>
-              <p className="mt-1.5 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">{t('module.memory.subtitle')}</p>
+              <p className="mt-1.5 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">{pageCopy.subtitle}</p>
             </div>
             <div className="memory-guardrail shrink-0">
               <ShieldCheck className="h-3.5 w-3.5" />
               <span>{t('module.memory.guardrail')}</span>
             </div>
           </div>
-          <div className="de-employee-tabs flex overflow-x-auto px-3" role="tablist" aria-label={t('module.memory.title')}>
+          <div className="px-4 pt-1 md:px-5"><RoleReadonlyBanner className="mb-2 flex items-start gap-2 rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]" /></div>
+          <div className="de-employee-tabs flex overflow-x-auto px-3" role="tablist" aria-label={pageCopy.title}>
             {visibleTabs.map((item) => (
               <button
                 key={item.key}
@@ -235,9 +244,10 @@ export default function Memory() {
               onStatusFilter={setStatusFilter}
               onEmployeeFilter={setEmployeeFilter}
               onOpenDetail={setDetailId}
-              onExpire={(id, title) => setConfirm({ type: 'expire', id, title })}
-              onDelete={(id, title) => setConfirm({ type: 'delete', id, title })}
-              onCandidate={(id) => candidate.mutate({ id }, { onSuccess: () => { toast.success('已提交知识候选，等待审核'); setTab('candidates'); }, onError: report })}
+              onExpire={canMutate ? (id, title) => setConfirm({ type: 'expire', id, title }) : undefined}
+              onDelete={canMutate ? (id, title) => setConfirm({ type: 'delete', id, title }) : undefined}
+              onCandidate={canMutate ? (id) => candidate.mutate({ id }, { onSuccess: () => { toast.success('已提交知识候选，等待审核'); setTab('candidates'); }, onError: report }) : undefined}
+              canMutate={canMutate}
             />
           )}
           {tab === 'candidates' && (
@@ -245,7 +255,7 @@ export default function Memory() {
               items={candidates.data ?? []}
               records={records.data ?? []}
               employeeMap={employeeMap}
-              canReview={isAdmin}
+              canReview={canMutate}
               onReview={(id, action) => review.mutate({ id, action }, {
                 onSuccess: (item) => {
                   if (action === 'approve' && item.knowledgePackageId) {
@@ -263,6 +273,7 @@ export default function Memory() {
             <GovernanceProgressive
               policy={policy.data}
               audit={audit.data ?? []}
+              canMutate={canMutate}
               onUpdate={(patch) => updatePolicy.mutate(patch, { onSuccess: () => toast.success('记忆策略已更新并写入审计'), onError: report })}
               onRun={() => runRefinement.mutate({}, { onSuccess: (result) => toast.success(`渐进提炼完成：工作 ${result.workingCreated}，长期 ${result.longCreated}，候选 ${result.candidatesCreated}`), onError: report })}
               running={runRefinement.isPending}
@@ -282,6 +293,7 @@ export default function Memory() {
           <MemoryDetail
             record={detail}
             employee={detail.digitalEmployeeId ? employeeMap.get(detail.digitalEmployeeId) : undefined}
+            canMutate={canMutate}
             onClose={() => setDetailId(null)}
             onExpire={() => { setDetailId(null); setConfirm({ type: 'expire', id: detail.id, title: detail.title }); }}
             onDelete={() => { setDetailId(null); setConfirm({ type: 'delete', id: detail.id, title: detail.title }); }}
@@ -478,6 +490,7 @@ function RecordList({
   onExpire,
   onDelete,
   onCandidate,
+  canMutate = false,
 }: {
   records: MemoryRecord[];
   layer: MemoryLayer;
@@ -490,9 +503,10 @@ function RecordList({
   onStatusFilter: (value: StatusFilter) => void;
   onEmployeeFilter: (value: string) => void;
   onOpenDetail: (id: string) => void;
-  onExpire: (id: string, title: string) => void;
-  onDelete: (id: string, title: string) => void;
-  onCandidate: (id: string) => void;
+  onExpire?: (id: string, title: string) => void;
+  onDelete?: (id: string, title: string) => void;
+  onCandidate?: (id: string) => void;
+  canMutate?: boolean;
 }) {
   const meta = LAYER[layer];
   const navigate = useNavigate();
@@ -548,19 +562,21 @@ function RecordList({
                         <ExternalLink className="h-3.5 w-3.5" />来源
                       </button>
                     )}
-                    {layer === 'long_term' && record.status === 'active' && (
+                    {canMutate && layer === 'long_term' && record.status === 'active' && onCandidate && (
                       <button type="button" className="memory-action memory-action--primary" onClick={() => onCandidate(record.id)}>
                         <FileUp className="h-3.5 w-3.5" />提炼
                       </button>
                     )}
-                    {record.status === 'active' && (
+                    {canMutate && record.status === 'active' && onExpire && (
                       <button type="button" className="memory-action" onClick={() => onExpire(record.id, record.title)}>
                         <Clock3 className="h-3.5 w-3.5" />失效
                       </button>
                     )}
-                    <button type="button" className="memory-action memory-action--danger" onClick={() => onDelete(record.id, record.title)}>
-                      <Trash2 className="h-3.5 w-3.5" />删除
-                    </button>
+                    {canMutate && onDelete && (
+                      <button type="button" className="memory-action memory-action--danger" onClick={() => onDelete(record.id, record.title)}>
+                        <Trash2 className="h-3.5 w-3.5" />删除
+                      </button>
+                    )}
                   </div>
                 </div>
                 <div className="memory-record__meta">
@@ -586,6 +602,7 @@ function RecordList({
 function MemoryDetail({
   record,
   employee,
+  canMutate = false,
   onClose,
   onExpire,
   onDelete,
@@ -593,6 +610,7 @@ function MemoryDetail({
 }: {
   record: MemoryRecord;
   employee?: DigitalEmployee;
+  canMutate?: boolean;
   onClose: () => void;
   onExpire: () => void;
   onDelete: () => void;
@@ -622,11 +640,11 @@ function MemoryDetail({
       <div className="flex flex-wrap gap-2">
         {employee && <Button size="sm" variant="secondary" onClick={() => navigate(`/agents?employeeId=${employee.id}`)}>查看岗位契约</Button>}
         {href && <Button size="sm" variant="secondary" onClick={() => navigate(href)}>打开来源</Button>}
-        {record.layer === 'long_term' && record.status === 'active' && (
+        {canMutate && record.layer === 'long_term' && record.status === 'active' && (
           <Button size="sm" onClick={onCandidate}><FileUp className="h-3 w-3" />提炼为知识候选</Button>
         )}
-        {record.status === 'active' && <Button size="sm" variant="ghost" onClick={onExpire}>失效</Button>}
-        <Button size="sm" variant="ghost" onClick={onDelete}>删除</Button>
+        {canMutate && record.status === 'active' && <Button size="sm" variant="ghost" onClick={onExpire}>失效</Button>}
+        {canMutate && <Button size="sm" variant="ghost" onClick={onDelete}>删除</Button>}
         <Button size="sm" variant="ghost" onClick={onClose}>关闭</Button>
       </div>
     </div>
@@ -728,12 +746,14 @@ function PolicyToggle({ checked, onChange, label }: { checked: boolean; onChange
 function GovernanceProgressive({
   policy,
   audit,
+  canMutate = false,
   onUpdate,
   onRun,
   running,
 }: {
   policy?: MemoryPolicy;
   audit: MemoryAuditEvent[];
+  canMutate?: boolean;
   onUpdate: (patch: Partial<MemoryPolicy>) => void;
   onRun: () => void;
   running: boolean;
@@ -752,9 +772,9 @@ function GovernanceProgressive({
         <div className="memory-panel__head">
           <div>
             <h3>每日渐进提炼策略</h3>
-            <p>生产环境由调度器按策略运行；此处触发一次提炼演练并写入审计。</p>
+            <p>{canMutate ? '生产环境由调度器按策略运行；此处触发一次提炼演练并写入审计。' : '只读核查调度策略与提炼链路；审计角色不可改写或演练。'}</p>
           </div>
-          <Button size="sm" loading={running} onClick={onRun}>立即演练</Button>
+          {canMutate && <Button size="sm" loading={running} onClick={onRun}>立即演练</Button>}
         </div>
         <div className="memory-stage-list">
           {stages.map((stage) => (
@@ -763,31 +783,46 @@ function GovernanceProgressive({
                 <strong>{stage.label}</strong>
                 <p>{stage.desc}</p>
               </div>
-              <PolicyToggle checked={policy?.[stage.key] ?? true} onChange={(value) => onUpdate({ [stage.key]: value })} label={stage.label} />
+              {canMutate ? (
+                <PolicyToggle checked={policy?.[stage.key] ?? true} onChange={(value) => onUpdate({ [stage.key]: value })} label={stage.label} />
+              ) : (
+                <Badge tone={policy?.[stage.key] ?? true ? 'success' : 'neutral'}>{policy?.[stage.key] ?? true ? '已启用' : '已关闭'}</Badge>
+              )}
             </div>
           ))}
         </div>
-        <div className="memory-gov-fields">
-          <label>每日运行时间
-            <Input type="time" value={time} onChange={(event) => setTime(event.target.value)} className="mt-1.5 h-9 text-xs" />
-          </label>
-          <label>最低置信度
-            <Input type="number" min="0" max="1" step="0.05" value={confidence} onChange={(event) => setConfidence(event.target.value)} className="mt-1.5 h-9 text-xs" />
-          </label>
-        </div>
-        <div className="memory-gov-toggles">
-          <label>
-            <span>长期写入需审核</span>
-            <PolicyToggle checked={policy?.longTermWriteApproval ?? true} onChange={(value) => onUpdate({ longTermWriteApproval: value })} label="长期写入需审核" />
-          </label>
-          <label>
-            <span>敏感数据脱敏</span>
-            <PolicyToggle checked={policy?.sensitiveDataMasking ?? true} onChange={(value) => onUpdate({ sensitiveDataMasking: value })} label="敏感数据脱敏" />
-          </label>
-        </div>
-        <Button className="mt-4" size="sm" onClick={() => onUpdate({ dailyRefinementTime: time, minimumConfidence: Number(confidence) })}>
-          保存调度策略
-        </Button>
+        {canMutate ? (
+          <>
+            <div className="memory-gov-fields">
+              <label>每日运行时间
+                <Input type="time" value={time} onChange={(event) => setTime(event.target.value)} className="mt-1.5 h-9 text-xs" />
+              </label>
+              <label>最低置信度
+                <Input type="number" min="0" max="1" step="0.05" value={confidence} onChange={(event) => setConfidence(event.target.value)} className="mt-1.5 h-9 text-xs" />
+              </label>
+            </div>
+            <div className="memory-gov-toggles">
+              <label>
+                <span>长期写入需审核</span>
+                <PolicyToggle checked={policy?.longTermWriteApproval ?? true} onChange={(value) => onUpdate({ longTermWriteApproval: value })} label="长期写入需审核" />
+              </label>
+              <label>
+                <span>敏感数据脱敏</span>
+                <PolicyToggle checked={policy?.sensitiveDataMasking ?? true} onChange={(value) => onUpdate({ sensitiveDataMasking: value })} label="敏感数据脱敏" />
+              </label>
+            </div>
+            <Button className="mt-4" size="sm" onClick={() => onUpdate({ dailyRefinementTime: time, minimumConfidence: Number(confidence) })}>
+              保存调度策略
+            </Button>
+          </>
+        ) : (
+          <dl className="memory-detail__grid mt-3">
+            <Row label="每日运行时间" value={policy?.dailyRefinementTime ?? '02:00'} />
+            <Row label="最低置信度" value={String(policy?.minimumConfidence ?? 0.85)} />
+            <Row label="长期写入需审核" value={policy?.longTermWriteApproval ?? true ? '是' : '否'} />
+            <Row label="敏感数据脱敏" value={policy?.sensitiveDataMasking ?? true ? '是' : '否'} />
+          </dl>
+        )}
       </section>
 
       <section className="memory-panel">

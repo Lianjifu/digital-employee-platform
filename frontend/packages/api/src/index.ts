@@ -111,7 +111,8 @@ export class ApiClient {
       if (!res.ok || !json.ok) {
         throw new ApiError(json.error?.code ?? 'E_UNKNOWN', json.error?.message ?? '请求失败', res.status);
       }
-      return json.data;
+      // 后端偶发返回 data: null（Go nil slice）；对数组消费方统一兜底为 []，避免 .filter 崩溃
+      return (json.data ?? null) as T;
     } finally {
       clearTimeout(t);
     }
@@ -128,6 +129,67 @@ export class ApiClient {
   }
   delete<T>(path: string, opts?: Omit<RequestOptions, 'method' | 'body'>) {
     return this.request<T>(path, { ...opts, method: 'DELETE' });
+  }
+
+  /** multipart 上传；Mock 模式下自动转为 contentBase64 JSON。 */
+  async upload<T>(path: string, form: FormData, opts: Omit<RequestOptions, 'method' | 'body'> = {}): Promise<T> {
+    const token = this.getAuthToken();
+    const requestHeaders: Record<string, string> = {
+      ...opts.headers,
+      ...this.getContextHeaders(),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+    if (this.mockHandler) {
+      const file = form.get('file');
+      if (!(file instanceof File) && !(file instanceof Blob)) {
+        throw new ApiError('E_BAD_REQUEST', '缺少 file 字段', 400);
+      }
+      const name = file instanceof File ? file.name : 'upload.bin';
+      const buf = new Uint8Array(await file.arrayBuffer());
+      let binary = '';
+      for (let i = 0; i < buf.length; i += 1) binary += String.fromCharCode(buf[i]!);
+      const contentBase64 = btoa(binary);
+      return (await this.mockHandler(path, {
+        ...opts,
+        method: 'POST',
+        headers: requestHeaders,
+        body: { fileName: name, contentBase64 },
+      })) as T;
+    }
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT);
+    try {
+      const url = resolveRequestURL(this.baseURL, path, opts.query);
+      const headers = sanitizeHeaders(requestHeaders);
+      // 不要手动设置 Content-Type，由浏览器带 multipart boundary
+      let res: Response;
+      try {
+        res = await fetch(url, {
+          method: 'POST',
+          headers,
+          body: form,
+          signal: opts.signal ?? controller.signal,
+        });
+      } catch (err) {
+        const aborted = err instanceof DOMException && err.name === 'AbortError';
+        if (aborted) {
+          throw new ApiError('E_TIMEOUT', '上传超时，请确认 de-core 是否可达', 408);
+        }
+        throw new ApiError('E_NETWORK', '无法连接控制面完成上传', 0);
+      }
+      let json: ApiResponse<T>;
+      try {
+        json = (await res.json()) as ApiResponse<T>;
+      } catch {
+        throw new ApiError('E_BAD_RESPONSE', `控制面返回非 JSON（HTTP ${res.status}）`, res.status);
+      }
+      if (!res.ok || !json.ok) {
+        throw new ApiError(json.error?.code ?? 'E_UNKNOWN', json.error?.message ?? '上传失败', res.status);
+      }
+      return (json.data ?? null) as T;
+    } finally {
+      clearTimeout(t);
+    }
   }
 }
 

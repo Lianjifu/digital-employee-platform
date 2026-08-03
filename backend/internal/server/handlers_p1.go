@@ -63,29 +63,56 @@ func (s *Server) workflowByID(r *http.Request) (any, error) {
 	id := identityFrom(r.Context())
 	s.Store.Lock()
 	defer s.Store.Unlock()
-	var wf map[string]any
-	for _, w := range s.Store.Workflows {
-		if str(w["id"]) == wid {
-			wf = w
-			break
+	resolveWorkflow := func(want string) map[string]any {
+		aliases := []string{want}
+		if want == "wf1" {
+			aliases = append(aliases, "wf-1")
+		} else if want == "wf-1" {
+			aliases = append(aliases, "wf1")
 		}
+		for _, candidate := range aliases {
+			for _, w := range s.Store.Workflows {
+				if str(w["id"]) == candidate {
+					return w
+				}
+			}
+		}
+		return nil
 	}
+	wf := resolveWorkflow(wid)
 	if wf == nil && action == "" {
 		return nil, apperr.NotFoundErr(apperr.NotFound, "流程不存在")
 	}
 	if action == "" {
 		return wf, nil
 	}
+	// 后续动作统一使用实际存储的 id，避免 wf1 / wf-1 分叉
+	if wf != nil {
+		wid = str(wf["id"])
+	}
 	body, _ := decodeMap(r)
 	switch action {
 	case "versions":
 		if r.Method == http.MethodGet {
-			return s.Store.WorkflowVersions[wid], nil
+			if vers := s.Store.WorkflowVersions[wid]; vers != nil {
+				return vers, nil
+			}
+			// 兼容旧种子键名
+			if wid == "wf1" {
+				return s.Store.WorkflowVersions["wf-1"], nil
+			}
+			if wid == "wf-1" {
+				return s.Store.WorkflowVersions["wf1"], nil
+			}
+			return []map[string]any{}, nil
 		}
 		ver := map[string]any{"id": s.Store.ID("wfv"), "workflowId": wid, "version": coalesce(str(body["version"]), "0.1.0"), "status": "draft", "createdAt": time.Now().UTC().Format(time.RFC3339)}
 		s.Store.WorkflowVersions[wid] = append([]map[string]any{ver}, s.Store.WorkflowVersions[wid]...)
 		return ver, nil
 	case "draft":
+		if wf == nil {
+			return nil, apperr.NotFoundErr(apperr.NotFound, "流程不存在")
+		}
 		for k, v := range body {
 			wf[k] = v
 		}
@@ -95,6 +122,9 @@ func (s *Server) workflowByID(r *http.Request) (any, error) {
 	case "validate":
 		return map[string]any{"ok": true, "issues": []string{}}, nil
 	case "publish":
+		if wf == nil {
+			return nil, apperr.NotFoundErr(apperr.NotFound, "流程不存在")
+		}
 		if err := s.evaluateWriteLocked(r, "workflow", "publish", policy.Input{ApproverID: id.ID, SubmitterID: id.ID}); err != nil {
 			return nil, err
 		}
@@ -107,8 +137,14 @@ func (s *Server) workflowByID(r *http.Request) (any, error) {
 		s.Store.WorkflowRuns = append([]map[string]any{run}, s.Store.WorkflowRuns...)
 		return run, nil
 	case "rollback":
+		if wf == nil {
+			return nil, apperr.NotFoundErr(apperr.NotFound, "流程不存在")
+		}
 		return wf, nil
 	case "publish-as-skill":
+		if wf == nil {
+			return nil, apperr.NotFoundErr(apperr.NotFound, "流程不存在")
+		}
 		skill := map[string]any{"id": s.Store.ID("wfs"), "workspaceId": s.workspaceID(r), "workflowId": wid, "name": coalesce(str(body["name"]), str(wf["name"])+"技能"), "status": "published", "version": "1.0.0"}
 		s.Store.WorkflowSkills = append([]map[string]any{skill}, s.Store.WorkflowSkills...)
 		return skill, nil
@@ -141,123 +177,6 @@ func (s *Server) generateWorkflow(r *http.Request) (any, error) {
 	defer s.Store.Unlock()
 	s.Store.WorkflowGens = append([]map[string]any{item}, s.Store.WorkflowGens...)
 	return item, nil
-}
-
-func (s *Server) skillsGovernanceOverview(r *http.Request) (any, error) {
-	s.Store.RLock()
-	defer s.Store.RUnlock()
-	return s.Store.SkillGovernance, nil
-}
-
-func (s *Server) listSkillCatalog(r *http.Request) (any, error) {
-	s.Store.RLock()
-	defer s.Store.RUnlock()
-	return s.Store.SkillCatalog, nil
-}
-
-func (s *Server) listSkillsAligned(r *http.Request) (any, error) {
-	return s.listSkills(r)
-}
-
-func (s *Server) memoryOverviewAligned(r *http.Request) (any, error) {
-	ws := s.workspaceID(r)
-	s.Store.RLock()
-	defer s.Store.RUnlock()
-	short, working, long, pending := 0, 0, 0, 0
-	for _, m := range s.Store.MemoryRecords {
-		if str(m["workspaceId"]) != ws {
-			continue
-		}
-		switch str(m["layer"]) {
-		case "short_term":
-			short++
-		case "working":
-			working++
-		case "long_term":
-			long++
-		}
-	}
-	for _, c := range s.Store.MemoryCands {
-		if str(c["workspaceId"]) == ws && str(c["status"]) == "pending" {
-			pending++
-		}
-	}
-	return map[string]any{
-		"totals": map[string]any{
-			"shortTerm": short, "working": working, "longTerm": long, "pendingCandidates": pending,
-		},
-		"policy": s.Store.MemoryPolicies[ws],
-	}, nil
-}
-
-func (s *Server) memoryRecordAction(r *http.Request) (any, error) {
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 4 {
-		return nil, apperr.NotFoundErr(apperr.NotFound, "记忆不存在")
-	}
-	mid, action := parts[3], ""
-	if len(parts) >= 5 {
-		action = parts[4]
-	}
-	id := identityFrom(r.Context())
-	s.Store.Lock()
-	defer s.Store.Unlock()
-	for i, m := range s.Store.MemoryRecords {
-		if str(m["id"]) != mid {
-			continue
-		}
-		switch {
-		case action == "expire" && r.Method == http.MethodPost:
-			m["status"] = "expired"
-			return m, nil
-		case action == "candidate" && r.Method == http.MethodPost:
-			cand := map[string]any{"id": s.Store.ID("mc"), "workspaceId": m["workspaceId"], "memoryId": mid, "title": "记忆候选", "status": "pending", "confidence": m["confidence"]}
-			s.Store.MemoryCands = append([]map[string]any{cand}, s.Store.MemoryCands...)
-			return cand, nil
-		case r.Method == http.MethodDelete:
-			s.Store.MemoryRecords = append(s.Store.MemoryRecords[:i], s.Store.MemoryRecords[i+1:]...)
-			return map[string]any{"id": mid}, nil
-		}
-	}
-	_ = id
-	return nil, apperr.NotFoundErr(apperr.NotFound, "记忆不存在")
-}
-
-func (s *Server) memoryCandidateActionAligned(r *http.Request) (any, error) {
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 5 {
-		return nil, apperr.NotFoundErr(apperr.NotFound, "候选不存在")
-	}
-	cid, action := parts[3], parts[4]
-	// approve|reject|promote
-	if action == "approve" {
-		action = "promote"
-	}
-	id := identityFrom(r.Context())
-	if id.Role != "admin" && action == "promote" {
-		return nil, apperr.Forbidden(apperr.AdminRequired, "记忆晋升需管理员")
-	}
-	s.Store.Lock()
-	defer s.Store.Unlock()
-	for _, c := range s.Store.MemoryCands {
-		if str(c["id"]) != cid {
-			continue
-		}
-		if action == "promote" {
-			c["status"] = "promoted"
-		} else {
-			c["status"] = "rejected"
-		}
-		return c, nil
-	}
-	return nil, apperr.NotFoundErr(apperr.NotFound, "候选不存在")
-}
-
-func (s *Server) memoryRefinement(r *http.Request) (any, error) {
-	return map[string]any{
-		"scheduledFor": time.Now().Add(1 * time.Hour).UTC().Format(time.RFC3339),
-		"workingCreated": 1, "longCreated": 0, "candidatesCreated": 1,
-	}, nil
 }
 
 func (s *Server) listNotificationChannels(r *http.Request) (any, error) {
@@ -347,7 +266,3 @@ func (s *Server) listWebhooksConfig(r *http.Request) (any, error) {
 }
 
 func (s *Server) emptyOK(r *http.Request) (any, error) { return []any{}, nil }
-
-func (s *Server) skillsGovernanceEmpty(r *http.Request) (any, error) {
-	return []any{}, nil
-}

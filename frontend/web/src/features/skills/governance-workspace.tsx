@@ -96,10 +96,10 @@ export function GovernanceWorkspace({
 
   const kpiItems = [
     { key: 'calls', label: '24h 调用', value: overview?.calls24h?.toLocaleString() ?? '—', tone: 'brand' as const, filter: null as null | SkillRuntimeHealth['status'] },
-    { key: 'success', label: '成功率', value: overview ? `${overview.successRate}%` : '—', tone: 'success' as const, filter: null },
-    { key: 'p95', label: '全局 P95', value: overview ? `${overview.p95Ms}ms` : '—', tone: 'info' as const, filter: null },
-    { key: 'abnormal', label: '异常能力', value: overview?.abnormalSkills ?? '—', tone: 'error' as const, filter: 'incident' as const },
-    { key: 'pending', label: '待处置', value: overview?.pendingActions ?? '—', tone: 'warn' as const, filter: 'attention' as const },
+    { key: 'success', label: '成功率', value: overview ? `${Number(overview.successRate).toFixed(1)}%` : '—', tone: 'success' as const, filter: null },
+    { key: 'p95', label: '全局 P95', value: overview ? `${overview.p95Ms ?? 0}ms` : '—', tone: 'info' as const, filter: null },
+    { key: 'abnormal', label: '异常能力', value: overview?.abnormalSkills ?? 0, tone: 'error' as const, filter: 'incident' as const },
+    { key: 'pending', label: '待处置', value: overview?.pendingActions ?? 0, tone: 'warn' as const, filter: 'attention' as const },
   ];
 
   return (

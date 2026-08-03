@@ -1,7 +1,9 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -103,6 +105,9 @@ func (s *Server) taskRoute(r *http.Request) (any, error) {
 		task["status"] = nextStatus
 		task["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
 		s.Store.AppendAudit(str(task["workspaceId"]), id.Name, "任务流转", str(task["title"])+":"+stage, "success", "")
+		if nextStatus == "completed" || nextStatus == "review" {
+			s.writeTaskWorkingMemoryLocked(task, id, nextStatus)
+		}
 		return task, nil
 	case "approve":
 		if id.Role != "admin" {
@@ -166,7 +171,27 @@ func (s *Server) taskTransitionLocked(task map[string]any, action string, body m
 	task["lifecycleStage"] = mapStatusToStage(next)
 	task["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
 	s.Store.AppendAudit(str(task["workspaceId"]), id.Name, "任务流转:"+action, str(task["title"]), "success", "")
+	if next == "completed" || next == "review" {
+		s.writeTaskWorkingMemoryLocked(task, id, next)
+	}
 	return task, nil
+}
+
+func (s *Server) writeTaskWorkingMemoryLocked(task map[string]any, id *auth.Identity, status string) {
+	title := coalesce(str(task["code"]), str(task["id"])) + " · " + coalesce(str(task["title"]), "任务")
+	content := "任务状态更新为 " + status + "；保留执行上下文以便人工接手与复盘。"
+	if note := strings.TrimSpace(str(task["summary"])); note != "" {
+		content = note + "\n" + content
+	}
+	_, _ = s.ingestRuntimeMemoryLocked(runtimeMemoryInput{
+		WorkspaceID: str(task["workspaceId"]), OwnerID: coalesce(str(task["ownerId"]), id.ID), OwnerName: id.Name,
+		DigitalEmployeeID: str(task["digitalEmployeeId"]),
+		Title: title, Content: content,
+		SourceType: "task", SourceID: str(task["id"]),
+		CorrelationID: "corr_task_" + str(task["id"]),
+		Layer: "working", Scope: "team", Confidence: 0.9,
+	})
+	go s.persistMemory()
 }
 
 func toInt(v any) int {
@@ -597,6 +622,18 @@ func intFrom(v any) int {
 		return int(t)
 	case float32:
 		return int(t)
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(t))
+		if err != nil {
+			return 0
+		}
+		return n
+	case json.Number:
+		n, err := t.Int64()
+		if err != nil {
+			return 0
+		}
+		return int(n)
 	default:
 		return 0
 	}
@@ -780,11 +817,43 @@ func (s *Server) listSessions(r *http.Request) (any, error) {
 	ws := s.workspaceID(r)
 	s.Store.RLock()
 	defer s.Store.RUnlock()
-	var out []map[string]any
+	out := make([]map[string]any, 0)
 	for _, sess := range s.Store.Sessions {
-		if str(sess["workspaceId"]) == ws {
-			out = append(out, sess)
+		if str(sess["workspaceId"]) != ws {
+			continue
 		}
+		cp := map[string]any{}
+		for k, v := range sess {
+			cp[k] = v
+		}
+		// 兼容精简种子：补齐前端会话列表所需字段，避免 Invalid Date 崩溃
+		if str(cp["lastMessageAt"]) == "" {
+			if v := str(cp["updatedAt"]); v != "" {
+				cp["lastMessageAt"] = v
+			} else if v := str(cp["createdAt"]); v != "" {
+				cp["lastMessageAt"] = v
+			}
+		}
+		if str(cp["createdAt"]) == "" {
+			cp["createdAt"] = cp["lastMessageAt"]
+		}
+		if str(cp["updatedAt"]) == "" {
+			cp["updatedAt"] = cp["lastMessageAt"]
+		}
+		if str(cp["preview"]) == "" {
+			cp["preview"] = "暂无消息"
+		}
+		if str(cp["status"]) == "" {
+			cp["status"] = "active"
+		}
+		if str(cp["agent"]) == "" {
+			if name := str(cp["digitalEmployeeName"]); name != "" {
+				cp["agent"] = name
+			} else {
+				cp["agent"] = "岗位专家"
+			}
+		}
+		out = append(out, cp)
 	}
 	return out, nil
 }
@@ -801,18 +870,75 @@ func (s *Server) getConversation(r *http.Request) (any, error) {
 		return nil, apperr.NotFoundErr(apperr.NotFound, "会话不存在")
 	}
 	cid := parts[2]
+	ws := s.workspaceID(r)
 	s.Store.RLock()
 	defer s.Store.RUnlock()
-	for _, c := range s.Store.Conversations {
-		if str(c["id"]) == cid {
+
+	findConversation := func(id string) map[string]any {
+		for _, c := range s.Store.Conversations {
+			if str(c["id"]) != id {
+				continue
+			}
+			if w := str(c["workspaceId"]); w != "" && w != ws {
+				return nil
+			}
 			cp := map[string]any{}
 			for k, v := range c {
 				cp[k] = v
 			}
-			cp["messages"] = s.Store.Messages[cid]
-			return cp, nil
+			if msgs, ok := s.Store.Messages[id]; ok {
+				cp["messages"] = msgs
+			} else if cp["messages"] == nil {
+				cp["messages"] = []map[string]any{}
+			}
+			return cp
 		}
+		return nil
 	}
+
+	if cp := findConversation(cid); cp != nil {
+		return cp, nil
+	}
+
+	// 兼容：前端可能用 session.id 拉详情；解析 session.conversationId 或返回空消息壳
+	for _, sess := range s.Store.Sessions {
+		if str(sess["id"]) != cid {
+			continue
+		}
+		if str(sess["workspaceId"]) != ws {
+			return nil, apperr.Forbidden(apperr.WorkspaceScope, "无权读取其他工作区会话")
+		}
+		convID := str(sess["conversationId"])
+		if convID != "" {
+			if cp := findConversation(convID); cp != nil {
+				return cp, nil
+			}
+		}
+		messages := s.Store.Messages[cid]
+		if messages == nil && convID != "" {
+			messages = s.Store.Messages[convID]
+		}
+		if messages == nil {
+			messages = []map[string]any{}
+		}
+		outID := convID
+		if outID == "" {
+			outID = cid
+		}
+		updatedAt := str(sess["updatedAt"])
+		if updatedAt == "" {
+			updatedAt = str(sess["lastMessageAt"])
+		}
+		return map[string]any{
+			"id":                outID,
+			"workspaceId":       str(sess["workspaceId"]),
+			"title":             sess["title"],
+			"digitalEmployeeId": sess["digitalEmployeeId"],
+			"updatedAt":         updatedAt,
+			"messages":          messages,
+		}, nil
+	}
+
 	return nil, apperr.NotFoundErr(apperr.NotFound, "会话不存在")
 }
 

@@ -57,10 +57,13 @@ type Store struct {
 	WorkflowVersions map[string][]map[string]any
 	WorkflowGens    []map[string]any
 	WorkflowTpls    []map[string]any
-	Skills          []map[string]any
-	SkillCatalog    []map[string]any
-	SkillGovernance map[string]any
-	MemoryRecords   []map[string]any
+	Skills             []map[string]any
+	SkillCatalog       []map[string]any
+	SkillGovernance    map[string]any
+	SkillHealth        []map[string]any
+	SkillIntegrations  []map[string]any
+	SkillExtra         map[string]any // policies, runtimes, permissions, versions, bindings, incidents, events
+	MemoryRecords      []map[string]any
 	MemoryCands     []map[string]any
 	MemoryPolicies  map[string]map[string]any
 	MemoryAudits    []map[string]any
@@ -304,22 +307,42 @@ func (s *Store) seed() {
 		{"workspaceId": "w1", "month": "2026-07", "usedUsd": 124.5, "limitUsd": 500},
 	}
 	s.KnowledgeDocs = []map[string]any{
-		{"id": "kd-1", "workspaceId": "w1", "title": "故障手册-缓存", "status": "published", "ownerId": "u1", "updatedAt": "2026-07-18T00:00:00Z"},
-		{"id": "kd-2", "workspaceId": "w1", "title": "发布检查清单", "status": "review", "ownerId": "u2", "updatedAt": "2026-07-19T00:00:00Z"},
+		{"id": "kd-1", "workspaceId": "w1", "packageId": "pkg-ops", "title": "故障手册-缓存", "source": "Runbook", "status": "ready", "ownerId": "u1", "sizeKb": 86, "chunks": 24, "citeCount": 12, "snippet": "Redis 缓存故障处置步骤与扩容建议。", "updatedAt": "2026-07-18T00:00:00Z", "quality": map[string]any{"completeness": 90, "freshness": 85, "citationAccuracy": 92}},
+		{"id": "kd-2", "workspaceId": "w1", "packageId": "pkg-ops", "title": "发布检查清单", "source": "变更管理", "status": "indexing", "ownerId": "u2", "sizeKb": 32, "chunks": 9, "citeCount": 3, "snippet": "生产发布前检查项。", "updatedAt": "2026-07-19T00:00:00Z", "quality": map[string]any{"completeness": 70, "freshness": 90, "citationAccuracy": 80}},
 	}
 	s.KBList = []map[string]any{
 		{"id": "kb-ops", "workspaceId": "w1", "name": "运维知识库", "docCount": 2, "status": "ready"},
 	}
 
 	s.Conversations = []map[string]any{
+		{"id": "s1", "workspaceId": "w1", "title": "Redis OOM 处理", "digitalEmployeeId": "de-1", "updatedAt": "2026-07-22T12:53:42Z", "messages": []map[string]any{}},
 		{"id": "conv-1", "workspaceId": "w1", "title": "缓存延迟排查", "digitalEmployeeId": "de-1", "updatedAt": "2026-07-22T08:00:00Z", "messages": []map[string]any{}},
+	}
+	s.Messages["s1"] = []map[string]any{
+		{"id": "msg-s1-1", "role": "user", "content": "prod-redis-01 内存打满了，怎么扩容？", "createdAt": "2026-07-22T12:47:00Z"},
+		{"id": "msg-s1-2", "role": "assistant", "content": "建议先确认 maxmemory 与 eviction policy，再评估是否扩容到 16GB。", "createdAt": "2026-07-22T12:53:42Z"},
 	}
 	s.Messages["conv-1"] = []map[string]any{
 		{"id": "msg-1", "role": "user", "content": "缓存命中率下降怎么排查？", "createdAt": "2026-07-22T08:00:00Z"},
 		{"id": "msg-2", "role": "assistant", "content": "建议先检查 Redis 慢查询与热点 key。", "createdAt": "2026-07-22T08:00:05Z"},
 	}
 	s.Sessions = []map[string]any{
-		{"id": "sess-1", "workspaceId": "w1", "title": "缓存延迟排查", "conversationId": "conv-1", "updatedAt": "2026-07-22T08:00:00Z", "digitalEmployeeId": "de-1"},
+		{
+			"id": "s1", "workspaceId": "w1", "ownerId": "u1", "title": "Redis OOM 处理",
+			"preview": "建议先确认 maxmemory 与 eviction policy，再评估是否扩容到 16GB。", "agent": "SRE 故障处置专员",
+			"digitalEmployeeId": "de-1", "digitalEmployeeName": "SRE 故障处置专员",
+			"conversationId": "s1", "status": "active",
+			"createdAt": "2026-07-22T12:47:00Z", "updatedAt": "2026-07-22T12:53:42Z",
+			"lastMessageAt": "2026-07-22T12:53:42Z", "pinned": true,
+		},
+		{
+			"id": "sess-1", "workspaceId": "w1", "ownerId": "u1", "title": "缓存延迟排查",
+			"preview": "建议先检查 Redis 慢查询与热点 key。", "agent": "SRE 故障处置专员",
+			"digitalEmployeeId": "de-1", "digitalEmployeeName": "SRE 故障处置专员",
+			"conversationId": "conv-1", "status": "active",
+			"createdAt": "2026-07-22T08:00:00Z", "updatedAt": "2026-07-22T08:00:05Z",
+			"lastMessageAt": "2026-07-22T08:00:05Z",
+		},
 	}
 	s.SlashCommands = []map[string]any{
 		{"id": "cmd-help", "name": "help", "description": "显示可用指令"},
@@ -327,43 +350,168 @@ func (s *Store) seed() {
 	}
 
 	s.Workflows = []map[string]any{
-		{"id": "wf-1", "workspaceId": "w1", "name": "故障自愈", "status": "active", "lifecycleStatus": "published", "version": "1.2.0", "ownerId": "u1", "environment": "production", "updatedAt": "2026-07-19T12:00:00Z", "nodes": []map[string]any{{"id": "n1", "type": "start"}, {"id": "n2", "type": "action"}}, "edges": []map[string]any{}},
+		{"id": "wf1", "workspaceId": "w1", "name": "故障自愈", "status": "active", "lifecycleStatus": "published", "version": "1.2.0", "ownerId": "u1", "environment": "production", "updatedAt": "2026-07-19T12:00:00Z", "nodes": []map[string]any{{"id": "n1", "type": "start"}, {"id": "n2", "type": "action"}}, "edges": []map[string]any{}},
 	}
-	s.WorkflowVersions["wf-1"] = []map[string]any{
-		{"id": "wfv-1", "workflowId": "wf-1", "version": "1.2.0", "status": "published", "createdAt": "2026-07-19T12:00:00Z"},
+	s.WorkflowVersions["wf1"] = []map[string]any{
+		{"id": "wfv-1", "workflowId": "wf1", "version": "1.2.0", "status": "published", "createdAt": "2026-07-19T12:00:00Z"},
 	}
 	s.WorkflowGens = []map[string]any{}
 	s.WorkflowTpls = []map[string]any{
 		{"id": "wft-1", "name": "告警处置模板", "description": "标准告警处置"},
 	}
 	s.WorkflowSkills = []map[string]any{
-		{"id": "wfs-1", "workspaceId": "w1", "workflowId": "wf-1", "name": "故障自愈技能", "status": "published", "version": "1.2.0"},
+		{
+			"id": "wfs-1", "workspaceId": "w1", "workflowId": "wf1", "sourceWorkflowId": "wf1", "sourceVersionId": "v1.2.0",
+			"name": "故障自愈技能", "description": "标准告警关联、定位建议与受控恢复步骤。",
+			"status": "published", "version": "1.2.0", "riskLevel": "high", "approvalRequired": true, "rollbackSupported": true,
+		},
 	}
 	s.WorkflowRuns = []map[string]any{
-		{"id": "run-1", "workspaceId": "w1", "workflowId": "wf-1", "status": "succeeded", "startedAt": "2026-07-22T07:00:00Z", "finishedAt": "2026-07-22T07:05:00Z"},
+		{"id": "run-1", "workspaceId": "w1", "workflowId": "wf1", "status": "succeeded", "startedAt": "2026-07-22T07:00:00Z", "finishedAt": "2026-07-22T07:05:00Z"},
 	}
 	s.Skills = []map[string]any{
-		{"id": "sk-1", "workspaceId": "w1", "name": "kubectl 只读", "kind": "skill", "lifecycleStatus": "enabled", "status": "published", "runtime": "gvisor", "version": "0.9.0", "risk": "medium"},
+		{
+			"id": "sk-1", "workspaceId": "w1", "ownerId": "u1", "owner": "平台管理员", "team": "SRE 平台组",
+			"name": "kubectl 只读", "kind": "skill", "description": "只读查询集群资源，禁止破坏性操作",
+			"lifecycleStatus": "enabled", "status": "installed", "runtime": "gvisor", "version": "0.9.0",
+			"riskLevel": "mid", "rating": 4.6, "installCount": 320, "cacheable": true, "source": "market",
+			"environment": "production", "classification": "internal", "lastVerifiedAt": "2 小时前",
+		},
+		{
+			"id": "sk-2", "workspaceId": "w1", "ownerId": "u1", "owner": "平台管理员", "team": "可观测性组",
+			"name": "loki-query", "kind": "skill", "description": "Loki 日志检索",
+			"lifecycleStatus": "enabled", "status": "installed", "version": "1.0.0",
+			"riskLevel": "low", "rating": 4.5, "installCount": 210, "cacheable": true, "source": "import",
+			"environment": "production", "classification": "internal", "lastVerifiedAt": "昨天",
+		},
 	}
 	s.SkillCatalog = []map[string]any{
-		{"id": "sc-1", "workspaceId": "w1", "name": "日志检索", "kind": "skill", "version": "1.0.0"},
+		{
+			"id": "sc-1", "workspaceId": "w1", "name": "日志检索", "kind": "skill", "version": "1.0.0",
+			"description": "跨 Loki / ES 的统一日志检索能力", "status": "available", "rating": 4.7, "installCount": 1800,
+			"riskLevel": "low", "cacheable": true, "publisher": "企业能力商店", "signed": true,
+			"dependencies": []string{}, "license": "内部许可", "lastScannedAt": "12 分钟前", "vulnerabilityCount": 0,
+			"supportedEnvironments": []string{"测试", "生产"}, "environment": "production", "classification": "internal",
+			"channel": "builtin", "syncedAt": "种子目录", "visibilityScope": "global", "releaseChannel": "stable",
+		},
+		{
+			"id": "sc-2", "workspaceId": "w1", "name": "mysql-cli", "kind": "skill", "version": "2.0.0",
+			"description": "MySQL 命令执行（受控沙箱）", "status": "available", "rating": 4.6, "installCount": 2200,
+			"riskLevel": "mid", "cacheable": true, "publisher": "企业能力商店", "signed": true,
+			"dependencies": []string{}, "license": "Apache-2.0", "lastScannedAt": "20 分钟前", "vulnerabilityCount": 0,
+			"supportedEnvironments": []string{"测试", "生产"}, "environment": "production", "classification": "internal",
+			"channel": "builtin", "syncedAt": "种子目录", "visibilityScope": "global", "releaseChannel": "stable",
+		},
+		{
+			"id": "sc-high", "workspaceId": "w1", "name": "jenkins-mcp", "kind": "mcp", "version": "1.0.0",
+			"description": "Jenkins 构建触发", "status": "available", "rating": 4.2, "installCount": 400,
+			"riskLevel": "high", "cacheable": false, "publisher": "企业能力商店", "signed": true,
+			"dependencies": []string{"jenkins-mcp"}, "license": "商业授权", "lastScannedAt": "刚刚", "vulnerabilityCount": 0,
+			"supportedEnvironments": []string{"隔离环境"}, "environment": "sandbox", "classification": "restricted",
+			"channel": "builtin", "syncedAt": "种子目录", "visibilityScope": "workspace", "releaseChannel": "beta",
+		},
+		{
+			"id": "sc-unsigned", "workspaceId": "w1", "name": "community-shell", "kind": "skill", "version": "0.3.0",
+			"description": "社区未签名 Shell 工具（仅演示供应链门禁）", "status": "available", "rating": 3.1, "installCount": 40,
+			"riskLevel": "high", "cacheable": false, "publisher": "未知社区", "signed": false,
+			"dependencies": []string{}, "license": "未知", "lastScannedAt": "刚刚", "vulnerabilityCount": 0,
+			"supportedEnvironments": []string{"隔离环境"}, "environment": "sandbox", "classification": "restricted",
+			"channel": "builtin", "syncedAt": "种子目录", "visibilityScope": "workspace", "releaseChannel": "beta",
+		},
+		{
+			"id": "sc-vuln", "workspaceId": "w1", "name": "legacy-ftp-tool", "kind": "tool", "version": "0.1.0",
+			"description": "含已知漏洞的 FTP 工具（演示漏洞门禁）", "status": "available", "rating": 2.8, "installCount": 12,
+			"riskLevel": "mid", "cacheable": false, "publisher": "企业能力商店", "signed": true,
+			"dependencies": []string{}, "license": "MIT", "lastScannedAt": "刚刚", "vulnerabilityCount": 4,
+			"supportedEnvironments": []string{"隔离环境"}, "environment": "sandbox", "classification": "restricted",
+			"channel": "builtin", "syncedAt": "种子目录", "visibilityScope": "workspace", "releaseChannel": "beta",
+		},
 	}
 	s.SkillGovernance = map[string]any{
-		"total": 1, "healthy": 1, "paused": 0, "incidents": 0,
+		"calls24h": 0, "successRate": 100, "p95Ms": 0, "abnormalSkills": 0, "pendingActions": 0,
+	}
+	s.SkillHealth = []map[string]any{
+		{"id": "sh-sk-1", "skillId": "sk-1", "name": "kubectl 只读", "kind": "skill", "environment": "production", "status": "healthy", "calls24h": 128, "successRate": 99.6, "p95Ms": 180, "errorRate": 0.4, "riskLevel": "mid", "owner": "平台管理员", "references": 2, "updatedAt": "12 分钟前"},
+		{"id": "sh-sk-2", "skillId": "sk-2", "name": "loki-query", "kind": "skill", "environment": "production", "status": "attention", "calls24h": 86, "successRate": 98.2, "p95Ms": 240, "errorRate": 1.8, "riskLevel": "low", "owner": "平台管理员", "references": 1, "updatedAt": "28 分钟前"},
+	}
+	s.SkillIntegrations = []map[string]any{}
+	s.SkillExtra = map[string]any{
+		"policies":    map[string]any{},
+		"runtimes":    map[string]any{},
+		"permissions": map[string]any{},
+		"versions":    map[string]any{},
+		"bindings": []map[string]any{
+			{"id": "cap-de1-sk1", "workspaceId": "w1", "targetType": "agent", "targetId": "de-1", "targetName": "故障自愈助手", "capabilityKind": "skill", "capabilityId": "sk-1", "pinnedVersion": "0.9.0", "status": "active", "createdBy": "系统", "createdAt": "2026-07-19T09:40:00Z", "auditId": "audit-cap-1"},
+			{"id": "cap-wf1-sk1", "workspaceId": "w1", "targetType": "workflow", "targetId": "wf1", "targetName": "故障自愈", "capabilityKind": "skill", "capabilityId": "sk-1", "pinnedVersion": "0.9.0", "status": "active", "createdBy": "系统", "createdAt": "2026-07-19T09:45:00Z", "auditId": "audit-cap-2"},
+		},
+		"incidents": []map[string]any{
+			{"id": "inc-loki-1", "workspaceId": "w1", "skillId": "sk-2", "skillName": "loki-query", "severity": "P2", "type": "latency", "title": "日志检索 P95 升高", "detail": "近 30 分钟查询延迟上升，建议重新验证连接。", "status": "open", "createdAt": "14:10", "requestId": "req_loki_1"},
+		},
+		"events": []map[string]any{
+			{"id": "sev-1", "workspaceId": "w1", "time": "12:20", "skillName": "kubectl 只读", "type": "call", "action": "健康验证完成", "actor": "系统", "result": "success"},
+			{"id": "sev-2", "workspaceId": "w1", "time": "14:10", "skillName": "loki-query", "type": "call", "action": "延迟告警", "actor": "运行监控", "result": "failed"},
+		},
 	}
 	s.MemoryRecords = []map[string]any{
-		{"id": "mem-1", "workspaceId": "w1", "layer": "working", "scope": "workspace", "content": "生产 Redis 集群高峰时段易抖动", "status": "active", "confidence": 0.9, "ownerId": "u1", "createdAt": "2026-07-20T00:00:00Z"},
-		{"id": "mem-2", "workspaceId": "w1", "layer": "short_term", "scope": "user", "content": "本轮会话关注缓存命中率", "status": "active", "confidence": 0.7, "ownerId": "u2", "createdAt": "2026-07-22T08:00:00Z"},
-		{"id": "mem-3", "workspaceId": "w1", "layer": "long_term", "scope": "workspace", "content": "高峰扩容经验", "status": "active", "confidence": 0.95, "ownerId": "u1", "createdAt": "2026-07-10T00:00:00Z"},
+		{
+			"id": "mem-short-1", "workspaceId": "w1", "ownerId": "u1", "digitalEmployeeId": "de-sre",
+			"layer": "short_term", "scope": "user", "title": "Redis OOM 会话上下文",
+			"content": "当前会话已确认 prod-redis-01 的 maxmemory 风险，等待双重审批执行。",
+			"classification": "internal", "sourceType": "conversation", "sourceId": "cv1",
+			"correlationId": "corr_conversation_cv1", "confidence": 0.92, "status": "active",
+			"expiresAt": "2026-07-22T08:00:00.000Z", "createdAt": "2026-07-21T08:12:00.000Z", "updatedAt": "2026-07-21T08:24:00.000Z",
+		},
+		{
+			"id": "mem-work-1", "workspaceId": "w1", "ownerId": "u1", "digitalEmployeeId": "de-sre",
+			"layer": "working", "scope": "team", "title": "TSK-20260713-001 处置上下文",
+			"content": "已完成内存趋势验证与大 Key 识别；人工接管前需保留执行证据。",
+			"classification": "internal", "sourceType": "task", "sourceId": "t1",
+			"correlationId": "corr_task_t1", "confidence": 0.96, "status": "active",
+			"expiresAt": "2026-08-20T00:00:00.000Z", "createdAt": "2026-07-13T08:24:00.000Z", "updatedAt": "2026-07-21T08:24:00.000Z",
+		},
+		{
+			"id": "mem-long-1", "workspaceId": "w1", "ownerId": "u1", "digitalEmployeeId": "de-sre",
+			"layer": "long_term", "scope": "workspace", "title": "Redis OOM 处置偏好",
+			"content": "生产 Redis OOM 优先检索已发布 Runbook；涉及配置写入必须由 SRE 与管理员完成双重审批。",
+			"classification": "restricted", "sourceType": "workflow", "sourceId": "wf1",
+			"correlationId": "corr_task_t1", "confidence": 0.91, "status": "active",
+			"createdAt": "2026-07-18T09:00:00.000Z", "updatedAt": "2026-07-21T08:24:00.000Z",
+		},
+		{
+			"id": "mem-long-pending", "workspaceId": "w1", "ownerId": "u1", "digitalEmployeeId": "de-alert-ops",
+			"layer": "long_term", "scope": "workspace", "title": "告警静默窗口经验",
+			"content": "重大活动窗口内对已知抖动告警可建议静默，但不得自动关闭 P1；需值班经理确认后执行。",
+			"classification": "confidential", "sourceType": "task", "sourceId": "t2",
+			"correlationId": "corr_task_t2", "confidence": 0.89, "status": "pending_review",
+			"createdAt": "2026-07-20T10:00:00.000Z", "updatedAt": "2026-07-21T09:00:00.000Z",
+		},
+		{
+			"id": "mem-long-2", "workspaceId": "w2", "ownerId": "u2", "digitalEmployeeId": "de-capacity",
+			"layer": "long_term", "scope": "workspace", "title": "预发扩容验收规则",
+			"content": "预发扩容先完成 10% 灰度与回滚演练，再提交生产发布审批。",
+			"classification": "internal", "sourceType": "task", "sourceId": "t6",
+			"correlationId": "corr_task_t6", "confidence": 0.88, "status": "active",
+			"createdAt": "2026-07-17T09:00:00.000Z", "updatedAt": "2026-07-20T08:00:00.000Z",
+		},
 	}
 	s.MemoryCands = []map[string]any{
-		{"id": "mc-1", "workspaceId": "w1", "memoryId": "mem-1", "title": "缓存抖动经验", "status": "pending", "confidence": 0.88},
+		{
+			"id": "mc-1", "workspaceId": "w1", "memoryId": "mem-long-pending",
+			"title": "告警静默窗口经验",
+			"summary": "重大活动窗口内对已知抖动告警可建议静默，但不得自动关闭 P1；需值班经理确认后执行。",
+			"classification": "confidential", "sourceCorrelationId": "corr_task_t2",
+			"status": "pending_review", "submittedAt": "2026-07-21T09:00:00.000Z",
+		},
 	}
 	s.MemoryPolicies["w1"] = map[string]any{
 		"workspaceId": "w1", "shortTermTtlHours": 24, "workingMemoryTtlDays": 30, "dailyRefinementTime": "02:00",
 		"shortToWorkingEnabled": true, "workingToLongEnabled": true, "longToKnowledgeEnabled": true,
 		"minimumConfidence": 0.85, "longTermWriteApproval": true, "sensitiveDataMasking": true,
-		"longTermCapacity": 5000, "usedCapacity": 12,
+		"longTermCapacity": 5000, "usedCapacity": 1,
+	}
+	s.MemoryAudits = []map[string]any{
+		{"id": "ma-1", "workspaceId": "w1", "time": "2026-07-21T09:00:00.000Z", "actor": "观星", "action": "提炼知识候选", "target": "告警静默窗口经验", "result": "success", "correlationId": "corr_task_t2"},
+		{"id": "ma-2", "workspaceId": "w1", "time": "2026-07-21T08:24:00.000Z", "actor": "夜航", "action": "写入记忆", "target": "Redis OOM 会话上下文", "result": "success", "correlationId": "corr_conversation_cv1"},
 	}
 	s.Channels = []map[string]any{
 		{"id": "ch-1", "workspaceId": "w1", "name": "企业微信通知", "kind": "wecom", "enabled": true, "monthlySent": 120, "successRate": 0.99},
@@ -383,19 +531,50 @@ func (s *Store) seed() {
 	}
 	s.ChannelDLQ = []map[string]any{}
 	s.KnowledgeExtra = map[string]any{
-		"packages": []map[string]any{{"id": "pkg-ops", "workspaceId": "w1", "name": "运维知识库", "domain": "运维", "status": "published", "classification": "internal", "currentVersion": map[string]any{"version": "3.1.0"}}},
-		"sources": []map[string]any{{"id": "ks-1", "workspaceId": "w1", "name": "Confluence", "kind": "confluence", "schedule": "daily", "status": "ready"}},
-		"governance": map[string]any{"workspaceId": "w1", "versionRetention": true, "piiMasking": true},
-		"audit": []map[string]any{},
-		"processingJobs": []map[string]any{},
-		"retrievalProfiles": []map[string]any{{"id": "rp-default", "workspaceId": "w1", "name": "默认检索", "topK": 5}},
-		"evaluations": []map[string]any{},
-		"graphEntities": []map[string]any{},
-		"graphRelations": []map[string]any{},
-		"bindings": []map[string]any{},
-		"citationTrace": []map[string]any{},
-		"eval": map[string]any{"recallAtK": 0.82, "citationAccuracy": 0.9},
-		"chunksTop": []map[string]any{},
+		"packages": []map[string]any{{
+			"id": "pkg-ops", "workspaceId": "w1", "name": "运维知识库", "description": "运维运行手册与变更检查",
+			"domain": "运维", "status": "published", "classification": "internal", "owner": "平台管理员", "ownerId": "u1",
+			"documentCount": 2, "documentIds": []string{"kd-1", "kd-2"}, "consumers": 1,
+			"currentVersion": map[string]any{"id": "kpv-ops-1", "version": "3.1.0", "status": "published", "indexVersion": "idx-310", "publishedAt": "2026-07-18T00:00:00Z", "qualityScore": 88, "changeSummary": "纳入缓存手册"},
+			"versions": []map[string]any{{"id": "kpv-ops-1", "version": "3.1.0", "status": "published", "indexVersion": "idx-310", "publishedAt": "2026-07-18T00:00:00Z", "qualityScore": 88, "changeSummary": "纳入缓存手册"}},
+		}},
+		"sources": []map[string]any{{"id": "ks-1", "workspaceId": "w1", "name": "Confluence", "kind": "Git / Markdown", "schedule": "daily", "status": "healthy", "documents": 2, "lastSync": "2026-07-20T00:00:00Z"}},
+		"governance": map[string]any{"workspaceId": "w1", "versionRetention": true, "piiMasking": true, "sensitiveDataDetection": true, "retentionDays": 365, "highRiskChangeApproval": true},
+		"audit": []map[string]any{{"id": "ka-1", "workspaceId": "w1", "time": "2026-07-18T00:00:00Z", "actor": "平台管理员", "action": "发布知识包", "target": "运维知识库", "result": "success"}},
+		"processingJobs": []map[string]any{{"id": "kj-1", "workspaceId": "w1", "packageId": "pkg-ops", "source": "故障手册-缓存", "strategy": "semantic", "status": "succeeded", "documentCount": 1, "chunkCount": 24, "indexVersion": "idx-310", "startedAt": "2026-07-18T00:00:00Z"}},
+		"retrievalProfiles": []map[string]any{{
+			"id": "rp-default", "workspaceId": "w1", "packageId": "pkg-ops", "name": "默认检索",
+			"retrievalModes": []string{"keyword", "vector"}, "topK": 5, "rerankEnabled": true, "noResultPolicy": "handoff",
+		}},
+		"evaluations": []map[string]any{{
+			"id": "kev-1", "workspaceId": "w1", "packageId": "pkg-ops", "profileId": "rp-default",
+			"baselineVersion": "3.0.0", "evaluatedVersion": "3.1.0",
+			"status": "passed", "recallAtK": 0.82, "mrr": 0.76, "ndcg": 0.81,
+			"citationAccuracy": 0.9, "p95LatencyMs": 210, "evaluatedAt": "2026-07-19T00:00:00Z",
+		}},
+		"graphEntities": []map[string]any{
+			{"id": "kge-redis", "workspaceId": "w1", "name": "redis-prod-01", "type": "asset", "confidence": 0.99, "sourceDocId": "kd-1", "sourceVersion": "v3.1"},
+			{"id": "kge-runbook", "workspaceId": "w1", "name": "故障手册-缓存", "type": "runbook", "confidence": 0.98, "sourceDocId": "kd-1", "sourceVersion": "v3.1"},
+			{"id": "kge-owner", "workspaceId": "w1", "name": "SRE 值班组", "type": "owner", "confidence": 0.99, "sourceDocId": "kd-1", "sourceVersion": "v3.1"},
+		},
+		"graphRelations": []map[string]any{
+			{"id": "kgr-01", "workspaceId": "w1", "fromId": "kge-redis", "toId": "kge-runbook", "type": "handled_by", "confidence": 0.98, "sourceDocId": "kd-1", "sourceVersion": "v3.1"},
+			{"id": "kgr-02", "workspaceId": "w1", "fromId": "kge-runbook", "toId": "kge-owner", "type": "owned_by", "confidence": 0.99, "sourceDocId": "kd-1", "sourceVersion": "v3.1"},
+		},
+		"bindings": []map[string]any{{
+			"id": "kb-bind-1", "workspaceId": "w1", "packageId": "pkg-ops", "packageName": "运维知识库", "packageVersion": "v3.1.0",
+			"consumerType": "agent", "consumerId": "de-1", "consumerName": "SRE 故障处置专员",
+			"environment": "production", "profileId": "rp-default", "noResultPolicy": "handoff",
+		}},
+		"citationTrace": []map[string]any{{
+			"id": "ct-1", "workspaceId": "w1", "docId": "kd-1", "title": "故障手册-缓存",
+			"citeCount": 12, "lastUsed": "2026-07-22", "usedBy": []string{"SRE 故障处置专员"},
+		}},
+		"eval": map[string]any{"workspaceId": "w1", "recall": 82, "precision": 90, "p95Latency": 210, "hitRate": 32, "recallAtK": 0.82, "citationAccuracy": 0.9},
+		"chunksTop": []map[string]any{
+			{"idx": 1, "source": "Runbook", "score": 0.91, "docId": "kd-1", "text": "Redis 缓存故障处置步骤与扩容建议。"},
+			{"idx": 2, "source": "变更管理", "score": 0.84, "docId": "kd-2", "text": "生产发布前检查项。"},
+		},
 	}
 
 	s.HomeKPIs = map[string]any{

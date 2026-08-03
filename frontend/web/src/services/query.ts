@@ -25,7 +25,7 @@ export function useApiQuery<T>(
     ...options,
   });
   return {
-    data: q.data,
+    data: q.data === null ? undefined : q.data,
     error: q.error,
     isLoading: q.isLoading,
     isFetching: q.isFetching,
@@ -60,4 +60,22 @@ export function useApiMutation<TData, TVar>(
       options?.onError?.(err, vars);
     },
   } as UseMutationOptions<TData, unknown, TVar>);
+}
+
+/** multipart 文件上传（FormData） */
+export function useApiUploadMutation<TData>(
+  path: string,
+  options?: MutationOpts<TData, FormData>,
+) {
+  const qc = useQueryClient();
+  return useMutation<TData, unknown, FormData>({
+    mutationFn: async (form: FormData) => getApiClient().upload<TData>(path, form),
+    onSuccess: (data, vars) => {
+      options?.onSuccess?.(data, vars);
+      qc.invalidateQueries();
+    },
+    onError: (err, vars) => {
+      options?.onError?.(err, vars);
+    },
+  } as UseMutationOptions<TData, unknown, FormData>);
 }

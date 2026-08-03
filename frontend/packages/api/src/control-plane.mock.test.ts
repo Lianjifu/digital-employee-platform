@@ -198,14 +198,38 @@ describe('control plane mock mutations', () => {
     await expect(mockHandler('/api/tools', { method: 'POST', body: { name: 'cmdb-tool', endpoint: 'https://cmdb.example.com' } })).rejects.toThrow('Schema');
     await expect(mockHandler('/api/tools', { method: 'POST', body: { name: 'invalid-contract-tool', endpoint: 'https://cmdb.example.com', schema: '{"type":"object"}' } })).rejects.toThrow('OpenAPI');
 
-    const mcp = await mockHandler('/api/mcp-connections', { method: 'POST', body: { name: 'metrics-mcp', endpoint: 'https://metrics.example.com', authMode: 'OAuth' } }) as any;
+    const mcp = await mockHandler('/api/mcp-connections', { method: 'POST', body: { name: 'metrics-mcp', endpoint: 'https://metrics.example.com', authMode: 'OAuth', protocol: 'mcp-streamable-http' } }) as any;
     const tool = await mockHandler('/api/tools', { method: 'POST', body: { name: 'asset-tool', endpoint: 'https://assets.example.com', schema: '{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object"}' } }) as any;
     expect(mcp.kind).toBe('mcp');
+    expect(mcp.protocol).toBe('mcp-streamable-http');
     expect(tool.kind).toBe('tool');
+    await expect(mockHandler('/api/mcp-connections', { method: 'POST', body: { name: 'stdio-mcp', endpoint: 'https://metrics.example.com', protocol: 'mcp-stdio' } })).rejects.toThrow('stdio');
 
     const audit = await mockHandler('/api/skills/audit', { method: 'GET' }) as any[];
     expect(audit.some((event) => event.action === '配置 MCP 并预检' && event.target.includes('metrics-mcp'))).toBe(true);
     expect(audit.some((event) => event.action === '配置 Tool 并预检' && event.target === 'asset-tool')).toBe(true);
+
+    const packaged = await mockHandler('/api/skills/import-package', {
+      method: 'POST',
+      body: { fileName: 'demo-skill.skill', contentBase64: btoa('PK\x03\x04mock-zip-bytes') },
+    }) as any;
+    expect(packaged.source).toBe('package');
+    expect(packaged.name).toBe('demo-skill');
+    expect(packaged.hasScripts).toBe(true);
+
+    const catalog = await mockHandler('/api/skills/catalog', { method: 'GET' }) as any;
+    expect(catalog.meta.demoNotice).toContain('演示');
+    expect(Array.isArray(catalog.items)).toBe(true);
+    const promoted = await mockHandler('/api/skills/catalog/publish', {
+      method: 'POST',
+      body: { skillId: packaged.id, releaseChannel: 'beta', visibilityScope: 'workspace' },
+    }) as any;
+    expect(promoted.channel).toBe('promoted');
+    const synced = await mockHandler('/api/skills/catalog/sync', {
+      method: 'POST',
+      body: { seedDemo: true },
+    }) as any;
+    expect(synced.acceptedCount).toBe(1);
   });
 
   it('requires an enabled agent before a workspace skill becomes usable by that agent', async () => {

@@ -542,6 +542,8 @@ export interface KnowledgeDoc {
   id: ID;
   workspaceId?: ID;
   ownerId?: ID;
+  /** 归属知识包；未纳管时可为空。 */
+  packageId?: ID;
   classification?: 'internal' | 'confidential' | 'restricted';
   correlationId?: string;
   title: string;
@@ -549,7 +551,7 @@ export interface KnowledgeDoc {
   sizeKb: number;
   chunks: number;
   citeCount: number;
-  status: 'parsing' | 'indexing' | 'ready' | 'failed';
+  status: 'parsing' | 'indexing' | 'ready' | 'failed' | 'published';
   updatedAt: ISODate;
 }
 
@@ -558,6 +560,10 @@ export interface KnowledgeSourceConnection {
   name: string;
   kind: 'REST API' | 'Git / Markdown' | 'Webhook' | '数据库只读连接';
   schedule: string;
+  /** 连接目标：API URL / Git 仓库 / 回调地址 / 数据库连接标识（不含密钥） */
+  endpoint?: string;
+  /** 凭据说明（演示用，不存真实密钥） */
+  credentialHint?: string;
   lastSync: string;
   documents: number;
   status: 'healthy' | 'syncing' | 'attention';
@@ -615,9 +621,12 @@ export interface KnowledgePackage {
   owner: string;
   status: KnowledgePackageStatus;
   documentCount: number;
+  /** 已纳管文档 ID；与 documentCount 对齐。 */
+  documentIds?: ID[];
   consumers: number;
   currentVersion: KnowledgePackageVersion;
   versions: KnowledgePackageVersion[];
+  updatedAt?: ISODate;
 }
 
 export interface KnowledgeProcessingJob {
@@ -765,7 +774,7 @@ export interface MemoryAuditEvent {
 // ============ 技能 P8 ============
 export type SkillKind = 'skill' | 'mcp' | 'tool';
 export type SkillLifecycleStatus = 'enabled' | 'disabled' | 'pending_approval' | 'quarantined' | 'deprecated';
-export type SkillSource = 'market' | 'import' | 'mcp' | 'tool';
+export type SkillSource = 'market' | 'import' | 'mcp' | 'tool' | 'package';
 
 export interface Skill {
   id: ID;
@@ -791,6 +800,19 @@ export interface Skill {
   hasUpdate?: boolean;
   upgradeVersion?: string;
   tags?: string[];
+  hasScripts?: boolean;
+  packageSha256?: string;
+  packageFileName?: string;
+  packageFiles?: string[];
+  scripts?: string[];
+  /** 商店货源：builtin | registry | promoted */
+  channel?: 'builtin' | 'registry' | 'promoted' | string;
+  channelLabel?: string;
+  syncedAt?: string;
+  visibilityScope?: 'global' | 'org' | 'workspace' | string;
+  releaseChannel?: 'stable' | 'beta' | string;
+  publisher?: string;
+  signed?: boolean;
 }
 
 export interface CapabilityRef {
@@ -828,6 +850,9 @@ export interface SkillIntegration {
   writeApprovalRequired: boolean;
   allowedEgress: string[];
   lastError?: string;
+  /** MCP 协议规范：mcp-streamable-http | mcp-sse | mcp-stdio */
+  protocol?: string;
+  authMode?: string;
 }
 
 export type SkillHealthStatus = 'healthy' | 'attention' | 'incident' | 'paused' | 'quarantined';
@@ -903,6 +928,8 @@ export interface SkillInstallPreflight {
   requiresApproval: boolean;
   decision: 'approved' | 'review_required' | 'blocked';
   reason?: string;
+  vulnerabilityCount?: number;
+  checks?: Array<{ label: string; status: 'passed' | 'failed' | 'review' }>;
 }
 
 export interface SkillAuditEvent {
@@ -919,7 +946,7 @@ export interface CapabilityBinding {
   id: ID;
   targetType: 'agent' | 'workflow';
   targetId: ID;
-  capabilityKind: 'skill' | 'workflow_skill';
+  capabilityKind: 'skill' | 'workflow_skill' | 'mcp' | 'tool';
   capabilityId: ID;
   pinnedVersion: string;
   status: 'active' | 'pending_approval' | 'disabled';
@@ -1066,7 +1093,10 @@ export interface ModelGovernanceSnapshot {
   publishedRoutes: number;
   draftRoutes: number;
   budgetRisk: 'normal' | 'attention' | 'critical';
+  /** 占用上限：仅已发布路由预算之和（与强制限额一致） */
   monthlyBudgetUsd: number;
+  /** 草稿/待发布规划预算，不计入占用分母 */
+  draftBudgetUsd?: number;
   monthlySpendUsd: number;
   healthyShare: number;
   avgLatencyMs: number;

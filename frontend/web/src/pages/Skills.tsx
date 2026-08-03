@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect } from 'react';
-import { useApiMutation, useApiQuery } from '@/services/query';
+import { useApiMutation, useApiQuery, useApiUploadMutation } from '@/services/query';
 import { Badge, Button, Input, KpiCard } from '@de/web-ui';
 import {
   Wrench, ShieldAlert, ShieldCheck, Settings, Search, AlertTriangle, CheckCircle2, Box, Star, Globe, Activity, History,
@@ -9,12 +9,13 @@ import {
 import { cn } from '@de/web-utils';
 import type { Skill, SkillAuditEvent, SkillImpactReport, SkillInstallPreflight, SkillPermission, SkillGovernancePolicy, SkillLifecycleStatus, SkillRuntimeHealth, WorkflowSkill } from '@de/web-types';
 import { Link, useSearchParams } from 'react-router-dom';
-import { Modal, ConfirmDialog, EmptyState } from '@/components/shared';
+import { Modal, ConfirmDialog, EmptyState, RoleReadonlyBanner } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useT } from '@/i18n';
+import { defaultSkillsTab, roleCanMutate, rolePageCopy, visibleSkillsTabs } from '@/features/role-nav/role-nav';
 import {
-  KIND_META, KIND_PROFILE, STORE_LIST, buildHealthBySkillId, buildReferenceBySkillId, enrichSkillRow,
+  KIND_META, KIND_PROFILE, buildHealthBySkillId, buildReferenceBySkillId, enrichSkillRow,
   toCapabilityRef, type ModalKind, type SkillCenterTab, type SkillRow,
 } from '@/features/skills/skill-ui';
 import {
@@ -25,22 +26,28 @@ import { GovernanceWorkspace } from '@/features/skills/governance-workspace';
 
 const VALID_TABS: SkillCenterTab[] = ['workspace', 'store', 'workflowSkills', 'integration', 'governance'];
 
-function resolveTab(raw: string | null): SkillCenterTab {
+function resolveTab(raw: string | null, roleDefault: SkillCenterTab): SkillCenterTab {
   if (raw === 'atomic') return 'workspace';
   if (raw && VALID_TABS.includes(raw as SkillCenterTab)) return raw as SkillCenterTab;
-  return 'workspace';
+  return roleDefault;
 }
 
 export default function Skills() {
   const { t } = useT();
   const user = useAuthStore((state) => state.user);
   const isAdmin = user?.role === 'admin';
-  const canWrite = Boolean(user?.permissions.includes('skill.write'));
+  const pageCopy = rolePageCopy('skills', user?.role);
+  const allowedTabs = visibleSkillsTabs(user?.role);
+  const canWrite = Boolean(user?.permissions.includes('skill.write')) && roleCanMutate(user?.role);
   const currentWorkspace = useWorkspaceStore((state) => state.current);
   const workspaceName = currentWorkspace?.name ?? 'ACME 生产';
   const [searchParams, setSearchParams] = useSearchParams();
   const initialTabRaw = searchParams.get('tab');
-  const [tab, setTab] = useState<SkillCenterTab>(() => resolveTab(initialTabRaw));
+  const [tab, setTab] = useState<SkillCenterTab>(() => {
+    const preferred = defaultSkillsTab(user?.role);
+    const resolved = resolveTab(initialTabRaw, preferred);
+    return allowedTabs.includes(resolved) ? resolved : preferred;
+  });
   const [typeFilters, setTypeFilters] = useState<Record<'workspace' | 'store' | 'integration' | 'governance', 'all' | Skill['kind']>>({ workspace: initialTabRaw === 'atomic' ? 'skill' : 'all', store: 'all', integration: 'all', governance: 'all' });
 
   useEffect(() => {
@@ -55,7 +62,8 @@ export default function Skills() {
 
   useEffect(() => {
     const nextRaw = searchParams.get('tab');
-    const next = resolveTab(nextRaw);
+    const preferred = defaultSkillsTab(user?.role);
+    const next = resolveTab(nextRaw, preferred);
     if (nextRaw === 'atomic') {
       setTypeFilters((filters) => ({ ...filters, workspace: 'skill' }));
       const params = new URLSearchParams(searchParams);
@@ -64,8 +72,9 @@ export default function Skills() {
       setTab('workspace');
       return;
     }
-    if (next !== tab) setTab(next);
-  }, [searchParams, tab, setSearchParams]);
+    const resolved = allowedTabs.includes(next) ? next : preferred;
+    if (resolved !== tab) setTab(resolved);
+  }, [searchParams, tab, setSearchParams, user?.role, allowedTabs]);
 
   const selectTab = (next: SkillCenterTab) => {
     setTab(next);
@@ -79,8 +88,12 @@ export default function Skills() {
   const [viewMode, setViewMode] = useState<'list' | 'cards'>('list');
   const [storeSearchQ, setStoreSearchQ] = useState('');
   const [storeRiskFilter, setStoreRiskFilter] = useState<'all' | 'low' | 'mid' | 'high'>('all');
+  const [storeChannelFilter, setStoreChannelFilter] = useState<'all' | 'builtin' | 'registry' | 'promoted'>('all');
+  const [storeReleaseFilter, setStoreReleaseFilter] = useState<'all' | 'stable' | 'beta'>('all');
+  const [promoteTicket, setPromoteTicket] = useState('');
   const [certifiedOnly, setCertifiedOnly] = useState(false);
   const [storePreview, setStorePreview] = useState<{ skill: any; preflight: SkillInstallPreflight } | null>(null);
+  const [approvalTicket, setApprovalTicket] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 10;
   const [storePage, setStorePage] = useState(1);
@@ -102,7 +115,10 @@ export default function Skills() {
   const [installed, setInstalled] = useState<SkillRow[]>([]);
   const [searchQ, setSearchQ] = useState('');
   const { data: apiInstalledData } = useApiQuery<Skill[]>(['skills'], '/api/skills');
-  const { data: apiCatalogData } = useApiQuery<Skill[]>(['skills', 'catalog'], '/api/skills/catalog');
+  const { data: apiCatalogData } = useApiQuery<{
+    items: Skill[];
+    meta?: { demoNotice?: string; channels?: Array<{ id: string; label: string }> };
+  }>(['skills', 'catalog'], '/api/skills/catalog');
   const { data: governanceHealthData } = useApiQuery<SkillRuntimeHealth[]>(
     ['skills', 'governance', 'health'],
     '/api/skills/governance/health',
@@ -110,7 +126,8 @@ export default function Skills() {
     { enabled: tab === 'workspace' || tab === 'governance' },
   );
   const apiInstalled = apiInstalledData ?? [];
-  const apiCatalog = apiCatalogData ?? [];
+  const apiCatalog = apiCatalogData?.items ?? [];
+  const catalogMeta = apiCatalogData?.meta;
   const governanceHealth = governanceHealthData ?? [];
   const healthBySkillId = useMemo(() => buildHealthBySkillId(governanceHealth), [governanceHealth]);
   const referenceBySkillId = useMemo(() => buildReferenceBySkillId(governanceHealth), [governanceHealth]);
@@ -157,7 +174,7 @@ export default function Skills() {
   // 不同 tab 的数据源
   const tabList: SkillRow[] = useMemo(() => {
     if (tab === 'workspace') return installed;
-    if (tab === 'store') return (apiCatalog.length ? apiCatalog : STORE_LIST).map((skill) => enrichSkillRow(skill as Skill, new Map())) as SkillRow[];
+    if (tab === 'store') return apiCatalog.map((skill) => enrichSkillRow(skill as Skill, new Map())) as SkillRow[];
     return installed;
   }, [tab, installed, apiCatalog]);
   const typeFilter = tab === 'workspace' || tab === 'store' || tab === 'integration' || tab === 'governance' ? typeFilters[tab] : 'all';
@@ -178,16 +195,22 @@ export default function Skills() {
         if (workspaceFocus === 'upgradeable') return Boolean(s.hasUpdate);
         return attentionSkillIds.has(s.id);
       })
-      .filter((s) => tab !== 'workspace' || !searchQ || s.name.toLowerCase().includes(searchQ.toLowerCase()) || s.description.toLowerCase().includes(searchQ.toLowerCase()))
-      .filter((s: any) => tab !== 'store' || (!storeSearchQ || `${s.name} ${s.description} ${s.publisher ?? ''}`.toLowerCase().includes(storeSearchQ.toLowerCase())) && (storeRiskFilter === 'all' || s.riskLevel === storeRiskFilter) && (!certifiedOnly || s.signed === true));
-  }, [tabList, typeFilter, lifecycleFilter, workspaceFocus, attentionSkillIds, searchQ, tab, storeSearchQ, storeRiskFilter, certifiedOnly]);
+      .filter((s) => tab !== 'workspace' || !searchQ || s.name.toLowerCase().includes(searchQ.toLowerCase()) || (s.description ?? '').toLowerCase().includes(searchQ.toLowerCase()))
+      .filter((s: any) => tab !== 'store' || (
+        (!storeSearchQ || `${s.name} ${s.description} ${s.publisher ?? ''} ${s.channelLabel ?? ''}`.toLowerCase().includes(storeSearchQ.toLowerCase()))
+        && (storeRiskFilter === 'all' || s.riskLevel === storeRiskFilter)
+        && (storeChannelFilter === 'all' || s.channel === storeChannelFilter)
+        && (storeReleaseFilter === 'all' || s.releaseChannel === storeReleaseFilter)
+        && (!certifiedOnly || s.signed === true)
+      ));
+  }, [tabList, typeFilter, lifecycleFilter, workspaceFocus, attentionSkillIds, searchQ, tab, storeSearchQ, storeRiskFilter, storeChannelFilter, storeReleaseFilter, certifiedOnly]);
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const pagedSkills = useMemo(() => filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize), [filtered, currentPage]);
   const storeTotalPages = Math.max(1, Math.ceil(filtered.length / storePageSize));
   const pagedStoreSkills = useMemo(() => filtered.slice((storePage - 1) * storePageSize, storePage * storePageSize), [filtered, storePage]);
 
-  useEffect(() => { setCurrentPage(1); }, [tab, typeFilter, lifecycleFilter, workspaceFocus, searchQ, storeSearchQ, storeRiskFilter, certifiedOnly]);
-  useEffect(() => { if (tab === 'store') setStorePage(1); }, [tab, typeFilter, storeSearchQ, storeRiskFilter, certifiedOnly]);
+  useEffect(() => { setCurrentPage(1); }, [tab, typeFilter, lifecycleFilter, workspaceFocus, searchQ, storeSearchQ, storeRiskFilter, storeChannelFilter, storeReleaseFilter, certifiedOnly]);
+  useEffect(() => { if (tab === 'store') setStorePage(1); }, [tab, typeFilter, storeSearchQ, storeRiskFilter, storeChannelFilter, storeReleaseFilter, certifiedOnly]);
   useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
   useEffect(() => { if (storePage > storeTotalPages) setStorePage(storeTotalPages); }, [storePage, storeTotalPages]);
 
@@ -223,21 +246,86 @@ export default function Skills() {
   const { data: permsData } = useApiQuery<SkillPermission[]>(['skill', activeId, 'permissions'], `/api/skills/${activeId}/permissions`, undefined, { enabled: detailEnabled });
   const { data: impact } = useApiQuery<SkillImpactReport>(['skill', activeId, 'impact'], `/api/skills/${activeId}/impact`, undefined, { enabled: detailEnabled });
   const { data: governance } = useApiQuery<SkillGovernancePolicy>(['skill', activeId, 'governance'], `/api/skills/${activeId}/governance`, undefined, { enabled: detailEnabled });
+  const { data: runtimeConfigData } = useApiQuery<{ cacheable: boolean; timeout: string; retries: string }>(
+    ['skill', activeId, 'runtime'],
+    `/api/skills/${activeId}/runtime`,
+    undefined,
+    { enabled: detailEnabled },
+  );
+  useEffect(() => {
+    if (!activeId || !runtimeConfigData) return;
+    setRuntimeSettings((prev) => ({
+      ...prev,
+      [activeId]: {
+        cacheable: Boolean(runtimeConfigData.cacheable),
+        timeout: String(runtimeConfigData.timeout ?? '30'),
+        retries: String(runtimeConfigData.retries ?? '1'),
+      },
+    }));
+  }, [activeId, runtimeConfigData]);
   const { data: skillAuditData } = useApiQuery<SkillAuditEvent[]>(['skill', 'audit'], '/api/skills/audit');
   const versions = versionsData ?? [];
   const perms = permsData ?? [];
   const skillAudit = skillAuditData ?? [];
   const importSkillsMutation = useApiMutation<Skill[], { items: Array<Partial<Skill>> }>('/api/skills/import');
+  const importPackageMutation = useApiUploadMutation<Skill>('/api/skills/import-package', {
+    onSuccess: (skill) => {
+      appendInstalled([skill]);
+      setOperationNotice(`已导入技能包「${skill.name}」v${skill.version}${skill.hasScripts ? '（含可执行脚本）' : ''}`);
+      setActiveModal(null);
+    },
+    onError: (error) => setOperationNotice(error instanceof Error ? error.message : '导入技能包失败'),
+  });
+  const publishToCatalogMutation = useApiMutation<Skill, {
+    skillId: string; releaseChannel: string; visibilityScope: string; approvalTicket?: string;
+  }>('/api/skills/catalog/publish', {
+    onSuccess: (entry) => {
+      setOperationNotice(`已晋升上架「${entry.name}」v${entry.version}（${(entry as any).channelLabel ?? 'promoted'} · ${(entry as any).releaseChannel ?? 'stable'}）`);
+      setPromoteTicket('');
+    },
+    onError: (error) => setOperationNotice(error instanceof Error ? error.message : '晋升上架失败'),
+  });
+  const syncCatalogMutation = useApiMutation<{ acceptedCount: number; rejectedCount: number }, { seedDemo?: boolean; items?: any[] }>(
+    '/api/skills/catalog/sync',
+    {
+      onSuccess: (result) => setOperationNotice(`Registry 同步完成：接受 ${result.acceptedCount}，拒绝 ${result.rejectedCount}`),
+      onError: (error) => setOperationNotice(error instanceof Error ? error.message : 'Registry 同步失败'),
+    },
+  );
   const installSkillMutation = useApiMutation<Skill, any>(({ id }) => `/api/skills/${id}/install`);
   const uninstallSkillMutation = useApiMutation<any, { id: string }>(({ id }) => `/api/skills/${id}/uninstall`);
   const upgradeSkillMutation = useApiMutation<Skill, { id: string }>(({ id }) => `/api/skills/${id}/upgrade`);
   const upgradePlanMutation = useApiMutation<any, { id: string; targetVersion?: string }>(({ id }) => `/api/skills/${id}/upgrade-plan`);
-  const lifecycleMutation = useApiMutation<Skill, { id: string; lifecycleStatus: SkillLifecycleStatus }>(({ id }) => `/api/skills/${id}/lifecycle`, undefined, 'PATCH');
-  const governanceMutation = useApiMutation<SkillGovernancePolicy, Partial<SkillGovernancePolicy>>(() => `/api/skills/${activeId}/governance`, undefined, 'PATCH');
+  const lifecycleMutation = useApiMutation<Skill, { id: string; lifecycleStatus: SkillLifecycleStatus }>(
+    ({ id }) => `/api/skills/${id}/lifecycle`,
+    {
+      onSuccess: (skill) => {
+        setInstalled((prev) => prev.map((item) => (item.id === skill.id ? enrichSkillRow({ ...item, ...skill }, healthBySkillId) : item)));
+        setOperationNotice(`已将「${skill.name}」更新为 ${skill.lifecycleStatus === 'enabled' ? '启用' : skill.lifecycleStatus === 'disabled' ? '暂停' : skill.lifecycleStatus}`);
+      },
+      onError: (error) => setOperationNotice(error instanceof Error ? error.message : '更新技能状态失败'),
+    },
+    'PATCH',
+  );
+  const governanceMutation = useApiMutation<SkillGovernancePolicy, Partial<SkillGovernancePolicy>>(
+    () => `/api/skills/${activeId}/governance`,
+    {
+      onSuccess: () => setOperationNotice('运行治理策略已更新，沙箱测试将立即按新策略执行。'),
+      onError: (error) => setOperationNotice(error instanceof Error ? error.message : '更新治理策略失败'),
+    },
+    'PATCH',
+  );
   const testSkillMutation = useApiMutation<any, { id: string; command: string }>(({ id }) => `/api/skills/${id}/test`);
-  const runtimeMutation = useApiMutation<any, { id: string; cacheable: boolean; timeout: string; retries: string }>(({ id }) => `/api/skills/${id}/runtime`, undefined, 'PATCH');
+  const runtimeMutation = useApiMutation<any, { id: string; cacheable: boolean; timeout: string; retries: string }>(
+    ({ id }) => `/api/skills/${id}/runtime`,
+    {
+      onSuccess: () => setOperationNotice('运行配置已保存（超时/重试将用于下一次沙箱测试）。'),
+      onError: (error) => setOperationNotice(error instanceof Error ? error.message : '保存运行配置失败'),
+    },
+    'PATCH',
+  );
   const permissionMutation = useApiMutation<any, { id: string; role: string; canCall: boolean; canConfig: boolean }>(({ id }) => `/api/skills/${id}/permissions`, undefined, 'PATCH');
-  const configureMcpMutation = useApiMutation<Skill, { name: string; endpoint: string; authMode: string }>('/api/mcp-connections');
+  const configureMcpMutation = useApiMutation<Skill, { name: string; endpoint: string; authMode: string; protocol: string }>('/api/mcp-connections');
   const configureToolMutation = useApiMutation<Skill, { name: string; endpoint: string; schema: string }>('/api/tools');
   const preflightMutation = useApiMutation<SkillInstallPreflight, { id: string }>(({ id }) => `/api/skills/${id}/preflight`);
   const bindSkillMutation = useApiMutation<any, { agentId: string; skillId: string }>(({ agentId }) => `/api/agents/${agentId}/skills`);
@@ -268,7 +356,13 @@ export default function Skills() {
   // Handlers
   const handleInstallFromStore = (storeItem: any) => {
     if (!canWrite) return;
-    preflightMutation.mutate({ id: storeItem.id }, { onSuccess: (preflight) => setStorePreview({ skill: storeItem, preflight }), onError: (error) => setOperationNotice(error instanceof Error ? error.message : '安装预检失败') });
+    preflightMutation.mutate({ id: storeItem.id }, {
+      onSuccess: (preflight) => {
+        setApprovalTicket('');
+        setStorePreview({ skill: storeItem, preflight });
+      },
+      onError: (error) => setOperationNotice(error instanceof Error ? error.message : '安装预检失败'),
+    });
   };
 
   const appendInstalled = (skills: Skill[]) => {
@@ -278,15 +372,29 @@ export default function Skills() {
   const confirmStoreInstall = () => {
     if (!storePreview || !canWrite) return;
     const { skill, preflight } = storePreview;
-    if (preflight.decision === 'blocked') { setOperationNotice(preflight.reason ?? '预检未通过，无法安装'); setStorePreview(null); return; }
-    installSkillMutation.mutate({ ...skill, approvalTicket: preflight.requiresApproval ? 'APR-DEMO-20260719' : undefined }, {
-      onSuccess: (installedSkill) => {
-        appendInstalled([installedSkill]);
-        setOperationNotice(preflight.requiresApproval ? '已提交审批并完成演示控制面安装；生产环境需等待真实审批回调。' : '技能已安装到技能列表，可继续分配给智能体或工作流。');
-        setStorePreview(null);
+    if (preflight.decision === 'blocked') {
+      setOperationNotice(preflight.reason ?? '预检未通过，无法安装');
+      setStorePreview(null);
+      return;
+    }
+    if (preflight.requiresApproval && !approvalTicket.trim()) {
+      setOperationNotice('该能力需要审批单号后才能安装');
+      return;
+    }
+    installSkillMutation.mutate(
+      { ...skill, approvalTicket: preflight.requiresApproval ? approvalTicket.trim() : undefined },
+      {
+        onSuccess: (installedSkill) => {
+          appendInstalled([installedSkill]);
+          setOperationNotice(preflight.requiresApproval
+            ? `已凭审批单 ${approvalTicket.trim()} 完成安装，可继续分配给智能体或工作流。`
+            : '技能已安装到技能列表，可继续分配给智能体或工作流。');
+          setStorePreview(null);
+          setApprovalTicket('');
+        },
+        onError: (error) => setOperationNotice(error instanceof Error ? error.message : '安装失败'),
       },
-      onError: (error) => setOperationNotice(error instanceof Error ? error.message : '安装失败'),
-    });
+    );
   };
 
   const handleUninstall = () => {
@@ -315,12 +423,35 @@ export default function Skills() {
     } catch {
       items = raw.split('\n').map((name) => name.trim()).filter(Boolean).map((name) => ({ name, kind: 'skill', description: `从粘贴内容导入 · ${name}`, riskLevel: 'mid', cacheable: false }));
     }
-    importSkillsMutation.mutate({ items }, { onSuccess: (created) => { appendInstalled(created); setActiveModal(null); } });
+    importSkillsMutation.mutate({ items }, {
+      onSuccess: (created) => { appendInstalled(created); setActiveModal(null); setOperationNotice(`已导入 ${created.length} 项技能`); },
+      onError: (error) => setOperationNotice(error instanceof Error ? error.message : '导入失败'),
+    });
+  };
+
+  const handleImportPackage = (file: File) => {
+    if (!canWrite) return;
+    const form = new FormData();
+    form.append('file', file);
+    importPackageMutation.mutate(form);
   };
 
   const handleRunTest = () => {
     if (!active || !testCmd.trim()) return;
-    testSkillMutation.mutate({ id: active.id, command: testCmd }, { onSuccess: (result) => setTestOutputs((prev) => [{ cmd: testCmd, out: String(result.output), ms: Number(result.durationMs), tone: (result.status === 'success' ? 'success' : 'error') as 'success' | 'error' }, ...prev].slice(0, 6)) });
+    testSkillMutation.mutate({ id: active.id, command: testCmd }, {
+      onSuccess: (result) => setTestOutputs((prev) => [{
+        cmd: testCmd,
+        out: [
+          String(result.output ?? ''),
+          result.runtime ? `runtime=${result.runtime}` : '',
+          result.sim ? 'mode=policy-sim（runtime 不可达）' : '',
+          result.correlationId ? `corr=${result.correlationId}` : '',
+        ].filter(Boolean).join('\n'),
+        ms: Number(result.durationMs),
+        tone: (result.status === 'success' ? 'success' : 'error') as 'success' | 'error',
+      }, ...prev].slice(0, 6)),
+      onError: (error) => setOperationNotice(error instanceof Error ? error.message : '沙箱测试失败'),
+    });
   };
 
   const riskIcon = (risk: string) => {
@@ -331,11 +462,11 @@ export default function Skills() {
 
   const skillTabs = [
     { key: 'workspace' as const, labelKey: 'module.skills.tabs.installed', icon: Wrench, count: installed.length },
-    { key: 'store' as const, labelKey: 'module.skills.tabs.store', icon: Sparkles, count: apiCatalog.length || STORE_LIST.length },
+    { key: 'store' as const, labelKey: 'module.skills.tabs.store', icon: Sparkles, count: apiCatalog.length },
     { key: 'workflowSkills' as const, labelKey: 'module.skills.tabs.workflowSkills', icon: GitBranch, count: workflowSkills.length },
-    ...((canWrite || isAdmin) ? [{ key: 'integration' as const, labelKey: 'module.skills.tabs.integration', icon: Network, count: null }] : []),
-    ...((isAdmin || canWrite) ? [{ key: 'governance' as const, labelKey: 'module.skills.tabs.governance', icon: ShieldCheck, count: attentionCount || installed.length }] : []),
-  ];
+    { key: 'integration' as const, labelKey: 'module.skills.tabs.integration', icon: Network, count: null },
+    { key: 'governance' as const, labelKey: 'module.skills.tabs.governance', icon: ShieldCheck, count: attentionCount },
+  ].filter((item) => allowedTabs.includes(item.key));
 
   return (
     <div className="de-employee-page h-full min-w-0 overflow-y-auto overscroll-contain bg-[var(--bg-elevated)] p-3 md:p-4 lg:p-5">
@@ -347,13 +478,13 @@ export default function Skills() {
                 <div className="de-employee-icon-tile grid h-8 w-8 place-items-center rounded-lg">
                   <Wrench className="h-4 w-4" />
                 </div>
-                <h1 className="text-base font-semibold text-[var(--text)]">{t('module.skills.title')}</h1>
+                <h1 className="text-base font-semibold text-[var(--text)]">{pageCopy.title}</h1>
               </div>
-              <p className="mt-1.5 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">{t('module.skills.subtitle')}</p>
+              <p className="mt-1.5 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">{pageCopy.subtitle}</p>
             </div>
             <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
               <Badge tone="info">{workspaceName}</Badge>
-              {!canWrite && <Badge tone="neutral">只读 · 需 skill.write</Badge>}
+              {!canWrite && <Badge tone="neutral">只读</Badge>}
               {canWrite && (
                 <>
                   <button type="button" className="de-employee-btn de-employee-btn--primary" onClick={() => selectTab('integration')}>
@@ -383,6 +514,7 @@ export default function Skills() {
           {tab !== 'workflowSkills' && tab !== 'integration' && tab !== 'governance' && (
             <p className="px-4 pb-2 text-xs text-[var(--text-muted)] md:px-5">{tabSummary}</p>
           )}
+          <div className="px-4 md:px-5"><RoleReadonlyBanner className="mb-2 flex items-start gap-2 rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]" /></div>
           <div className="de-employee-tabs flex overflow-x-auto px-3" role="tablist" aria-label="技能中心分区">
             {skillTabs.map((item) => (
               <button
@@ -487,9 +619,23 @@ export default function Skills() {
                   <div className="flex flex-wrap items-center gap-2.5">
                     <h3 className="skills-store-toolbar__title">{t('module.skills.tabs.store')}</h3>
                     <Badge tone="neutral" className="text-[10px]">{filtered.length} 项</Badge>
+                    <Badge tone="info" className="text-[10px]">三层货源</Badge>
                   </div>
-                  <p className="mt-1.5 max-w-[62ch] text-[12px] leading-5 text-[var(--text-muted)]">安装前将执行发布方、签名、依赖与风险预检；不会自动绑定到智能体或工作流。</p>
+                  <p className="mt-1.5 max-w-[72ch] text-[12px] leading-5 text-[var(--text-muted)]">
+                    {catalogMeta?.demoNotice
+                      ?? '安装前将执行发布方、签名、依赖与风险预检；平台内置条目仅用于演示，生产货源以 Registry 同步与工作区晋升为主。'}
+                  </p>
                 </div>
+                {isAdmin && canWrite && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    loading={syncCatalogMutation.isPending}
+                    onClick={() => syncCatalogMutation.mutate({ seedDemo: true })}
+                  >
+                    同步 Registry
+                  </Button>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-3 border-t border-[var(--border)] px-5 py-4">
                 <div className="relative">
@@ -503,6 +649,17 @@ export default function Skills() {
                     </button>
                   ))}
                 </div>
+                <select value={storeChannelFilter} onChange={(event) => setStoreChannelFilter(event.target.value as typeof storeChannelFilter)} className="h-9 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 text-[11px]" aria-label="货源筛选">
+                  <option value="all">全部货源</option>
+                  <option value="builtin">平台内置（演示）</option>
+                  <option value="registry">企业 Registry</option>
+                  <option value="promoted">工作区晋升</option>
+                </select>
+                <select value={storeReleaseFilter} onChange={(event) => setStoreReleaseFilter(event.target.value as typeof storeReleaseFilter)} className="h-9 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 text-[11px]" aria-label="发布频道">
+                  <option value="all">全部频道</option>
+                  <option value="stable">stable</option>
+                  <option value="beta">beta</option>
+                </select>
                 <select value={storeRiskFilter} onChange={(event) => setStoreRiskFilter(event.target.value as typeof storeRiskFilter)} className="h-9 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 text-[11px]" aria-label="风险筛选">
                   <option value="all">全部风险</option>
                   <option value="low">低风险</option>
@@ -759,10 +916,10 @@ export default function Skills() {
                     </div>
 
                     <dl className="skill-store-card__foot">
+                      <div><dt>货源</dt><dd>{market.channelLabel ?? (market.channel === 'registry' ? '企业 Registry' : market.channel === 'promoted' ? '工作区晋升' : '平台内置（演示）')}</dd></div>
+                      <div><dt>频道</dt><dd className="font-mono">{market.releaseChannel ?? 'stable'}</dd></div>
                       <div><dt>发布方</dt><dd>{market.publisher ?? '社区发布方'}</dd></div>
                       <div><dt>签名</dt><dd className={market.signed ? 'text-[var(--success)]' : 'text-[var(--warning)]'}>{market.signed ? '已验证' : '待验证'}</dd></div>
-                      <div><dt>形态</dt><dd>{profile.caption}</dd></div>
-                      <div><dt>依赖</dt><dd>{(market.dependencies ?? []).length ? `${market.dependencies.length} 项` : '无'}</dd></div>
                     </dl>
 
                     <Button
@@ -899,12 +1056,51 @@ export default function Skills() {
                 <div><dt>脱敏 / 熔断</dt><dd>{governance?.dataMaskingEnabled ? '已启用' : '未启用'} / {governance?.circuitBreakerEnabled ? '已启用' : '未启用'}</dd></div>
               </dl>
               {canWrite && (
-                <div className="mt-3 flex gap-2 border-t border-[var(--border)] pt-3">
+                <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--border)] pt-3">
                   <Button size="sm" variant="secondary" className="flex-1" onClick={() => governance && governanceMutation.mutate({ writeApprovalRequired: !governance.writeApprovalRequired })}>{governance?.writeApprovalRequired ? '关闭写审批' : '开启写审批'}</Button>
                   <Button size="sm" variant="secondary" className="flex-1" onClick={() => governance && governanceMutation.mutate({ dataMaskingEnabled: !governance.dataMaskingEnabled })}>{governance?.dataMaskingEnabled ? '关闭脱敏' : '开启脱敏'}</Button>
+                  <Button size="sm" variant="secondary" className="flex-1" onClick={() => governance && governanceMutation.mutate({ circuitBreakerEnabled: !governance.circuitBreakerEnabled })}>{governance?.circuitBreakerEnabled ? '关闭熔断' : '开启熔断'}</Button>
                 </div>
               )}
             </div>
+
+            {activeInstalled && canWrite && (
+              <div className="skill-detail-panel">
+                <div className="skill-detail-panel__title"><Sparkles className="h-3.5 w-3.5 text-[var(--brand)]" />晋升到技能商店</div>
+                <p className="mb-2 text-[10px] leading-4 text-[var(--text-muted)]">将本工作区已验证技能上架为可安装目录条目；高风险 / 全局可见需审批单号。</p>
+                <div className="flex flex-wrap gap-2">
+                  <Input value={promoteTicket} onChange={(e) => setPromoteTicket(e.target.value)} placeholder="审批单号（可选/按策略必填）" className="h-8 min-w-[160px] flex-1 text-xs" />
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    loading={publishToCatalogMutation.isPending}
+                    onClick={() => active && publishToCatalogMutation.mutate({
+                      skillId: active.id,
+                      releaseChannel: active.riskLevel === 'high' ? 'beta' : 'stable',
+                      visibilityScope: 'workspace',
+                      approvalTicket: promoteTicket.trim() || undefined,
+                    })}
+                  >
+                    上架到商店
+                  </Button>
+                  {isAdmin && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      loading={publishToCatalogMutation.isPending}
+                      onClick={() => active && publishToCatalogMutation.mutate({
+                        skillId: active.id,
+                        releaseChannel: 'stable',
+                        visibilityScope: 'global',
+                        approvalTicket: promoteTicket.trim() || 'APR-GLOBAL',
+                      })}
+                    >
+                      全局上架
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
 
             {showRuntimeConfig && activeRuntimeSettings && (
               <div className="skill-detail-panel">
@@ -1129,7 +1325,13 @@ export default function Skills() {
       </Modal>
 
       {/* ===== Modals ===== */}
-      <ImportSkillModal open={activeModal === 'importSkill'} onClose={() => setActiveModal(null)} onSubmit={handleImport} />
+      <ImportSkillModal
+        open={activeModal === 'importSkill'}
+        onClose={() => setActiveModal(null)}
+        onSubmitText={handleImport}
+        onSubmitFile={handleImportPackage}
+        uploading={importPackageMutation.isPending || importSkillsMutation.isPending}
+      />
       <CapabilityConfigModal
         open={activeModal === 'configureMcp'}
         onClose={() => setActiveModal(null)}
@@ -1137,7 +1339,7 @@ export default function Skills() {
         onSubmit={(form) => {
           if (!canWrite) return;
           configureMcpMutation.mutate(
-          { name: form.name, endpoint: form.endpoint, authMode: form.authMode ?? 'OAuth' },
+          { name: form.name, endpoint: form.endpoint, authMode: form.authMode ?? 'OAuth', protocol: form.protocol ?? 'mcp-streamable-http' },
           { onSuccess: () => { setOperationNotice('MCP 已完成连接预检并进入工作区能力目录'); setActiveModal(null); } },
         );}}
       />
@@ -1152,8 +1354,90 @@ export default function Skills() {
           { onSuccess: () => { setOperationNotice('Tool 已完成 Schema 校验并进入工作区能力目录'); setActiveModal(null); } },
         );}}
       />
-      <Modal open={!!storePreview} onClose={() => setStorePreview(null)} title={storePreview ? `安装预览 · ${storePreview.skill.name}` : '安装预览'} description="安装仅将能力纳管到技能列表，不会自动授予智能体或工作流执行权限。" size="lg" footer={<><Button variant="ghost" onClick={() => setStorePreview(null)}>取消</Button><Button disabled={!canWrite || storePreview?.preflight.decision === 'blocked'} onClick={confirmStoreInstall}>{storePreview?.preflight.requiresApproval ? '提交审批并安装' : '确认安装'}</Button></>}>
-        {storePreview && <div className="space-y-3 text-xs"><div className="grid grid-cols-2 gap-2"><Stat label="发布方" value={(storePreview.skill as any).publisher ?? '社区发布方'} /><Stat label="签名" value={storePreview.preflight.signatureValid ? '已验证' : '未验证'} tone={storePreview.preflight.signatureValid ? 'success' : 'error'} /></div><div className="grid grid-cols-3 gap-2"><Stat label="许可证" value={(storePreview.skill as any).license ?? '待确认'} /><Stat label="漏洞" value={`${(storePreview.skill as any).vulnerabilityCount ?? '—'} 项`} tone={(storePreview.skill as any).vulnerabilityCount ? 'error' : 'success'} /><Stat label="最近扫描" value={(storePreview.skill as any).lastScannedAt ?? '—'} /></div><div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3"><div className="mb-2 font-semibold">依赖与风险预检</div><div className="space-y-1.5">{storePreview.preflight.dependencies.length ? storePreview.preflight.dependencies.map((dependency) => <div key={dependency.name} className="flex justify-between"><span>{dependency.name}</span><Badge tone={dependency.status === 'ready' ? 'success' : 'error'} className="text-[9px]">{dependency.status === 'ready' ? '已就绪' : '缺失'}</Badge></div>) : <span className="text-[var(--success)]">无额外依赖</span>}<div className="mt-2 border-t border-[var(--border)] pt-2">适用环境：{((storePreview.skill as any).supportedEnvironments ?? ['待验证']).join('、')}<span className="ml-3">风险等级：<Badge tone={storePreview.skill.riskLevel === 'high' ? 'error' : storePreview.skill.riskLevel === 'mid' ? 'warn' : 'success'} className="ml-1 text-[9px]">{storePreview.skill.riskLevel === 'high' ? '高风险' : storePreview.skill.riskLevel === 'mid' ? '中风险' : '低风险'}</Badge></span>{storePreview.preflight.requiresApproval && <span className="ml-2 text-[var(--warning)]">需要安全审批</span>}</div></div></div><div className="rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] text-[var(--info)]">SBOM、许可证和漏洞为演示控制面供应链扫描结果；生产环境需由制品仓库与安全平台提供可验证数据。</div></div>}
+      <Modal
+        open={!!storePreview}
+        onClose={() => { setStorePreview(null); setApprovalTicket(''); }}
+        title={storePreview ? `安装预览 · ${storePreview.skill.name}` : '安装预览'}
+        description="安装仅将能力纳管到技能列表，不会自动授予智能体或工作流执行权限。"
+        size="lg"
+        footer={(
+          <>
+            <Button variant="ghost" onClick={() => { setStorePreview(null); setApprovalTicket(''); }}>取消</Button>
+            <Button
+              disabled={!canWrite || storePreview?.preflight.decision === 'blocked' || (storePreview?.preflight.requiresApproval && !approvalTicket.trim())}
+              onClick={confirmStoreInstall}
+            >
+              {storePreview?.preflight.requiresApproval ? '提交审批并安装' : '确认安装'}
+            </Button>
+          </>
+        )}
+      >
+        {storePreview && (
+          <div className="space-y-3 text-xs">
+            <div className="grid grid-cols-2 gap-2">
+              <Stat label="发布方" value={(storePreview.skill as any).publisher ?? '社区发布方'} />
+              <Stat label="签名" value={storePreview.preflight.signatureValid ? '已验证' : '未验证'} tone={storePreview.preflight.signatureValid ? 'success' : 'error'} />
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              <Stat label="许可证" value={(storePreview.skill as any).license ?? '待确认'} />
+              <Stat label="漏洞" value={`${storePreview.preflight.vulnerabilityCount ?? (storePreview.skill as any).vulnerabilityCount ?? 0} 项`} tone={(storePreview.preflight.vulnerabilityCount ?? (storePreview.skill as any).vulnerabilityCount) ? 'error' : 'success'} />
+              <Stat label="最近扫描" value={(storePreview.skill as any).lastScannedAt ?? '—'} />
+            </div>
+            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3">
+              <div className="mb-2 font-semibold">依赖与风险预检</div>
+              <div className="space-y-1.5">
+                {storePreview.preflight.dependencies.length
+                  ? storePreview.preflight.dependencies.map((dependency) => (
+                    <div key={dependency.name} className="flex justify-between">
+                      <span>{dependency.name}</span>
+                      <Badge tone={dependency.status === 'ready' ? 'success' : 'error'} className="text-[9px]">{dependency.status === 'ready' ? '已就绪' : '缺失'}</Badge>
+                    </div>
+                  ))
+                  : <span className="text-[var(--success)]">无额外依赖</span>}
+                {(storePreview.preflight.checks?.length ?? 0) > 0 && (
+                  <div className="mt-2 space-y-1 border-t border-[var(--border)] pt-2">
+                    {storePreview.preflight.checks!.map((check) => (
+                      <div key={check.label} className="flex justify-between gap-2">
+                        <span>{check.label}</span>
+                        <Badge
+                          tone={check.status === 'passed' ? 'success' : check.status === 'review' ? 'warn' : 'error'}
+                          className="text-[9px]"
+                        >
+                          {check.status === 'passed' ? '通过' : check.status === 'review' ? '待复核' : '未通过'}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-2 border-t border-[var(--border)] pt-2">
+                  适用环境：{((storePreview.skill as any).supportedEnvironments ?? ['待验证']).join('、')}
+                  <span className="ml-3">
+                    风险等级：
+                    <Badge tone={storePreview.skill.riskLevel === 'high' ? 'error' : storePreview.skill.riskLevel === 'mid' ? 'warn' : 'success'} className="ml-1 text-[9px]">
+                      {storePreview.skill.riskLevel === 'high' ? '高风险' : storePreview.skill.riskLevel === 'mid' ? '中风险' : '低风险'}
+                    </Badge>
+                  </span>
+                  {storePreview.preflight.requiresApproval && <span className="ml-2 text-[var(--warning)]">需要安全审批</span>}
+                  {storePreview.preflight.reason && <p className="mt-2 text-[var(--text-secondary)]">{storePreview.preflight.reason}</p>}
+                </div>
+              </div>
+            </div>
+            {storePreview.preflight.requiresApproval && storePreview.preflight.decision !== 'blocked' && (
+              <div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3">
+                <label className="mb-1.5 block text-[11px] font-medium text-[var(--text-secondary)]">审批单号 *</label>
+                <Input
+                  value={approvalTicket}
+                  onChange={(event) => setApprovalTicket(event.target.value)}
+                  placeholder="例如：APR-2026-0819-01"
+                  className="de-employee-input h-9 bg-[var(--bg-elevated)] text-xs"
+                />
+              </div>
+            )}
+            <div className="rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] text-[var(--info)]">
+              供应链检查包含签名、发布方信任与漏洞扫描；外连与高危命令由技能运行策略在沙箱测试时拦截。
+            </div>
+          </div>
+        )}
       </Modal>
 
       <ConfirmDialog

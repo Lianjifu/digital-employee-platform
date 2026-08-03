@@ -70,6 +70,11 @@ export function enrichSkillRow(skill: Skill, healthBySkillId: Map<string, SkillR
   const perf = perfFromHealth(health);
   return {
     ...skill,
+    description: skill.description ?? '',
+    rating: skill.rating ?? 0,
+    installCount: skill.installCount ?? 0,
+    riskLevel: skill.riskLevel ?? 'mid',
+    cacheable: Boolean(skill.cacheable),
     calls: formatCallsDaily(perf.calls24h),
     perf,
   };

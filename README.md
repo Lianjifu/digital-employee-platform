@@ -105,7 +105,11 @@ make test
 |---|---|
 | 控制台页面 | 运营总览、专家协作、任务、工作区、数字员工、工作流、模型/知识/技能/记忆/渠道、平台设置与治理 |
 | 契约联调 | P0/P1 首屏 GET + 关键写路径对齐 de-core；见 [`backend/api/contract-gap.md`](backend/api/contract-gap.md) |
-| Copilot | `VITE_USE_MOCK=false` 时走 `/api/copilot/.../stream` SSE（policy→employee→rag→runtime→meter） |
+| Copilot | `VITE_USE_MOCK=false` 时走 `/api/copilot/.../stream` SSE（policy→employee→rag→runtime→meter）；回合写入短期记忆 |
+| 模型服务 | 供应商接入/探活/discover、路由发布门禁、Vault 凭据、预算与审计（M0–M7） |
+| 知识中心 | 知识包草稿/发布、文档软删、来源同步、RAG ingest/retrieve、评测与治理门禁 |
+| 技能中心 | 商店货源（builtin/registry）、晋升上架、签名/漏洞门禁、`.skill` 包导入、RunToken→skill-runtime |
+| 记忆中心 | 三层记忆 + 候选审核晋升草稿知识包；TTL 调度；长期容量门禁；会话/任务运行时写入 |
 | 策略 / 审计 | 内嵌 baseline + 可选 OPA；de-policy / de-audit 进程；Audit Center 优先 `DE_AUDIT_URL` |
 | 执行面 | Runtime OpenAI 兼容适配、RAG ingest、Skill RunToken、Workflow 试跑活动 |
 | 观测 | `/metrics` + Prometheus/Grafana；含 Copilot SSE / 审计 fanout 告警 |
@@ -135,6 +139,7 @@ make test
 
 - 前端默认打真实 de-core；`mock.ts` 仅作可选离线与单测。
 - 数据多为控制面内存 + PG 快照（`kv_documents`），非完整关系型业务库。
+- 记忆不会直接发布知识；审核通过仅创建**草稿知识包**，正式发布仍走知识中心门禁。
 - LangGraph 全图编排、真 gVisor runsc、SPIRE SDS、de-platform / de-collab 拆分仍属后续。
 
 ## 验证提交

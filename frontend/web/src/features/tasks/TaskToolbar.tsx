@@ -33,7 +33,7 @@ function Select({ value, onChange, options, label }: { value: string; onChange: 
 
 export function TaskToolbar({ filters, onChange, view, onViewChange, tasks, onCreate }: {
   filters: TaskFilters; onChange: (next: TaskFilters) => void; view: 'board' | 'list'; onViewChange: (view: 'board' | 'list') => void;
-  tasks: ControlledTask[]; onCreate: () => void;
+  tasks: ControlledTask[]; onCreate?: () => void;
 }) {
   const update = <K extends keyof TaskFilters>(key: K, value: TaskFilters[K]) => onChange({ ...filters, [key]: value });
   const assignees = Array.from(new Set(tasks.map((task) => task.assignee).filter(Boolean))) as string[];
@@ -53,6 +53,6 @@ export function TaskToolbar({ filters, onChange, view, onViewChange, tasks, onCr
     <Select label="数字员工" value={filters.agent} onChange={(value) => update('agent', value)} options={[{ value: 'all', label: '全部数字员工' }, ...employees.map(([value, label]) => ({ value, label }))]} />
     <Select label="来源" value={filters.source} onChange={(value) => update('source', value as TaskFilters['source'])} options={[{ value: 'all', label: '全部来源' }, { value: 'conversation', label: '会话' }, { value: 'alert', label: '告警' }, { value: 'manual', label: '手工创建' }]} />
     <Select label="审批状态" value={filters.approval} onChange={(value) => update('approval', value as TaskFilters['approval'])} options={[{ value: 'all', label: '全部审批状态' }, { value: 'pending', label: '待双重审批' }, { value: 'approved', label: '已批准' }, { value: 'rejected', label: '已拒绝' }]} />
-    <div className="task-toolbar-actions"><div className="task-view-toggle"><button aria-label="看板视图" className={view === 'board' ? 'active' : ''} onClick={() => onViewChange('board')}><TableProperties size={16} /></button><button aria-label="列表视图" className={view === 'list' ? 'active' : ''} onClick={() => onViewChange('list')}><List size={16} /></button></div><button type="button" className="task-create-btn" onClick={onCreate}><Plus size={16} />新建任务</button></div>
+    <div className="task-toolbar-actions"><div className="task-view-toggle"><button aria-label="看板视图" className={view === 'board' ? 'active' : ''} onClick={() => onViewChange('board')}><TableProperties size={16} /></button><button aria-label="列表视图" className={view === 'list' ? 'active' : ''} onClick={() => onViewChange('list')}><List size={16} /></button></div>{onCreate && <button type="button" className="task-create-btn" onClick={onCreate}><Plus size={16} />新建任务</button>}</div>
   </div>;
 }

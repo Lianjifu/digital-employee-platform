@@ -24,11 +24,20 @@ var DurableCollections = []string{
 	"conversations",
 	"messages",
 	"knowledge_docs",
+	"knowledge_extra",
 	"memory_candidates",
 	"memory_records",
+	"memory_policies",
+	"memory_audits",
 	"channel_dlq",
 	"channel_deploys",
 	"release_approvals",
+	"skills",
+	"skill_catalog",
+	"skill_health",
+	"skill_integrations",
+	"skill_extra",
+	"workflow_skills",
 }
 
 // SetPersistHook registers durable snapshot writer (Postgres kv_documents).
@@ -106,16 +115,46 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 		return out
 	case "knowledge_docs":
 		return s.KnowledgeDocs
+	case "knowledge_extra":
+		// Flatten map[string]any into a single document for kv snapshot.
+		return []map[string]any{{"id": "knowledge_extra", "workspaceId": "*", "payload": s.KnowledgeExtra}}
 	case "memory_candidates":
 		return s.MemoryCands
 	case "memory_records":
 		return s.MemoryRecords
+	case "memory_policies":
+		out := make([]map[string]any, 0, len(s.MemoryPolicies))
+		for ws, p := range s.MemoryPolicies {
+			cp := map[string]any{}
+			for k, v := range p {
+				cp[k] = v
+			}
+			if str(cp["workspaceId"]) == "" {
+				cp["workspaceId"] = ws
+			}
+			out = append(out, cp)
+		}
+		return out
+	case "memory_audits":
+		return s.MemoryAudits
 	case "channel_dlq":
 		return s.ChannelDLQ
 	case "channel_deploys":
 		return s.ChannelDeploys
 	case "release_approvals":
 		return s.ReleaseApprovals
+	case "skills":
+		return s.Skills
+	case "skill_catalog":
+		return s.SkillCatalog
+	case "skill_health":
+		return s.SkillHealth
+	case "skill_integrations":
+		return s.SkillIntegrations
+	case "skill_extra":
+		return []map[string]any{{"id": "skill_extra", "workspaceId": "*", "payload": s.SkillExtra}}
+	case "workflow_skills":
+		return s.WorkflowSkills
 	default:
 		return nil
 	}
@@ -198,15 +237,49 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 		}
 	case "knowledge_docs":
 		s.KnowledgeDocs = items
+	case "knowledge_extra":
+		if len(items) > 0 {
+			if payload, ok := items[0]["payload"].(map[string]any); ok && len(payload) > 0 {
+				// Keep in-memory seed when durable snapshot is an empty shell.
+				s.KnowledgeExtra = payload
+			}
+		}
 	case "memory_candidates":
 		s.MemoryCands = items
 	case "memory_records":
 		s.MemoryRecords = items
+	case "memory_policies":
+		s.MemoryPolicies = map[string]map[string]any{}
+		for _, p := range items {
+			ws := str(p["workspaceId"])
+			if ws == "" {
+				continue
+			}
+			s.MemoryPolicies[ws] = p
+		}
+	case "memory_audits":
+		s.MemoryAudits = items
 	case "channel_dlq":
 		s.ChannelDLQ = items
 	case "channel_deploys":
 		s.ChannelDeploys = items
 	case "release_approvals":
 		s.ReleaseApprovals = items
+	case "skills":
+		s.Skills = items
+	case "skill_catalog":
+		s.SkillCatalog = items
+	case "skill_health":
+		s.SkillHealth = items
+	case "skill_integrations":
+		s.SkillIntegrations = items
+	case "skill_extra":
+		if len(items) > 0 {
+			if payload, ok := items[0]["payload"].(map[string]any); ok && len(payload) > 0 {
+				s.SkillExtra = payload
+			}
+		}
+	case "workflow_skills":
+		s.WorkflowSkills = items
 	}
 }

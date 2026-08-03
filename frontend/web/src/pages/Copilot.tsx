@@ -52,6 +52,8 @@ import { useT } from '@/i18n';
 import { Markdown } from '@/components/Markdown';
 import { deriveWorkbenchSummary, type WorkbenchContextTab } from '@/features/copilot/workbench';
 import { sessionHistoryPresentation } from '@/features/copilot/layout';
+import { RoleReadonlyBanner } from '@/components/shared';
+import { roleCanMutate, rolePageCopy } from '@/features/role-nav/role-nav';
 import type {
   ChatMessageEx,
   ChatSession,
@@ -67,61 +69,85 @@ interface SessionItem {
   workspaceId?: string;
   ownerId?: string;
   correlationId?: string;
-  title: string;
-  preview: string;
-  agent: string;
+  conversationId?: string;
+  title?: string;
+  preview?: string;
+  agent?: string;
   digitalEmployeeId?: string;
   digitalEmployeeName?: string;
-  status: 'active' | 'done';
-  createdAt: string;
-  updatedAt: string;
-  lastMessageAt: string;
+  status?: 'active' | 'done' | string;
+  createdAt?: string;
+  updatedAt?: string;
+  lastMessageAt?: string;
   pinned?: boolean;
   unread?: number;
 }
 
-function sessionGroup(lastMessageAt: string): ChatSession['group'] {
-  const day = new Date(lastMessageAt); const today = new Date();
+function sessionGroup(lastMessageAt: string | undefined | null): ChatSession['group'] {
+  const day = parseDate(lastMessageAt);
+  if (!day) return 'earlier';
+  const today = new Date();
   const delta = Math.floor((new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime() - new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime()) / 86_400_000);
   return delta <= 0 ? 'today' : delta === 1 ? 'yesterday' : delta < 7 ? 'week' : 'earlier';
 }
 
 const SHANGHAI_TIME_ZONE = 'Asia/Shanghai';
 
+function parseDate(value: string | number | Date | null | undefined): Date | null {
+  if (value == null || value === '') return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function formatShanghaiTime(value: string | number | Date) {
-  return new Intl.DateTimeFormat('zh-CN', { timeZone: SHANGHAI_TIME_ZONE, hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(value));
+  const date = parseDate(value);
+  if (!date) return '—';
+  return new Intl.DateTimeFormat('zh-CN', { timeZone: SHANGHAI_TIME_ZONE, hour: '2-digit', minute: '2-digit', hour12: false }).format(date);
 }
 
 function formatShanghaiDate(value: string | number | Date) {
-  return new Intl.DateTimeFormat('zh-CN', { timeZone: SHANGHAI_TIME_ZONE, year: 'numeric', month: 'numeric', day: 'numeric' }).format(new Date(value));
+  const date = parseDate(value);
+  if (!date) return '—';
+  return new Intl.DateTimeFormat('zh-CN', { timeZone: SHANGHAI_TIME_ZONE, year: 'numeric', month: 'numeric', day: 'numeric' }).format(date);
 }
 
-function sessionTime(lastMessageAt: string) {
-  const date = new Date(lastMessageAt); const today = new Date();
+function sessionTime(lastMessageAt: string | undefined | null) {
+  const date = parseDate(lastMessageAt);
+  if (!date) return '—';
+  const today = new Date();
   const sameDay = formatShanghaiDate(date) === formatShanghaiDate(today);
   return sameDay ? formatShanghaiTime(date) : new Intl.DateTimeFormat('zh-CN', { timeZone: SHANGHAI_TIME_ZONE, month: 'numeric', day: 'numeric' }).format(date);
 }
 
 function toChatSession(session: SessionItem): ChatSession {
+  const stamp = session.lastMessageAt || session.updatedAt || session.createdAt;
+  const created = parseDate(session.createdAt)?.getTime() ?? parseDate(stamp)?.getTime() ?? Date.now();
+  const updated = parseDate(session.updatedAt)?.getTime() ?? parseDate(stamp)?.getTime() ?? created;
   return {
     id: session.id,
     workspaceId: session.workspaceId,
     ownerId: session.ownerId,
-    title: session.title,
-    preview: session.preview,
-    agent: session.digitalEmployeeName ?? session.agent,
+    conversationId: session.conversationId ?? session.id,
+    title: session.title || '未命名会话',
+    preview: session.preview || '暂无消息',
+    agent: session.digitalEmployeeName ?? session.agent ?? '岗位专家',
     digitalEmployeeId: session.digitalEmployeeId,
     digitalEmployeeName: session.digitalEmployeeName ?? session.agent,
-    status: session.status,
-    lifecycle: session.status === 'active' ? 'active' : 'idle',
-    group: sessionGroup(session.lastMessageAt),
-    time: sessionTime(session.lastMessageAt),
+    status: session.status === 'done' ? 'done' : 'active',
+    lifecycle: session.status === 'done' ? 'idle' : 'active',
+    group: sessionGroup(stamp),
+    time: sessionTime(stamp),
     pinned: session.pinned,
     messages: [],
-    createdAt: new Date(session.createdAt).getTime(),
-    lastActiveAt: new Date(session.updatedAt).getTime(),
+    createdAt: created,
+    lastActiveAt: updated,
     encrypted: true,
   };
+}
+
+function sessionInWorkspace(session: Pick<ChatSession, 'id' | 'workspaceId'> | SessionItem | undefined, workspaceId: string) {
+  if (!session?.id) return false;
+  return (session.workspaceId ?? 'w1') === workspaceId;
 }
 
 type ContextSelection = {
@@ -240,6 +266,8 @@ export default function Copilot() {
   const employeeIdFromQuery = searchParams.get('employeeId');
   const currentUser = useAuthStore((state) => state.user);
   const isAdmin = currentUser?.role === 'admin';
+  const canMutate = roleCanMutate(currentUser?.role);
+  const pageCopy = rolePageCopy('copilot', currentUser?.role);
   const { t } = useT();
   const [searchQ, setSearchQ] = useState('');
   const [historyReady, setHistoryReady] = useState(false);
@@ -361,20 +389,36 @@ export default function Copilot() {
   const currentModel = MODELS.find((m) => m.key === currentModelKey) ?? MODELS[0];
   const enabledToolCount = enabledTools.length;
 
-  const { data: employees = [] } = useApiQuery<DigitalEmployee[]>(['digital-employees'], '/api/digital-employees');
+  const { data: employeesData } = useApiQuery<DigitalEmployee[]>(['digital-employees'], '/api/digital-employees');
+  const employees = useMemo(() => employeesData ?? [], [employeesData]);
   const onDutyEmployees = useMemo(
     () => employees.filter((item) => item.lifecycle === 'active').sort(compareDigitalEmployees),
     [employees],
   );
-  const { data: slashCmds = [] } = useApiQuery<{ cmd: string; desc: string; icon: string; category: string }[]>(
+  const { data: slashCmdsData } = useApiQuery<{ cmd: string; desc: string; icon: string; category: string }[]>(
     ['slash-cmds'], '/api/slash-commands'
   );
-  const { data: sessionHistory = [], isLoading: sessionsLoading } = useApiQuery<SessionItem[]>(['sessions'], '/api/sessions');
+  const slashCmds = useMemo(() => slashCmdsData ?? [], [slashCmdsData]);
+  const { data: sessionHistoryData, isLoading: sessionsLoading } = useApiQuery<SessionItem[]>(['sessions'], '/api/sessions');
+  const sessionHistory = useMemo(() => sessionHistoryData ?? [], [sessionHistoryData]);
   const chat = useChat({ name: '岗位专家' });
   const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
-  const { data: activeConversation } = useApiQuery<any>(['conversation', chat.state.activeId], `/api/conversations/${chat.state.activeId}`, undefined, { enabled: !!chat.state.activeId });
-
   const activeSession = chat.activeSession;
+  const serverSession = useMemo(
+    () => sessionHistory.find((item) => item.id === chat.state.activeId),
+    [sessionHistory, chat.state.activeId],
+  );
+  // 仅拉取服务端已知会话；本地新建 s_* 不请求，避免 404 刷屏
+  const conversationFetchId = serverSession
+    ? (serverSession.conversationId || serverSession.id)
+    : undefined;
+  const { data: activeConversation, isError: conversationMissing } = useApiQuery<any>(
+    ['conversation', conversationFetchId],
+    `/api/conversations/${conversationFetchId ?? '__none__'}`,
+    undefined,
+    { enabled: Boolean(conversationFetchId), retry: false, staleTime: 30_000 },
+  );
+
   const activeEmployeeId = activeSession?.digitalEmployeeId ?? employeeIdFromQuery ?? undefined;
   const activeEmployee = employees.find((item) => item.id === activeEmployeeId) ?? null;
   const expertName = activeEmployee ? employeePrimaryLabel(activeEmployee) : (activeSession?.digitalEmployeeName ?? activeSession?.agent ?? '岗位专家');
@@ -413,27 +457,38 @@ export default function Copilot() {
   }, [chat.importSessions, sessionHistory, sessionsLoading]);
 
   useEffect(() => {
-    if (!activeConversation || activeConversation.id !== chat.state.activeId) return;
-    const summary = sessionHistory.find((item) => item.id === activeConversation.id);
+    if (conversationMissing || !activeConversation || !chat.state.activeId || !conversationFetchId) return;
+    if (activeConversation.id !== conversationFetchId && activeConversation.id !== chat.state.activeId) return;
+    const summary = sessionHistory.find((item) => item.id === chat.state.activeId)
+      ?? sessionHistory.find((item) => item.conversationId === activeConversation.id);
     if (!summary) return;
-    chat.syncSession({ ...toChatSession(summary), messages: activeConversation.messages as ChatMessageEx[] });
-  }, [activeConversation, chat.state.activeId, chat.syncSession, sessionHistory]);
+    chat.syncSession({ ...toChatSession(summary), messages: (activeConversation.messages ?? []) as ChatMessageEx[] });
+  }, [activeConversation, conversationMissing, chat.state.activeId, chat.syncSession, conversationFetchId, sessionHistory]);
 
-  // 深链：/copilot/:id 切换到对应会话
+  // 深链：URL → state（仅当路由会话在当前工作区有效时）
   useEffect(() => {
     if (!historyReady || !routeSessionId) return;
     if (routeSessionId === chat.state.activeId) return;
-    const exists = Boolean(chat.state.sessions[routeSessionId]) || sessionHistory.some((item) => item.id === routeSessionId);
-    if (exists) chat.switchSession(routeSessionId);
-  }, [historyReady, routeSessionId, chat.state.activeId, chat.state.sessions, chat.switchSession, sessionHistory]);
+    const local = chat.state.sessions[routeSessionId];
+    const fromServer = sessionHistory.find((item) => item.id === routeSessionId);
+    if (!local && !fromServer) return;
+    if (!sessionInWorkspace(local ?? fromServer, currentWorkspaceId)) return;
+    chat.switchSession(routeSessionId);
+  }, [historyReady, routeSessionId, chat.state.activeId, chat.switchSession, sessionHistory, currentWorkspaceId, chat.state.sessions]);
 
-  // 活动会话同步到 URL
+  // URL 同步：state → URL。若路由已指向另一有效会话，交给深链 effect，禁止互相抢写。
   useEffect(() => {
     if (!historyReady || !chat.state.activeId) return;
-    const target = `/copilot/${chat.state.activeId}`;
     if (routeSessionId === chat.state.activeId) return;
-    navigate(target, { replace: true });
-  }, [historyReady, chat.state.activeId, routeSessionId, navigate]);
+    if (routeSessionId) {
+      const routeLocal = chat.state.sessions[routeSessionId];
+      const routeServer = sessionHistory.find((item) => item.id === routeSessionId);
+      if ((routeLocal || routeServer) && sessionInWorkspace(routeLocal ?? routeServer, currentWorkspaceId)) {
+        return;
+      }
+    }
+    navigate(`/copilot/${chat.state.activeId}`, { replace: true });
+  }, [historyReady, chat.state.activeId, routeSessionId, navigate, chat.state.sessions, sessionHistory, currentWorkspaceId]);
 
   // 深链：?employeeId= 选中在岗专家并发起/绑定会话
   useEffect(() => {
@@ -446,10 +501,10 @@ export default function Copilot() {
       setExpertPickerOpen(true);
       return;
     }
-    const existing = Object.values(chat.state.sessions).find((session) => session.digitalEmployeeId === employee.id && session.status === 'active');
+    const existing = Object.values(chat.state.sessions).find((session) => session.digitalEmployeeId === employee.id && session.status === 'active' && sessionInWorkspace(session, currentWorkspaceId));
     if (existing) {
       chat.switchSession(existing.id);
-    } else {
+    } else if (canMutate) {
       const id = chat.newSession({
         digitalEmployeeId: employee.id,
         digitalEmployeeName: employeePrimaryLabel(employee),
@@ -458,9 +513,10 @@ export default function Copilot() {
       if (id) navigate(`/copilot/${id}`, { replace: true });
     }
     setSearchParams({}, { replace: true });
-  }, [historyReady, employeeIdFromQuery, employees, chat, navigate, setSearchParams]);
+  }, [historyReady, employeeIdFromQuery, employees, chat.state.sessions, chat.switchSession, chat.newSession, navigate, setSearchParams, canMutate, currentWorkspaceId]);
 
   const startSessionWithExpert = (employee: DigitalEmployee) => {
+    if (!canMutate) return;
     if (employee.lifecycle !== 'active') return;
     const active = chat.activeSession;
     if (expertPickerMode === 'rebind' && active) {
@@ -497,6 +553,7 @@ export default function Copilot() {
   };
 
   const openNewSessionPicker = () => {
+    if (!canMutate) return;
     setExpertPickerMode('new');
     setExpertPickerOpen(true);
     setExpertPickerQuery('');
@@ -504,6 +561,7 @@ export default function Copilot() {
   };
 
   const openRebindExpertPicker = () => {
+    if (!canMutate) return;
     setExpertPickerMode('rebind');
     setExpertPickerOpen(true);
     setExpertPickerQuery('');
@@ -665,7 +723,7 @@ export default function Copilot() {
 
   // 过滤会话
   const filteredSessions = useMemo(() => {
-    const list = Object.values(chat.state.sessions).filter((session) => (session.workspaceId ?? 'w1') === currentWorkspaceId);
+    const list = Object.values(chat.state.sessions).filter((session) => sessionInWorkspace(session, currentWorkspaceId));
     const q = searchQ.trim().toLowerCase();
     return list.filter((s) => !q || s.title.toLowerCase().includes(q) || s.preview.toLowerCase().includes(q));
   }, [chat.state.sessions, currentWorkspaceId, searchQ]);
@@ -692,6 +750,7 @@ export default function Copilot() {
   };
 
   const handleSend = () => {
+    if (!canMutate) return;
     if (!chat.state.draftInput.trim() || chat.state.typing || isClosed || handoffActive) return;
     if (!activeSession?.digitalEmployeeId && !activeEmployee) {
       openNewSessionPicker();
@@ -778,17 +837,28 @@ export default function Copilot() {
     return { tokens, priced };
   }, [currentSession, riskLevel]);
   useEffect(() => {
-    const visible = Object.values(chat.state.sessions).filter((session) => (session.workspaceId ?? 'w1') === currentWorkspaceId);
-    if (!historyReady || sessionsLoading || visible.some((session) => session.id === chat.state.activeId)) return;
-    if (visible[0]) chat.switchSession(visible[0].id);
-    else if (onDutyEmployees[0]) {
-      chat.newSession({
+    const visible = Object.values(chat.state.sessions).filter((session) => sessionInWorkspace(session, currentWorkspaceId));
+    if (!historyReady || sessionsLoading) return;
+    if (chat.state.activeId && visible.some((session) => session.id === chat.state.activeId)) return;
+    // 优先采纳当前路由中的有效会话，避免与深链互相覆盖
+    if (routeSessionId && visible.some((session) => session.id === routeSessionId)) {
+      chat.switchSession(routeSessionId);
+      return;
+    }
+    if (visible[0]?.id) {
+      chat.switchSession(visible[0].id);
+      if (routeSessionId !== visible[0].id) navigate(`/copilot/${visible[0].id}`, { replace: true });
+      return;
+    }
+    if (canMutate && onDutyEmployees[0]) {
+      const id = chat.newSession({
         digitalEmployeeId: onDutyEmployees[0].id,
         digitalEmployeeName: employeePrimaryLabel(onDutyEmployees[0]),
         agentKey: onDutyEmployees[0].capabilities.agentId,
       });
+      if (id) navigate(`/copilot/${id}`, { replace: true });
     }
-  }, [chat.state.activeId, chat.state.sessions, currentWorkspaceId, historyReady, sessionsLoading, onDutyEmployees, chat]);
+  }, [chat.state.activeId, chat.state.sessions, currentWorkspaceId, historyReady, sessionsLoading, onDutyEmployees, chat.switchSession, chat.newSession, canMutate, navigate, routeSessionId]);
   const sessionSignals = useMemo(() => {
     const messages = currentSession?.messages ?? [];
     const executions = messages.reduce((total, message) => total + (message.toolCalls?.length ?? 0), 0);
@@ -904,7 +974,9 @@ export default function Copilot() {
     if (!contextSelection.open) return;
     if (contextSelection.scope === 'session' && canOpenExpertContext) return;
     if (contextSelection.scope === 'message' && hasSelectedContext) return;
-    setContextSelection((selection) => ({ ...selection, open: false, messageId: undefined }));
+    setContextSelection((selection) => (
+      selection.open ? { ...selection, open: false, messageId: undefined } : selection
+    ));
   }, [contextSelection.open, contextSelection.scope, hasSelectedContext, canOpenExpertContext]);
 
   // P2：Cmd/Ctrl + Shift + E 快速打开或关闭当前会话上下文。
@@ -968,12 +1040,16 @@ export default function Copilot() {
       >
         <div className="copilot-sessions__head">
           <div className="copilot-sessions__title-row">
-            <h2>会话记录</h2>
+            <h2>{pageCopy.title}</h2>
             <span className="copilot-sessions__count" title="当前工作区可见会话数">{filteredSessions.length}</span>
           </div>
-          <Button size="sm" className="copilot-sessions__new" onClick={openNewSessionPicker}>
-            <Plus className="h-3.5 w-3.5" />新会话
-          </Button>
+          {canMutate ? (
+            <Button size="sm" className="copilot-sessions__new" onClick={openNewSessionPicker}>
+              <Plus className="h-3.5 w-3.5" />新会话
+            </Button>
+          ) : (
+            <p className="px-1 text-[10px] leading-4 text-[var(--text-muted)]">{pageCopy.subtitle}</p>
+          )}
           <div className="copilot-sessions__search">
             <Search className="h-3.5 w-3.5" />
             <input
@@ -1026,15 +1102,17 @@ export default function Copilot() {
                             </Badge>
                           </div>
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => chat.delSession(s.id)}
-                          className="copilot-session-item__delete"
-                          aria-label={`删除会话：${s.title}`}
-                          title="删除"
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </button>
+                        {canMutate && (
+                          <button
+                            type="button"
+                            onClick={() => chat.delSession(s.id)}
+                            className="copilot-session-item__delete"
+                            aria-label={`删除会话：${s.title}`}
+                            title="删除"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -1045,8 +1123,8 @@ export default function Copilot() {
           {filteredSessions.length === 0 && (
             <div className="copilot-sessions__empty">
               <Bot className="h-8 w-8" />
-              <strong>还没有会话</strong>
-              <span>点击「新会话」选择在岗专家开始协作</span>
+              <strong>{canMutate ? '还没有会话' : '暂无协作记录'}</strong>
+              <span>{canMutate ? '点击「新会话」选择在岗专家开始协作' : '工作区会话证据将在此只读展示'}</span>
             </div>
           )}
         </div>
@@ -1078,6 +1156,7 @@ export default function Copilot() {
 
       {/* ============ 中间对话 ============ */}
       <section className="copilot-conversation flex min-w-0 min-h-0 flex-1 flex-col bg-[var(--bg)] overflow-hidden">
+        <div className="px-4 pt-2 sm:px-5"><RoleReadonlyBanner className="mb-1 flex items-start gap-2 rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]" /></div>
         {/* 当前事件工作头：对话页首先呈现处置对象和下一待办。 */}
         <header className="app-glass copilot-header px-4 py-3 sm:px-5">
           {(() => {
@@ -1287,12 +1366,14 @@ export default function Copilot() {
                       </>
                     ) : (
                       <>
-                        <h2 className="text-xl font-semibold text-[var(--text)]">选择在岗专家</h2>
-                        <p className="text-sm text-[var(--text-muted)] mt-1">专家协作面向已上岗的数字员工；请先选择协作对象再开始会话。</p>
-                        <Button size="sm" className="mt-4" onClick={openNewSessionPicker}>
-                          <BriefcaseBusiness className="h-3.5 w-3.5" />选择在岗专家
-                        </Button>
-                        {onDutyEmployees.length === 0 && (
+                        <h2 className="text-xl font-semibold text-[var(--text)]">{canMutate ? '选择在岗专家' : '协作记录核查'}</h2>
+                        <p className="text-sm text-[var(--text-muted)] mt-1">{canMutate ? '专家协作面向已上岗的数字员工；请先选择协作对象再开始会话。' : '请从左侧选择已有会话核查证据与审批轨迹。'}</p>
+                        {canMutate && (
+                          <Button size="sm" className="mt-4" onClick={openNewSessionPicker}>
+                            <BriefcaseBusiness className="h-3.5 w-3.5" />选择在岗专家
+                          </Button>
+                        )}
+                        {canMutate && onDutyEmployees.length === 0 && (
                           <p className="mt-3 text-[11px] text-[var(--text-muted)]">
                             当前工作区暂无在岗员工，请先到 <Link to="/agents" className="text-[var(--brand)]">数字员工</Link> 完成上岗。
                           </p>
@@ -1300,7 +1381,7 @@ export default function Copilot() {
                       </>
                     )}
                   </div>
-                  {activeEmployee && (
+                  {canMutate && activeEmployee && (
                     <>
                       <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">
                         <Sparkles className="h-3 w-3" />建议试试
@@ -1337,6 +1418,7 @@ export default function Copilot() {
         </div>
 
         {/* ============ 输入区（企业级 Composer） ============ */}
+        {canMutate ? (
         <div
           className="copilot-composer relative border-t border-[var(--border)] px-3 pb-3 pt-2.5 bg-gradient-to-b from-[var(--bg)] to-[var(--bg-elevated)]/40"
           onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
@@ -1665,6 +1747,11 @@ export default function Copilot() {
             </span>
           </div>
         </div>
+        ) : (
+          <div className="border-t border-[var(--border)] px-4 py-3 text-[11px] leading-5 text-[var(--text-muted)] bg-[var(--bg-elevated)]/40">
+            审计只读 · 可核查会话证据；若审批策略要求审计签署位，仍可在消息审批卡中完成签署。
+          </div>
+        )}
       </section>
 
       <div
@@ -1737,6 +1824,9 @@ export default function Copilot() {
               </span>
               {handoffActive && <span className="copilot-agent-details__handoff">由 {handoffOwner} 处理后续变更</span>}
             </div>
+            <p className="mt-2 px-1 text-[10px] leading-4 text-[var(--text-muted)]">
+              会话上下文即运行记忆入口；管理员可在「记忆中心」做策略治理，审计员可核查记忆策略。
+            </p>
           </header>
 
           <nav className="copilot-agent-details__tabs shrink-0" aria-label="会话上下文分区">

@@ -232,15 +232,55 @@ export function validateProviderConnectDraft(
 }
 
 export function canDiscoverModels(
-  draft: Pick<ProviderConnectDraft, 'protocol' | 'baseUrl' | 'apiKey'>,
+  draft: Pick<ProviderConnectDraft, 'protocol' | 'baseUrl' | 'apiKey' | 'deploymentName' | 'apiVersion'>,
+  options: { allowStoredCredential?: boolean } = {},
+) {
+  return canTestConnectDraft(draft, options);
+}
+
+/** 连接测试 / 拉取模型：仅检查连通必需字段，不要求供应商名称等展示字段。 */
+export function canTestConnectDraft(
+  draft: Pick<ProviderConnectDraft, 'protocol' | 'baseUrl' | 'apiKey' | 'deploymentName' | 'apiVersion'>,
   options: { allowStoredCredential?: boolean } = {},
 ) {
   if (!draft.baseUrl.trim()) return { ok: false as const, reason: '请先填写 API 请求地址' };
   if (!/^https?:\/\//i.test(draft.baseUrl.trim())) return { ok: false as const, reason: 'API 请求地址格式无效' };
   if (draft.protocol !== 'ollama' && !draft.apiKey.trim() && !options.allowStoredCredential) {
-    return { ok: false as const, reason: '拉取模型列表需要先填写 API Key' };
+    return { ok: false as const, reason: '请先填写 API Key' };
+  }
+  if (draft.protocol === 'azure_openai') {
+    if (!draft.deploymentName.trim()) return { ok: false as const, reason: '请先填写 Deployment Name' };
+    if (!draft.apiVersion.trim()) return { ok: false as const, reason: '请先填写 API Version' };
   }
   return { ok: true as const };
+}
+
+/** 已保存供应商：用落库字段判断能否发起连通性验证（不依赖未保存草稿）。 */
+export function canTestSavedProvider(provider: {
+  protocol?: ModelConnectProtocol;
+  baseUrl?: string;
+  apiVersion?: string;
+  deploymentName?: string;
+  credentialRef?: string;
+  credentialMasked?: string;
+  tier?: ProviderTier;
+}) {
+  const protocol = provider.protocol
+    ?? (provider.tier === 'self_hosted' ? 'ollama' : 'openai_compatible');
+  const hasCredential = Boolean(
+    (provider.credentialRef && provider.credentialRef.trim())
+    || (provider.credentialMasked && !/^[*·.\s]*$/.test(provider.credentialMasked)),
+  );
+  return canTestConnectDraft(
+    {
+      protocol,
+      baseUrl: provider.baseUrl ?? '',
+      apiKey: '',
+      deploymentName: provider.deploymentName ?? '',
+      apiVersion: provider.apiVersion ?? '',
+    },
+    { allowStoredCredential: protocol === 'ollama' || hasCredential },
+  );
 }
 
 /** Soft guidance when URL host and selected protocol look mismatched. */

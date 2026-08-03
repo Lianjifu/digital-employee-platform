@@ -31,14 +31,21 @@ describe('enterprise navigation translations', () => {
 
   it('uses four-character Chinese primary nav labels', () => {
     const navKeys = [
-      'nav.home', 'nav.copilot', 'nav.tasks', 'nav.agents', 'nav.workflows',
-      'nav.models', 'nav.knowledge', 'nav.skills', 'nav.memory', 'nav.channels',
+      'nav.home', 'nav.copilot', 'nav.copilot.auditor',
+      'nav.tasks', 'nav.tasks.user', 'nav.tasks.auditor',
+      'nav.agents', 'nav.agents.auditor',
+      'nav.workflows', 'nav.workflows.auditor',
+      'nav.models', 'nav.models.auditor', 'nav.knowledge', 'nav.knowledge.user', 'nav.knowledge.auditor',
+      'nav.skills', 'nav.skills.user', 'nav.skills.auditor',
+      'nav.memory', 'nav.memory.auditor', 'nav.channels',
       'nav.accessControl', 'nav.zeroTrust', 'nav.auditCenter',
     ] as const;
     for (const key of navKeys) {
-      expect([...DICTS['zh-CN'][key]].length).toBe(4);
+      expect([...DICTS['zh-CN'][key]].length, key).toBe(4);
     }
     expect(DICTS['zh-CN']['nav.group.operations']).toBe('协作');
+    expect(DICTS['zh-CN']['nav.group.audit']).toBe('审计');
+    expect(DICTS['zh-CN']['nav.group.review']).toBe('核查');
     expect(DICTS['zh-CN']['account.platformSettings']).toBe('平台设置');
     expect(DICTS['zh-CN']['module.settings.tabs.usage']).toBe('套餐用量');
     expect(DICTS['zh-CN']['nav.workflows']).toBe('工作流程');
@@ -49,7 +56,7 @@ describe('enterprise navigation translations', () => {
   it('labels the skills store tab and CTA consistently', () => {
     expect(DICTS['zh-CN']['module.skills.tabs.store']).toBe('技能商店');
     expect(DICTS['zh-CN']['module.skills.cta.store']).toBe('从商店安装');
-    expect(DICTS['zh-CN']['module.skills.summary.store']).toContain('技能商店');
+    expect(DICTS['zh-CN']['module.skills.summary.store']).toContain('Registry');
     expect(DICTS['en-US']['module.skills.tabs.store']).toBe('Skill Store');
     expect(DICTS['en-US']['module.skills.cta.store']).toBe('Install from store');
   });

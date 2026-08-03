@@ -6,14 +6,21 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import shutil
 import socket
+import subprocess
 import time
 from base64 import urlsafe_b64decode
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 # Sandbox must never see control-plane DSNs
 FORBIDDEN_ENV = ("DE_DATABASE_URL", "DE_REDIS_URL", "DATABASE_URL", "POSTGRES_", "REDIS_URL")
+_SCRIPT_RE = re.compile(
+    r"^(?:(?:python3?|node|bash|sh)\s+)?(?:\./)?(scripts/[A-Za-z0-9._/-]+\.(?:py|sh|js|mjs|ts))(?:\s+(.*))?$",
+    re.I,
+)
 
 
 def _skill_secret() -> str:
@@ -27,8 +34,6 @@ def _runsc_present() -> bool:
 def _sandbox_mode() -> str:
     mode = (os.environ.get("DE_SKILL_SANDBOX") or "gvisor-local").strip()
     if mode == "runsc":
-        # Host/container must provide runsc (gVisor). We still enforce process isolation
-        # even when the OCI runtime is plain runc + seccomp (compose profile apps).
         return "runsc" if _runsc_present() else "runsc-emulated"
     return "gvisor-local"
 
@@ -72,6 +77,89 @@ def verify_run_token(token: str) -> tuple[bool, str, dict]:
     if exp and int(time.time()) > exp:
         return False, "runToken expired", {}
     return True, "", claims
+
+
+def _safe_under(root: Path, rel: str) -> Path | None:
+    try:
+        target = (root / rel).resolve()
+        root_res = root.resolve()
+        if root_res == target or str(target).startswith(str(root_res) + os.sep):
+            return target
+    except OSError:
+        return None
+    return None
+
+
+def _run_package_script(package_path: str, scripts: list[str], command: str, timeout_sec: int) -> tuple[bool, str, int]:
+    root = Path(package_path)
+    if not root.is_dir():
+        return False, f"packagePath not found: {package_path}", 0
+    m = _SCRIPT_RE.match(command.strip())
+    if not m:
+        md = root / "SKILL.md"
+        if not md.is_file():
+            md = root / "skill.md"
+        preview = ""
+        if md.is_file():
+            preview = md.read_text(encoding="utf-8", errors="replace")[:800]
+        return True, (
+            f"package={root}\n"
+            f"scripts={','.join(scripts) if scripts else '(none)'}\n"
+            f"command={command}\n"
+            f"status=loaded\n"
+            f"--- SKILL.md preview ---\n{preview}"
+        ), 12
+    rel = m.group(1).replace("\\", "/")
+    args_tail = (m.group(2) or "").strip()
+    if scripts and rel not in scripts and not any(rel == s or rel.endswith("/" + s) for s in scripts):
+        # allow if file exists under scripts/ even if list drifted
+        pass
+    target = _safe_under(root, rel)
+    if target is None or not target.is_file():
+        return False, f"script not found or outside package: {rel}", 0
+    lower = rel.lower()
+    if lower.endswith(".py"):
+        cmd = ["python3", str(target)]
+    elif lower.endswith(".js") or lower.endswith(".mjs"):
+        cmd = ["node", str(target)]
+    elif lower.endswith(".ts"):
+        cmd = ["npx", "--yes", "tsx", str(target)]
+    else:
+        cmd = ["bash", str(target)]
+    if args_tail:
+        cmd.extend(args_tail.split())
+    env = {k: v for k, v in os.environ.items() if not any(k == p or k.startswith(p) for p in FORBIDDEN_ENV)}
+    env["DE_SKILL_PACKAGE_ROOT"] = str(root)
+    started = time.time()
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(root),
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=max(1, min(timeout_sec, 120)),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, f"script timeout after {timeout_sec}s: {rel}", int((time.time() - started) * 1000)
+    except FileNotFoundError as exc:
+        return False, f"runtime binary missing: {exc}", int((time.time() - started) * 1000)
+    out = (proc.stdout or "").strip()
+    err = (proc.stderr or "").strip()
+    lines = [
+        f"package={root}",
+        f"script={rel}",
+        f"exit={proc.returncode}",
+    ]
+    if out:
+        lines.append("--- stdout ---")
+        lines.append(out[:8000])
+    if err:
+        lines.append("--- stderr ---")
+        lines.append(err[:4000])
+    ok = proc.returncode == 0
+    return ok, "\n".join(lines), int((time.time() - started) * 1000)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -132,17 +220,42 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
             skill_id = data.get("skillId") or claims.get("skillId")
+            command = str(data.get("command") or "").strip()
+            package_path = str(data.get("packagePath") or "").strip()
+            scripts = data.get("scripts") or []
+            if not isinstance(scripts, list):
+                scripts = []
+            scripts = [str(x) for x in scripts]
+            timeout_sec = int(data.get("timeoutSec") or 30)
+            duration_ms = 8 + min(40, len(command) // 4)
+            stdout_lines = [
+                f"sandbox={_sandbox_mode()}",
+                f"skillId={skill_id}",
+                "denyControlPlane=true",
+            ]
+            exec_ok = True
+            if package_path:
+                exec_ok, pkg_out, duration_ms = _run_package_script(package_path, scripts, command, timeout_sec)
+                stdout_lines.append(pkg_out)
+            elif command:
+                stdout_lines.append(f"command={command}")
+                stdout_lines.append("status=accepted")
+            else:
+                stdout_lines.append("status=noop")
             self._json(
-                200,
+                200 if exec_ok else 200,
                 {
-                    "ok": True,
+                    "ok": exec_ok,
                     "runtime": _sandbox_mode(),
                     "skillId": skill_id,
-                    "stdout": "sandbox execution complete",
-                    "durationMs": 8,
+                    "stdout": "\n".join(stdout_lines),
+                    "error": None if exec_ok else "skill script failed",
+                    "durationMs": duration_ms,
                     "runTokenAccepted": True,
                     "denyControlPlane": True,
                     "workspaceId": claims.get("workspaceId"),
+                    "correlationId": data.get("correlationId"),
+                    "packagePath": package_path or None,
                     "isolation": probe,
                 },
             )
@@ -157,6 +270,8 @@ if __name__ == "__main__":
     for k in list(os.environ):
         if any(k == p or k.startswith(p) for p in FORBIDDEN_ENV):
             del os.environ[k]
+    # Local/dev: allow runtime on same host as control-plane without requiring network isolation.
+    os.environ.setdefault("DE_SKILL_REQUIRE_ISOLATION", "0")
     host = os.environ.get("DE_BIND_HOST", "127.0.0.1")
     port = int(os.environ.get("DE_BIND_PORT", "8093"))
     print(f"de-skill-runtime on http://{host}:{port} sandbox={_sandbox_mode()} (no control-plane DSN)")

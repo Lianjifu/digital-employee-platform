@@ -19,7 +19,7 @@ func (s *Server) listEmployees(r *http.Request) (any, error) {
 	}
 	s.Store.RLock()
 	defer s.Store.RUnlock()
-	var out []map[string]any
+	var out = make([]map[string]any, 0)
 	for _, e := range s.Store.Employees {
 		if str(e["workspaceId"]) == ws {
 			out = append(out, e)
@@ -224,7 +224,7 @@ func (s *Server) listTasks(r *http.Request) (any, error) {
 	}
 	s.Store.RLock()
 	defer s.Store.RUnlock()
-	var out []map[string]any
+	var out = make([]map[string]any, 0)
 	for _, t := range s.Store.Tasks {
 		if str(t["workspaceId"]) != ws {
 			continue
@@ -309,9 +309,15 @@ func (s *Server) legacyAgentsProxy(r *http.Request) (any, error) {
 	items, _ := list.([]map[string]any)
 	out := make([]map[string]any, 0, len(items))
 	for _, e := range items {
+		lifecycle := str(e["lifecycle"])
+		status := lifecycle
+		switch lifecycle {
+		case "active", "released", "published":
+			status = "installed"
+		}
 		out = append(out, map[string]any{
 			"id": e["id"], "name": e["name"], "workspaceId": e["workspaceId"],
-			"status": e["lifecycle"], "ownerId": e["ownerId"], "legacy": true,
+			"status": status, "ownerId": e["ownerId"], "legacy": true,
 		})
 	}
 	return out, nil

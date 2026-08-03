@@ -3,7 +3,7 @@ import { X } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import { Button } from '@de/web-ui';
 
-export type ModalSize = 'sm' | 'md' | 'lg' | 'xl';
+export type ModalSize = 'sm' | 'md' | 'lg' | 'xl' | '2xl';
 
 export interface ModalProps {
   open: boolean;
@@ -13,10 +13,14 @@ export interface ModalProps {
   footer?: ReactNode;
   size?: ModalSize;
   closeOnBackdrop?: boolean;
+  /** 为 false 时不响应 ESC（叠层确认弹窗打开时，底层弹窗应关闭此项） */
+  closeOnEscape?: boolean;
   children?: ReactNode;
   /** 覆盖默认 body 样式，例如文档阅读器需要去掉内边距与外层滚动 */
   bodyClassName?: string;
   panelClassName?: string;
+  /** 叠层用：确认框应高于业务弹窗，默认 z-[200] */
+  overlayClassName?: string;
 }
 
 const SIZE_CLASS: Record<ModalSize, string> = {
@@ -24,6 +28,7 @@ const SIZE_CLASS: Record<ModalSize, string> = {
   md: 'max-w-xl',
   lg: 'max-w-3xl',
   xl: 'max-w-6xl',
+  '2xl': 'max-w-[1440px]',
 };
 
 /**
@@ -40,23 +45,25 @@ export function Modal({
   footer,
   size = 'md',
   closeOnBackdrop = true,
+  closeOnEscape = true,
   children,
   bodyClassName,
   panelClassName,
+  overlayClassName,
 }: ModalProps) {
   useEffect(() => {
-    if (!open) return;
+    if (!open || !closeOnEscape) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     document.addEventListener('keydown', onKey);
     return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, onClose, closeOnEscape]);
 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
+    <div className={cn('fixed inset-0 z-[200] flex items-center justify-center p-4', overlayClassName)}>
       {/* 遮罩 */}
       <div
         className="absolute inset-0 bg-black/50 backdrop-blur-sm animate-[fadeIn_0.15s_ease]"

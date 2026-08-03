@@ -75,6 +75,9 @@ backend/
 | P2 执行面 | Runtime 适配、RAG ingest、Skill 审计、Workflow 活动 | **已交付** |
 | P3 硬化 | staging、evaluateWrite 扩展、SSE/审计指标告警、DE 门禁 | **已交付** |
 | Models M0–M7 | 契约/租户隔离/Vault 凭据/真探活/路由门禁/审计预算/持久化指标 | **已交付** |
+| Knowledge | 知识包/文档/来源/RAG/评测/治理；与 Mock 字段级对齐 | **已交付** |
+| Skills P0–P3 | 商店货源、晋升上架、Registry 同步门禁、包导入、RunToken 试跑 | **已交付** |
+| Memory P0–P3 | 状态契约、approve→草稿知识包、TTL/容量、会话/任务运行时写入 | **已交付** |
 | 后续 | de-platform/collab、SPIRE SDS、真 runsc | 未完成 |
 
 契约缺口：[`api/contract-gap.md`](api/contract-gap.md)
@@ -104,6 +107,8 @@ CI：`.github/workflows/backend-contract.yml`
 | `DE_MODEL_ALLOW_PRIVATE` | 允许探活/discover 访问内网（ollama） |
 | `DE_MODEL_DISCOVER_FALLBACK` | 远端解析失败时回落静态目录（默认 1） |
 | `DE_MODEL_BUDGET_ENFORCE` | Copilot 用量硬门禁（默认 0） |
+| `DE_SKILL_RUN_SECRET` | Skill RunToken HMAC |
+| `DE_SKILL_TEST_SIM` | skill-runtime 不可达时是否允许本地仿真（生产建议 `0`） |
 
 ### 模型服务（生产语义）
 
@@ -112,4 +117,13 @@ CI：`.github/workflows/backend-contract.yml`
 - 写路径校验 workspace + `model.write`；删除前 impact；路由 validate→ready→publish；failover 返回 `fromModelId`/`toModelId`
 - 持久化：`model_providers` / `routing_policies` / `policy_versions` / `model_audit` / `model_budgets`
 - 指标：`de_model_provider_probe_*`、`de_model_vault_errors_total`、`de_model_policy_publish_total`、`de_model_budget_denies_total`
-| `DE_SKILL_RUN_SECRET` | Skill RunToken HMAC |
+
+### 知识 / 技能 / 记忆
+
+| 域 | 关键实现 | 说明 |
+|---|---|---|
+| Knowledge | `handlers_knowledge.go` | 知识包草稿→发布门禁；文档软删；来源同步；RAG ingest/retrieve |
+| Skills | `handlers_skills*.go` · `skill_package.go` | catalog/sync/publish；`.skill`/`.zip`/`.tgz` 导入；治理熔断与沙箱试跑 |
+| Memory | `handlers_memory.go` · `memory_ttl.go` | overview/records/candidates/policy/audit；approve 创建草稿知识包；60s TTL；Copilot→短期、任务 completed/review→工作记忆 |
+
+持久化集合另含：`memory_records` / `memory_candidates` / `memory_policies` / `memory_audits`、`skill_catalog` / `skill_extra`、`knowledge_extra`。
