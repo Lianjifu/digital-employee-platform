@@ -70,10 +70,12 @@ type Store struct {
 	Channels        []map[string]any
 	ChannelDeploys  []map[string]any
 	DeliveryPolicies []map[string]any
+	DeliveryPolicyVersions []map[string]any
 	ChannelTemplates []map[string]any
 	ChannelBlacklist []map[string]any
 	ChannelAudit    []map[string]any
 	ChannelDLQ      []map[string]any
+	ChannelHealth   map[string]map[string]any
 
 	HomeKPIs             map[string]any
 	HomeExtra            map[string]any
@@ -104,6 +106,7 @@ func New() *Store {
 		MemoryPolicies:   map[string]map[string]any{},
 		WorkflowVersions: map[string][]map[string]any{},
 		KnowledgeExtra:   map[string]any{},
+		ChannelHealth:    map[string]map[string]any{},
 		ActorExtraWorkspaces: map[string][]string{},
 		TenantProfile: map[string]any{
 			"name": "ACME Corp", "tenantId": "tenant-acme", "region": "cn-east-1",
@@ -514,22 +517,58 @@ func (s *Store) seed() {
 		{"id": "ma-2", "workspaceId": "w1", "time": "2026-07-21T08:24:00.000Z", "actor": "夜航", "action": "写入记忆", "target": "Redis OOM 会话上下文", "result": "success", "correlationId": "corr_conversation_cv1"},
 	}
 	s.Channels = []map[string]any{
-		{"id": "ch-1", "workspaceId": "w1", "name": "企业微信通知", "kind": "wecom", "enabled": true, "monthlySent": 120, "successRate": 0.99},
+		{"id": "ch-feishu", "workspaceId": "w1", "name": "飞书", "kind": "feishu", "enabled": true, "monthlySent": 820, "successRate": 0.998},
+		{"id": "ch-email", "workspaceId": "w1", "name": "邮件", "kind": "email", "enabled": true, "monthlySent": 210, "successRate": 0.978},
 	}
 	s.ChannelDeploys = []map[string]any{
-		{"id": "cd-1", "workspaceId": "w1", "channelId": "ch-1", "kind": "wecom", "status": "active", "name": "生产通知", "endpointMasked": "https://qyapi.****"},
+		{
+			"id": "delivery-feishu", "workspaceId": "w1", "name": "飞书生产投递", "kind": "feishu",
+			"environment": "production", "status": "active",
+			"credentialRef": "vault://channel-deployments/delivery-feishu/credential",
+			"credentialMasked": "app-…prod", "owner": "消息平台组",
+			"lastVerifiedAt": "2026-07-19T12:00:00.000Z",
+		},
+		{
+			"id": "delivery-email", "workspaceId": "w1", "name": "邮件生产投递", "kind": "email",
+			"environment": "production", "status": "active",
+			"credentialRef": "vault://channel-deployments/delivery-email/credential",
+			"credentialMasked": "smtp-…prod", "owner": "消息平台组",
+			"lastVerifiedAt": "2026-07-19T12:00:00.000Z",
+		},
 	}
 	s.DeliveryPolicies = []map[string]any{
-		{"id": "dp-1", "workspaceId": "w1", "name": "生产告警投递", "primaryDeploymentId": "cd-1", "fallbackDeploymentIds": []string{}, "status": "published", "dataClassification": "internal", "validationIssues": []string{}},
+		{
+			"id": "delivery-policy-p0", "workspaceId": "w1", "eventType": "P0 紧急告警",
+			"primaryDeploymentId": "delivery-feishu", "fallbackDeploymentIds": []string{"delivery-email"},
+			"audience": "SRE 值班组", "dataClassification": "internal", "status": "draft", "validationIssues": []string{},
+		},
 	}
+	s.DeliveryPolicyVersions = []map[string]any{}
 	s.ChannelTemplates = []map[string]any{
-		{"id": "ct-1", "workspaceId": "w1", "name": "告警通知模板", "kind": "wecom", "desc": "标准告警"},
+		{"id": "card1", "workspaceId": "w1", "name": "告警卡片", "kind": "feishu", "locale": "zh-CN", "status": "published", "tone": "error", "desc": "P0/P1 紧急事件 · 含一键跳转", "preview": "[P0] Redis OOM\n集群: prod-redis-01\n[查看详情 →]", "updatedAt": "2026-07-18T08:00:00.000Z"},
+		{"id": "card2", "workspaceId": "w1", "name": "审批卡片", "kind": "feishu", "locale": "zh-CN", "status": "published", "tone": "warn", "desc": "双重审批 · 同意/拒绝按钮", "preview": "变更审批\n[批准] [拒绝]", "updatedAt": "2026-07-17T09:30:00.000Z"},
+		{"id": "card3", "workspaceId": "w1", "name": "交接摘要", "kind": "email", "locale": "zh-CN", "status": "draft", "tone": "info", "desc": "人工接管摘要 · 脱敏任务上下文", "preview": "交接：夜航 → 值班经理\n任务 TSK-*** 待审批", "updatedAt": "2026-07-21T07:10:00.000Z"},
 	}
-	s.ChannelBlacklist = []map[string]any{}
+	s.ChannelBlacklist = []map[string]any{
+		{"id": "b1", "workspaceId": "w1", "type": "用户", "value": "test-spammer@external.com", "reason": "高频无效告警", "addedBy": "系统", "expires": "2026-08-01"},
+		{"id": "b2", "workspaceId": "w1", "type": "群组", "value": "ext-noise-room", "reason": "外部噪音群，禁止投递生产告警", "addedBy": "消息平台组", "expires": "永久"},
+	}
 	s.ChannelAudit = []map[string]any{
-		{"id": "ca-1", "workspaceId": "w1", "time": "2026-07-22T07:00:00Z", "actor": "平台管理员", "action": "发布投递策略", "target": "生产告警投递", "result": "success"},
+		{"id": "ca-1", "workspaceId": "w1", "time": "2026-07-21T09:40:00.000Z", "actor": "消息平台组", "action": "验证渠道部署", "target": "飞书生产投递", "result": "success", "correlationId": "corr_channel_verify_1"},
+		{"id": "ca-2", "workspaceId": "w1", "time": "2026-07-20T16:20:00.000Z", "actor": "平台管理员", "action": "创建渠道部署", "target": "邮件生产投递", "result": "success", "correlationId": "corr_channel_create_1"},
+		{"id": "ca-3", "workspaceId": "w1", "time": "2026-07-19T12:00:00.000Z", "actor": "消息平台组", "action": "保存投递策略草稿", "target": "P0 紧急告警", "result": "success", "correlationId": "corr_channel_policy_1"},
 	}
-	s.ChannelDLQ = []map[string]any{}
+	s.ChannelDLQ = []map[string]any{
+		{
+			"id": "da-demo-1", "workspaceId": "w1", "policyId": "delivery-policy-p0", "deploymentId": "delivery-feishu",
+			"targetMasked": "SRE ****", "payloadSummary": "[P0] **** OOM ****", "status": "dead_letter",
+			"attempts": 3, "correlationId": "corr_delivery_demo_1", "createdAt": "2026-07-21T10:12:00.000Z",
+		},
+	}
+	s.ChannelHealth = map[string]map[string]any{
+		"delivery-feishu": {"deploymentId": "delivery-feishu", "successRate": 99.8, "p95Ms": 120, "errorCount24h": 2, "status": "healthy"},
+		"delivery-email":  {"deploymentId": "delivery-email", "successRate": 97.8, "p95Ms": 280, "errorCount24h": 24, "status": "attention"},
+	}
 	s.KnowledgeExtra = map[string]any{
 		"packages": []map[string]any{{
 			"id": "pkg-ops", "workspaceId": "w1", "name": "运维知识库", "description": "运维运行手册与变更检查",

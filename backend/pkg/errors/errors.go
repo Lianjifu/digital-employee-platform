@@ -70,6 +70,7 @@ const (
 	RateLimited             Code = "E_RATE_LIMITED"
 	ChannelReadForbidden    Code = "E_CHANNEL_READ_FORBIDDEN"
 	ChannelWriteForbidden   Code = "E_CHANNEL_WRITE_FORBIDDEN"
+	ChannelInUse            Code = "E_CHANNEL_IN_USE"
 	TaskScope               Code = "E_TASK_SCOPE"
 	TaskOwnerScope          Code = "E_TASK_OWNER_SCOPE"
 	DigitalEmployeeNotFound              Code = "E_DIGITAL_EMPLOYEE_NOT_FOUND"

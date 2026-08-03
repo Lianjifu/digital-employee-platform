@@ -64,11 +64,10 @@ type DeploymentHealth = {
   p95Ms: number;
   errorCount24h: number;
   status: 'healthy' | 'attention' | 'offline';
-};
-
-const DEPLOYMENT_HEALTH: Record<string, Omit<DeploymentHealth, 'deploymentId'>> = {
-  'delivery-feishu': { successRate: 99.8, p95Ms: 120, errorCount24h: 2, status: 'healthy' },
-  'delivery-email': { successRate: 97.8, p95Ms: 280, errorCount24h: 24, status: 'attention' },
+  name?: string;
+  kind?: string;
+  environment?: string;
+  deployStatus?: string;
 };
 
 function formatTime(value?: string) {
@@ -103,6 +102,7 @@ export default function Channels() {
   const overview = useApiQuery<{ activeDeployments: number; publishedPolicies: number; deadLetters: number; capacityRisk: string }>(['channel-overview', scopeKey], '/api/channel-control/overview');
   const failures = useApiQuery<DeliveryAttempt[]>(['channel-dead-letters', scopeKey], '/api/channel-control/dead-letters');
   const audit = useApiQuery<ChannelAuditEvent[]>(['channel-audit', scopeKey], '/api/channel-control/audit');
+  const healthMetrics = useApiQuery<DeploymentHealth[]>(['channel-health', scopeKey], '/api/channel-control/health', undefined, { enabled: tab === 'health' });
   const templates = useApiQuery<ChannelTemplate[]>(['channel-templates', scopeKey], '/api/channel-templates', undefined, { enabled: tab === 'templates' });
   const blacklist = useApiQuery<BlacklistItem[]>(['channel-blacklist', scopeKey], '/api/channel-blacklist', undefined, { enabled: tab === 'templates' });
   const activePolicy = policies.data?.find((item) => item.id === selectedPolicy);
@@ -114,6 +114,7 @@ export default function Channels() {
   const publish = useApiMutation<DeliveryPolicyVersion, { id: string }>((v) => `/api/channel-control/policies/${v.id}/publish`);
   const simulate = useApiMutation<{ status: string; capacityRisk: string }, { id: string }>((v) => `/api/channel-control/policies/${v.id}/simulate`);
   const createTemplate = useApiMutation<ChannelTemplate, { name: string; desc: string; kind: ChannelKind }>('/api/channel-templates');
+  const replayDeadLetter = useApiMutation<DeliveryAttempt, { id: string }>((v) => `/api/channel-control/dead-letters/${v.id}/replay`);
 
   const loading = deployments.isLoading || policies.isLoading;
   const notifyError = (e: unknown) => toast.error(e instanceof Error ? e.message : '渠道控制面操作失败');
@@ -214,6 +215,7 @@ export default function Channels() {
             <Health
               overview={overview.data}
               deployments={deployments.data ?? []}
+              metrics={healthMetrics.data ?? []}
               onSimulate={() => {
                 const draft = policies.data?.[0];
                 if (!draft) { toast.warn('暂无策略可模拟'); return; }
@@ -225,7 +227,17 @@ export default function Channels() {
             <Failures
               items={failures.data ?? []}
               deployments={deploymentMap}
+              canWrite={canWrite}
               onGoRouting={() => setTab('routing')}
+              onReplay={(id) => replayDeadLetter.mutate({ id }, {
+                onSuccess: () => {
+                  toast.success('死信已重投并从队列移除');
+                  failures.refetch();
+                  overview.refetch();
+                  audit.refetch();
+                },
+                onError: notifyError,
+              })}
             />
           ) : (
             <Audit items={audit.data ?? []} />
@@ -506,16 +518,24 @@ function Templates({
 function Health({
   overview,
   deployments,
+  metrics,
   onSimulate,
   canWrite,
 }: {
   overview?: { capacityRisk: string; activeDeployments?: number; deadLetters?: number };
   deployments: ChannelDeployment[];
+  metrics: DeploymentHealth[];
   onSimulate: () => void;
   canWrite: boolean;
 }) {
+  const metricMap = useMemo(() => {
+    const map = new Map<string, DeploymentHealth>();
+    metrics.forEach((item) => map.set(item.deploymentId, item));
+    return map;
+  }, [metrics]);
   const rows = deployments.map((item) => {
-    const health = DEPLOYMENT_HEALTH[item.id] ?? {
+    const health = metricMap.get(item.id) ?? {
+      deploymentId: item.id,
       successRate: item.status === 'active' ? 99 : 0,
       p95Ms: item.status === 'active' ? 150 : 0,
       errorCount24h: 0,
@@ -587,11 +607,15 @@ function Health({
 function Failures({
   items,
   deployments,
+  canWrite,
   onGoRouting,
+  onReplay,
 }: {
   items: DeliveryAttempt[];
   deployments: Map<string, ChannelDeployment>;
+  canWrite: boolean;
   onGoRouting: () => void;
+  onReplay: (id: string) => void;
 }) {
   return (
     <div className="channels-panel">
@@ -611,7 +635,12 @@ function Failures({
                   <strong>死信 · {item.targetMasked}</strong>
                   <p>{deployments.get(item.deploymentId)?.name ?? item.deploymentId} · 尝试 {item.attempts} 次</p>
                 </div>
-                <Badge tone="error">死信</Badge>
+                <div className="flex items-center gap-2">
+                  <Badge tone="error">死信</Badge>
+                  <Button size="sm" variant="secondary" disabled={!canWrite} onClick={() => onReplay(item.id)}>
+                    <Send className="h-3.5 w-3.5" />重投
+                  </Button>
+                </div>
               </div>
               <p className="channels-failure__payload">{item.payloadSummary}</p>
               <div className="channels-card__meta">

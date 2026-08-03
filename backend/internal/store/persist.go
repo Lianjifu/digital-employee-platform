@@ -31,6 +31,11 @@ var DurableCollections = []string{
 	"memory_audits",
 	"channel_dlq",
 	"channel_deploys",
+	"delivery_policies",
+	"delivery_policy_versions",
+	"channel_templates",
+	"channel_blacklist",
+	"channel_audit",
 	"release_approvals",
 	"skills",
 	"skill_catalog",
@@ -141,6 +146,16 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 		return s.ChannelDLQ
 	case "channel_deploys":
 		return s.ChannelDeploys
+	case "delivery_policies":
+		return s.DeliveryPolicies
+	case "delivery_policy_versions":
+		return s.DeliveryPolicyVersions
+	case "channel_templates":
+		return s.ChannelTemplates
+	case "channel_blacklist":
+		return s.ChannelBlacklist
+	case "channel_audit":
+		return s.ChannelAudit
 	case "release_approvals":
 		return s.ReleaseApprovals
 	case "skills":
@@ -263,6 +278,16 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 		s.ChannelDLQ = items
 	case "channel_deploys":
 		s.ChannelDeploys = items
+	case "delivery_policies":
+		s.DeliveryPolicies = items
+	case "delivery_policy_versions":
+		s.DeliveryPolicyVersions = items
+	case "channel_templates":
+		s.ChannelTemplates = items
+	case "channel_blacklist":
+		s.ChannelBlacklist = items
+	case "channel_audit":
+		s.ChannelAudit = items
 	case "release_approvals":
 		s.ReleaseApprovals = items
 	case "skills":

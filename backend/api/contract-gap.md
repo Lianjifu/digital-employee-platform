@@ -21,7 +21,9 @@
 | `GET /api/digital-employees*` + lifecycle/release/configuration | OK（简化校验） |
 | `POST /api/tasks/:id/transition` | OK（`stage`） |
 | Models 控制面（providers/routing/governance/audit）字段级 | OK（M0–M7：credential 别名、discover 形状、租户隔离、impact、failover、ModelAudit、预算门禁开关） |
-| `GET /api/channel-control/*` | OK |
+| `GET /api/channel-control/*` | OK（P0–P3 字段级） |
+| Channels：部署字段/策略状态机/死信 DeliveryAttempt/健康指标/模板预览 | OK |
+| Channels 死信重投（`POST .../dead-letters/:id/replay`）+ FE 失败处置 | OK |
 | `GET /api/sessions`、`/api/conversations/*` | OK |
 
 ## P1（能力页）— 最小集已挂载

@@ -110,6 +110,7 @@ make test
 | 知识中心 | 知识包草稿/发布、文档软删、来源同步、RAG ingest/retrieve、评测与治理门禁 |
 | 技能中心 | 商店货源（builtin/registry）、晋升上架、签名/漏洞门禁、`.skill` 包导入、RunToken→skill-runtime |
 | 记忆中心 | 三层记忆 + 候选审核晋升草稿知识包；TTL 调度；长期容量门禁；会话/任务运行时写入 |
+| 消息渠道 | 部署接入/连通性验证、投递策略校验发布、死信处置、运行健康、模板与黑名单 |
 | 策略 / 审计 | 内嵌 baseline + 可选 OPA；de-policy / de-audit 进程；Audit Center 优先 `DE_AUDIT_URL` |
 | 执行面 | Runtime OpenAI 兼容适配、RAG ingest、Skill RunToken、Workflow 试跑活动 |
 | 观测 | `/metrics` + Prometheus/Grafana；含 Copilot SSE / 审计 fanout 告警 |

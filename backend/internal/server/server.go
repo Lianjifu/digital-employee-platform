@@ -395,7 +395,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.channelControlDeployments(r)
 	case path == "/api/channel-control/deployments" && method == http.MethodPost:
 		data, err = s.channelControlCreateDeploy(r)
-	case strings.HasPrefix(path, "/api/channel-control/deployments/") && (method == http.MethodPost || method == http.MethodDelete):
+	case strings.HasPrefix(path, "/api/channel-control/deployments/") && (method == http.MethodGet || method == http.MethodPost || method == http.MethodDelete):
 		data, err = s.channelDeployAction(r)
 	case path == "/api/channel-control/policies" && method == http.MethodGet:
 		data, err = s.channelControlPolicies(r)
@@ -411,12 +411,18 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.replayChannelDLQ(r)
 	case path == "/api/channel-control/audit" && method == http.MethodGet:
 		data, err = s.channelControlAudit(r)
+	case path == "/api/channel-control/health" && method == http.MethodGet:
+		data, err = s.channelControlHealth(r)
+	case path == "/api/channel-control/deliveries" && method == http.MethodPost:
+		data, err = s.channelControlDeliveries(r)
 	case path == "/api/channel-templates" && method == http.MethodGet:
 		data, err = s.listChannelTemplates(r)
 	case path == "/api/channel-templates" && method == http.MethodPost:
 		data, err = s.createChannelTemplate(r)
 	case path == "/api/channel-blacklist" && method == http.MethodGet:
 		data, err = s.listChannelBlacklist(r)
+	case path == "/api/channel-blacklist" && method == http.MethodPost:
+		data, err = s.createChannelBlacklist(r)
 	case path == "/api/channels" && method == http.MethodGet:
 		data, err = s.listChannels(r)
 	case path == "/api/channels" && method == http.MethodPost:

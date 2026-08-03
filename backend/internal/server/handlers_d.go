@@ -253,27 +253,37 @@ func (s *Server) channelOutbound(r *http.Request) (any, error) {
 		return nil, apperr.Forbidden(apperr.ChannelWriteForbidden, "缺少 channel.write")
 	}
 	body, _ := decodeMap(r)
+	ws := s.workspaceID(r)
+	now := time.Now().UTC().Format(time.RFC3339)
+	corr := s.Store.ID("delivery_corr")
 	delivery := map[string]any{
-		"id": s.Store.ID("out"), "workspaceId": s.workspaceID(r),
+		"id": s.Store.ID("delivery_attempt"), "workspaceId": ws,
+		"policyId": coalesce(str(body["policyId"]), ""), "deploymentId": coalesce(str(body["channelId"]), str(body["deploymentId"])),
 		"channelId": body["channelId"], "status": "delivered",
+		"targetMasked": maskTarget(coalesce(str(body["target"]), "unknown")),
+		"payloadSummary": truncateRunes(coalesce(str(body["content"]), "outbound"), 48),
 		"normalized": map[string]any{"layer": "L01", "payload": body["payload"]},
-		"at": time.Now().UTC().Format(time.RFC3339),
-		"attempts": 1, "replayable": true,
+		"at": now, "createdAt": now, "attempts": 1, "replayable": true, "correlationId": corr,
 	}
 	persistDLQ := false
 	s.Store.Lock()
 	if body["fail"] == true {
 		delivery["status"] = "dead_letter"
 		delivery["error"] = coalesce(str(body["error"]), "outbound_failed")
+		delivery["attempts"] = 3
+		if str(delivery["payloadSummary"]) == "outbound" {
+			delivery["payloadSummary"] = str(delivery["error"])
+		}
 		s.Store.ChannelDLQ = append([]map[string]any{delivery}, s.Store.ChannelDLQ...)
-		s.Store.AppendAudit(s.workspaceID(r), id.Name, "渠道出站失败入DLQ", str(body["channelId"]), "deny", str(delivery["error"]))
+		s.appendChannelAuditLocked(ws, id.Name, "渠道出站失败入DLQ", coalesce(str(body["channelId"]), "channel"), "failed", str(delivery["error"]), corr)
 		persistDLQ = true
 	} else {
-		s.Store.AppendAudit(s.workspaceID(r), id.Name, "渠道出站", str(body["channelId"]), "success", "")
+		s.appendChannelAuditLocked(ws, id.Name, "渠道出站", coalesce(str(body["channelId"]), "channel"), "success", "", corr)
 	}
 	s.Store.Unlock()
 	if persistDLQ {
 		s.Store.Persist("channel_dlq")
+		s.Store.Persist("channel_audit")
 	}
 	return delivery, nil
 }
@@ -292,9 +302,9 @@ func (s *Server) listChannelDLQ(r *http.Request) (any, error) {
 }
 
 func (s *Server) replayChannelDLQ(r *http.Request) (any, error) {
-	id := identityFrom(r.Context())
-	if !auth.Has(id, "channel.write") {
-		return nil, apperr.Forbidden(apperr.ChannelWriteForbidden, "缺少 channel.write")
+	id, err := s.requireChannelWrite(r)
+	if err != nil {
+		return nil, err
 	}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	// api/channel-control/dead-letters/:id/replay  OR api/channels/dlq/:id/replay
@@ -308,25 +318,31 @@ func (s *Server) replayChannelDLQ(r *http.Request) (any, error) {
 	if dlqID == "" {
 		return nil, apperr.BadReq(apperr.BadRequest, "缺少死信 ID")
 	}
+	ws := s.workspaceID(r)
+	now := time.Now().UTC().Format(time.RFC3339)
 	s.Store.Lock()
 	var replayed map[string]any
 	for i, d := range s.Store.ChannelDLQ {
 		if str(d["id"]) != dlqID {
 			continue
 		}
+		if str(d["workspaceId"]) != "" && str(d["workspaceId"]) != ws {
+			s.Store.Unlock()
+			return nil, apperr.Forbidden(apperr.ChannelWriteForbidden, "E_CHANNEL_WORKSPACE_SCOPE: 无权操作其他工作区死信")
+		}
 		d["status"] = "delivered"
-		d["replayedAt"] = time.Now().UTC().Format(time.RFC3339)
+		d["replayedAt"] = now
 		d["attempts"] = toInt(d["attempts"]) + 1
 		d["replayedBy"] = id.Name
 		s.Store.ChannelDLQ = append(s.Store.ChannelDLQ[:i], s.Store.ChannelDLQ[i+1:]...)
-		s.Store.AppendAudit(str(d["workspaceId"]), id.Name, "死信重投", dlqID, "success", "")
-		replayed = d
+		s.appendChannelAuditLocked(ws, id.Name, "死信重投", coalesce(str(d["targetMasked"]), dlqID), "success", "", coalesce(str(d["correlationId"]), ""))
+		replayed = normalizeDeliveryAttempt(d)
 		break
 	}
 	s.Store.Unlock()
 	if replayed == nil {
 		return nil, apperr.NotFoundErr(apperr.NotFound, "死信不存在")
 	}
-	s.Store.Persist("channel_dlq")
+	go s.persistChannel()
 	return replayed, nil
 }
