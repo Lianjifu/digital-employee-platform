@@ -45,3 +45,6 @@ temp/
 
 # pnpm content-addressable store (local)
 .pnpm-store/
+
+# Local CI workflow drafts (not published with the repo)
+.github/workflows/
