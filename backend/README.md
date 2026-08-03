@@ -90,7 +90,7 @@ python3 runtimes/de_rag/test_vector.py
 python3 runtimes/de_skill_runtime/test_runtoken.py
 ```
 
-CI：`.github/workflows/backend-contract.yml`
+仓库不跟踪 GitHub Actions：`.github/workflows/` 已在根目录 `.gitignore` 中；本地可保留 `backend-contract.yml` 等草稿，但不会推送到远端。契约与回归以本机 `make test` 为准。
 
 ## 关键环境变量
 

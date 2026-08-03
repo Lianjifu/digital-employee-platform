@@ -140,6 +140,7 @@ make test
 - 前端默认打真实 de-core；`mock.ts` 仅作可选离线与单测。
 - 数据多为控制面内存 + PG 快照（`kv_documents`），非完整关系型业务库。
 - 记忆不会直接发布知识；审核通过仅创建**草稿知识包**，正式发布仍走知识中心门禁。
+- `.github/workflows/` 已加入 `.gitignore`，CI 工作流草稿仅保留在本地，不随仓库推送。
 - LangGraph 全图编排、真 gVisor runsc、SPIRE SDS、de-platform / de-collab 拆分仍属后续。
 
 ## 验证提交
