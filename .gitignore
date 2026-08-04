@@ -18,7 +18,11 @@ coverage/
 .env
 .env.*
 !.env.example
+!.env.staging
 *.local
+
+# Local Go binaries
+backend/bin/
 
 # Operating system and editor files
 .DS_Store

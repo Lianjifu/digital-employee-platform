@@ -744,7 +744,7 @@ func (s *Server) retrievePublishedNormalized(r *http.Request, body map[string]an
 	var results []map[string]any
 	if hits := s.callRAGPublished(query, ws, corr); hits != nil {
 		if m, ok := hits.(map[string]any); ok {
-			results = normalizeRetrieveHitList(m["results"])
+			results = filterRetrieveToPublished(s, ws, normalizeRetrieveHitList(m["results"]))
 		}
 	}
 	if len(results) == 0 {
@@ -755,6 +755,7 @@ func (s *Server) retrievePublishedNormalized(r *http.Request, body map[string]an
 				continue
 			}
 			st := str(d["status"])
+			// ready = 控制面可读；indexing/draft 等不得进入 retrieve
 			if st != "published" && st != "ready" {
 				continue
 			}
@@ -779,6 +780,32 @@ func (s *Server) retrievePublishedNormalized(r *http.Request, body map[string]an
 			"recall": float64(minInt(100, len(results)*20)), "precision": 80, "p95Latency": latency, "hitRate": len(results),
 		},
 	}, nil
+}
+
+func filterRetrieveToPublished(s *Server, workspaceID string, hits []map[string]any) []map[string]any {
+	if len(hits) == 0 {
+		return hits
+	}
+	s.Store.RLock()
+	allowed := map[string]struct{}{}
+	for _, d := range s.Store.KnowledgeDocs {
+		if str(d["workspaceId"]) != workspaceID {
+			continue
+		}
+		st := str(d["status"])
+		if st == "published" || st == "ready" {
+			allowed[str(d["id"])] = struct{}{}
+		}
+	}
+	s.Store.RUnlock()
+	out := make([]map[string]any, 0, len(hits))
+	for _, hit := range hits {
+		id := coalesce(str(hit["docId"]), str(hit["id"]))
+		if _, ok := allowed[id]; ok {
+			out = append(out, hit)
+		}
+	}
+	return out
 }
 
 func normalizeRetrieveHitList(v any) []map[string]any {

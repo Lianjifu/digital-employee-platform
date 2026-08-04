@@ -9,7 +9,7 @@ import (
 type ServiceMode string
 
 const (
-	ModeAll      ServiceMode = "all"      // de-core 兼容壳：全路由
+	ModeAll      ServiceMode = "all"      // unit tests only (single-process full routes)
 	ModeSys      ServiceMode = "sys"      // :8100 platform · policy · audit · ops
 	ModeCollab   ServiceMode = "collab"   // :8101 collab · employee
 	ModeCap      ServiceMode = "cap"      // :8102 model · knowledge · memory · skill · channel
@@ -18,9 +18,9 @@ const (
 
 func ParseServiceMode(s string) ServiceMode {
 	switch strings.ToLower(strings.TrimSpace(s)) {
-	case "", "all", "core", "de-core":
+	case "all":
 		return ModeAll
-	case "sys", "de-sys", "platform":
+	case "sys", "de-sys", "platform", "":
 		return ModeSys
 	case "collab", "de-collab":
 		return ModeCollab
@@ -29,7 +29,7 @@ func ParseServiceMode(s string) ServiceMode {
 	case "workflow", "de-workflow":
 		return ModeWorkflow
 	default:
-		return ModeAll
+		return ModeSys
 	}
 }
 
@@ -43,8 +43,10 @@ func (m ServiceMode) String() string {
 		return "de-cap"
 	case ModeWorkflow:
 		return "de-workflow"
+	case ModeAll:
+		return "de-all"
 	default:
-		return "de-core"
+		return "de-sys"
 	}
 }
 

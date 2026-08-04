@@ -1,6 +1,7 @@
-# Local OIDC IdP for de-core (compose profile: oidc)
+# Local OIDC IdP for control plane (compose profile: oidc)
 # Issuer: http://127.0.0.1:5556/dex
 # Users: admin@acme.com / password, user@acme.com / password, audit@acme.com / password
+# Client id "de-core" 为历史 OIDC 客户端名，回调指向 de-gateway :8089
 
 issuer: http://127.0.0.1:5556/dex
 storage:
@@ -12,7 +13,7 @@ telemetry:
 staticClients:
   - id: de-core
     redirectURIs:
-      - http://127.0.0.1:8080/api/auth/oidc/callback
+      - http://127.0.0.1:8089/api/auth/oidc/callback
     name: de-core
     secret: de-core-secret
 enablePasswordDB: true

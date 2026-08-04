@@ -6,12 +6,6 @@ rule_files:
   - /etc/prometheus/alerts.yml
 
 scrape_configs:
-  - job_name: de-core
-    metrics_path: /metrics
-    static_configs:
-      - targets: ["host.docker.internal:8080"]
-        labels:
-          service: de-core
   - job_name: de-coarse
     metrics_path: /metrics
     static_configs:

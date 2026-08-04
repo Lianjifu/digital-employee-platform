@@ -7,14 +7,14 @@ import re
 
 DEFAULT_PUBLISHED = [
     {
-        "docId": "kd-1",
+        "docId": "rag-seed-1",
         "title": "故障手册-缓存",
         "snippet": "检查 Redis 慢查询与热点 key",
         "score": 0.91,
         "status": "published",
     },
     {
-        "docId": "kd-2",
+        "docId": "rag-seed-2",
         "title": "发布手册-灰度",
         "snippet": "先金丝雀 5% 流量再全量",
         "score": 0.88,

@@ -958,7 +958,7 @@ function GovernanceWorkspace({
                 className="de-employee-btn de-employee-btn--primary"
                 disabled={!canWrite || !eligibility.ready}
                 title={!eligibility.ready ? eligibility.guidance : '打开演练配置'}
-                onClick={onOpenDrill}
+                onClick={() => onOpenDrill()}
               >
                 <FlaskConical className="h-3.5 w-3.5" />打开演练
               </button>

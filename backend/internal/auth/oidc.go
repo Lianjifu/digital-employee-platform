@@ -34,7 +34,7 @@ func LoadOIDC() OIDCConfig {
 		Issuer:        issuer,
 		ClientID:      os.Getenv("DE_OIDC_CLIENT_ID"),
 		ClientSecret:  os.Getenv("DE_OIDC_CLIENT_SECRET"),
-		RedirectURL:   envOr("DE_OIDC_REDIRECT_URL", "http://127.0.0.1:8080/api/auth/oidc/callback"),
+		RedirectURL:   envOr("DE_OIDC_REDIRECT_URL", "http://127.0.0.1:8089/api/auth/oidc/callback"),
 		Enabled:       issuer != "",
 		AllowDevCodes: os.Getenv("DE_OIDC_ALLOW_DEV_CODES") == "1",
 		HTTPClient:    &http.Client{Timeout: 15 * time.Second},

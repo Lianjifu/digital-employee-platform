@@ -576,7 +576,7 @@ function Health({
             <div className="channels-card__top">
               <div>
                 <strong>{row.name}</strong>
-                <p>{KIND_LABEL[row.kind]} · {ENV_LABEL[row.environment]}</p>
+                <p>{KIND_LABEL[row.kind as ChannelKind] ?? row.kind} · {ENV_LABEL[row.environment as keyof typeof ENV_LABEL] ?? row.environment}</p>
               </div>
               <Badge tone={row.status === 'healthy' ? 'success' : row.status === 'attention' ? 'warn' : 'neutral'}>
                 {row.status === 'healthy' ? '健康' : row.status === 'attention' ? '关注' : '离线'}

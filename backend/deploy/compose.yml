@@ -110,24 +110,8 @@ services:
     networks:
       - de_net
 
-  # Path-split gateway skeleton (clusters → same de-core until microservices exist). :8089
-  envoy-split:
-    image: envoyproxy/envoy:v1.31-latest
-    container_name: de-envoy-split
-    restart: unless-stopped
-    profiles: ["split"]
-    ports:
-      - "8089:8089"
-      - "9904:9901"
-    volumes:
-      - ./envoy/envoy.split.yaml:/etc/envoy/envoy.yaml:ro
-    command: ["-c", "/etc/envoy/envoy.yaml", "--log-level", "info"]
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    networks:
-      - de_net
 
-  # Optional Temporal (M4). Local de-core also has in-process de-workflow.
+  # Optional Temporal (M4). de-workflow HTTP+Worker.
   temporal:
     image: temporalio/auto-setup:1.25.2
     container_name: de-temporal
@@ -148,7 +132,7 @@ services:
     networks:
       - de_net
 
-  # Local OIDC IdP (Dex). de-core: DE_OIDC_ISSUER=http://127.0.0.1:5556/dex
+  # Local OIDC IdP (Dex). OIDC: DE_OIDC_ISSUER=http://127.0.0.1:5556/dex
   dex:
     image: ghcr.io/dexidp/dex:v2.41.1
     container_name: de-dex
@@ -268,7 +252,7 @@ services:
     networks:
       - de_net
 
-  # External OPA (Rego). de-core: DE_OPA_URL=http://127.0.0.1:8181
+  # External OPA (Rego). Set DE_OPA_URL=http://127.0.0.1:8181 on control-plane processes.
   opa:
     image: openpolicyagent/opa:0.70.0
     container_name: de-opa
@@ -404,7 +388,7 @@ services:
     networks:
       - de_net
 
-  # Observability: Prometheus + Grafana (scrapes host de-core :8080/metrics)
+  # Observability: Prometheus + Grafana (scrapes coarse :8100-8103/metrics)
   prometheus:
     image: prom/prometheus:v2.55.1
     container_name: de-prometheus
@@ -447,9 +431,8 @@ services:
     networks:
       - de_net
 
-  # —— Coarse-grained control plane (v4) ——
-  # Profile: coarse — de-sys:8100 de-collab:8101 de-cap:8102 de-workflow:8103 (+ gateway)
-  # Legacy fine ports de-policy:8094 / de-audit:8095 optional via profiles policy|audit.
+  # —— Coarse-grained control plane (v4, primary) ——
+  # Profile: coarse — de-sys:8100 de-collab:8101 de-cap:8102 de-workflow:8103 (+ gateway + FastAPI)
   de-sys:
     build:
       context: ..
@@ -480,7 +463,6 @@ services:
       DE_OIDC_REDIRECT_URL: ${DE_OIDC_REDIRECT_URL:-http://127.0.0.1:8089/api/auth/oidc/callback}
       # Prefer local evaluate; do not point at retired :8094 in coarse mode
       DE_POLICY_URL: ${DE_POLICY_URL:-}
-      DE_AUDIT_URL: ${DE_AUDIT_URL:-}
     ports:
       - "8100:8100"
     healthcheck:
@@ -592,124 +574,6 @@ services:
     networks:
       - de_net
 
-  # Legacy fine microservice: durable audit append/list + audit-center.
-  # Profiles: audit (standalone) or apps. Port :8095 — prefer de-sys:8100 in coarse mode.
-  de-audit:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-      args: { CMD: de-audit }
-    image: de-audit:local
-    container_name: de-audit
-    restart: unless-stopped
-    profiles: ["apps", "audit"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    environment:
-      DE_AUDIT_ADDR: ":8095"
-      DE_DATABASE_URL: postgres://de:de@postgres:5432/digital_employee?sslmode=disable
-      DE_REDIS_URL: redis://redis:6379/0
-      DE_CORE_URL: ${DE_CORE_URL:-http://de-core:8080}
-      DE_KAFKA_BROKERS: ${DE_KAFKA_BROKERS:-}
-      DE_OPENSEARCH_URL: ${DE_OPENSEARCH_URL:-}
-      DE_AUDIT_INTERNAL_TOKEN: ${DE_AUDIT_INTERNAL_TOKEN:-}
-      DE_JWT_SECRET: ${DE_JWT_SECRET:-}
-    ports:
-      - "8095:8095"
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8095/healthz"]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-    networks:
-      - de_net
-
-  # First extracted microservice: write-path evaluate + ZT evaluate; proxies store routes to de-core.
-  # Profiles: policy (standalone) or apps (with de-core). Port :8094
-  de-policy:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-      args: { CMD: de-policy }
-    image: de-policy:local
-    container_name: de-policy
-    restart: unless-stopped
-    profiles: ["apps", "policy"]
-    environment:
-      DE_POLICY_ADDR: ":8094"
-      DE_CORE_URL: ${DE_CORE_URL:-http://de-core:8080}
-      DE_OPA_URL: ${DE_OPA_URL:-}
-      DE_POLICY_INTERNAL_TOKEN: ${DE_POLICY_INTERNAL_TOKEN:-}
-    ports:
-      - "8094:8094"
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8094/healthz"]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-    networks:
-      - de_net
-
-  # Application processes (optional). Profile: apps
-  de-core:
-    build:
-      context: ..
-      dockerfile: Dockerfile
-      args: { CMD: de-core }
-    image: de-core:local
-    container_name: de-core
-    restart: unless-stopped
-    profiles: ["apps"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      de-policy:
-        condition: service_healthy
-      de-audit:
-        condition: service_healthy
-    environment:
-      DE_CORE_ADDR: ":8080"
-      DE_DATABASE_URL: postgres://de:de@postgres:5432/digital_employee?sslmode=disable
-      DE_REDIS_URL: redis://redis:6379/0
-      DE_AGENT_RUNTIME_URL: http://de-agent-runtime:8091
-      DE_RAG_URL: http://de-rag:8092
-      DE_SKILL_RUNTIME_URL: http://de-skill-runtime:8093
-      DE_BAN_MOCK_TOKEN: ${DE_BAN_MOCK_TOKEN:-0}
-      DE_FORCE_OIDC: ${DE_FORCE_OIDC:-0}
-      DE_ALLOW_PASSWORD_LOGIN: ${DE_ALLOW_PASSWORD_LOGIN:-1}
-      DE_TEMPORAL_HOST: ${DE_TEMPORAL_HOST:-}
-      DE_KAFKA_BROKERS: ${DE_KAFKA_BROKERS:-}
-      DE_VAULT_ADDR: ${DE_VAULT_ADDR:-}
-      DE_VAULT_TOKEN: ${DE_VAULT_TOKEN:-}
-      DE_OPA_URL: ${DE_OPA_URL:-}
-      DE_OPENSEARCH_URL: ${DE_OPENSEARCH_URL:-}
-      DE_OIDC_ISSUER: ${DE_OIDC_ISSUER:-}
-      DE_OIDC_CLIENT_ID: ${DE_OIDC_CLIENT_ID:-}
-      DE_OIDC_CLIENT_SECRET: ${DE_OIDC_CLIENT_SECRET:-}
-      DE_OIDC_REDIRECT_URL: ${DE_OIDC_REDIRECT_URL:-http://127.0.0.1:8080/api/auth/oidc/callback}
-      DE_OIDC_AUTH_PATH: ${DE_OIDC_AUTH_PATH:-}
-      DE_SKILL_RUN_SECRET: ${DE_SKILL_RUN_SECRET:-de-skill-run-dev}
-      DE_SPIFFE_TRUST_DOMAIN: ${DE_SPIFFE_TRUST_DOMAIN:-de.local}
-      DE_POLICY_URL: ${DE_POLICY_URL:-http://de-policy:8094}
-      DE_POLICY_INTERNAL_TOKEN: ${DE_POLICY_INTERNAL_TOKEN:-}
-      DE_AUDIT_URL: ${DE_AUDIT_URL:-http://de-audit:8095}
-      DE_AUDIT_INTERNAL_TOKEN: ${DE_AUDIT_INTERNAL_TOKEN:-}
-    ports:
-      - "8080:8080"
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8080/healthz"]
-      interval: 10s
-      timeout: 3s
-      retries: 12
-    networks:
-      - de_net
-      - de_exec_net
-
   de-agent-runtime:
     build:
       context: ../services/de-agent-runtime
@@ -717,7 +581,7 @@ services:
     image: de-agent-runtime:local
     container_name: de-agent-runtime
     restart: unless-stopped
-    profiles: ["apps", "coarse"]
+    profiles: ["coarse"]
     environment:
       DE_BIND_HOST: "0.0.0.0"
       DE_BIND_PORT: "8091"
@@ -738,7 +602,7 @@ services:
     image: de-rag:local
     container_name: de-rag
     restart: unless-stopped
-    profiles: ["apps", "coarse"]
+    profiles: ["coarse"]
     environment:
       DE_BIND_HOST: "0.0.0.0"
       DE_BIND_PORT: "8092"
@@ -760,7 +624,7 @@ services:
     image: de-skill-runtime:local
     container_name: de-skill-runtime
     restart: unless-stopped
-    profiles: ["apps", "coarse"]
+    profiles: ["coarse"]
     # Isolated from control-plane network (no route to postgres/redis).
     # Intentionally no DE_DATABASE_URL / DE_REDIS_URL
     environment:
@@ -795,8 +659,8 @@ services:
     image: de-workflow:local
     container_name: de-workflow
     restart: unless-stopped
-    # Enable with: --profile apps|coarse (+ temporal for worker)
-    profiles: ["apps", "coarse"]
+    # Enable with: --profile coarse (+ temporal for worker)
+    profiles: ["coarse"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -839,7 +703,7 @@ volumes:
 networks:
   de_net:
     driver: bridge
-  # Execution plane only: skill-runtime; de-core attaches to both nets.
+  # Execution plane only: skill-runtime + collab/cap for invoke.
   de_exec_net:
     driver: bridge
     internal: false

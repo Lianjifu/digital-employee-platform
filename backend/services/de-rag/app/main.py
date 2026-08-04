@@ -44,14 +44,20 @@ async def retrieve(request: Request) -> dict[str, Any]:
     if not isinstance(data, dict):
         data = {}
     corr = data.get("correlationId") or ""
-    if data.get("docs") and BACKEND != "milvus":
-        tmp = VectorIndex()
-        tmp.reindex(data["docs"])
-        results = tmp.search(data.get("query") or "")
-        backend = "vector-memory"
+    # Explicit docs payload (including empty list) scopes search to that corpus.
+    # Avoid falling through to the process-global INDEX, which may contain demo seeds.
+    if "docs" in data:
+        docs = data.get("docs") or []
+        if BACKEND != "milvus":
+            tmp = VectorIndex()
+            tmp.reindex(docs if isinstance(docs, list) else [])
+            results = tmp.search(data.get("query") or "")
+            backend = "vector-memory"
+        else:
+            INDEX.reindex(docs if isinstance(docs, list) else [])
+            results = INDEX.search(data.get("query") or "")
+            backend = BACKEND
     else:
-        if data.get("docs"):
-            INDEX.reindex(data["docs"])
         results = INDEX.search(data.get("query") or "")
         backend = BACKEND
     return {

@@ -1,5 +1,5 @@
 /**
- * API 运行模式：默认走真实 de-core；仅当显式 VITE_USE_MOCK=true 时启用本地 Mock。
+ * API 运行模式：默认走真实控制面（de-gateway）；仅当显式 VITE_USE_MOCK=true 时启用本地 Mock。
  */
 export function isMockApiMode(): boolean {
   return import.meta.env.VITE_USE_MOCK === 'true';
@@ -15,8 +15,8 @@ function isLoopbackBase(url: string): boolean {
 }
 
 /**
- * 开发态默认走同源 `/api`（Vite proxy → de-core），避免浏览器/Cursor 沙箱
- * 无法直连 `127.0.0.1:8080` 导致「模型控制面数据读取失败」。
+ * 开发态默认走同源 `/api`（Vite proxy → de-gateway :8089），避免浏览器/Cursor 沙箱
+ * 无法直连环回地址导致控制面读取失败。
  * 需要直连时设置 `VITE_API_DIRECT=true` 并填写非空 `VITE_API_BASE`。
  */
 export function apiBaseURL(): string {

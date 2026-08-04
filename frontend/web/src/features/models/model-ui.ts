@@ -169,14 +169,14 @@ export function modelQueryState({
     return {
       kind: 'error' as const,
       label: '模型控制面数据读取失败',
-      detail: errorDetail?.replace(/^E_[A-Z0-9_]+:\s*/, '') || '请确认 de-core 已启动（cd backend && make run），然后重新读取。',
+      detail: errorDetail?.replace(/^E_[A-Z0-9_]+:\s*/, '') || '请确认粗粒度控制面已启动（cd backend && make run），然后重新读取。',
     };
   }
   if (data && data.length === 0) return { kind: 'empty' as const, label: '暂无模型控制面数据', detail: undefined as string | undefined };
   return { kind: 'ready' as const, label: '', detail: undefined as string | undefined };
 }
 
-/** Normalize provider/policy payloads from de-core (null slices → []). */
+/** Normalize provider/policy payloads from control plane (null slices → []). */
 export function normalizeModelProviders<T extends { models?: readonly unknown[] | null }>(providers: T[] | null | undefined): T[] {
   return (providers ?? []).map((provider) => ({
     ...provider,

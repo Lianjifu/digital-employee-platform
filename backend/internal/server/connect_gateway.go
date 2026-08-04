@@ -138,15 +138,22 @@ func (s *Server) callRAGPublished(query, workspaceID, corr string) any {
 	client := &http.Client{Timeout: 2 * time.Second}
 	s.Store.RLock()
 	var docs []map[string]any
+	allowed := map[string]struct{}{}
 	for _, d := range s.Store.KnowledgeDocs {
 		if str(d["workspaceId"]) == workspaceID && str(d["status"]) == "published" {
+			id := str(d["id"])
+			allowed[id] = struct{}{}
 			docs = append(docs, map[string]any{
-				"docId": d["id"], "title": d["title"],
+				"docId": id, "title": d["title"],
 				"snippet": "已发布：" + str(d["title"]), "score": 0.9, "status": "published",
 			})
 		}
 	}
 	s.Store.RUnlock()
+	// No published corpus → skip sidecar (avoids RAG global INDEX leaking non-published seeds).
+	if len(docs) == 0 {
+		return nil
+	}
 	payload, _ := json.Marshal(map[string]any{
 		"query": query, "workspaceId": workspaceID, "correlationId": corr,
 		"publishedOnly": true, "docs": docs,
@@ -162,6 +169,18 @@ func (s *Server) callRAGPublished(query, workspaceID, corr string) any {
 	var out map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return nil
+	}
+	// Defense in depth: drop any hit outside the published corpus we authorized.
+	if raw, ok := out["results"]; ok {
+		filtered := make([]any, 0)
+		for _, item := range knowledgeSliceMaps(raw) {
+			id := coalesce(str(item["docId"]), str(item["id"]))
+			if _, ok := allowed[id]; !ok {
+				continue
+			}
+			filtered = append(filtered, item)
+		}
+		out["results"] = filtered
 	}
 	out["correlationId"] = corr
 	return out

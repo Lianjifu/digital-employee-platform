@@ -1,14 +1,14 @@
-// Package apprun boots a coarse-grained control-plane process (de-sys / collab / cap / core).
+// Package apprun boots a coarse-grained control-plane process (de-sys / collab / cap / workflow).
 package apprun
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"time"
 
-	"github.com/digital-employee-platform/backend/internal/deaudit"
 	"github.com/digital-employee-platform/backend/internal/infra"
 	"github.com/digital-employee-platform/backend/internal/server"
 	"github.com/digital-employee-platform/backend/internal/store"
@@ -24,6 +24,12 @@ type Options struct {
 func Run(opts Options) error {
 	if opts.Mode == "" {
 		opts.Mode = server.ParseServiceMode(os.Getenv("DE_SERVICE"))
+	}
+	if opts.Mode == "" || opts.Mode == server.ModeAll {
+		// ModeAll is for unit tests only; deployment binaries must set ModeSys/Collab/Cap/Workflow.
+		if opts.Mode == server.ModeAll && os.Getenv("DE_ALLOW_MODE_ALL") != "1" {
+			return fmt.Errorf("refusing ModeAll deployment (set DE_SERVICE=sys|collab|cap|workflow); use make compose-up-coarse")
+		}
 	}
 	if opts.Addr == "" {
 		opts.Addr = env("DE_LISTEN_ADDR", ":8080")
@@ -50,43 +56,30 @@ func Run(opts Options) error {
 		}
 	}
 	kv := &infra.KVStore{Pool: pg}
-	auditClient := deaudit.NewClientFromEnv()
 
-	// When running as de-sys (or all), prefer local audit sink so we don't depend on :8095.
-	useRemoteAudit := auditClient.Available() && opts.Mode != server.ModeSys && opts.Mode != server.ModeAll
-	if useRemoteAudit {
-		log.Printf("audit fanout → de-audit (%s)", auditClient.Base)
-		st.SetAuditHook(func(ev map[string]any) {
-			if err := auditClient.Append(context.Background(), ev); err != nil {
-				server.IncAuditWriteFailure()
-				log.Printf("audit fanout de-audit: %v", err)
-			}
-		})
-	} else {
-		st.SetAuditHook(func(ev map[string]any) {
-			c := context.Background()
-			failed := false
-			if err := auditSink.Append(c, ev); err != nil {
+	st.SetAuditHook(func(ev map[string]any) {
+		c := context.Background()
+		failed := false
+		if err := auditSink.Append(c, ev); err != nil {
+			failed = true
+			log.Printf("audit pg append: %v", err)
+		}
+		if auditBus != nil {
+			auditBus.Publish(c, ev)
+		}
+		if kafkaBus != nil {
+			kafkaBus.Publish(c, ev)
+		}
+		if search != nil {
+			if err := search.IndexEvent(c, ev); err != nil {
 				failed = true
-				log.Printf("audit pg append: %v", err)
+				log.Printf("audit opensearch index: %v", err)
 			}
-			if auditBus != nil {
-				auditBus.Publish(c, ev)
-			}
-			if kafkaBus != nil {
-				kafkaBus.Publish(c, ev)
-			}
-			if search != nil {
-				if err := search.IndexEvent(c, ev); err != nil {
-					failed = true
-					log.Printf("audit opensearch index: %v", err)
-				}
-			}
-			if failed {
-				server.IncAuditWriteFailure()
-			}
-		})
-	}
+		}
+		if failed {
+			server.IncAuditWriteFailure()
+		}
+	})
 	st.SetPersistHook(func(ctx context.Context, collection string, items []map[string]any) error {
 		return kv.ReplaceCollection(ctx, collection, items)
 	})
@@ -121,7 +114,7 @@ func Run(opts Options) error {
 	srv.UsageSink = &infra.UsageSink{Pool: pg}
 	srv.KV = kv
 	srv.Search = search
-	if opts.Mode == server.ModeAll || opts.Mode == server.ModeCap || opts.Mode == server.ModeCollab {
+	if opts.Mode == server.ModeCap || opts.Mode == server.ModeCollab || opts.Mode == server.ModeAll {
 		srv.StartMemoryMaintenance()
 	}
 

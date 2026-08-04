@@ -12,7 +12,7 @@ import { useAuthStore } from './stores/authStore';
 import { apiBaseURL, isMockApiMode } from './lib/api-mode';
 
 function installApiClient() {
-  // 默认真实 de-core；开发态走同源 /api（Vite proxy）。仅 VITE_USE_MOCK=true 时注入 Mock。
+  // 默认真实 API；开发态走同源 /api（Vite proxy → :8089）。仅 VITE_USE_MOCK=true 时注入 Mock。
   setApiClient(
     new ApiClient(
       apiBaseURL(),

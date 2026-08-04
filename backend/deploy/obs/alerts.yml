@@ -1,24 +1,24 @@
 groups:
-  - name: de-core-slo
+  - name: de-coarse-slo
     rules:
-      - alert: DeCoreDown
+      - alert: DeControlPlaneDown
         expr: de_core_up == 0 or absent(de_core_up)
         for: 1m
         labels:
           severity: critical
         annotations:
-          summary: "de-core metrics missing or down"
-          description: "Prometheus cannot scrape de_core_up from :8080/metrics"
+          summary: "control-plane metrics missing or down"
+          description: "Prometheus cannot scrape de_core_up{service=...} from coarse :8100–8103/metrics"
 
-      - alert: DeCorePostgresMissing
+      - alert: DeControlPlanePostgresMissing
         expr: de_postgres_configured == 0
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "de-core has no Postgres pool"
+          summary: "control-plane has no Postgres pool"
 
-      - alert: DeCoreChannelDLQGrowing
+      - alert: DeChannelDLQGrowing
         expr: de_channel_dlq_size > 20
         for: 10m
         labels:
@@ -27,15 +27,15 @@ groups:
           summary: "Channel DLQ size high"
           description: "de_channel_dlq_size={{ $value }}"
 
-      - alert: DeCoreHighGoroutines
+      - alert: DeControlPlaneHighGoroutines
         expr: de_go_goroutines > 500
         for: 10m
         labels:
           severity: warning
         annotations:
-          summary: "de-core goroutine count elevated"
+          summary: "control-plane goroutine count elevated"
 
-      - alert: DeCoreCopilotStreamErrorRate
+      - alert: DeCopilotStreamErrorRate
         expr: |
           (
             rate(de_copilot_stream_errors_total[5m])
@@ -49,7 +49,7 @@ groups:
           summary: "Copilot SSE error rate elevated"
           description: "More than 20% of Copilot streams failed in the last 5m window"
 
-      - alert: DeCoreAuditWriteFailures
+      - alert: DeAuditWriteFailures
         expr: increase(de_audit_write_failures_total[10m]) > 5
         for: 5m
         labels:
@@ -58,7 +58,7 @@ groups:
           summary: "Durable audit fanout failures"
           description: "de_audit_write_failures_total increased by {{ $value }} in 10m"
 
-      - alert: DeCoreModelProbeErrorRate
+      - alert: DeModelProbeErrorRate
         expr: |
           (
             rate(de_model_provider_probe_errors_total[10m])
@@ -71,7 +71,7 @@ groups:
         annotations:
           summary: "Model provider probe failure rate elevated"
 
-      - alert: DeCoreModelVaultErrors
+      - alert: DeModelVaultErrors
         expr: increase(de_model_vault_errors_total[15m]) > 3
         for: 5m
         labels:
@@ -79,7 +79,7 @@ groups:
         annotations:
           summary: "Model credential Vault errors"
 
-      - alert: DeCoreModelBudgetDenies
+      - alert: DeModelBudgetDenies
         expr: increase(de_model_budget_denies_total[30m]) > 10
         for: 10m
         labels:

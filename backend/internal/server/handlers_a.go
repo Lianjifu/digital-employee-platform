@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
-	"github.com/digital-employee-platform/backend/internal/deaudit"
 	"github.com/digital-employee-platform/backend/internal/policy"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
@@ -647,20 +646,7 @@ func (s *Server) auditCenter(r *http.Request) (any, error) {
 	seen := map[string]bool{}
 	var out []map[string]any
 
-	// Prefer remote de-audit when DE_AUDIT_URL is set.
-	if c := deaudit.NewClientFromEnv(); c.Available() {
-		if rows, err := c.ListRecent(r.Context(), id.WorkspaceIDs, 200); err == nil {
-			for _, a := range rows {
-				aid := str(a["id"])
-				if aid != "" {
-					seen[aid] = true
-				}
-				out = append(out, a)
-			}
-		}
-	}
-
-	// Prefer OpenSearch when configured, else PG audit.events.
+	// Prefer OpenSearch when configured, else PG audit.events (owned by de-sys).
 	if s.Search != nil && s.Search.Available() {
 		if rows, err := s.Search.SearchRecent(r.Context(), id.WorkspaceIDs, 200); err == nil && len(rows) > 0 {
 			for _, a := range rows {

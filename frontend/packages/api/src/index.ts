@@ -1,5 +1,5 @@
 /**
- * API 客户端层 — 默认请求真实后端（de-core）。
+ * API 客户端层 — 默认请求真实后端（粗粒度网关 / Vite 代理）。
  * Mock 适配器仅在应用入口显式注入时启用（VITE_USE_MOCK=true）。
  */
 import type { ApiResponse } from '@de/web-types';
@@ -95,11 +95,11 @@ export class ApiClient {
       } catch (err) {
         const aborted = err instanceof DOMException && err.name === 'AbortError';
         if (aborted) {
-          throw new ApiError('E_TIMEOUT', '请求超时，请确认 de-core 是否可达', 408);
+          throw new ApiError('E_TIMEOUT', '请求超时，请确认控制面网关是否可达', 408);
         }
         const hint = this.baseURL
           ? `无法连接控制面 ${this.baseURL}，请先启动：cd backend && make run`
-          : '无法连接控制面（同源 /api → Vite 代理 → :8080）。请确认 de-core 已启动（cd backend && make run），并重启前端 dev（环境变量变更需重启 Vite）';
+          : '无法连接控制面（同源 /api → Vite 代理 → :8089 网关）。请确认已启动粗粒度栈（cd backend && make compose-up-coarse），并重启前端 dev（环境变量变更需重启 Vite）';
         throw new ApiError('E_NETWORK', hint, 0);
       }
       let json: ApiResponse<T>;
@@ -141,10 +141,10 @@ export class ApiClient {
     };
     if (this.mockHandler) {
       const file = form.get('file');
-      if (!(file instanceof File) && !(file instanceof Blob)) {
+      if (file == null || typeof file === 'string') {
         throw new ApiError('E_BAD_REQUEST', '缺少 file 字段', 400);
       }
-      const name = file instanceof File ? file.name : 'upload.bin';
+      const name = 'name' in file && typeof file.name === 'string' ? file.name : 'upload.bin';
       const buf = new Uint8Array(await file.arrayBuffer());
       let binary = '';
       for (let i = 0; i < buf.length; i += 1) binary += String.fromCharCode(buf[i]!);
@@ -173,7 +173,7 @@ export class ApiClient {
       } catch (err) {
         const aborted = err instanceof DOMException && err.name === 'AbortError';
         if (aborted) {
-          throw new ApiError('E_TIMEOUT', '上传超时，请确认 de-core 是否可达', 408);
+          throw new ApiError('E_TIMEOUT', '上传超时，请确认控制面网关是否可达', 408);
         }
         throw new ApiError('E_NETWORK', '无法连接控制面完成上传', 0);
       }

@@ -9,7 +9,7 @@ import (
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
-// evaluateWrite runs policy (remote de-policy when DE_POLICY_URL set) and audits the decision.
+// evaluateWrite runs policy (DE_POLICY_URL → de-sys when set) and audits the decision.
 func (s *Server) evaluateWrite(r *http.Request, resource, action string, extra policy.Input) error {
 	s.Store.Lock()
 	defer s.Store.Unlock()
@@ -45,7 +45,7 @@ func (s *Server) evaluateWriteLocked(r *http.Request, resource, action string, e
 	return nil
 }
 
-// decidePolicy prefers peer de-policy (DE_POLICY_URL), else Engine (OPA/local).
+// decidePolicy prefers peer policy service (DE_POLICY_URL → de-sys /v1/evaluate), else local Engine.
 func (s *Server) decidePolicy(ctx context.Context, in policy.Input) policy.Decision {
 	if c := depolicy.NewClientFromEnv(); c.Available() {
 		if d, err := c.Evaluate(ctx, in); err == nil {

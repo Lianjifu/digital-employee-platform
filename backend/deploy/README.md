@@ -41,21 +41,18 @@ make run
 
 ```bash
 make compose-up-full       # + Vault(:8200) + Envoy(:8088)
-make compose-up-coarse     # ★ 粗粒度：sys/collab/cap/workflow + FastAPI + gateway:8089
-make compose-up-temporal   # + Temporal(:7233)，再 make worker
-make compose-up-oidc       # + Dex OIDC(:5556)（轻量）
-make compose-up-authentik  # + Authentik(:9000)（生产形 IdP，见 deploy/authentik/）
+make compose-up-coarse     # ★ 主路径：sys/collab/cap/workflow + FastAPI + gateway:8089
+make compose-up-temporal   # + Temporal(:7233)
+make compose-up-oidc       # + Dex OIDC(:5556)
+make compose-up-authentik  # + Authentik(:9000)
 make compose-up-kafka      # + Redpanda(:19092)
-make compose-up-mtls       # + Envoy mTLS(:8443)，先 make certs
+make compose-up-mtls       # + Envoy mTLS(:8443)
 make compose-up-spiffe     # + Envoy SPIFFE mTLS(:8444)
-make compose-up-split      # + Envoy 路径拆分网关(:8089；遗留 policy→:8094)
-make compose-up-policy     # + de-policy 微服务(:8094)（遗留；prefer de-sys）
-make compose-up-audit      # + de-audit 微服务(:8095)（遗留；prefer de-sys）
-make compose-up-milvus     # + Milvus standalone(:19530) + etcd/minio
-make compose-up-opa        # + OPA(:8181)，Rego: deploy/opa/policies
-make compose-up-search     # + OpenSearch(:9200)，审计索引 de-audit
+make compose-up-milvus     # + Milvus
+make compose-up-opa        # + OPA(:8181)
+make compose-up-search     # + OpenSearch(:9200)
 make compose-up-obs        # + Prometheus(:9090) + Grafana(:3000)
-make compose-up-apps       # + de-core / runtime / rag / skill（兼容壳）
+make compose-up-staging    # coarse + oidc + opa + search + obs
 ```
 
 | 变量 | 说明 |
@@ -68,15 +65,15 @@ make compose-up-apps       # + de-core / runtime / rag / skill（兼容壳）
 | `DE_MILVUS_URI=http://127.0.0.1:19530` | Docker Milvus（`make compose-up-milvus`）；未设置则 RAG 用内存向量 |
 | `DE_OPA_URL=http://127.0.0.1:8181` | 远程 OPA evaluate；失败回退内嵌 baseline |
 | `DE_OPENSEARCH_URL=http://127.0.0.1:9200` | 审计写入/查询 OpenSearch |
-| `DE_AUDIT_URL` | 审计中心查询优先远程 de-audit，其次 OpenSearch / PG / 内存 |
-| `DE_SKILL_RUN_SECRET` | de-core 与 de-skill-runtime 共享的 RunToken HMAC 密钥 |
+| `DE_POLICY_URL=http://127.0.0.1:8100` | collab/cap 调 de-sys `/v1/evaluate`；sys 留空 |
+| `DE_SKILL_RUN_SECRET` | 控制面与 de-skill-runtime 共享的 RunToken HMAC 密钥 |
 | `DE_BAN_MOCK_TOKEN=1` | 生产/预发禁用 `mock-*-token` |
 | `DE_FORCE_OIDC=1` | 拒绝密码登录，仅 OIDC |
 
 ### Staging（硬化预发）
 
 ```bash
-make compose-up-staging   # apps + Dex + OPA + OpenSearch + obs + policy/audit
+make compose-up-staging   # coarse + Dex + OPA + OpenSearch + obs
 # 默认加载 deploy/.env.staging：BAN_MOCK=1 FORCE_OIDC=1
 ```
 
@@ -84,20 +81,15 @@ make compose-up-staging   # apps + Dex + OPA + OpenSearch + obs + policy/audit
 
 ```bash
 make compose-up-authentik   # :9000，见 deploy/authentik/README.md
-make compose-up-obs         # Prometheus :9090，Grafana :3000（抓取 host:8080/metrics）
-# 告警含 Copilot SSE 错误率、审计 fanout 失败（deploy/obs/alerts.yml）
+make compose-up-obs         # Prometheus :9090，Grafana :3000（抓取 :8100–8103/metrics）
 ```
 
-### SPIFFE / 拆分网关 / 沙箱
+### SPIFFE / 沙箱
 
 ```bash
-make certs && make certs-rotate   # SPIFFE URI SAN；短周期叶子证书
+make certs && make certs-rotate
 make compose-up-spiffe            # https://127.0.0.1:8444
-make compose-up-split             # http://127.0.0.1:8089 路径分流骨架
-make compose-up-policy            # de-policy :8094（evaluate + 回源 de-core）
-make compose-up-audit             # de-audit :8095（PG/Redis/Kafka/OS fanout）
-# host: make de-policy / make de-audit；DE_POLICY_URL / DE_AUDIT_URL 指向本机端口
-# de-skill-runtime：de_exec_net + seccomp；见 deploy/spiffe/README.md、topology-split.md
+# de-skill-runtime：de_exec_net + seccomp；见 topology-split.md
 ```
 
 Proto / Connect：`make buf-generate` → `gen/`（`/de.*.Service/*`）。  
@@ -107,20 +99,19 @@ mTLS：`make certs` 生成本地 CA；客户端证书 `deploy/certs/client.{crt,
 
 ```bash
 make compose-up-milvus
-pip install -r runtimes/de_rag/requirements.txt
+pip install -r services/de-rag/requirements-milvus.txt
 export DE_MILVUS_URI=http://127.0.0.1:19530
 make rag   # :8092，healthz 中 backend=milvus
 ```
 
 容器：`de-milvus`（19530/9091）、`de-milvus-etcd`、`de-milvus-minio`（内网）。Milvus 较吃内存，Colima/Docker 建议 ≥6–8GB。
 
-### 应用进程镜像（profile `apps`）
+### 应用进程（profile `coarse`）
 
 ```bash
-make compose-up-apps
-# de-core:8080  de-agent-runtime:8091  de-rag:8092  de-skill-runtime:8093
-# Temporal worker（需先 compose-up-temporal）:
-# docker compose -f deploy/compose.yml --profile apps --profile temporal up -d de-workflow
+make compose-up-coarse
+# gateway:8089  sys:8100  collab:8101  cap:8102  workflow:8103
+# FastAPI: 8091 / 8092 / 8093
 ```
 
-生产建议：`DE_BAN_MOCK_TOKEN=1`（禁用 mock token 与密码登录）或 `DE_FORCE_OIDC=1`。
+生产建议：`DE_BAN_MOCK_TOKEN=1` 或 `DE_FORCE_OIDC=1`。

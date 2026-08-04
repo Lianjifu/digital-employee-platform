@@ -41,7 +41,10 @@ func TestParseServiceMode(t *testing.T) {
 	if ParseServiceMode("de-sys") != ModeSys {
 		t.Fatal("de-sys")
 	}
-	if ParseServiceMode("") != ModeAll {
-		t.Fatal("empty")
+	if ParseServiceMode("") != ModeSys {
+		t.Fatal("empty defaults to sys")
+	}
+	if ParseServiceMode("all") != ModeAll {
+		t.Fatal("all")
 	}
 }

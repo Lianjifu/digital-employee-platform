@@ -15,4 +15,4 @@ Committed outputs:
 - `de/*/v1/*.pb.go`
 - `de/*/v1/*connect/*.connect.go`
 
-`de-core` mounts these handlers at `/de.*.Service/*` and `/connect/de.*.Service/*`.
+`de-sys` / `de-collab` / `de-cap` mount these handlers at `/de.*.Service/*` and `/connect/de.*.Service/*`（按 ServiceMode）。
