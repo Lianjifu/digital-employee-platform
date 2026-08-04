@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -97,8 +99,9 @@ func (s *Server) findSkillLocked(ws, id string) (int, map[string]any) {
 		if str(sk["id"]) != id {
 			continue
 		}
-		if str(sk["workspaceId"]) != "" && str(sk["workspaceId"]) != ws {
-			return -1, nil
+		skWS := str(sk["workspaceId"])
+		if skWS != "" && skWS != ws {
+			continue
 		}
 		return i, sk
 	}
@@ -401,6 +404,7 @@ func (s *Server) importSkills(r *http.Request) (any, error) {
 		s.ensureSkillHealthLocked(item)
 		s.Store.SkillIntegrations = append([]map[string]any{{
 			"id": s.Store.ID("si"), "workspaceId": ws, "name": name, "type": item["kind"],
+			"skillId": str(item["id"]),
 			"environment": "test", "status": "validating", "owner": id.Name,
 			"endpoint": "registry://import/" + name + ":" + str(item["version"]),
 			"credentialRef": "vault://registries/import-reader",
@@ -1218,6 +1222,44 @@ func (s *Server) createTool(r *http.Request) (any, error) {
 	return normalizeSkillItem(item), nil
 }
 
+func resolveIntegrationSkillID(item map[string]any) string {
+	if id := strings.TrimSpace(str(item["skillId"])); id != "" {
+		return id
+	}
+	ref := str(item["credentialRef"])
+	// vault://skills/<skillId>/runtime
+	if strings.HasPrefix(ref, "vault://skills/") {
+		rest := strings.TrimPrefix(ref, "vault://skills/")
+		if i := strings.IndexByte(rest, '/'); i > 0 {
+			return rest[:i]
+		}
+		return rest
+	}
+	return ""
+}
+
+func (s *Server) verifyPackageSkillLocked(ws, skillID string) (sk map[string]any, errMsg string) {
+	_, sk = s.findSkillLocked(ws, skillID)
+	if sk == nil {
+		return nil, "关联技能不存在或已卸载"
+	}
+	if str(sk["source"]) != "package" {
+		return sk, ""
+	}
+	pkgPath := str(sk["packagePath"])
+	if pkgPath == "" {
+		return sk, "技能包尚未落盘"
+	}
+	if st, err := os.Stat(pkgPath); err != nil || !st.IsDir() {
+		return sk, "技能包目录不可用：" + pkgPath
+	}
+	mdRel := coalesce(str(sk["skillMdPath"]), "SKILL.md")
+	if _, err := os.Stat(filepath.Join(pkgPath, mdRel)); err != nil {
+		return sk, "技能包缺少 " + mdRel
+	}
+	return sk, ""
+}
+
 func (s *Server) skillIntegrationAction(r *http.Request) (any, error) {
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	if len(parts) < 4 {
@@ -1243,13 +1285,33 @@ func (s *Server) skillIntegrationAction(r *http.Request) (any, error) {
 	}
 	switch {
 	case action == "test" && r.Method == http.MethodPost:
-		item["lastVerifiedAt"] = "刚刚"
-		if str(item["status"]) == "failed" {
-			item["health"] = "attention"
-		} else {
-			item["health"] = "healthy"
+		verifiedAt := time.Now().Format("15:04:05")
+		skillID := resolveIntegrationSkillID(item)
+		if skillID != "" && str(item["skillId"]) == "" {
+			item["skillId"] = skillID
 		}
-		s.Store.AppendAudit(ws, id.Name, "执行接入连通性验证", str(item["name"]), "success", "")
+		if str(item["type"]) == "skill" && skillID != "" {
+			sk, errMsg := s.verifyPackageSkillLocked(ws, skillID)
+			if errMsg != "" {
+				item["lastVerifiedAt"] = verifiedAt
+				item["health"] = "attention"
+				item["status"] = "failed"
+				item["lastError"] = errMsg
+				s.Store.AppendAudit(ws, id.Name, "执行接入连通性验证", str(item["name"]), "failed", errMsg)
+				go s.persistSkills()
+				return nil, apperr.BadReq(apperr.BadRequest, errMsg)
+			}
+			if sk != nil {
+				sk["lastVerifiedAt"] = verifiedAt
+			}
+		}
+		item["lastVerifiedAt"] = verifiedAt
+		delete(item, "lastError")
+		item["health"] = "healthy"
+		if st := str(item["status"]); st == "validating" || st == "draft" || st == "failed" {
+			item["status"] = "enabled"
+		}
+		s.Store.AppendAudit(ws, id.Name, "执行接入连通性验证", str(item["name"]), "success", "verifiedAt="+verifiedAt)
 		go s.persistSkills()
 		return item, nil
 	case action == "discover" && r.Method == http.MethodPost:

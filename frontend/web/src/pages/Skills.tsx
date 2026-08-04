@@ -3,7 +3,7 @@ import { useApiMutation, useApiQuery, useApiUploadMutation } from '@/services/qu
 import { Badge, Button, Input, KpiCard } from '@de/web-ui';
 import {
   Wrench, ShieldAlert, ShieldCheck, Settings, Search, AlertTriangle, CheckCircle2, Box, Star, Globe, Activity, History,
-  Play, RefreshCw, Lock, Container, Eye, Terminal, Sparkles, Layers, Trash2, GitBranch,
+  Play, RefreshCw, Lock, Container, Eye, Terminal, Sparkles, Trash2, GitBranch,
   Save, List, LayoutGrid, Power, ArrowUpCircle, Upload, Network,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
@@ -16,7 +16,7 @@ import { useT } from '@/i18n';
 import { defaultSkillsTab, roleCanMutate, rolePageCopy, visibleSkillsTabs } from '@/features/role-nav/role-nav';
 import {
   KIND_META, KIND_PROFILE, buildHealthBySkillId, buildReferenceBySkillId, enrichSkillRow,
-  toCapabilityRef, type ModalKind, type SkillCenterTab, type SkillRow,
+  type ModalKind, type SkillCenterTab, type SkillRow,
 } from '@/features/skills/skill-ui';
 import {
   ImportSkillModal, CapabilityConfigModal, StoreSkillDetail, Stat, X,
@@ -106,11 +106,10 @@ export default function Skills() {
   const [batchConfirm, setBatchConfirm] = useState<'upgrade' | null>(null);
   const [showDetails, setShowDetails] = useState(false);
   const [detailTab, setDetailTab] = useState<'overview' | 'access' | 'versions' | 'runtime'>('overview');
+  const [detailDescExpanded, setDetailDescExpanded] = useState(false);
   const [showRuntimeConfig, setShowRuntimeConfig] = useState(false);
   const [runtimeSettings, setRuntimeSettings] = useState<Record<string, { cacheable: boolean; timeout: string; retries: string }>>({});
   const [operationNotice, setOperationNotice] = useState<string | null>(null);
-  const [bindAgentId, setBindAgentId] = useState('');
-  const [bindWorkflowId, setBindWorkflowId] = useState('');
 
   const [installed, setInstalled] = useState<SkillRow[]>([]);
   const [searchQ, setSearchQ] = useState('');
@@ -131,11 +130,7 @@ export default function Skills() {
   const governanceHealth = governanceHealthData ?? [];
   const healthBySkillId = useMemo(() => buildHealthBySkillId(governanceHealth), [governanceHealth]);
   const referenceBySkillId = useMemo(() => buildReferenceBySkillId(governanceHealth), [governanceHealth]);
-  const { data: availableAgentsData } = useApiQuery<Array<{ id: string; name: string; status: string }>>(['agents', 'skill-binding'], '/api/agents');
-  const { data: availableWorkflowsData } = useApiQuery<Array<{ id: string; name: string; version: string }>>(['workflows', 'skill-binding'], '/api/workflows');
   const { data: workflowSkillsData, refetch: refetchWorkflowSkills } = useApiQuery<WorkflowSkill[]>(['workflow-skills'], '/api/workflow-skills');
-  const availableAgents = availableAgentsData ?? [];
-  const availableWorkflows = availableWorkflowsData ?? [];
   const workflowSkills = workflowSkillsData ?? [];
   const promoteWorkflowSkillApi = useApiMutation<WorkflowSkill, { id: string }>(
     (vars) => `/api/workflow-skills/${vars.id}/publish`,
@@ -154,15 +149,6 @@ export default function Skills() {
   useEffect(() => {
     setInstalled(apiInstalled.map((skill) => enrichSkillRow(skill, healthBySkillId)));
   }, [apiInstalled, healthBySkillId]);
-
-  useEffect(() => {
-    const firstAgent = availableAgents.find((agent) => agent.status === 'installed');
-    if (firstAgent) setBindAgentId(firstAgent.id);
-  }, [availableAgents]);
-
-  useEffect(() => {
-    if (availableWorkflows[0]) setBindWorkflowId(availableWorkflows[0].id);
-  }, [availableWorkflows]);
 
   // 测试运行器输入与输出
   const [testCmd, setTestCmd] = useState('');
@@ -238,6 +224,7 @@ export default function Skills() {
     setDetailTab(options?.detailTab ?? 'overview');
     setShowRuntimeConfig(false);
     setTestRunnerOpen(!!options?.test);
+    setDetailDescExpanded(false);
   };
 
   const detailEnabled = Boolean(activeId);
@@ -328,9 +315,6 @@ export default function Skills() {
   const configureMcpMutation = useApiMutation<Skill, { name: string; endpoint: string; authMode: string; protocol: string }>('/api/mcp-connections');
   const configureToolMutation = useApiMutation<Skill, { name: string; endpoint: string; schema: string }>('/api/tools');
   const preflightMutation = useApiMutation<SkillInstallPreflight, { id: string }>(({ id }) => `/api/skills/${id}/preflight`);
-  const bindSkillMutation = useApiMutation<any, { agentId: string; skillId: string }>(({ agentId }) => `/api/agents/${agentId}/skills`);
-  const bindWorkflowCapabilityMutation = useApiMutation<any, { workflowId: string; capabilityKind: 'skill' | 'mcp' | 'tool'; capabilityId: string; pinnedVersion: string }>(({ workflowId }) => `/api/workflows/${workflowId}/capabilities`);
-
   const openUpgradePlan = (skill: SkillRow) => {
     if (!canWrite) return;
     setActiveId(skill.id);
@@ -786,7 +770,7 @@ export default function Skills() {
                               {skill.hasUpdate && <span className="ml-1 text-[10px] font-sans text-[var(--warning)]">可升级</span>}
                             </span>
                             <span>
-                              <button type="button" onClick={(event) => { event.stopPropagation(); openSkillDetails(skill.id, { detailTab: 'access' }); }} className={cn('skills-ref-link', referenced && 'is-active')}>
+                              <button type="button" onClick={(event) => { event.stopPropagation(); openSkillDetails(skill.id); }} className={cn('skills-ref-link', referenced && 'is-active')}>
                                 {referenced ? `${refCount} 处` : '未引用'}
                               </button>
                             </span>
@@ -960,8 +944,8 @@ export default function Skills() {
         title={active ? `${active.name} · 技能详情` : '技能详情'}
         description={activeInstalled ? '已纳管能力的使用范围、运行治理与变更追溯' : '评估制品的能力边界、兼容性、安全性与安装条件'}
         size="lg"
-        bodyClassName="skill-detail-modal px-7 py-6"
-        panelClassName="max-w-[680px]"
+        bodyClassName="skill-detail-modal skill-detail-modal--split !overflow-hidden px-0 py-0"
+        panelClassName="max-w-[760px]"
         footer={!activeInstalled && active ? (
           <>
             <Button variant="ghost" onClick={() => setShowDetails(false)}>关闭</Button>
@@ -973,20 +957,21 @@ export default function Skills() {
       >
         {active ? (
           <>
+            <div className="skill-detail-chrome">
             <div className="skill-detail-hero">
-              <div className="flex items-start gap-4">
-                <div className={cn('grid h-11 w-11 place-items-center rounded-xl shrink-0',
-                  active.kind === 'skill' ? 'bg-[var(--info-bg)] text-[var(--info)]' :
-                  active.kind === 'mcp' ? 'bg-[var(--success-bg)] text-[var(--success)]' :
-                  'bg-[var(--warning-bg)] text-[var(--warning)]',
+              <div className="skill-detail-hero__top">
+                <div className={cn('skill-detail-hero__icon',
+                  active.kind === 'skill' ? 'is-skill' :
+                  active.kind === 'mcp' ? 'is-mcp' :
+                  'is-tool',
                 )}>
                   {(() => { const Icon = KIND_META[active.kind].icon; return <Icon className="h-5 w-5" />; })()}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1.5">
-                    <strong className="text-[16px] font-semibold tracking-[-0.01em] text-[var(--text)]">{active.name}</strong>
-                    <span className="font-mono text-[11px] text-[var(--text-muted)]">{KIND_META[active.kind].label}</span>
-                    <span className="font-mono text-[11px] text-[var(--text-muted)]">v{active.version}</span>
+                  <div className="skill-detail-hero__title-row">
+                    <strong className="skill-detail-hero__name">{active.name}</strong>
+                    <span className="skill-detail-hero__meta-chip">{KIND_META[active.kind].label}</span>
+                    <span className="skill-detail-hero__meta-chip font-mono">v{active.version}</span>
                     {activeInstalled ? (
                       <span className={cn('knowledge-status-dot', (active.lifecycleStatus ?? 'enabled') === 'enabled' ? 'is-ready' : (active.lifecycleStatus === 'pending_approval' || active.lifecycleStatus === 'quarantined') ? 'is-failed' : 'is-indexing')}>
                         {(active.lifecycleStatus ?? 'enabled') === 'enabled' ? '已启用' : active.lifecycleStatus === 'pending_approval' ? '待审批' : active.lifecycleStatus === 'disabled' ? '已暂停' : active.lifecycleStatus === 'quarantined' ? '已隔离' : '已废弃'}
@@ -995,79 +980,191 @@ export default function Skills() {
                       <span className="knowledge-status-dot is-indexing">未安装</span>
                     )}
                   </div>
-                  <p className="mt-2 max-w-[52ch] text-[12px] leading-5 text-[var(--text-muted)]">{active.description}</p>
-                  <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px] text-[var(--text-muted)]">
-                    <span>风险 <strong className={cn('font-semibold', active.riskLevel === 'high' ? 'text-[var(--danger)]' : active.riskLevel === 'mid' ? 'text-[var(--warning)]' : 'text-[var(--success)]')}>{active.riskLevel === 'high' ? '高' : active.riskLevel === 'mid' ? '中' : '低'}</strong></span>
-                    {activeInstalled ? (
-                      <>
-                        <span>责任人 <strong className="font-medium text-[var(--text-secondary)]">{active.owner ?? '未分配'}</strong></span>
-                        <span>24h <strong className="font-mono text-[var(--text)]">{active.perf?.calls24h ?? 0}</strong></span>
-                        <span>错误率 <strong className={cn('font-mono', (active.perf?.errorRate ?? 0) > 1 ? 'text-[var(--danger)]' : 'text-[var(--success)]')}>{active.perf?.errorRate ?? 0}%</strong></span>
-                        <span>P95 <strong className="font-mono text-[var(--text)]">{active.perf?.p95Ms ?? 0}ms</strong></span>
-                      </>
-                    ) : (
-                      <>
-                        <span>发布方 <strong className="font-medium text-[var(--text-secondary)]">{(active as any).publisher ?? '社区发布方'}</strong></span>
-                        <span>评分 <strong className="font-mono text-[var(--text)]">{active.rating}</strong></span>
-                        <span>安装量 <strong className="font-mono text-[var(--text)]">{active.installCount?.toLocaleString() ?? '—'}</strong></span>
-                        <span>签名 <strong className={cn('font-medium', (active as any).signed ? 'text-[var(--success)]' : 'text-[var(--warning)]')}>{(active as any).signed ? '已验证' : '待验证'}</strong></span>
-                      </>
+                  <div className="skill-detail-hero__desc-wrap">
+                    <p className={cn('skill-detail-hero__desc', !detailDescExpanded && 'is-clamped')}>{active.description}</p>
+                    {active.description.length > 120 && (
+                      <button
+                        type="button"
+                        className="skill-detail-hero__desc-toggle"
+                        onClick={() => setDetailDescExpanded((open) => !open)}
+                      >
+                        {detailDescExpanded ? '收起' : '展开全部'}
+                      </button>
                     )}
                   </div>
                 </div>
               </div>
+
+              <div className="skill-detail-hero__metrics" aria-label="关键指标">
+                <div className="skill-detail-metric">
+                  <span>风险</span>
+                  <strong className={cn(active.riskLevel === 'high' ? 'text-[var(--danger)]' : active.riskLevel === 'mid' ? 'text-[var(--warning)]' : 'text-[var(--success)]')}>
+                    {active.riskLevel === 'high' ? '高' : active.riskLevel === 'mid' ? '中' : '低'}
+                  </strong>
+                </div>
+                {activeInstalled ? (
+                  <>
+                    <div className="skill-detail-metric">
+                      <span>责任人</span>
+                      <strong>{active.owner ?? '未分配'}</strong>
+                    </div>
+                    <div className="skill-detail-metric">
+                      <span>24h 调用</span>
+                      <strong className="font-mono">{active.perf?.calls24h ?? 0}</strong>
+                    </div>
+                    <div className="skill-detail-metric">
+                      <span>错误率</span>
+                      <strong className={cn('font-mono', (active.perf?.errorRate ?? 0) > 1 ? 'text-[var(--danger)]' : 'text-[var(--success)]')}>{active.perf?.errorRate ?? 0}%</strong>
+                    </div>
+                    <div className="skill-detail-metric">
+                      <span>P95</span>
+                      <strong className="font-mono">{active.perf?.p95Ms ?? 0}ms</strong>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="skill-detail-metric">
+                      <span>发布方</span>
+                      <strong>{(active as any).publisher ?? '社区发布方'}</strong>
+                    </div>
+                    <div className="skill-detail-metric">
+                      <span>评分</span>
+                      <strong className="font-mono">{active.rating}</strong>
+                    </div>
+                    <div className="skill-detail-metric">
+                      <span>安装量</span>
+                      <strong className="font-mono">{active.installCount?.toLocaleString() ?? '—'}</strong>
+                    </div>
+                    <div className="skill-detail-metric">
+                      <span>签名</span>
+                      <strong className={cn((active as any).signed ? 'text-[var(--success)]' : 'text-[var(--warning)]')}>{(active as any).signed ? '已验证' : '待验证'}</strong>
+                    </div>
+                  </>
+                )}
+              </div>
+
               {activeInstalled && (
                 <div className="skill-detail-hero__actions">
-                  <button type="button" className="skill-detail-link" onClick={() => { setTestRunnerOpen(true); setShowRuntimeConfig(false); setDetailTab('runtime'); }}>
-                    <Terminal className="h-3.5 w-3.5" />运行测试
-                  </button>
-                  <button type="button" className="skill-detail-link" disabled={!canWrite} onClick={() => { setShowRuntimeConfig(true); setTestRunnerOpen(false); setDetailTab('overview'); }}>
-                    <Settings className="h-3.5 w-3.5" />运行配置
-                  </button>
-                  <button type="button" className="skill-detail-link is-danger ml-auto" disabled={!canWrite} onClick={() => setActiveModal('uninstall')}>
+                  <div className="skill-detail-hero__actions-primary">
+                    <button type="button" className="skill-detail-link is-primary" onClick={() => { setTestRunnerOpen(true); setShowRuntimeConfig(false); setDetailTab('runtime'); }}>
+                      <Terminal className="h-3.5 w-3.5" />运行测试
+                    </button>
+                    <button type="button" className="skill-detail-link" disabled={!canWrite} onClick={() => { setShowRuntimeConfig(true); setTestRunnerOpen(false); setDetailTab('overview'); }}>
+                      <Settings className="h-3.5 w-3.5" />运行配置
+                    </button>
+                  </div>
+                  <button type="button" className="skill-detail-link is-danger" disabled={!canWrite} onClick={() => setActiveModal('uninstall')}>
                     <Trash2 className="h-3.5 w-3.5" />卸载
                   </button>
                 </div>
               )}
             </div>
 
-            {activeInstalled ? <>
+            {activeInstalled ? (
             <div className="skill-detail-tabs" role="tablist" aria-label="技能详情分区">
-              {([{ key: 'overview', label: '概览与策略' }, { key: 'access', label: '引用与权限' }, { key: 'versions', label: '版本与发布' }, { key: 'runtime', label: '运行与审计' }] as const).map((item) => (
+              {([{ key: 'overview', label: '概览与策略' }, { key: 'access', label: '权限' }, { key: 'versions', label: '版本与发布' }, { key: 'runtime', label: '运行与审计' }] as const).map((item) => (
                 <button key={item.key} type="button" role="tab" aria-selected={detailTab === item.key} onClick={() => setDetailTab(item.key)} className={cn(detailTab === item.key && 'is-active')}>{item.label}</button>
               ))}
             </div>
-
-            {detailTab === 'overview' && <>
-            <div className="skill-detail-panel">
-              <div className="skill-detail-panel__title"><Container className="h-3.5 w-3.5 text-[var(--success)]" />执行隔离<small>gVisor · 受控</small></div>
-              <dl className="skill-detail-kv">
-                <div><dt>运行时</dt><dd className="font-mono">runsc · gvisor 20240603</dd></div>
-                <div><dt>隔离边界</dt><dd>syscall 拦截 · 网络命名空间 · 文件只读挂载</dd></div>
-              </dl>
+            ) : null}
             </div>
 
-            <div className="skill-detail-panel">
-              <div className="skill-detail-panel__title"><ShieldCheck className="h-3.5 w-3.5 text-[var(--brand)]" />生产安全策略</div>
-              <dl className="skill-detail-kv">
-                <div><dt>密钥引用</dt><dd className="truncate font-mono text-[var(--brand)]">{governance?.secretRef ?? '加载中'}</dd></div>
-                <div><dt>网络出口</dt><dd>{governance?.allowedEgress.join('、') ?? '—'}</dd></div>
-                <div><dt>写操作审批</dt><dd><Badge tone={governance?.writeApprovalRequired ? 'warn' : 'success'} className="text-[9px]">{governance?.writeApprovalRequired ? '必须审批' : '无需审批'}</Badge></dd></div>
-                <div><dt>脱敏 / 熔断</dt><dd>{governance?.dataMaskingEnabled ? '已启用' : '未启用'} / {governance?.circuitBreakerEnabled ? '已启用' : '未启用'}</dd></div>
-              </dl>
-              {canWrite && (
-                <div className="mt-3 flex flex-wrap gap-2 border-t border-[var(--border)] pt-3">
-                  <Button size="sm" variant="secondary" className="flex-1" onClick={() => governance && governanceMutation.mutate({ writeApprovalRequired: !governance.writeApprovalRequired })}>{governance?.writeApprovalRequired ? '关闭写审批' : '开启写审批'}</Button>
-                  <Button size="sm" variant="secondary" className="flex-1" onClick={() => governance && governanceMutation.mutate({ dataMaskingEnabled: !governance.dataMaskingEnabled })}>{governance?.dataMaskingEnabled ? '关闭脱敏' : '开启脱敏'}</Button>
-                  <Button size="sm" variant="secondary" className="flex-1" onClick={() => governance && governanceMutation.mutate({ circuitBreakerEnabled: !governance.circuitBreakerEnabled })}>{governance?.circuitBreakerEnabled ? '关闭熔断' : '开启熔断'}</Button>
+            <div className="skill-detail-scroll">
+            {activeInstalled ? <>
+            {detailTab === 'overview' && <>
+            <div className="skill-detail-overview-grid">
+              <div className="skill-detail-panel">
+                <div className="skill-detail-panel__title">
+                  <Container className="h-3.5 w-3.5 text-[var(--success)]" />
+                  执行隔离
+                  <small>gVisor · 受控</small>
                 </div>
-              )}
+                <dl className="skill-detail-kv skill-detail-kv--stack">
+                  <div>
+                    <dt>运行时</dt>
+                    <dd className="font-mono">runsc · gvisor 20240603</dd>
+                  </div>
+                  <div>
+                    <dt>隔离边界</dt>
+                    <dd>
+                      <ul className="skill-detail-chip-list">
+                        <li>syscall 拦截</li>
+                        <li>网络命名空间</li>
+                        <li>文件只读挂载</li>
+                      </ul>
+                    </dd>
+                  </div>
+                  {active.source === 'package' && (
+                    <div>
+                      <dt>制品来源</dt>
+                      <dd>
+                        技能包{active.hasScripts ? ` · ${active.scripts?.length ?? 0} 个脚本` : ''}
+                        {active.packageFileName ? <span className="mt-1 block truncate font-mono text-[10px] text-[var(--text-muted)]">{active.packageFileName}</span> : null}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+              </div>
+
+              <div className="skill-detail-panel">
+                <div className="skill-detail-panel__title"><ShieldCheck className="h-3.5 w-3.5 text-[var(--brand)]" />生产安全策略</div>
+                <dl className="skill-detail-kv skill-detail-kv--stack">
+                  <div>
+                    <dt>密钥引用</dt>
+                    <dd className="truncate font-mono text-[var(--brand)]" title={governance?.secretRef}>{governance?.secretRef ?? '加载中'}</dd>
+                  </div>
+                  <div>
+                    <dt>网络出口</dt>
+                    <dd>
+                      {(governance?.allowedEgress?.length ?? 0) > 0 ? (
+                        <ul className="skill-detail-chip-list">
+                          {governance!.allowedEgress.map((host) => <li key={host}>{host}</li>)}
+                        </ul>
+                      ) : (
+                        <span className="text-[var(--text-muted)]">无外网出口</span>
+                      )}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>写操作审批</dt>
+                    <dd><Badge tone={governance?.writeApprovalRequired ? 'warn' : 'success'} className="text-[9px]">{governance?.writeApprovalRequired ? '必须审批' : '无需审批'}</Badge></dd>
+                  </div>
+                </dl>
+                {canWrite && (
+                  <div className="skill-detail-policy-toggles" role="group" aria-label="安全策略开关">
+                    <button
+                      type="button"
+                      className={cn('skill-detail-toggle', governance?.writeApprovalRequired && 'is-on')}
+                      onClick={() => governance && governanceMutation.mutate({ writeApprovalRequired: !governance.writeApprovalRequired })}
+                    >
+                      <span>写审批</span>
+                      <strong>{governance?.writeApprovalRequired ? '开' : '关'}</strong>
+                    </button>
+                    <button
+                      type="button"
+                      className={cn('skill-detail-toggle', governance?.dataMaskingEnabled && 'is-on')}
+                      onClick={() => governance && governanceMutation.mutate({ dataMaskingEnabled: !governance.dataMaskingEnabled })}
+                    >
+                      <span>脱敏</span>
+                      <strong>{governance?.dataMaskingEnabled ? '开' : '关'}</strong>
+                    </button>
+                    <button
+                      type="button"
+                      className={cn('skill-detail-toggle', governance?.circuitBreakerEnabled && 'is-on')}
+                      onClick={() => governance && governanceMutation.mutate({ circuitBreakerEnabled: !governance.circuitBreakerEnabled })}
+                    >
+                      <span>熔断</span>
+                      <strong>{governance?.circuitBreakerEnabled ? '开' : '关'}</strong>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
 
             {activeInstalled && canWrite && (
               <div className="skill-detail-panel">
                 <div className="skill-detail-panel__title"><Sparkles className="h-3.5 w-3.5 text-[var(--brand)]" />晋升到技能商店</div>
-                <p className="mb-2 text-[10px] leading-4 text-[var(--text-muted)]">将本工作区已验证技能上架为可安装目录条目；高风险 / 全局可见需审批单号。</p>
+                <p className="mb-3 text-[11px] leading-5 text-[var(--text-muted)]">将本工作区已验证技能上架为可安装目录条目；高风险 / 全局可见需审批单号。</p>
                 <div className="flex flex-wrap gap-2">
                   <Input value={promoteTicket} onChange={(e) => setPromoteTicket(e.target.value)} placeholder="审批单号（可选/按策略必填）" className="h-8 min-w-[160px] flex-1 text-xs" />
                   <Button
@@ -1124,37 +1221,6 @@ export default function Skills() {
                 </div>
               </div>
             )}
-            </>}
-
-            {detailTab === 'access' && <>
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-xs">
-              <div className="flex items-center justify-between"><span className="flex items-center gap-1.5 font-semibold"><Layers className="h-3.5 w-3.5 text-[var(--brand)]" />引用影响分析</span><Badge tone={impact?.uninstallAllowed ? 'success' : 'warn'}>{impact?.uninstallAllowed ? '可安全下线' : '受引用保护'}</Badge></div>
-              <div className="mt-2 grid grid-cols-3 gap-2 text-center"><span><b className="block font-mono text-sm">{impact?.agents.length ?? 0}</b><small className="text-[10px] text-[var(--text-muted)]">智能体</small></span><span><b className="block font-mono text-sm">{impact?.workflows.length ?? 0}</b><small className="text-[10px] text-[var(--text-muted)]">工作流</small></span><span><b className="block font-mono text-sm">{impact?.activeRuns ?? 0}</b><small className="text-[10px] text-[var(--text-muted)]">运行中</small></span></div>
-              {!impact?.uninstallAllowed && <p className="mt-2 text-[10px] leading-relaxed text-[var(--warning)]">{impact?.reason}</p>}
-              {(impact?.agents.length || impact?.workflows.length) ? (
-                <div className="mt-3 space-y-2 border-t border-[var(--border)] pt-2">
-                  {impact.agents.length > 0 && (
-                    <div><span className="text-[10px] text-[var(--text-muted)]">关联智能体</span><div className="mt-1 flex flex-wrap gap-1">{impact.agents.map((name) => <Badge key={name} tone="info" className="text-[9px]">{name}</Badge>)}</div></div>
-                  )}
-                  {impact.workflows.length > 0 && (
-                    <div><span className="text-[10px] text-[var(--text-muted)]">关联工作流</span><div className="mt-1 flex flex-wrap gap-1">{impact.workflows.map((name) => <Badge key={name} tone="neutral" className="text-[9px]">{name}</Badge>)}</div></div>
-                  )}
-                </div>
-              ) : null}
-            </div>
-
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-xs">
-              <div className="mb-2 flex items-center gap-1.5 font-semibold"><Wrench className="h-3.5 w-3.5 text-[var(--brand)]" />安装到智能体</div>
-              <p className="mb-2 text-[10px] leading-relaxed text-[var(--text-muted)]">工作区安装只表示制品可用；分配到已启用智能体后，才可在该智能体的受控工作流中调用。</p>
-              <div className="flex gap-2"><select value={bindAgentId} onChange={(event) => setBindAgentId(event.target.value)} className="h-8 min-w-0 flex-1 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs">{availableAgents.map((agent) => <option key={agent.id} value={agent.id} disabled={agent.status !== 'installed'}>{agent.name}{agent.status !== 'installed' ? '（未启用）' : ''}</option>)}</select><Button size="sm" disabled={!canWrite || !bindAgentId} onClick={() => { const cap = toCapabilityRef(active); bindSkillMutation.mutate({ agentId: bindAgentId, skillId: cap.id }, { onSuccess: () => setOperationNotice(`技能「${active.name}」已分配到智能体`), onError: (error) => setOperationNotice(error instanceof Error ? error.message : '分配失败') }); }}>分配</Button></div>
-            </div>
-
-            <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-xs">
-              <div className="mb-2 flex items-center gap-1.5 font-semibold"><GitBranch className="h-3.5 w-3.5 text-[var(--brand)]" />引用到工作流</div>
-              <p className="mb-2 text-[10px] leading-relaxed text-[var(--text-muted)]">将当前版本固定到工作流；画布中的 Skill 执行、MCP 工具或 Tool 节点只能选择已引用的能力。</p>
-              <div className="flex gap-2"><select value={bindWorkflowId} onChange={(event) => setBindWorkflowId(event.target.value)} className="h-8 min-w-0 flex-1 rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-xs">{availableWorkflows.map((workflow) => <option key={workflow.id} value={workflow.id}>{workflow.name} · {workflow.version}</option>)}</select><Button size="sm" disabled={!canWrite || !bindWorkflowId} onClick={() => { const cap = toCapabilityRef(active); bindWorkflowCapabilityMutation.mutate({ workflowId: bindWorkflowId, capabilityKind: active.kind, capabilityId: cap.id, pinnedVersion: cap.pinnedVersion }, { onSuccess: () => setOperationNotice(`技能「${active.name}」已固定引用到工作流`), onError: (error) => setOperationNotice(error instanceof Error ? error.message : '引用失败') }); }}>引用</Button></div>
-            </div>
-
             </>}
 
             {detailTab === 'runtime' && <>
@@ -1249,21 +1315,21 @@ export default function Skills() {
 
             {/* 版本历史 */}
             {detailTab === 'versions' && versions.length > 0 && (
-              <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-4">
-                <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-                  <History className="h-3.5 w-3.5" />版本历史
+              <div className="skill-detail-panel">
+                <div className="skill-detail-panel__title">
+                  <History className="h-3.5 w-3.5 text-[var(--brand)]" />版本历史
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   {versions.slice(0, 3).map((v: any) => (
-                    <div key={v.version} className="rounded-md bg-[var(--bg)] border border-[var(--border)] p-2">
-                      <div className="flex items-center justify-between">
+                    <div key={v.version} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3">
+                      <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-mono font-bold text-xs">v{v.version}</span>
+                          <span className="font-mono text-xs font-bold">v{v.version}</span>
                           <Badge tone={v.type === 'major' ? 'error' : v.type === 'minor' ? 'info' : 'neutral'} className="text-[9px]">{v.type}</Badge>
                         </div>
-                        <span className="text-[10px] text-[var(--text-muted)] font-mono">{v.date}</span>
+                        <span className="font-mono text-[10px] text-[var(--text-muted)]">{v.date}</span>
                       </div>
-                      <div className="mt-1 space-y-0.5 text-[10px] text-[var(--text-muted)]">
+                      <div className="mt-2 space-y-0.5 text-[11px] text-[var(--text-muted)]">
                         {v.notes?.map((n: string, i: number) => (
                           <div key={i} className={cn(n.startsWith('+') ? 'text-[var(--success)]' : 'text-[var(--danger)]')}>{n}</div>
                         ))}
@@ -1276,23 +1342,23 @@ export default function Skills() {
             {detailTab === 'versions' && versions.length === 0 && <EmptyState icon={History} title="暂无版本记录" description="后续升级、回滚和发布记录会在此处沉淀。" />}
 
             {/* 权限矩阵（可切换） */}
-            {detailTab === 'access' && <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-4">
-              <div className="text-xs font-semibold mb-3 flex items-center gap-1.5">
-                <Lock className="h-3.5 w-3.5" />权限矩阵
-                <span className="ml-auto text-[10px] text-[var(--text-muted)]">点击切换</span>
+            {detailTab === 'access' && <div className="skill-detail-panel">
+              <div className="skill-detail-panel__title">
+                <Lock className="h-3.5 w-3.5 text-[var(--brand)]" />权限矩阵
+                <span className="ml-auto text-[10px] font-medium text-[var(--text-muted)]">点击切换</span>
               </div>
-              <table className="w-full text-[10px]">
+              <table className="w-full text-[11px]">
                 <thead>
                   <tr className="text-[var(--text-muted)]">
-                    <th className="text-left py-1">角色</th>
-                    <th className="px-2">调用</th>
-                    <th className="px-2">配置</th>
+                    <th className="py-1.5 text-left font-medium">角色</th>
+                    <th className="px-2 font-medium">调用</th>
+                    <th className="px-2 font-medium">配置</th>
                   </tr>
                 </thead>
                 <tbody>
                   {currentPerms.map((p: any) => (
                     <tr key={p.role} className="border-t border-[var(--border)]">
-                      <td className="py-1 font-semibold">{p.role}</td>
+                      <td className="py-2 font-semibold">{p.role}</td>
                       <td className="px-2 text-center">
                         <button
                           disabled={!canWrite}
@@ -1318,6 +1384,7 @@ export default function Skills() {
             </div>}
 
             </> : <StoreSkillDetail skill={active} detailTab={detailTab} setDetailTab={setDetailTab} />}
+            </div>
           </>
         ) : (
           <EmptyState icon={Wrench} title="选择一项技能查看详情" />

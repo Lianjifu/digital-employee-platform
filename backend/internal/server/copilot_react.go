@@ -1,0 +1,258 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/digital-employee-platform/backend/internal/auth"
+	"github.com/digital-employee-platform/backend/internal/modelprov"
+)
+
+const reactMaxSteps = 5
+
+type reactEmitFunc func(typ, stage string, extra map[string]any)
+
+type reactTurnInput struct {
+	Request         *http.Request
+	WorkspaceID     string
+	ModelID         string
+	System          string
+	Messages        []modelprov.ChatMessage
+	Registry        []registeredTool
+	UserMessage     string
+	ConversationID  string
+	CorrelationID   string
+	DigitalEmployee string
+	Viewer          *auth.Identity
+	Emit            reactEmitFunc
+	ModeHint        string
+	ReflectHint     string
+	RouteReason     string
+	SkipRoute       bool
+	SkipStream      bool
+	NoBootstrap     bool
+	MaxSteps        int
+}
+
+type reactTurnResult struct {
+	Text          string
+	Resolved      resolvedTurn
+	ModelID       string
+	ToolCalls     []map[string]any
+	Citations     []map[string]any
+	Steps         int
+	Err           error
+	Mode          string
+	Plan          planPayload
+	ReflectRounds int
+	Agents        []map[string]any
+	PolicyLevel   string
+	PolicyID      string
+}
+
+// runReactTurn executes a bounded Reason→Act→Observe loop, then optionally streams the final answer.
+func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnResult {
+	reg := in.Registry
+	messages := append([]modelprov.ChatMessage{}, in.Messages...)
+	system := strings.TrimSpace(in.System)
+	if system != "" {
+		system += "\n\n"
+	}
+	system += toolRegistryPrompt(reg)
+
+	maxSteps := in.MaxSteps
+	if maxSteps <= 0 {
+		maxSteps = reactMaxSteps
+	}
+
+	if !in.SkipRoute {
+		in.Emit("route", "harness", map[string]any{
+			"mode": modeReact, "maxSteps": maxSteps,
+			"enabledTools": enabledToolKeys(reg), "modelId": in.ModelID,
+			"reason": coalesce(in.RouteReason, "react"),
+		})
+	}
+
+	var toolCalls []map[string]any
+	var citations []map[string]any
+	resolvedModel := in.ModelID
+	var lastRT resolvedTurn
+	runCtx := toolRunContext{
+		Request: in.Request, WorkspaceID: in.WorkspaceID, OwnerID: "",
+		DigitalEmployee: in.DigitalEmployee, ConversationID: in.ConversationID,
+		CorrelationID: in.CorrelationID, UserMessage: in.UserMessage, Viewer: in.Viewer,
+	}
+	if in.Viewer != nil {
+		runCtx.OwnerID = in.Viewer.ID
+	}
+
+	// Bootstrap: if knowledge.retrieve is enabled, run once so factual turns always have RAG
+	// without relying solely on model tool-calling compliance (esp. embedded).
+	if !in.NoBootstrap {
+		if t := registryLookup(reg, "knowledge.retrieve"); t != nil && t.Enabled {
+			in.Emit("stage", "react", map[string]any{"status": "running", "step": 0, "action": "bootstrap_retrieve"})
+			call := toolCallRequest{Name: "knowledge.retrieve", Args: map[string]any{"query": in.UserMessage}}
+			in.Emit("tool", "react", map[string]any{
+				"name": call.Name, "status": "running", "args": call.Args, "id": "tc_bootstrap_kr",
+			})
+			res := s.runCopilotTool(runCtx, t, call)
+			tcID := "tc_bootstrap_kr"
+			toolCalls = append(toolCalls, toolCallToPersist(tcID, call.Name, call.Args, res))
+			extra := map[string]any{
+				"name": call.Name, "status": res.Status, "args": call.Args, "id": tcID,
+				"durationMs": res.DurationMs, "permission": res.Permission,
+			}
+			if res.Hits != nil {
+				extra["hits"] = res.Hits
+				citations = append(citations, citationsFromRagHits(res.Hits)...)
+			}
+			if res.Error != "" {
+				extra["error"] = res.Error
+			}
+			in.Emit("tool", "react", extra)
+			messages = append(messages,
+				modelprov.ChatMessage{Role: "assistant", Content: "<<<TOOL>>>\n{\"name\":\"knowledge.retrieve\",\"args\":{\"query\":" + jsonQuote(in.UserMessage) + "}}\n<<<END>>>"},
+				modelprov.ChatMessage{Role: "user", Content: "【工具观察 knowledge.retrieve】\n" + res.Output},
+			)
+		}
+	}
+
+	finalText := ""
+	steps := 0
+
+	for step := 1; step <= maxSteps; step++ {
+		steps = step
+		in.Emit("stage", "react", map[string]any{"status": "running", "step": step})
+
+		var buf strings.Builder
+		text, rt, err := s.streamLLMForCopilot(ctx, in.Request, in.WorkspaceID, in.ModelID, messages, system, func(chunk, mid string) error {
+			if mid != "" {
+				resolvedModel = mid
+			}
+			buf.WriteString(chunk)
+			return nil
+		})
+		if err != nil {
+			if finalText == "" && buf.Len() == 0 && text == "" {
+				return reactTurnResult{Err: err, ToolCalls: toolCalls, Citations: citations, Steps: steps, ModelID: resolvedModel, Mode: modeReact}
+			}
+			text = coalesce(text, buf.String())
+		} else {
+			lastRT = rt
+			if text == "" {
+				text = buf.String()
+			}
+			resolvedModel = coalesce(rt.ModelID, resolvedModel)
+		}
+
+		call, ok := parseToolCall(text)
+		if !ok || maxSteps == 1 {
+			finalText = stripToolCallMarkers(text)
+			in.Emit("stage", "react", map[string]any{"status": "ok", "step": step, "action": "final"})
+			break
+		}
+
+		tcID := fmt.Sprintf("tc_react_%d", step)
+		in.Emit("tool", "react", map[string]any{
+			"name": call.Name, "status": "running", "args": call.Args, "id": tcID,
+		})
+
+		tool, deny := authorizeToolCall(reg, call)
+		var res toolExecResult
+		if deny != nil {
+			res = *deny
+			res.DurationMs = 0
+		} else {
+			res = s.runCopilotTool(runCtx, tool, call)
+		}
+
+		displayName := call.Name
+		if tool != nil {
+			displayName = tool.Name
+		}
+		toolCalls = append(toolCalls, toolCallToPersist(tcID, displayName, call.Args, res))
+		extra := map[string]any{
+			"name": displayName, "status": res.Status, "args": call.Args, "id": tcID,
+			"durationMs": res.DurationMs, "permission": res.Permission,
+		}
+		if res.Hits != nil {
+			extra["hits"] = res.Hits
+			citations = append(citations, citationsFromRagHits(res.Hits)...)
+		}
+		if res.Error != "" {
+			extra["error"] = res.Error
+		}
+		if res.SandboxID != "" {
+			extra["sandboxId"] = res.SandboxID
+		}
+		in.Emit("tool", "react", extra)
+
+		obs := res.Output
+		if obs == "" {
+			obs = coalesce(res.Error, res.Status)
+		}
+		messages = append(messages,
+			modelprov.ChatMessage{Role: "assistant", Content: strings.TrimSpace(text)},
+			modelprov.ChatMessage{Role: "user", Content: "【工具观察 " + displayName + " · " + res.Status + "】\n" + obs + "\n请基于观察继续：若需再调用工具请输出工具块，否则给出最终中文回答。"},
+		)
+
+		if step == maxSteps {
+			systemFinal := system + "\n已达工具步数上限，请不要再调用工具，直接给出最终中文回答。"
+			var finalBuf strings.Builder
+			ft, rt2, err2 := s.streamLLMForCopilot(ctx, in.Request, in.WorkspaceID, in.ModelID, messages, systemFinal, func(chunk, mid string) error {
+				if mid != "" {
+					resolvedModel = mid
+				}
+				finalBuf.WriteString(chunk)
+				return nil
+			})
+			if err2 == nil {
+				lastRT = rt2
+				finalText = stripToolCallMarkers(coalesce(ft, finalBuf.String()))
+			} else {
+				finalText = "已完成工具调用，但最终合成失败：" + err2.Error()
+			}
+			in.Emit("stage", "react", map[string]any{"status": "ok", "step": step, "action": "max_steps_final"})
+			break
+		}
+	}
+
+	if finalText == "" {
+		finalText = "（未生成回复）"
+	}
+
+	if !in.SkipStream {
+		streamHarnessAnswer(in.Emit, finalText, resolvedModel, lastRT, modeReact, steps)
+	}
+
+	return reactTurnResult{
+		Text: finalText, Resolved: lastRT, ModelID: resolvedModel,
+		ToolCalls: toolCalls, Citations: dedupeCitations(citations),
+		Steps: steps, Mode: modeReact,
+	}
+}
+
+func jsonQuote(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return `""`
+	}
+	return string(b)
+}
+
+func dedupeCitations(in []map[string]any) []map[string]any {
+	seen := map[string]struct{}{}
+	out := make([]map[string]any, 0, len(in))
+	for _, c := range in {
+		key := str(c["docId"]) + "|" + str(c["source"]) + "|" + str(c["text"])
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, c)
+	}
+	return out
+}

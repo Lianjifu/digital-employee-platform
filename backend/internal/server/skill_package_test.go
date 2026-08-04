@@ -106,6 +106,39 @@ func TestParseAndImportSkillPackage(t *testing.T) {
 		t.Fatalf("test status: %s", rr.Body.String())
 	}
 
+	rr = knowledgeDo(t, h, http.MethodGet, "/api/skill-integrations", "mock-admin-token", "")
+	if rr.Code != 200 {
+		t.Fatalf("list integrations %d %s", rr.Code, rr.Body.String())
+	}
+	var listEnv struct {
+		Data []map[string]any `json:"data"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &listEnv)
+	var integrationID string
+	for _, item := range listEnv.Data {
+		if item["skillId"] == skillID || item["name"] == "hello-echo" {
+			integrationID, _ = item["id"].(string)
+			break
+		}
+	}
+	if integrationID == "" {
+		t.Fatalf("imported skill missing integration row: %s", rr.Body.String())
+	}
+	rr = knowledgeDo(t, h, http.MethodPost, "/api/skill-integrations/"+integrationID+"/test", "mock-admin-token", `{}`)
+	if rr.Code != 200 {
+		t.Fatalf("integration test %d %s", rr.Code, rr.Body.String())
+	}
+	var verifyEnv struct {
+		Data map[string]any `json:"data"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &verifyEnv)
+	if verifyEnv.Data["health"] != "healthy" {
+		t.Fatalf("expected healthy after verify: %s", rr.Body.String())
+	}
+	if verifyEnv.Data["lastVerifiedAt"] == "刚刚" || verifyEnv.Data["lastVerifiedAt"] == "" {
+		t.Fatalf("expected clock timestamp after verify, got %v", verifyEnv.Data["lastVerifiedAt"])
+	}
+
 	// reject zip-root SKILL.md
 	var badBuf bytes.Buffer
 	zw := zip.NewWriter(&badBuf)

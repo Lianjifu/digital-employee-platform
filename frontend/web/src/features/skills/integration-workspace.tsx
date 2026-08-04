@@ -1,12 +1,14 @@
 import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { useApiMutation, useApiQuery } from '@/services/query';
-import { Badge, Button, Input } from '@de/web-ui';
+import { Badge, Button, Input, toast } from '@de/web-ui';
 import {
   Wrench, Globe, Box, Upload, Network, RefreshCw, Sparkles, Search, CheckCircle2, AlertTriangle,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import type { SkillIntegration } from '@de/web-types';
 import { Modal, EmptyState } from '@/components/shared';
+import { useWorkspaceStore } from '@/stores/workspaceStore';
 
 export function IntegrationWorkspace({
   onImport, onMcp, onTool, canWrite,
@@ -16,13 +18,69 @@ export function IntegrationWorkspace({
   onTool: () => void;
   canWrite: boolean;
 }) {
+  const queryClient = useQueryClient();
+  const workspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
   const [statusFilter, setStatusFilter] = useState<'all' | SkillIntegration['status'] | 'attention'>('all');
   const [searchQ, setSearchQ] = useState('');
   const [selected, setSelected] = useState<SkillIntegration | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
   const { data: integrationsData } = useApiQuery<SkillIntegration[]>(['skill-integrations'], '/api/skill-integrations');
   const integrations = integrationsData ?? [];
-  const testMutation = useApiMutation<SkillIntegration, { id: string }>(({ id }) => `/api/skill-integrations/${id}/test`);
-  const discoverMutation = useApiMutation<SkillIntegration, { id: string }>(({ id }) => `/api/skill-integrations/${id}/discover`);
+
+  const applyIntegrationResult = (result: SkillIntegration) => {
+    queryClient.setQueryData<SkillIntegration[]>(['skill-integrations', workspaceId], (prev) => {
+      const list = prev ?? integrations;
+      return list.map((item) => (item.id === result.id ? { ...item, ...result } : item));
+    });
+    setSelected((prev) => (prev?.id === result.id ? { ...prev, ...result } : prev));
+  };
+
+  const notifyError = (error: unknown) => {
+    toast.error(error instanceof Error ? error.message : '接入操作失败');
+  };
+
+  const testMutation = useApiMutation<SkillIntegration, { id: string }>(
+    ({ id }) => `/api/skill-integrations/${id}/test`,
+    {
+      onSuccess: (result) => {
+        applyIntegrationResult(result);
+        toast.success(
+          result.health === 'healthy'
+            ? `「${result.name}」验证通过（${result.lastVerifiedAt}）`
+            : `「${result.name}」验证完成`,
+        );
+      },
+      onError: notifyError,
+    },
+  );
+  const discoverMutation = useApiMutation<SkillIntegration, { id: string }>(
+    ({ id }) => `/api/skill-integrations/${id}/discover`,
+    {
+      onSuccess: (result) => {
+        applyIntegrationResult(result);
+        toast.success(`「${result.name}」已发现 ${result.discoveredCapabilities} 项能力`);
+      },
+      onError: notifyError,
+    },
+  );
+
+  const runTest = (id: string) => {
+    if (!canWrite || testMutation.isPending) return;
+    setPendingId(id);
+    testMutation.mutate(
+      { id },
+      { onSettled: () => setPendingId((cur) => (cur === id ? null : cur)) },
+    );
+  };
+
+  const runDiscover = (id: string) => {
+    if (!canWrite || discoverMutation.isPending) return;
+    setPendingId(id);
+    discoverMutation.mutate(
+      { id },
+      { onSettled: () => setPendingId((cur) => (cur === id ? null : cur)) },
+    );
+  };
 
   const enabledCount = integrations.filter((item) => item.status === 'enabled').length;
   const validatingCount = integrations.filter((item) => item.status === 'validating').length;
@@ -127,6 +185,7 @@ export function IntegrationWorkspace({
               <tbody>
                 {visible.map((item) => {
                   const Icon = typeIcon(item.type);
+                  const busy = pendingId === item.id;
                   return (
                     <tr key={item.id}>
                       <td>
@@ -155,7 +214,7 @@ export function IntegrationWorkspace({
                       </td>
                       <td>
                         <div className="skills-integration-table__mono truncate text-[var(--brand)]">{item.credentialRef}</div>
-                        <div className="mt-1.5 truncate text-[11px] text-[var(--text-muted)]">{item.allowedEgress.join('、')}</div>
+                        <div className="mt-1.5 truncate text-[11px] text-[var(--text-muted)]">{item.allowedEgress.join('、') || '无外网出口'}</div>
                       </td>
                       <td>
                         <span className="text-[12px] text-[var(--text-secondary)]">{item.lastVerifiedAt}</span>
@@ -163,8 +222,20 @@ export function IntegrationWorkspace({
                       </td>
                       <td className="text-right">
                         <div className="skills-integration-table__ops">
-                          <button type="button" disabled={!canWrite} onClick={() => testMutation.mutate({ id: item.id })}>验证</button>
-                          <button type="button" disabled={!canWrite || item.status === 'failed'} onClick={() => discoverMutation.mutate({ id: item.id })}>发现</button>
+                          <button
+                            type="button"
+                            disabled={!canWrite || busy}
+                            onClick={() => runTest(item.id)}
+                          >
+                            {busy && testMutation.isPending ? '验证中…' : '验证'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!canWrite || item.status === 'failed' || busy}
+                            onClick={() => runDiscover(item.id)}
+                          >
+                            {busy && discoverMutation.isPending ? '发现中…' : '发现'}
+                          </button>
                           <button type="button" onClick={() => setSelected(item)}>详情</button>
                         </div>
                       </td>
@@ -188,8 +259,25 @@ export function IntegrationWorkspace({
         footer={(
           <>
             <Button variant="ghost" onClick={() => setSelected(null)}>关闭</Button>
-            {selected && <Button variant="secondary" disabled={!canWrite} onClick={() => testMutation.mutate({ id: selected.id })}><RefreshCw className="h-3.5 w-3.5" />重新验证</Button>}
-            {selected && <Button disabled={!canWrite} onClick={() => discoverMutation.mutate({ id: selected.id })}><Sparkles className="h-3.5 w-3.5" />重新发现</Button>}
+            {selected && (
+              <Button
+                variant="secondary"
+                disabled={!canWrite || testMutation.isPending}
+                onClick={() => runTest(selected.id)}
+              >
+                <RefreshCw className={cn('h-3.5 w-3.5', testMutation.isPending && pendingId === selected.id && 'animate-spin')} />
+                {testMutation.isPending && pendingId === selected.id ? '验证中…' : '重新验证'}
+              </Button>
+            )}
+            {selected && (
+              <Button
+                disabled={!canWrite || selected.status === 'failed' || discoverMutation.isPending}
+                onClick={() => runDiscover(selected.id)}
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                {discoverMutation.isPending && pendingId === selected.id ? '发现中…' : '重新发现'}
+              </Button>
+            )}
           </>
         )}
       >
@@ -207,6 +295,8 @@ export function IntegrationWorkspace({
                 </div>
                 <div><dt>接入类型</dt><dd>{selected.type.toUpperCase()}</dd></div>
                 <div><dt>责任人</dt><dd>{selected.owner}</dd></div>
+                <div><dt>最近验证</dt><dd className="font-mono">{selected.lastVerifiedAt}</dd></div>
+                {selected.skillId && <div><dt>关联技能</dt><dd className="font-mono">{selected.skillId}</dd></div>}
               </dl>
             </div>
             <div className="skill-detail-panel">
@@ -214,7 +304,7 @@ export function IntegrationWorkspace({
               <dl className="skill-detail-kv">
                 <div><dt>服务地址</dt><dd className="truncate font-mono text-[var(--brand)]">{selected.endpoint}</dd></div>
                 <div><dt>凭据引用</dt><dd className="truncate font-mono text-[var(--brand)]">{selected.credentialRef}</dd></div>
-                <div><dt>网络出口</dt><dd>{selected.allowedEgress.join('、')}</dd></div>
+                <div><dt>网络出口</dt><dd>{selected.allowedEgress.join('、') || '无外网出口'}</dd></div>
               </dl>
             </div>
             <div className="skill-detail-panel">
@@ -226,8 +316,18 @@ export function IntegrationWorkspace({
                 </div>
                 <div>
                   <dt>说明</dt>
-                  <dd className="text-left text-[var(--text-muted)]">私网连接、mTLS、凭据轮换与熔断由控制面执行；此处展示当前策略状态。</dd>
+                  <dd className="text-left text-[var(--text-muted)]">
+                    {selected.type === 'skill'
+                      ? '包技能验证会检查关联技能是否存在，以及 SKILL.md / 落盘目录是否可用。'
+                      : '私网连接、mTLS、凭据轮换与熔断由控制面执行；此处展示当前策略状态。'}
+                  </dd>
                 </div>
+                {selected.lastError && (
+                  <div>
+                    <dt>最近错误</dt>
+                    <dd className="text-left text-[var(--danger)]">{selected.lastError}</dd>
+                  </div>
+                )}
               </dl>
             </div>
           </div>

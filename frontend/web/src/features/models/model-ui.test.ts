@@ -22,7 +22,7 @@ import {
 
 describe('model control-plane UI state', () => {
   it('blocks destructive provider removal when published routes still reference it', () => {
-    expect(providerLifecycleAction({ deletionAllowed: false })).toEqual({ disabled: true, label: '已被路由引用' });
+    expect(providerLifecycleAction({ deletionAllowed: false })).toEqual({ disabled: true, label: '已被已发布路由引用' });
     expect(providerLifecycleAction(undefined)).toEqual({ disabled: true, label: '检查引用中…' });
     expect(providerLifecycleAction({ deletionAllowed: true })).toEqual({ disabled: false, label: '删除供应商' });
   });
@@ -85,7 +85,20 @@ describe('model control-plane UI state', () => {
     expect(routingLevelPurpose('P0')).toContain('降级');
     expect(routingPolicyNextAction('draft')).toBe('校验草稿');
     expect(routingPolicyNextAction('ready')).toBe('发布版本');
+    expect(routingPolicyNextAction('published')).toBe('可取消发布 / 调整需重校验');
     expect(routingDataScopeLabel({ dataScope: 'restricted', egressAllowed: false })).toBe('受限 · 禁止出境');
+  });
+
+  it('detects published-route references for list delete affordance', async () => {
+    const { providerReferencedByPublishedPolicies } = await import('./model-ui');
+    expect(providerReferencedByPublishedPolicies(
+      { id: 'p1', models: [{ id: 'm1' } as any] },
+      [{ status: 'published', primaryModelId: 'm1', fallbackModelIds: [] }],
+    )).toBe(true);
+    expect(providerReferencedByPublishedPolicies(
+      { id: 'p1', models: [{ id: 'm1' } as any] },
+      [{ status: 'draft', primaryModelId: 'm1', fallbackModelIds: [] }],
+    )).toBe(false);
   });
 
   it('summarizes routing policy counts for workspace KPIs', () => {

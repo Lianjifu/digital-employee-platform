@@ -78,6 +78,7 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 	s.ensureSkillRuntimeLocked(item)
 	s.Store.SkillIntegrations = append([]map[string]any{{
 		"id": s.Store.ID("si"), "workspaceId": ws, "name": meta.Name, "type": "skill",
+		"skillId": skillID,
 		"environment": "test", "status": "enabled", "owner": id.Name,
 		"endpoint": "package://" + meta.Name + "@" + meta.Version,
 		"credentialRef": "vault://skills/" + skillID + "/runtime",

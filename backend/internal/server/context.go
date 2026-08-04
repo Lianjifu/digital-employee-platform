@@ -50,7 +50,10 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" ||
 			r.URL.Path == "/v1/evaluate" ||
 			r.URL.Path == "/api/auth/login" ||
-			r.URL.Path == "/api/auth/oidc/login" || r.URL.Path == "/api/auth/oidc/callback" {
+			r.URL.Path == "/api/auth/oidc/login" || r.URL.Path == "/api/auth/oidc/callback" ||
+			strings.HasPrefix(r.URL.Path, "/api/channel/feishu/events/") ||
+			strings.HasPrefix(r.URL.Path, "/api/channel/wecom/events/") ||
+			strings.HasPrefix(r.URL.Path, "/api/channel/dingtalk/events/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -84,8 +87,14 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			}
 		}
 		if id.Role == "auditor" && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			writeErr(w, apperr.Forbidden(apperr.AuditorReadOnly, "审计用户仅可读取证据，不能修改平台资源"))
-			return
+			p := r.URL.Path
+			// Self-Evolution 会签：审计员可对 skill/routing 候选 approve|reject
+			evolveOK := strings.HasPrefix(p, "/api/evolve/candidates/") &&
+				(strings.HasSuffix(p, "/approve") || strings.HasSuffix(p, "/reject"))
+			if !evolveOK {
+				writeErr(w, apperr.Forbidden(apperr.AuditorReadOnly, "审计用户仅可读取证据，不能修改平台资源"))
+				return
+			}
 		}
 		if id.Role == "user" {
 			p := r.URL.Path

@@ -100,6 +100,10 @@ cd ../backend && make test && make test-python && make smoke
 |---|---|
 | 控制台 | 运营、协作、任务、员工、工作流、模型/知识/技能/记忆/渠道、治理 |
 | 粗粒度切流 | ServiceMode + gateway；policy evaluate / 审计在 de-sys |
+| 飞书渠道 | App ID/Secret→Vault；verify=tenant_access_token+bot/v3/info；Webhook `/api/channel/feishu/events/{id}` |
+| 钉钉渠道 | Client ID/Secret；verify=oauth2/accessToken；默认 Stream；可选 HTTP Webhook |
+| 企微渠道 | 自建应用 CorpId/Secret/AgentId + 回调加解密；或智能机器人 WebSocket |
+| 个人微信 | ilink Token；verify=getUpdates；出站需 context_token；长轮询侧车 |
 | 执行面 | FastAPI Runtime / RAG / Skill（隔离网） |
 | 观测 | `/metrics`（`service` label）+ Prometheus/Grafana |
 

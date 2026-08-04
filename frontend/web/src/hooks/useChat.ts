@@ -88,8 +88,10 @@ type Action =
   | { type: 'push_history'; value: string }
   | { type: 'new_session'; session: ChatSession }
   | { type: 'merge_sessions'; sessions: ChatSession[] }
+  | { type: 'reconcile_sessions'; workspaceId: string; serverIds: string[] }
   | { type: 'sync_session'; session: ChatSession }
   | { type: 'del_session'; id: string }
+  | { type: 'clear_active' }
   | { type: 'switch'; id: string }
   | { type: 'pin'; id: string; pinned: boolean }
   | { type: 'star'; id: string; starred: boolean }
@@ -123,8 +125,8 @@ type Action =
 /* ============ 常量 ============ */
 
 const STORAGE_KEY = 'de-chat-state';
-/** v5：清理与 de-core 会话契约不一致的本地残留，避免错误深链与会话详情 404 死循环 */
-const STORAGE_VERSION = 5;
+/** v7：清理侧栏已空但仍占用 activeId 的残留会话（如 Redis OOM） */
+const STORAGE_VERSION = 7;
 const MAX_SESSIONS = 200; // 总会话上限
 const MAX_MESSAGES_PER_SESSION = 500; // 单会话消息上限
 const MAX_REQUESTS = 200; // 请求日志上限
@@ -208,6 +210,25 @@ function reducer(s: State, a: Action): State {
       });
       return changed ? { ...s, sessions: merged } : s;
     }
+    case 'reconcile_sessions': {
+      // 服务端列表为当前工作区权威源：去掉本地仍挂着、服务端已不存在的会话，避免侧栏空、主区仍显示残留。
+      const server = new Set(a.serverIds);
+      let changed = false;
+      const next = { ...s.sessions };
+      for (const id of Object.keys(next)) {
+        const session = next[id];
+        const ws = session.workspaceId ?? 'w1';
+        if (ws !== a.workspaceId) continue;
+        // 尚未落库的本地草稿（s_*）保留
+        if (/^s_/.test(id)) continue;
+        if (server.has(id)) continue;
+        delete next[id];
+        changed = true;
+      }
+      if (!changed) return s;
+      const activeStill = Boolean(s.activeId && next[s.activeId]);
+      return { ...s, sessions: next, activeId: activeStill ? s.activeId : '' };
+    }
     case 'sync_session': {
       const existing = s.sessions[a.session.id];
       if (!a.session.id) return s;
@@ -229,11 +250,15 @@ function reducer(s: State, a: Action): State {
     }
     case 'del_session': {
       const next = { ...s.sessions };
+      const removed = next[a.id];
       delete next[a.id];
-      const ids = Object.keys(next);
-      const firstId = ids[0] ?? '';
-      return { ...s, sessions: next, activeId: s.activeId === a.id ? firstId : s.activeId };
+      if (s.activeId !== a.id) return { ...s, sessions: next };
+      const ws = removed?.workspaceId ?? 'w1';
+      const firstSame = Object.values(next).find((sess) => (sess.workspaceId ?? 'w1') === ws);
+      return { ...s, sessions: next, activeId: firstSame?.id ?? '' };
     }
+    case 'clear_active':
+      return s.activeId ? { ...s, activeId: '' } : s;
     case 'switch': {
       if (!a.id || s.activeId === a.id) return s;
       const target = s.sessions[a.id];
@@ -777,6 +802,7 @@ export function useChat(agentMeta?: { name: string }) {
 
   // 超时监控：超时自动 abort + 写错误
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deletedSessionIdsRef = useRef<Set<string>>(new Set());
 
   /* ==================== 内部：启动流式 ==================== */
 
@@ -915,9 +941,10 @@ export function useChat(agentMeta?: { name: string }) {
       ctrl: AbortController,
       correlationIdStr: string,
       digitalEmployeeId?: string,
-      opts?: { skipAppend?: boolean; agentName?: string },
+      opts?: { skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string },
     ) => {
       const agentName = opts?.agentName ?? '岗位专家';
+      const modelId = opts?.modelId ?? '';
       const placeholder: ChatMessageEx = {
         id: replyId,
         role: 'assistant',
@@ -929,7 +956,7 @@ export function useChat(agentMeta?: { name: string }) {
         clientMsgId: uid('c_'),
         correlationId: correlationIdStr,
         status: 'streaming',
-        metrics: { model: 'de-runtime', provider: 'de-core' },
+        metrics: { model: modelId, provider: 'de-core' },
         createdAt: new Date().toISOString(),
       };
       if (!opts?.skipAppend) {
@@ -943,6 +970,10 @@ export function useChat(agentMeta?: { name: string }) {
       const reasoningSteps: ReasoningStep[] = [];
       const toolCalls: ToolCall[] = [];
       const citations: Citation[] = [];
+      let resolvedModel = modelId;
+      let resolvedProvider = 'de-core';
+      let resolvedSource = '';
+      let toolStartedAt = startedAt;
 
       dispatch({
         type: 'log_request',
@@ -953,7 +984,7 @@ export function useChat(agentMeta?: { name: string }) {
           op: 'send',
           mid: replyId,
           sid,
-          model: 'de-runtime',
+          model: modelId,
           promptTokens: 0,
           completionTokens: 0,
           durationMs: 0,
@@ -996,43 +1027,172 @@ export function useChat(agentMeta?: { name: string }) {
       const onEvent = (event: string, data: CopilotSSEEvent) => {
         if (ctrl.signal.aborted) return;
         const typ = data.type || event;
+        if (typeof data.modelId === 'string' && data.modelId) resolvedModel = data.modelId;
+        if (typeof data.modelName === 'string' && data.modelName) resolvedModel = data.modelName;
+        if (typeof data.providerId === 'string' && data.providerId) resolvedProvider = data.providerId;
+        if (typeof data.source === 'string' && data.source) resolvedSource = data.source;
         if (typ === 'stage') {
+          if (data.stage === 'rag' || data.stage === 'runtime') {
+            if (data.status === 'running') toolStartedAt = Date.now();
+          }
+          if (data.stage === 'memory' && Array.isArray(data.provenance) && data.provenance.length) {
+            const titles = data.provenance
+              .map((p) => `${p.layer ?? '?'}:${p.title || p.id || '?'}`)
+              .slice(0, 5)
+              .join(' · ');
+            const step: ReasoningStep = {
+              id: uid('rs_'),
+              kind: 'search',
+              title: `记忆注入 ${data.provenance.length} 条`,
+              detail: titles,
+              startedAt: new Date().toISOString(),
+            };
+            reasoningSteps.push(step);
+            dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+            return;
+          }
           const step: ReasoningStep = {
             id: uid('rs_'),
             kind: 'plan',
             title: `阶段 ${data.stage ?? '?'}`,
             detail: data.status ? `status=${data.status}` : undefined,
+            startedAt: new Date().toISOString(),
+          };
+          reasoningSteps.push(step);
+          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          return;
+        }
+        if (typ === 'evolve') {
+          const step: ReasoningStep = {
+            id: uid('rs_'),
+            kind: 'analyze',
+            title: `自进化 · ${data.kind ?? 'candidate'}`,
+            detail: [data.title, data.status, data.summary].filter(Boolean).join(' · ') || undefined,
+            startedAt: new Date().toISOString(),
+          };
+          reasoningSteps.push(step);
+          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          return;
+        }
+        if (typ === 'route') {
+          const step: ReasoningStep = {
+            id: uid('rs_'),
+            kind: 'plan',
+            title: `路由 ${data.mode ?? 'react'}`,
+            detail: [
+              data.reason,
+              data.policyLevel ? `策略${data.policyLevel}` : '',
+              Array.isArray(data.enabledTools) ? `tools=${data.enabledTools.length}` : '',
+            ].filter(Boolean).join(' · ') || undefined,
+            startedAt: new Date().toISOString(),
+          };
+          reasoningSteps.push(step);
+          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          return;
+        }
+        if (typ === 'agent') {
+          const status = data.status ?? 'delegating';
+          const title = status === 'supervising'
+            ? `多智能体督导 · ${Array.isArray(data.specialists) ? data.specialists.length : 0} 人`
+            : status === 'delegating'
+              ? `委派 ${data.name ?? data.employeeId ?? '专家'}`
+              : status === 'delegated'
+                ? `回执 ${data.name ?? data.employeeId ?? '专家'}`
+                : status === 'completed'
+                  ? '多专家会商完成'
+                  : status === 'fallback'
+                    ? '无可用子专家，降级执行'
+                    : `多智能体 · ${status}`;
+          const step: ReasoningStep = {
+            id: uid('rs_'),
+            kind: 'analyze',
+            title: String(title),
+            detail: data.task || data.preview || data.department || data.reason,
+            startedAt: new Date().toISOString(),
+          };
+          reasoningSteps.push(step);
+          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          return;
+        }
+        if (typ === 'plan') {
+          const status = data.status ?? 'ready';
+          const title = status === 'ready' || status === 'completed'
+            ? `计划 ${status === 'completed' ? '完成' : '就绪'}`
+            : status === 'step_running'
+              ? `执行步骤 ${data.index ?? ''}/${data.total ?? ''}`
+              : `计划 · ${status}`;
+          const detail = data.title || data.goal || (Array.isArray(data.steps) ? `${data.steps.length} 步` : undefined);
+          const step: ReasoningStep = {
+            id: uid('rs_'),
+            kind: 'plan',
+            title: String(title),
+            detail: detail ? String(detail) : undefined,
+            startedAt: new Date().toISOString(),
+          };
+          reasoningSteps.push(step);
+          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          return;
+        }
+        if (typ === 'reflect') {
+          const step: ReasoningStep = {
+            id: uid('rs_'),
+            kind: 'reflect',
+            title: `反思 R${data.round ?? 1}`,
+            detail: data.critique || data.reason || data.status,
+            startedAt: new Date().toISOString(),
           };
           reasoningSteps.push(step);
           dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
           return;
         }
         if (typ === 'tool') {
-          const tc: ToolCall = {
-            id: uid('tc_'),
-            name: data.name ?? 'tool',
-            args: {},
-            status: data.status === 'ok' || data.status === 'success' ? 'success' : data.status === 'running' ? 'running' : 'success',
-            durationMs: 0,
+          const hits = data.hits as {
+            backend?: string;
+            query?: string;
+            results?: Array<{ title?: string; snippet?: string; score?: number; docId?: string; source?: string }>;
+          } | undefined;
+          const results = hits?.results
+            ?? (Array.isArray(data.hits) ? (data.hits as Array<{ title?: string; snippet?: string; score?: number; docId?: string; source?: string }>) : []);
+          const statusRaw = data.status ?? 'success';
+          const status: ToolCall['status'] =
+            statusRaw === 'denied' || statusRaw === 'failed' || statusRaw === 'running' || statusRaw === 'success'
+              ? statusRaw
+              : statusRaw === 'ok' ? 'success' : 'failed';
+          const args = {
+            ...(typeof data.args === 'object' && data.args ? data.args : {}),
+            ...(hits?.backend ? { backend: hits.backend } : {}),
+            ...(hits?.query ? { query: hits.query } : {}),
+            ...(results.length ? { hitCount: results.length } : {}),
           };
-          toolCalls.push(tc);
-          dispatch({
-            type: 'replace_msg',
-            sid,
-            mid: replyId,
-            msg: { ...placeholder, content, reasoningSteps: [...reasoningSteps], toolCalls: [...toolCalls], citations, status: 'streaming' },
-          });
-          const hits = data.hits as { results?: Array<{ title?: string; snippet?: string; score?: number; docId?: string }> } | undefined;
-          const results = hits?.results ?? (Array.isArray(data.hits) ? (data.hits as Array<{ title?: string; snippet?: string; score?: number; docId?: string }>) : []);
-          for (const h of results.slice(0, 5)) {
+          const tcId = typeof data.id === 'string' && data.id ? data.id : uid('tc_');
+          const existing = toolCalls.findIndex((t) => t.id === tcId);
+          const tc: ToolCall = {
+            id: tcId,
+            name: data.name ?? 'tool',
+            args,
+            status,
+            durationMs: typeof data.durationMs === 'number' ? data.durationMs : Math.max(0, Date.now() - toolStartedAt),
+            permission: data.permission,
+            sandboxId: data.sandboxId,
+            error: data.error,
+          };
+          if (existing >= 0) toolCalls[existing] = tc;
+          else toolCalls.push(tc);
+          for (const h of results.slice(0, 8)) {
             citations.push({
               id: uid('cite_'),
               docId: h.docId ?? 'doc',
-              source: h.title ?? h.docId ?? 'knowledge',
+              source: h.source ?? h.title ?? h.docId ?? 'knowledge',
               text: h.snippet ?? '',
               score: typeof h.score === 'number' ? h.score : 0.5,
             });
           }
+          dispatch({
+            type: 'replace_msg',
+            sid,
+            mid: replyId,
+            msg: { ...placeholder, content, reasoningSteps: [...reasoningSteps], toolCalls: [...toolCalls], citations: [...citations], status: 'streaming' },
+          });
           return;
         }
         if (typ === 'delta' && data.text) {
@@ -1059,21 +1219,27 @@ export function useChat(agentMeta?: { name: string }) {
           return;
         }
         if (typ === 'done') {
+          const provenance = Array.isArray(data.memoryProvenance) ? data.memoryProvenance : undefined;
           const finalMsg: ChatMessageEx = {
             ...placeholder,
             content,
             reasoningSteps: [...reasoningSteps],
             toolCalls: [...toolCalls],
             citations: [...citations],
+            memoryProvenance: provenance,
             metrics: {
-              model: 'de-runtime',
-              provider: 'de-core',
+              model: resolvedModel,
+              provider: resolvedSource ? `${resolvedProvider}/${resolvedSource}` : resolvedProvider,
               ttftMs: firstChunkAt ? firstChunkAt - startedAt : Date.now() - startedAt,
               durationMs: Date.now() - startedAt,
               completionTokens: Math.round(content.length * 0.4),
+              memoryHits: typeof data.memoryHits === 'number' ? data.memoryHits : provenance?.length,
+              memoryProvenance: provenance,
             },
             status: 'succeeded',
-            serverMsgId: uid('srv_'),
+            serverMsgId: (typeof data.messageId === 'string' && data.messageId)
+              || (typeof data.id === 'string' && data.id)
+              || uid('srv_'),
           };
           dispatch({ type: 'replace_msg', sid, mid: replyId, msg: finalMsg });
           dispatch({
@@ -1084,6 +1250,7 @@ export function useChat(agentMeta?: { name: string }) {
               durationMs: Date.now() - startedAt,
               ttftMs: firstChunkAt ? firstChunkAt - startedAt : 0,
               completionTokens: Math.round(content.length * 0.4),
+              model: resolvedModel,
             },
           });
           dispatch({ type: 'set_typing', typing: false });
@@ -1094,10 +1261,14 @@ export function useChat(agentMeta?: { name: string }) {
       };
 
       void streamCopilotTurn({
-        conversationId: sid,
+        conversationId: opts?.conversationId ?? sid,
         content: text,
         correlationId: correlationIdStr,
         digitalEmployeeId,
+        modelId,
+        enabledTools: opts?.enabledTools,
+        modeHint: opts?.modeHint,
+        reflectHint: opts?.reflectHint,
         signal: ctrl.signal,
         onEvent,
       }).catch((err: unknown) => {
@@ -1123,7 +1294,7 @@ export function useChat(agentMeta?: { name: string }) {
       ctrl: AbortController,
       corr: string,
       digitalEmployeeId?: string,
-      opts?: { replyId?: string; skipAppend?: boolean; agentName?: string },
+      opts?: { replyId?: string; skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string },
     ) => {
       const replyId = opts?.replyId ?? uid('m_');
       if (isMockChatMode()) {
@@ -1133,6 +1304,11 @@ export function useChat(agentMeta?: { name: string }) {
         startBackendStream(sid, replyId, text, ctrl, corr, digitalEmployeeId, {
           skipAppend: opts?.skipAppend,
           agentName: opts?.agentName,
+          modelId: opts?.modelId,
+          enabledTools: opts?.enabledTools,
+          conversationId: opts?.conversationId,
+          modeHint: opts?.modeHint,
+          reflectHint: opts?.reflectHint,
         });
       }
     },
@@ -1143,17 +1319,21 @@ export function useChat(agentMeta?: { name: string }) {
 
   const setDraft = useCallback((v: string) => dispatch({ type: 'set_draft', value: v }), []);
 
-  const newSession = useCallback((opts?: { digitalEmployeeId?: string; digitalEmployeeName?: string; agentKey?: string }) => {
-    const id = uid('s_');
-    const expertName = opts?.digitalEmployeeName ?? agentMeta?.name ?? '岗位专家';
-    const sess: ChatSession = {
+  const newSession = useCallback(async (opts?: { digitalEmployeeId?: string; digitalEmployeeName?: string; agentKey?: string; modelId?: string; enabledTools?: string[] }) => {
+    const expertName = opts?.digitalEmployeeName
+      ?? (opts?.digitalEmployeeId ? (agentMeta?.name ?? '岗位专家') : '助手');
+    const workspaceId = useWorkspaceStore.getState().currentWorkspaceId ?? 'w1';
+    const owner = useAuthStore.getState().user;
+    const modelId = opts?.modelId ?? '';
+
+    const buildLocal = (id: string, conversationId: string): ChatSession => ({
       id,
       title: '新会话',
       preview: '',
       agent: expertName,
       agentKey: opts?.agentKey,
       digitalEmployeeId: opts?.digitalEmployeeId,
-      digitalEmployeeName: expertName,
+      digitalEmployeeName: opts?.digitalEmployeeId ? expertName : undefined,
       status: 'active',
       lifecycle: 'active',
       group: 'today',
@@ -1161,26 +1341,77 @@ export function useChat(agentMeta?: { name: string }) {
       messages: [],
       createdAt: Date.now(),
       lastActiveAt: Date.now(),
-      ownerId: 'u1',
-      ownerName: '王昊',
-      workspaceId: useWorkspaceStore.getState().currentWorkspaceId ?? 'w1',
-      conversationId: id,
+      ownerId: owner?.id ?? 'u1',
+      ownerName: owner?.name ?? '王昊',
+      workspaceId,
+      conversationId,
+      modelId,
+      enabledTools: opts?.enabledTools,
       encrypted: true,
-    };
-    dispatch({ type: 'new_session', session: sess });
+    });
+
+    if (!isMockChatMode()) {
+      try {
+        const created = await getApiClient().post<{
+          id: string;
+          conversationId?: string;
+          title?: string;
+          digitalEmployeeId?: string;
+          digitalEmployeeName?: string;
+          modelId?: string;
+        }>('/api/sessions', {
+          title: '新会话',
+          digitalEmployeeId: opts?.digitalEmployeeId,
+          digitalEmployeeName: opts?.digitalEmployeeId ? expertName : undefined,
+          modelId,
+        });
+        const sess = buildLocal(created.id, created.conversationId || created.id);
+        if (created.modelId) sess.modelId = created.modelId;
+        dispatch({ type: 'new_session', session: sess });
+        return created.id;
+      } catch {
+        /* fall through to local session so UI stays usable */
+      }
+    }
+
+    const id = uid('s_');
+    dispatch({ type: 'new_session', session: buildLocal(id, id) });
     return id;
   }, [agentMeta?.name]);
 
-  /** 将当前工作区的只读历史记录并入本地会话，不改变用户正在进行的会话。 */
-  const importSessions = useCallback((sessions: ChatSession[]) => {
-    if (sessions.length) dispatch({ type: 'merge_sessions', sessions });
+  /** 将当前工作区的只读历史记录并入本地会话，并剔除服务端已不存在的残留。 */
+  const importSessions = useCallback((sessions: ChatSession[], opts?: { workspaceId?: string; reconcile?: boolean }) => {
+    const filtered = sessions.filter((session) => session.id && !deletedSessionIdsRef.current.has(session.id));
+    if (filtered.length) dispatch({ type: 'merge_sessions', sessions: filtered });
+    if (opts?.reconcile && opts.workspaceId) {
+      dispatch({
+        type: 'reconcile_sessions',
+        workspaceId: opts.workspaceId,
+        serverIds: filtered.map((session) => session.id),
+      });
+    }
   }, []);
 
   const syncSession = useCallback((session: ChatSession) => {
+    if (!session.id || deletedSessionIdsRef.current.has(session.id)) return;
     dispatch({ type: 'sync_session', session });
   }, []);
 
-  const delSession = useCallback((id: string) => dispatch({ type: 'del_session', id }), []);
+  const clearActive = useCallback(() => {
+    dispatch({ type: 'clear_active' });
+  }, []);
+
+  const delSession = useCallback(async (id: string) => {
+    if (!id) return;
+    deletedSessionIdsRef.current.add(id);
+    dispatch({ type: 'del_session', id });
+    if (isMockChatMode()) return;
+    try {
+      await getApiClient().request(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    } catch {
+      // 本地已删；服务端失败时 tombstone 阻止 importSessions 回灌
+    }
+  }, []);
   const switchSession = useCallback((id: string) => dispatch({ type: 'switch', id }), []);
   const togglePin = useCallback((id: string) => {
     const sess = state.sessions[id];
@@ -1238,15 +1469,37 @@ export function useChat(agentMeta?: { name: string }) {
       ctrl.abort();
     }, DEFAULT_TIMEOUT_MS);
 
-    const deId = state.sessions[state.activeId]?.digitalEmployeeId;
+    const deId = opts?.digitalEmployeeId ?? state.sessions[state.activeId]?.digitalEmployeeId;
+    const sess = state.sessions[state.activeId];
+    const replyName = sess?.digitalEmployeeId
+      ? (sess.digitalEmployeeName ?? sess.agent ?? '岗位专家')
+      : '助手';
+    const modelId = opts?.modelId ?? opts?.model ?? sess?.modelId;
+    const enabledTools = opts?.enabledTools ?? sess?.enabledTools;
+    // 若调用方带了运行配置，写回会话，保证重新生成/刷新一致
+    if (sess && (opts?.modelId || opts?.enabledTools)) {
+      dispatch({
+        type: 'sync_session',
+        session: {
+          ...sess,
+          modelId: modelId ?? sess.modelId,
+          enabledTools: enabledTools ?? sess.enabledTools,
+        },
+      });
+    }
     setTimeout(() => {
-      launchReply(state.activeId, text, ctrl, corr, deId);
+      launchReply(state.activeId, text, ctrl, corr, deId, {
+        modelId,
+        enabledTools,
+        conversationId: sess?.conversationId ?? state.activeId,
+        agentName: replyName,
+      });
     }, isMockChatMode() ? 300 : 0);
   }, [state.activeId, state.sessions, state.typing, launchReply]);
 
   const sendMessage = send; // 兼容别名
 
-  const replaceAndSend = useCallback((mid: string, content: string) => {
+  const replaceAndSend = useCallback((mid: string, content: string, opts?: { modelId?: string; enabledTools?: string[] }) => {
     const sess = state.sessions[state.activeId];
     const original = sess?.messages.find((message) => message.id === mid);
     const text = content.trim();
@@ -1258,12 +1511,21 @@ export function useChat(agentMeta?: { name: string }) {
     const ctrl = new AbortController(); dispatch({ type: 'set_abort', ctrl });
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     timeoutRef.current = setTimeout(() => ctrl.abort(), DEFAULT_TIMEOUT_MS);
+    const modelId = opts?.modelId ?? sess.modelId;
+    const enabledTools = opts?.enabledTools ?? sess.enabledTools;
     setTimeout(() => {
-      launchReply(state.activeId, text, ctrl, corr, sess.digitalEmployeeId);
+      launchReply(state.activeId, text, ctrl, corr, sess.digitalEmployeeId, {
+        modelId,
+        enabledTools,
+        conversationId: sess.conversationId ?? state.activeId,
+        agentName: sess.digitalEmployeeId
+          ? (sess.digitalEmployeeName ?? sess.agent ?? '岗位专家')
+          : '助手',
+      });
     }, isMockChatMode() ? 200 : 0);
   }, [state.activeId, state.sessions, state.typing, launchReply]);
 
-  const regenerate = useCallback((mid: string) => {
+  const regenerate = useCallback((mid: string, opts?: { modelId?: string; enabledTools?: string[]; modeHint?: string; reflectHint?: string }) => {
     const sess = state.sessions[state.activeId];
     if (!sess) return;
     const idx = sess.messages.findIndex((m) => m.id === mid);
@@ -1275,7 +1537,9 @@ export function useChat(agentMeta?: { name: string }) {
     dispatch({ type: 'set_active_correlation', id: corr });
 
     const replyId = uid('m_');
-    const agentName = sess.digitalEmployeeName ?? sess.agent ?? '岗位专家';
+    const agentName = sess.digitalEmployeeId
+      ? (sess.digitalEmployeeName ?? sess.agent ?? '岗位专家')
+      : '助手';
     const placeholder: ChatMessageEx = {
       id: replyId,
       role: 'assistant',
@@ -1305,6 +1569,11 @@ export function useChat(agentMeta?: { name: string }) {
         replyId,
         skipAppend: true,
         agentName,
+        modelId: opts?.modelId ?? sess.modelId,
+        enabledTools: opts?.enabledTools ?? sess.enabledTools,
+        conversationId: sess.conversationId ?? state.activeId,
+        modeHint: opts?.modeHint,
+        reflectHint: opts?.reflectHint,
       });
     }, isMockChatMode() ? 200 : 0);
   }, [state.activeId, state.sessions, launchReply]);
@@ -1330,11 +1599,11 @@ export function useChat(agentMeta?: { name: string }) {
     const api = getApiClient();
     const result = await api.post<{ signedAt: string; signatureHash: string; completed: boolean }>(`/api/actions/${mid}/approve`, {
       signerIndex,
-      conversationId: state.activeId,
+      conversationId: session.conversationId ?? state.activeId,
     });
     dispatch({ type: 'approve', sid: state.activeId, mid, signerIndex, signedAt: result.signedAt, signatureHash: result.signatureHash });
     if (result.completed) {
-      const task = await api.post<{ id: string; code: string }>(`/api/conversations/${state.activeId}/tasks`, {
+      const task = await api.post<{ id: string; code: string }>(`/api/conversations/${session.conversationId ?? state.activeId}/tasks`, {
         title: `${session?.title ?? '专家协同会话'} · 待办事项`,
         priority: 'P1',
         assignee: '王昊',
@@ -1398,12 +1667,15 @@ export function useChat(agentMeta?: { name: string }) {
     if (state.activeId) dispatch({ type: 'reject', sid: state.activeId, mid, signerIndex, reason });
   }, [state.activeId]);
 
-  /** 反馈（点赞 / 点踩 + 标签 + 备注） */
+  /** 反馈（点赞 / 点踩 + 标签 + 备注）；同步后端自进化候选 */
   const setFeedback = useCallback((mid: string, payload: { kind: FeedbackKind; tags?: FeedbackTag[]; comment?: string; ratedBy?: string }) => {
     if (!state.activeId) return;
+    const sid = state.activeId;
+    const sess = state.sessions[sid];
+    const msg = sess?.messages.find((m) => m.id === mid);
     dispatch({
       type: 'set_feedback',
-      sid: state.activeId,
+      sid,
       mid,
       feedback: {
         kind: payload.kind,
@@ -1413,7 +1685,28 @@ export function useChat(agentMeta?: { name: string }) {
         ratedAt: new Date().toISOString(),
       },
     });
-  }, [state.activeId]);
+    if (isMockChatMode()) return;
+    const conversationId = sess?.conversationId || msg?.correlationId || sid;
+    const serverMid = msg?.serverMsgId || mid;
+    if (!conversationId || payload.kind == null) return;
+    const token = localStorage.getItem('token');
+    const workspaceId = useWorkspaceStore.getState().currentWorkspaceId ?? 'w1';
+    void fetch(`/api/copilot/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(serverMid)}/feedback`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        'x-workspace-id': workspaceId,
+      },
+      body: JSON.stringify({
+        kind: payload.kind,
+        comment: payload.comment,
+        tags: payload.tags,
+      }),
+    }).catch(() => {
+      /* 反馈失败不阻断本地 UI */
+    });
+  }, [state.activeId, state.sessions]);
 
   /** 重试某条失败消息（消费相同 clientMsgId 幂等） */
   const retryMessage = useCallback((mid: string) => {
@@ -1497,6 +1790,7 @@ export function useChat(agentMeta?: { name: string }) {
     newSession,
     importSessions,
     syncSession,
+    clearActive,
     delSession,
     switchSession,
     togglePin,

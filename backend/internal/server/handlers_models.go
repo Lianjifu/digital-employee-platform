@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"time"
@@ -66,38 +67,36 @@ func (s *Server) findPolicyLocked(pid, ws string) (map[string]any, error) {
 }
 
 func (s *Server) modelByIDLocked(modelID string) (map[string]any, map[string]any) {
+	return s.modelByIDInWorkspaceLocked(modelID, "")
+}
+
+func (s *Server) modelByIDInWorkspaceLocked(modelID, ws string) (map[string]any, map[string]any) {
+	var fallbackM, fallbackP map[string]any
 	for _, p := range s.Store.ModelProviders {
 		for _, m := range providerModels(p) {
-			if str(m["id"]) == modelID {
+			if str(m["id"]) != modelID {
+				continue
+			}
+			if ws != "" && str(p["workspaceId"]) == ws {
 				return m, p
+			}
+			if fallbackM == nil {
+				fallbackM, fallbackP = m, p
 			}
 		}
 	}
+	if ws == "" {
+		return fallbackM, fallbackP
+	}
+	// Prefer in-workspace hit only when ws is set; cross-workspace ids are ignored
+	// so routed primaryModelId cannot leak another workspace's offline endpoint.
 	return nil, nil
 }
 
 func (s *Server) providerImpactLocked(providerID string) map[string]any {
+	// Only currently published policies block deletion. Historical PolicyVersions
+	// remain immutable audit snapshots and must not permanently pin a provider.
 	refs := make([]map[string]any, 0)
-	for _, ver := range s.Store.PolicyVersions {
-		snap, _ := ver["snapshot"].(map[string]any)
-		if snap == nil {
-			continue
-		}
-		ids := append([]string{str(snap["primaryModelId"])}, stringSlice(snap["fallbackModelIds"])...)
-		for _, mid := range ids {
-			if mid == "" {
-				continue
-			}
-			m, _ := s.modelByIDLocked(mid)
-			if m != nil && str(m["providerId"]) == providerID {
-				refs = append(refs, map[string]any{
-					"policyId": ver["policyId"], "level": snap["level"], "versionId": ver["id"],
-				})
-				break
-			}
-		}
-	}
-	// Also treat currently published policies as references even if version snapshot is thin.
 	for _, pol := range s.Store.RoutingPolicies {
 		if str(pol["status"]) != "published" {
 			continue
@@ -105,6 +104,9 @@ func (s *Server) providerImpactLocked(providerID string) map[string]any {
 		ids := append([]string{str(pol["primaryModelId"])}, stringSlice(pol["fallbackModelIds"])...)
 		hit := false
 		for _, mid := range ids {
+			if mid == "" {
+				continue
+			}
 			m, _ := s.modelByIDLocked(mid)
 			if m != nil && str(m["providerId"]) == providerID {
 				hit = true
@@ -114,24 +116,23 @@ func (s *Server) providerImpactLocked(providerID string) map[string]any {
 		if !hit {
 			continue
 		}
-		already := false
-		for _, r := range refs {
-			if str(r["policyId"]) == str(pol["id"]) {
-				already = true
+		versionID := ""
+		// PolicyVersions are prepended on publish; first matching id is the latest.
+		for _, ver := range s.Store.PolicyVersions {
+			if str(ver["policyId"]) == str(pol["id"]) {
+				versionID = str(ver["id"])
 				break
 			}
 		}
-		if !already {
-			refs = append(refs, map[string]any{
-				"policyId": pol["id"], "level": pol["level"], "versionId": "",
-			})
-		}
+		refs = append(refs, map[string]any{
+			"policyId": pol["id"], "level": pol["level"], "versionId": versionID,
+		})
 	}
 	out := map[string]any{
 		"providerId": providerID, "routeReferences": refs, "deletionAllowed": len(refs) == 0,
 	}
 	if len(refs) > 0 {
-		out["blockedReason"] = "供应商被已发布路由引用，需先替换或停用路由。"
+		out["blockedReason"] = "供应商被已发布路由引用，请先在「模型路由」取消发布或替换模型后再删除。"
 	}
 	return out
 }
@@ -198,7 +199,32 @@ func (s *Server) putProviderCredential(r *http.Request, providerID, raw string) 
 			return "", "", apperr.BadReq(apperr.ProviderCredential, "写入凭据失败")
 		}
 	}
+	// Durable local mirror (must not nest Store.Lock — callers like PATCH already hold it).
+	s.Store.Lock()
+	if s.Store.ModelSecrets == nil {
+		s.Store.ModelSecrets = map[string]string{}
+	}
+	s.Store.ModelSecrets[credRef] = raw
+	s.Store.Unlock()
+	s.Store.Persist("model_secrets")
 	return credRef, masked, nil
+}
+
+func (s *Server) resolveProviderCredential(ctx context.Context, credRef string) string {
+	if credRef == "" {
+		return ""
+	}
+	if s.Vault != nil {
+		if v, err := s.Vault.Resolve(ctx, credRef); err == nil && v != "" {
+			return v
+		}
+	}
+	s.Store.RLock()
+	defer s.Store.RUnlock()
+	if s.Store.ModelSecrets != nil {
+		return s.Store.ModelSecrets[credRef]
+	}
+	return ""
 }
 
 func (s *Server) listModelProvidersFE(r *http.Request) (any, error) {
@@ -365,22 +391,19 @@ func (s *Server) testModelProvider(r *http.Request, id *auth.Identity, ws, pid s
 
 	secret := ""
 	resolved := false
-	if ref != "" && s.Vault != nil {
-		if v, err := s.Vault.Resolve(r.Context(), ref); err != nil {
-			if s.Vault.Enabled() {
-				IncModelVaultError()
-				s.Store.Lock()
-				s.appendModelAudit(ws, id.Name, "验证供应商连通性", name, "failed", map[string]any{"reason": "凭据不可用"})
-				s.Store.Unlock()
-				return nil, apperr.BadReq(apperr.ProviderCredential, "凭据不可用: "+vault.Redact(ref))
-			}
-		} else {
-			secret = v
-			resolved = true
-		}
-	}
 	if override := modelprov.ExtractCredential(body); override != "" {
 		secret = override
+		resolved = true
+	} else if ref != "" {
+		secret = s.resolveProviderCredential(r.Context(), ref)
+		resolved = secret != ""
+		if !resolved && s.Vault != nil && s.Vault.Enabled() {
+			IncModelVaultError()
+			s.Store.Lock()
+			s.appendModelAudit(ws, id.Name, "验证供应商连通性", name, "failed", map[string]any{"reason": "凭据不可用"})
+			s.Store.Unlock()
+			return nil, apperr.BadReq(apperr.ProviderCredential, "凭据不可用: "+vault.Redact(ref))
+		}
 	}
 
 	statusLabel := "healthy"
@@ -517,8 +540,14 @@ func (s *Server) patchModelProvider(r *http.Request, id *auth.Identity, ws, pid 
 	}
 	cred := modelprov.ExtractCredential(body)
 	if cred != "" {
-		// Unlock briefly? Vault put doesn't need store lock but we hold it — OK for stub.
+		// Release store lock before secrets write to avoid nested Lock deadlock.
+		s.Store.Unlock()
 		credRef, masked, err := s.putProviderCredential(r, pid, cred)
+		s.Store.Lock()
+		if err != nil {
+			return nil, err
+		}
+		p, err = s.findProviderLocked(pid, ws)
 		if err != nil {
 			return nil, err
 		}
@@ -598,10 +627,8 @@ func (s *Server) discoverModels(r *http.Request) (any, error) {
 			if apiVersion == "" {
 				apiVersion = str(p["apiVersion"])
 			}
-			if apiKey == "" && s.Vault != nil {
-				if v, err := s.Vault.Resolve(r.Context(), str(p["credentialRef"])); err == nil {
-					apiKey = v
-				}
+			if apiKey == "" {
+				apiKey = s.resolveProviderCredential(r.Context(), str(p["credentialRef"]))
 			}
 		}
 		s.Store.RUnlock()
@@ -900,6 +927,24 @@ func (s *Server) routingPolicyAction(r *http.Request) (any, error) {
 		s.Store.AppendAudit(ws, id.Name, "发布路由策略", str(p["level"]), "success", "")
 		IncModelPolicyPublish()
 		return ver, nil
+	case "unpublish":
+		body, _ := decodeMap(r)
+		s.Store.Lock()
+		defer s.Store.Unlock()
+		p, err := s.findPolicyLocked(pid, ws)
+		if err != nil {
+			return nil, err
+		}
+		if str(p["status"]) != "published" {
+			s.appendModelAudit(ws, id.Name, "取消发布路由", str(p["level"]), "failed", map[string]any{"reason": "仅已发布路由可取消发布"})
+			return nil, apperr.BadReq(apperr.PolicyNotPublished, "仅已发布路由可取消发布")
+		}
+		p["status"] = "draft"
+		p["validationIssues"] = []string{}
+		s.Store.PersistCollection("routing_policies", s.Store.RoutingPolicies)
+		s.appendModelAudit(ws, id.Name, "取消发布路由", str(p["level"]), "success", map[string]any{"reason": str(body["reason"])})
+		s.Store.AppendAudit(ws, id.Name, "取消发布路由策略", str(p["level"]), "success", str(body["reason"]))
+		return p, nil
 	case "rollback":
 		body, _ := decodeMap(r)
 		versionID := str(body["versionId"])

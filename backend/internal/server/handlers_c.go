@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
+	"github.com/digital-employee-platform/backend/internal/modelprov"
 	"github.com/digital-employee-platform/backend/internal/policy"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
@@ -301,39 +303,71 @@ func (s *Server) listConversations(r *http.Request) (any, error) {
 func (s *Server) createConversation(r *http.Request) (any, error) {
 	id := identityFrom(r.Context())
 	body, _ := decodeMap(r)
+	ws := s.workspaceID(r)
+	now := time.Now().UTC().Format(time.RFC3339)
+	convID := s.Store.ID("conv")
+	deID := body["digitalEmployeeId"]
+	deName := strings.TrimSpace(coalesce(str(body["digitalEmployeeName"]), str(body["agent"])))
+	if deName == "" {
+		if str(deID) != "" {
+			deName = "岗位专家"
+		} else {
+			deName = "助手"
+		}
+	}
+	title := coalesce(str(body["title"]), "新会话")
+	modelID := coalesce(str(body["modelId"]), "sonnet-4")
 	item := map[string]any{
-		"id": s.Store.ID("conv"), "workspaceId": s.workspaceID(r),
-		"title":             coalesce(str(body["title"]), "新会话"),
-		"digitalEmployeeId": body["digitalEmployeeId"],
-		"updatedAt":         time.Now().UTC().Format(time.RFC3339),
+		"id": convID, "workspaceId": ws,
+		"title": title, "digitalEmployeeId": deID, "modelId": modelID,
+		"updatedAt": now,
+	}
+	sessID := s.Store.ID("sess")
+	session := map[string]any{
+		"id": sessID, "workspaceId": ws, "ownerId": id.ID, "title": title,
+		"preview": "暂无消息", "agent": deName,
+		"digitalEmployeeId": deID, "digitalEmployeeName": deName,
+		"conversationId": convID, "status": "active", "modelId": modelID,
+		"createdAt": now, "updatedAt": now, "lastMessageAt": now,
 	}
 	s.Store.Lock()
 	s.Store.Conversations = append([]map[string]any{item}, s.Store.Conversations...)
-	s.Store.AppendAudit(s.workspaceID(r), id.Name, "创建协作会话", str(item["title"]), "success", "")
+	s.Store.Sessions = append([]map[string]any{session}, s.Store.Sessions...)
+	if s.Store.Messages[convID] == nil {
+		s.Store.Messages[convID] = []map[string]any{}
+	}
+	s.Store.AppendAudit(ws, id.Name, "创建协作会话", title, "success", "")
 	s.Store.Unlock()
 	s.Store.Persist("conversations")
+	s.Store.Persist("sessions")
+	s.Store.Persist("messages")
+	item["sessionId"] = sessID
 	return item, nil
 }
 
 func (s *Server) listMessages(r *http.Request) (any, error) {
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 4 {
+	raw := conversationIDFromPath(r.URL.Path)
+	if raw == "" {
 		return nil, apperr.NotFoundErr(apperr.NotFound, "会话不存在")
 	}
-	cid := parts[2]
+	ws := s.workspaceID(r)
 	s.Store.RLock()
 	defer s.Store.RUnlock()
-	return s.Store.Messages[cid], nil
+	cid := s.resolveMessageBucketID(ws, raw)
+	msgs := s.Store.Messages[cid]
+	if msgs == nil {
+		msgs = []map[string]any{}
+	}
+	return msgs, nil
 }
 
 func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	id := identityFrom(r.Context())
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 4 {
+	rawID := conversationIDFromPath(r.URL.Path)
+	if rawID == "" {
 		writeErr(w, apperr.NotFoundErr(apperr.NotFound, "会话不存在"))
 		return
 	}
-	cid := parts[2]
 	body, _ := decodeMap(r)
 	userMsg := strings.TrimSpace(str(body["content"]))
 	if userMsg == "" {
@@ -346,6 +380,21 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	}
 	ws := s.workspaceID(r)
 	deID := coalesce(str(body["digitalEmployeeId"]), "")
+	requestedModel := coalesce(str(body["modelId"]), coalesce(str(body["model"]), ""))
+	modeHint := coalesce(str(body["modeHint"]), str(body["mode"]))
+	reflectHint := coalesce(str(body["reflectHint"]), str(body["feedback"]))
+	var enabledTools []string
+	if arr, ok := body["enabledTools"].([]any); ok {
+		for _, t := range arr {
+			if s := str(t); s != "" {
+				enabledTools = append(enabledTools, s)
+			}
+		}
+	}
+
+	s.Store.RLock()
+	cid := s.resolveMessageBucketID(ws, rawID)
+	s.Store.RUnlock()
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -382,45 +431,105 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	}
 	emit("stage", "policy", map[string]any{"status": "ok", "decision": eval["decision"]})
 
-	// 2) employee
+	// 2) employee — optional; unbound sessions chat as generic assistant
 	emit("stage", "employee", map[string]any{"status": "running"})
 	emp, _ := s.resolveActiveEmployee(r, deID)
 	empMap, _ := emp.(map[string]any)
-	if empMap != nil && empMap["active"] == false && deID != "" {
-		emit("error", "employee", map[string]any{"message": str(empMap["reason"])})
-		return
+	if empMap != nil && empMap["skipped"] == true {
+		emit("stage", "employee", map[string]any{"status": "ok", "employee": nil, "skipped": true})
+	} else if empMap != nil && empMap["active"] == false {
+		// Stale / offline binding must not block LLM turns
+		emit("stage", "employee", map[string]any{
+			"status": "ok", "employee": nil, "warning": coalesce(str(empMap["reason"]), "数字员工不可用"),
+		})
+	} else {
+		emit("stage", "employee", map[string]any{"status": "ok", "employee": empMap})
 	}
-	emit("stage", "employee", map[string]any{"status": "ok", "employee": empMap})
 
+	// 模型优先级：显式运行配置 > 数字员工装配模型/路由 > 演示别名
+	modelID := resolveCopilotModelID(requestedModel, empMap)
+
+	now := time.Now().UTC().Format(time.RFC3339)
 	s.Store.Lock()
 	s.Store.Messages[cid] = append(s.Store.Messages[cid], map[string]any{
 		"id": s.Store.ID("msg"), "role": "user", "content": userMsg,
-		"createdAt": time.Now().UTC().Format(time.RFC3339), "correlationId": corr,
+		"createdAt": now, "correlationId": corr,
 	})
+	s.touchSessionLocked(ws, rawID, cid, userMsg, now, modelID)
 	s.Store.Unlock()
 	s.Store.Persist("messages")
+	s.Store.Persist("sessions")
 
-	// 3) rag (published only)
-	emit("stage", "rag", map[string]any{"status": "running"})
-	ragHits, _ := s.retrievePublished(r, map[string]any{"query": userMsg}, corr)
-	emit("tool", "rag", map[string]any{"name": "knowledge.retrieve", "status": "ok", "hits": ragHits})
-	emit("stage", "rag", map[string]any{"status": "ok"})
+	// 3a) cross-session memory (not the same as published knowledge)
+	emit("stage", "memory", map[string]any{"status": "running"})
+	resolvedDE := deID
+	if resolvedDE == "" && empMap != nil {
+		resolvedDE = str(empMap["id"])
+	}
+	s.Store.RLock()
+	memoryHits := s.retrieveMemoryForTurnLocked(ws, id.ID, resolvedDE, cid, userMsg, id)
+	historySnapshot := append([]map[string]any{}, s.Store.Messages[cid]...)
+	s.Store.RUnlock()
+	emit("stage", "memory", map[string]any{
+		"status": "ok", "hitCount": len(memoryHits),
+		"provenance": memoryProvenanceMaps(memoryHits),
+	})
 
-	// 4) runtime / model
-	emit("stage", "runtime", map[string]any{"status": "running"})
-	reply := s.runtimeReply(userMsg)
-	if ragHits != nil {
-		reply = reply + "\n\n（已检索已发布知识）"
+	// Tool registry: capabilities ∩ enabledTools ∩ boundary
+	registry := buildToolRegistry(empMap, enabledTools)
+	system := buildCopilotSystemPrompt(empMap, nil, memoryHits)
+
+	chatMessages := assembleCopilotChatMessages(historySnapshot)
+	if len(chatMessages) == 0 {
+		chatMessages = []modelprov.ChatMessage{{Role: "user", Content: userMsg}}
 	}
-	for _, c := range chunkText(reply, 24) {
-		emit("delta", "runtime", map[string]any{"text": c})
-		time.Sleep(15 * time.Millisecond)
+
+	// 4) Harness：Dynamic route → React / Plan-Exec / Direct → Reflection → stream
+	emit("stage", "runtime", map[string]any{
+		"status": "running", "modelId": modelID, "mode": "harness",
+		"enabledTools": enabledToolKeys(registry), "historyTurns": len(chatMessages),
+	})
+	streamCtx, streamCancel := context.WithTimeout(r.Context(), 150*time.Second)
+	defer streamCancel()
+	reactOut := s.runHarnessTurn(streamCtx, reactTurnInput{
+		Request: r, WorkspaceID: ws, ModelID: modelID, System: system,
+		Messages: chatMessages, Registry: registry, UserMessage: userMsg,
+		ConversationID: cid, CorrelationID: corr, DigitalEmployee: resolvedDE,
+		Viewer: id, Emit: emit, ModeHint: modeHint, ReflectHint: reflectHint,
+	})
+	if reactOut.Err != nil {
+		fallback := ""
+		if allowRuntimeStub() {
+			fallback = s.runtimeReply(userMsg, modelID, enabledTools)
+			if strings.Contains(fallback, "[runtime stub]") {
+				fallback = ""
+			}
+		}
+		if fallback == "" {
+			emit("error", "runtime", map[string]any{"message": "模型调用失败：" + reactOut.Err.Error()})
+			return
+		}
+		reactOut.Text = fallback
+		for _, c := range chunkText(fallback, 24) {
+			emit("delta", "runtime", map[string]any{"text": c, "modelId": modelID})
+			time.Sleep(8 * time.Millisecond)
+		}
+		emit("stage", "runtime", map[string]any{"status": "degraded", "modelId": modelID, "warning": reactOut.Err.Error()})
 	}
-	emit("stage", "runtime", map[string]any{"status": "ok"})
+	full := reactOut.Text
+	rt := reactOut.Resolved
+	resolvedModelID := coalesce(reactOut.ModelID, modelID)
+	modelID = resolvedModelID
+	toolCalls := reactOut.ToolCalls
+	citations := reactOut.Citations
+	if toolCalls == nil {
+		toolCalls = []map[string]any{}
+	}
+	mode := coalesce(reactOut.Mode, modeReact)
 
 	// 5) meter (+ optional model budget hard gate)
 	emit("stage", "meter", map[string]any{"status": "running"})
-	units := len([]rune(reply))
+	units := len([]rune(full))
 	s.Store.Lock()
 	budgetErr := s.checkModelBudgetLocked(ws)
 	s.Store.Unlock()
@@ -430,48 +539,211 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	}
 	s.recordUsageWS(ws, "copilot", units, corr)
 	emit("stage", "meter", map[string]any{"status": "ok", "units": units})
-	emit("done", "done", map[string]any{"ok": true})
-	streamOK = true
 
-	resolvedDE := deID
-	if resolvedDE == "" && empMap != nil {
-		resolvedDE = str(empMap["id"])
+	assistantMsgID := s.Store.ID("msg")
+	assistantMsg := map[string]any{
+		"id": assistantMsgID, "role": "assistant", "content": full,
+		"createdAt": time.Now().UTC().Format(time.RFC3339), "correlationId": corr,
+		"toolCalls": toolCalls,
+		"metrics": map[string]any{
+			"model": modelID, "provider": coalesce(rt.ProviderID, "de-runtime"),
+			"source": coalesce(rt.Source, mode),
+			"memoryHits": len(memoryHits), "historyTurns": len(chatMessages),
+			"reactSteps": reactOut.Steps, "mode": mode, "reflectRounds": reactOut.ReflectRounds,
+			"policyLevel": reactOut.PolicyLevel, "policyId": reactOut.PolicyID,
+		},
+	}
+	if prov := memoryProvenanceMaps(memoryHits); len(prov) > 0 {
+		assistantMsg["memoryProvenance"] = prov
+	}
+	if len(citations) > 0 {
+		assistantMsg["citations"] = citations
+	}
+	if len(reactOut.Plan.Steps) > 0 {
+		planSteps := make([]map[string]any, 0, len(reactOut.Plan.Steps))
+		for _, st := range reactOut.Plan.Steps {
+			planSteps = append(planSteps, map[string]any{
+				"id": st.ID, "title": st.Title, "action": st.Action, "tool": st.Tool,
+			})
+		}
+		assistantMsg["plan"] = map[string]any{"goal": reactOut.Plan.Goal, "steps": planSteps}
+	}
+	if len(reactOut.Agents) > 0 {
+		assistantMsg["agents"] = reactOut.Agents
 	}
 	s.Store.Lock()
-	s.Store.Messages[cid] = append(s.Store.Messages[cid], map[string]any{
-		"id": s.Store.ID("msg"), "role": "assistant", "content": reply,
-		"createdAt": time.Now().UTC().Format(time.RFC3339), "correlationId": corr,
-	})
+	s.Store.Messages[cid] = append(s.Store.Messages[cid], assistantMsg)
+	preview := truncateRunes(full, 80)
+	s.touchSessionLocked(ws, rawID, cid, preview, time.Now().UTC().Format(time.RFC3339), modelID)
 	s.Store.AppendAudit(ws, id.Name, "协作回合", cid, "success", corr)
 	_, _ = s.ingestRuntimeMemoryLocked(runtimeMemoryInput{
 		WorkspaceID: ws, OwnerID: id.ID, OwnerName: id.Name, DigitalEmployeeID: resolvedDE,
 		Title: "会话上下文 · " + truncateRunes(userMsg, 40),
-		Content: "用户：" + userMsg + "\n助手：" + reply,
+		Content: "用户：" + userMsg + "\n助手：" + full,
 		SourceType: "conversation", SourceID: cid, CorrelationID: corr,
 		Layer: "short_term", Scope: "user", Confidence: 0.85,
 	})
+	// Phase 4: Self-Evolution candidates + Dream compress (no silent production mutate)
+	evolveCreated := s.runPostTurnEvolutionLocked(evolveTurnInput{
+		WorkspaceID: ws, OwnerID: id.ID, OwnerName: id.Name, DigitalEmployeeID: resolvedDE,
+		ConversationID: cid, CorrelationID: corr, MessageID: assistantMsgID,
+		UserMessage: userMsg, AssistantText: full, Mode: mode,
+		ReflectRounds: reactOut.ReflectRounds, ToolCalls: toolCalls,
+		MemoryHits: memoryHits, Emit: nil,
+	})
 	s.Store.Unlock()
 	s.Store.Persist("messages")
-	go s.persistMemory()
+	s.Store.Persist("sessions")
+	go s.persistEvolve()
+
+	for _, cand := range evolveCreated {
+		emit("evolve", "candidate", map[string]any{
+			"id": cand["id"], "kind": cand["kind"], "status": cand["status"],
+			"title": cand["title"], "summary": cand["summary"],
+		})
+	}
+	emit("done", "done", map[string]any{
+		"ok": true, "modelId": modelID, "mode": mode,
+		"messageId": assistantMsgID,
+		"memoryHits": len(memoryHits), "historyTurns": len(chatMessages),
+		"memoryProvenance": memoryProvenanceMaps(memoryHits),
+		"reactSteps": reactOut.Steps, "toolCount": len(toolCalls),
+		"reflectRounds": reactOut.ReflectRounds,
+		"policyLevel": reactOut.PolicyLevel, "policyId": reactOut.PolicyID,
+		"evolveCandidates": len(evolveCreated),
+	})
+	streamOK = true
 }
 
-func (s *Server) runtimeReply(prompt string) string {
+func (s *Server) touchSessionLocked(ws, rawID, cid, preview, now, modelID string) {
+	for i, sess := range s.Store.Sessions {
+		if str(sess["workspaceId"]) != ws {
+			continue
+		}
+		if str(sess["id"]) != rawID && str(sess["conversationId"]) != cid && str(sess["id"]) != cid {
+			continue
+		}
+		sess["preview"] = preview
+		sess["updatedAt"] = now
+		sess["lastMessageAt"] = now
+		if modelID != "" {
+			sess["modelId"] = modelID
+		}
+		s.Store.Sessions[i] = sess
+		return
+	}
+}
+
+func allowRuntimeStub() bool {
+	v := strings.TrimSpace(os.Getenv("DE_ALLOW_RUNTIME_STUB"))
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
+// resolveCopilotModelID picks the model/route for one turn.
+// Explicit run-config wins unless it is a demo alias while the employee has a bound model/route.
+func resolveCopilotModelID(requested string, emp map[string]any) string {
+	requested = strings.TrimSpace(requested)
+	empModel := employeeBoundModel(emp)
+	if isDemoModelAlias(requested) && empModel != "" {
+		return empModel
+	}
+	if requested != "" {
+		return requested
+	}
+	if empModel != "" {
+		return empModel
+	}
+	return ""
+}
+
+func employeeBoundModel(emp map[string]any) string {
+	if emp == nil || emp["skipped"] == true || emp["active"] == false {
+		return ""
+	}
+	if caps, ok := emp["capabilities"].(map[string]any); ok {
+		if m := strings.TrimSpace(coalesce(str(caps["model"]), str(caps["modelId"]))); m != "" {
+			return m
+		}
+	}
+	return strings.TrimSpace(coalesce(str(emp["model"]), str(emp["modelId"])))
+}
+
+func isDemoModelAlias(id string) bool {
+	switch strings.ToLower(strings.TrimSpace(id)) {
+	case "", "sonnet-4", "haiku-4.5", "opus-4.8", "gpt-5", "deepseek-r2":
+		return true
+	default:
+		return false
+	}
+}
+
+func ragSnippetsForPrompt(ragHits any) []string {
+	m, ok := ragHits.(map[string]any)
+	if !ok {
+		return nil
+	}
+	raw, ok := m["results"].([]map[string]any)
+	if !ok {
+		// JSON decode often yields []any
+		arr, ok := m["results"].([]any)
+		if !ok {
+			return nil
+		}
+		var out []string
+		for _, item := range arr {
+			im, _ := item.(map[string]any)
+			if im == nil {
+				continue
+			}
+			sn := coalesce(str(im["snippet"]), str(im["title"]))
+			if sn != "" {
+				out = append(out, sn)
+			}
+		}
+		return out
+	}
+	var out []string
+	for _, im := range raw {
+		sn := coalesce(str(im["snippet"]), str(im["title"]))
+		if sn != "" {
+			out = append(out, sn)
+		}
+	}
+	return out
+}
+
+func (s *Server) runtimeReply(prompt, modelID string, enabledTools []string) string {
 	client := &http.Client{Timeout: 2 * time.Second}
-	payload, _ := json.Marshal(map[string]any{"input": prompt})
+	payload, _ := json.Marshal(map[string]any{
+		"input": prompt, "model": modelID, "modelId": modelID, "enabledTools": enabledTools,
+	})
 	resp, err := client.Post(s.RuntimeURL+"/v1/invoke", "application/json", strings.NewReader(string(payload)))
 	if err == nil && resp != nil {
 		defer resp.Body.Close()
 		if resp.StatusCode < 300 {
 			b, _ := io.ReadAll(resp.Body)
 			var out struct {
-				Output string `json:"output"`
+				Output   string `json:"output"`
+				Provider string `json:"provider"`
 			}
 			if json.Unmarshal(b, &out) == nil && out.Output != "" {
+				if out.Provider == "stub" || strings.Contains(out.Output, "[runtime stub]") {
+					if !allowRuntimeStub() {
+						return ""
+					}
+				}
 				return out.Output
 			}
 		}
 	}
-	return "（de-core 退化回复）已收到：" + prompt + "。建议结合知识检索与已上岗数字员工能力继续排查。"
+	if !allowRuntimeStub() {
+		return ""
+	}
+	toolHint := ""
+	if len(enabledTools) > 0 {
+		toolHint = "；可用工具：" + strings.Join(enabledTools, ",")
+	}
+	return "（de-core 退化回复 · " + modelID + "）已收到：" + prompt + "。建议结合知识检索与已上岗数字员工能力继续排查" + toolHint + "。"
 }
 
 func writeSSE(w http.ResponseWriter, event string, data any) {

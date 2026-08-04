@@ -10,7 +10,7 @@ function gateLabel(employee: {
 }) {
   if (employee.lifecycle === 'quarantined' || (employee.lifecycle === 'active' && employee.runtime.anomalies > 0)) return '需关注';
   if (employee.lifecycle === 'active') return '可协作';
-  if (employee.release.status === 'pending_approval') return '待双重审批上岗';
+  if (employee.release.status === 'pending_approval') return '待确认上岗';
   if (employee.evaluation.status === 'passed') return `评测 ${employee.evaluation.score ?? '—'} · 可申请上岗`;
   if (employee.evaluation.status === 'failed') return '评测未通过';
   if (employee.lifecycle === 'paused') return '已暂停';
@@ -63,18 +63,20 @@ function baseCapabilityEmployee(overrides: Partial<CapabilityAssemblyEmployee> =
 }
 
 describe('digital employees catalog copy', () => {
-  it('surfaces collaboration and dual-approval gates', () => {
+  it('surfaces collaboration and release gates', () => {
     expect(gateLabel({ lifecycle: 'active', release: { status: 'released' }, evaluation: { status: 'passed', score: 94 }, runtime: { anomalies: 0 } })).toBe('可协作');
     expect(gateLabel({ lifecycle: 'active', release: { status: 'released' }, evaluation: { status: 'passed', score: 94 }, runtime: { anomalies: 2 } })).toBe('需关注');
-    expect(gateLabel({ lifecycle: 'draft', release: { status: 'pending_approval' }, evaluation: { status: 'passed', score: 90 }, runtime: { anomalies: 0 } })).toBe('待双重审批上岗');
+    expect(gateLabel({ lifecycle: 'draft', release: { status: 'pending_approval' }, evaluation: { status: 'passed', score: 90 }, runtime: { anomalies: 0 } })).toBe('待确认上岗');
   });
 
   it('keeps brand-safe catalog phrases', () => {
     const phrases = [
-      '专家团队协同的数字员工：岗位边界清晰，双重审批与人工接管可追溯。',
+      '专家团队协同的数字员工：岗位边界清晰，上岗门禁与人工接管可追溯。',
       '在册专家',
       '待上岗审批',
       '新建数字员工',
+      '创建数字员工',
+      '配置中',
       '发起协作',
       '执行运行时已绑定（内部）',
       '企业可信数字员工平台',
@@ -95,17 +97,23 @@ describe('digital employees catalog copy', () => {
       '待评测',
       '评测未通过',
       '可申请上岗',
-      '待双重审批',
+      '待确认上岗',
       '已上岗',
-      '双重审批上岗',
       '质量与上岗门禁',
+      '按岗位与部门发现可协作的数字员工；上岗门禁在「上岗发布」中推进。',
+      '仍需完善配置、完成评测后即可申请上岗。',
+      '仍需配置、评测后申请上岗。',
       '需处置异常',
       '交接偏高',
       '运行稳定',
       '在岗专家',
       '暂停 / 隔离',
+      '保存配置',
+      '配置可保存，上岗前仍需完成评测',
+      '采用并创建',
     ];
     for (const phrase of phrases) {
+      expect(phrase).not.toMatch(/创建草稿|保存配置草稿|采用为草稿/);
       for (const pattern of forbidden) {
         expect(phrase).not.toMatch(pattern);
       }
@@ -236,17 +244,24 @@ describe('releaseOnboardingCompleteness', () => {
     expect(releaseOnboardingCompleteness(baseReleaseEmployee({ evaluation: { status: 'passed', score: 94 } })).stage).toBe('ready_to_request');
   });
 
-  it('marks pending dual approval and released', () => {
+  it('marks pending confirmation and released', () => {
     expect(releaseOnboardingCompleteness(baseReleaseEmployee({
       evaluation: { status: 'passed', score: 94 },
       release: { status: 'pending_approval', requestedBy: '建造者' },
       lifecycle: 'pending_approval',
-    })).label).toBe('待双重审批');
+    })).label).toBe('待确认上岗');
     expect(releaseOnboardingCompleteness(baseReleaseEmployee({
       evaluation: { status: 'passed', score: 94 },
       release: { status: 'released', requestedBy: '建造者', approver: '平台管理员' },
       lifecycle: 'active',
     })).label).toBe('已上岗');
+  });
+
+  it('omits dual-approval from release gates', () => {
+    const result = releaseOnboardingCompleteness(baseReleaseEmployee({ evaluation: { status: 'passed', score: 94 } }));
+    expect(result.gates.map((gate) => gate.key)).toEqual(['contract', 'capability', 'evaluation']);
+    expect(result.gates.every((gate) => gate.passed)).toBe(true);
+    expect(result.stage).toBe('ready_to_request');
   });
 
   it('flags incomplete contract before evaluation', () => {

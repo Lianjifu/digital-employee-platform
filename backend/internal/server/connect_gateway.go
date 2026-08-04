@@ -61,7 +61,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		data, err := s.retrievePublished(r, body, corr)
 		writeConnect(w, data, err)
 	case "de.runtime.v1.RuntimeService/Invoke":
-		out := s.runtimeReply(coalesce(str(body["input"]), str(body["prompt"])))
+		out := s.runtimeReply(coalesce(str(body["input"]), str(body["prompt"])), coalesce(str(body["modelId"]), coalesce(str(body["model"]), "sonnet-4")), nil)
 		writeConnect(w, map[string]any{
 			"output": out, "graph": "minimal", "correlationId": corr, "tokens": len([]rune(out)),
 		}, nil)
@@ -83,11 +83,15 @@ func writeConnect(w http.ResponseWriter, data any, err error) {
 }
 
 func (s *Server) resolveActiveEmployee(r *http.Request, deID string) (any, error) {
+	deID = strings.TrimSpace(deID)
+	if deID == "" {
+		return map[string]any{"active": true, "skipped": true}, nil
+	}
 	ws := s.workspaceID(r)
 	s.Store.RLock()
 	defer s.Store.RUnlock()
 	for _, e := range s.Store.Employees {
-		if deID != "" && str(e["id"]) != deID {
+		if str(e["id"]) != deID {
 			continue
 		}
 		if str(e["workspaceId"]) != ws {
@@ -100,7 +104,11 @@ func (s *Server) resolveActiveEmployee(r *http.Request, deID string) (any, error
 			reason = "数字员工未上岗: " + life
 		}
 		return map[string]any{
-			"id": e["id"], "name": e["name"], "lifecycle": life, "active": active, "reason": reason,
+			"id": e["id"], "name": e["name"], "role": e["role"], "department": e["department"],
+			"description": e["description"], "responsibilities": e["responsibilities"],
+			"prohibitedActions": e["prohibitedActions"], "capabilities": e["capabilities"],
+			"boundaryPolicy": e["boundaryPolicy"],
+			"lifecycle": life, "active": active, "reason": reason,
 		}, nil
 	}
 	return map[string]any{"id": deID, "active": false, "reason": "未找到数字员工"}, nil

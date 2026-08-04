@@ -1,0 +1,439 @@
+package server
+
+import (
+	"sort"
+	"strings"
+	"time"
+	"unicode"
+
+	"github.com/digital-employee-platform/backend/internal/auth"
+	"github.com/digital-employee-platform/backend/internal/modelprov"
+)
+
+const (
+	copilotHistoryMaxMessages = 12 // ~6 轮
+	copilotHistoryMaxRunes    = 1200
+	copilotMemoryMaxItems     = 5
+	copilotMemoryMaxRunes     = 400
+)
+
+// assembleCopilotChatMessages projects stored conversation messages into LLM turns.
+// stored should already include the current user message as the last entry.
+// Prior turns are windowed; the current user turn is always kept.
+func assembleCopilotChatMessages(stored []map[string]any) []modelprov.ChatMessage {
+	if len(stored) == 0 {
+		return nil
+	}
+	start := 0
+	if len(stored) > copilotHistoryMaxMessages {
+		start = len(stored) - copilotHistoryMaxMessages
+	}
+	window := stored[start:]
+	out := make([]modelprov.ChatMessage, 0, len(window))
+	for i, m := range window {
+		role := strings.ToLower(strings.TrimSpace(str(m["role"])))
+		content := strings.TrimSpace(str(m["content"]))
+		if content == "" && role != "assistant" {
+			continue
+		}
+		switch role {
+		case "user":
+			out = append(out, modelprov.ChatMessage{
+				Role:    "user",
+				Content: truncateRunes(content, copilotHistoryMaxRunes),
+			})
+		case "assistant":
+			body := content
+			if summary := toolCallsSummary(m["toolCalls"]); summary != "" {
+				if body != "" {
+					body += "\n"
+				}
+				body += summary
+			}
+			if body == "" {
+				continue
+			}
+			// Keep the latest assistant even if truncated; prior ones can be shorter.
+			limit := copilotHistoryMaxRunes
+			if i < len(window)-1 {
+				limit = copilotHistoryMaxRunes
+			}
+			out = append(out, modelprov.ChatMessage{
+				Role:    "assistant",
+				Content: truncateRunes(body, limit),
+			})
+		case "tool", "system":
+			// Phase 0: fold tool/system into assistant summaries only.
+			continue
+		default:
+			continue
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	// Ensure last message is the current user turn when possible.
+	return out
+}
+
+func toolCallsSummary(raw any) string {
+	items := knowledgeSliceMaps(raw)
+	if len(items) == 0 {
+		if arr, ok := raw.([]any); ok {
+			for _, x := range arr {
+				if m, ok := x.(map[string]any); ok {
+					items = append(items, m)
+				}
+			}
+		}
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(items))
+	for _, tc := range items {
+		name := coalesce(str(tc["name"]), "tool")
+		status := coalesce(str(tc["status"]), "ok")
+		parts = append(parts, name+"("+status+")")
+	}
+	return "【本回合工具】" + strings.Join(parts, "、")
+}
+
+func citationsFromRagHits(ragHits any) []map[string]any {
+	results := ragHitResults(ragHits)
+	if len(results) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(results))
+	for i, h := range results {
+		if i >= 8 {
+			break
+		}
+		score := toFloat(h["score"])
+		if score <= 0 {
+			score = 0.5
+		}
+		out = append(out, map[string]any{
+			"id":     coalesce(str(h["id"]), "cite_"+str(h["docId"])),
+			"docId":  coalesce(str(h["docId"]), coalesce(str(h["id"]), "doc")),
+			"source": coalesce(str(h["source"]), coalesce(str(h["title"]), "knowledge")),
+			"text":   coalesce(str(h["snippet"]), str(h["text"])),
+			"score":  score,
+		})
+	}
+	return out
+}
+
+func ragHitResults(ragHits any) []map[string]any {
+	m, ok := ragHits.(map[string]any)
+	if !ok || m == nil {
+		return nil
+	}
+	return knowledgeSliceMaps(m["results"])
+}
+
+func knowledgeToolCallFromHits(ragHits any, durationMs int) map[string]any {
+	backend := "published-memory"
+	query := ""
+	hitCount := 0
+	if m, ok := ragHits.(map[string]any); ok && m != nil {
+		backend = coalesce(str(m["backend"]), backend)
+		query = str(m["query"])
+		hitCount = len(ragHitResults(ragHits))
+	}
+	return map[string]any{
+		"id":   "tc_knowledge_retrieve",
+		"name": "knowledge.retrieve",
+		"args": map[string]any{
+			"backend":  backend,
+			"query":    query,
+			"hitCount": hitCount,
+		},
+		"status":     "success",
+		"durationMs": durationMs,
+	}
+}
+
+type memoryHit struct {
+	ID      string
+	Title   string
+	Content string
+	Layer   string
+	Score   float64
+	Source  string
+}
+
+// memoryProvenanceMaps turns injected hits into white-box audit rows for SSE / message store.
+func memoryProvenanceMaps(hits []memoryHit) []map[string]any {
+	if len(hits) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(hits))
+	for _, h := range hits {
+		out = append(out, map[string]any{
+			"id":    coalesce(h.ID, h.Source),
+			"title": h.Title,
+			"layer": h.Layer,
+			"score": h.Score,
+		})
+	}
+	return out
+}
+
+// retrieveMemoryForTurnLocked requires Store.RLock (or Lock) held.
+// Skips short_term from the current conversation (already covered by history).
+func (s *Server) retrieveMemoryForTurnLocked(ws, ownerID, deID, excludeSourceID, query string, viewer *auth.Identity) []memoryHit {
+	now := time.Now().UTC()
+	type scored struct {
+		hit   memoryHit
+		score float64
+	}
+	var candidates []scored
+	qTokens := tokenizeQuery(query)
+
+	for _, m := range s.Store.MemoryRecords {
+		if str(m["workspaceId"]) != ws {
+			continue
+		}
+		if str(m["status"]) != "active" {
+			continue
+		}
+		if !memoryCanRead(viewer, m) {
+			continue
+		}
+		layer := str(m["layer"])
+		if layer != "short_term" && layer != "working" && layer != "long_term" {
+			continue
+		}
+		if exp := str(m["expiresAt"]); exp != "" {
+			if t, err := time.Parse(time.RFC3339, exp); err == nil && now.After(t) {
+				continue
+			}
+		}
+		memDE := str(m["digitalEmployeeId"])
+		if deID != "" && memDE != "" && memDE != deID {
+			continue
+		}
+		sourceID := str(m["sourceId"])
+		// Avoid duplicating the active conversation transcript already in Messages.
+		if layer == "short_term" && excludeSourceID != "" && sourceID == excludeSourceID {
+			continue
+		}
+		title := str(m["title"])
+		content := str(m["content"])
+		score := scoreMemoryText(title+" "+content, qTokens, layer)
+		if score <= 0 && len(qTokens) > 0 {
+			continue
+		}
+		if score <= 0 {
+			// No query tokens: still allow working/long for cross-session continuity.
+			switch layer {
+			case "working":
+				score = 0.35
+			case "long_term":
+				score = 0.4
+			default:
+				continue
+			}
+		}
+		// Prefer owner-scoped short_term for the same user.
+		if layer == "short_term" && ownerID != "" && str(m["ownerId"]) != ownerID && str(m["scope"]) == "user" {
+			continue
+		}
+		candidates = append(candidates, scored{
+			score: score,
+			hit: memoryHit{
+				ID:      str(m["id"]),
+				Title:   title,
+				Content: truncateRunes(content, copilotMemoryMaxRunes),
+				Layer:   layer,
+				Score:   score,
+				Source:  coalesce(sourceID, str(m["id"])),
+			},
+		})
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].score == candidates[j].score {
+			return layerRank(candidates[i].hit.Layer) > layerRank(candidates[j].hit.Layer)
+		}
+		return candidates[i].score > candidates[j].score
+	})
+	if len(candidates) > copilotMemoryMaxItems {
+		candidates = candidates[:copilotMemoryMaxItems]
+	}
+	out := make([]memoryHit, 0, len(candidates))
+	for _, c := range candidates {
+		out = append(out, c.hit)
+	}
+	return out
+}
+
+func layerRank(layer string) int {
+	switch layer {
+	case "long_term":
+		return 3
+	case "working":
+		return 2
+	case "short_term":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func tokenizeQuery(q string) []string {
+	q = strings.ToLower(strings.TrimSpace(q))
+	if q == "" {
+		return nil
+	}
+	var tokens []string
+	var b strings.Builder
+	flush := func() {
+		t := b.String()
+		b.Reset()
+		if t == "" {
+			return
+		}
+		// Keep CJK unigrams and latin tokens length >= 2
+		runes := []rune(t)
+		if len(runes) == 1 && unicode.Is(unicode.Han, runes[0]) {
+			tokens = append(tokens, t)
+			return
+		}
+		if len(runes) >= 2 {
+			tokens = append(tokens, t)
+		}
+	}
+	for _, r := range q {
+		if unicode.Is(unicode.Han, r) {
+			flush()
+			tokens = append(tokens, string(r))
+			continue
+		}
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			continue
+		}
+		flush()
+	}
+	flush()
+	return uniqueStrings(tokens)
+}
+
+func uniqueStrings(in []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
+}
+
+func scoreMemoryText(text string, tokens []string, layer string) float64 {
+	if len(tokens) == 0 {
+		return 0
+	}
+	lower := strings.ToLower(text)
+	hits := 0
+	for _, t := range tokens {
+		if strings.Contains(lower, t) {
+			hits++
+		}
+	}
+	if hits == 0 {
+		return 0
+	}
+	base := float64(hits) / float64(len(tokens))
+	return base + 0.05*float64(layerRank(layer))
+}
+
+func buildCopilotSystemPrompt(emp map[string]any, ragHits any, memoryHits []memoryHit) string {
+	var b strings.Builder
+	if emp != nil && emp["skipped"] != true && emp["active"] != false {
+		name := coalesce(str(emp["name"]), "数字员工")
+		role := coalesce(str(emp["role"]), str(emp["title"]))
+		dept := str(emp["department"])
+		b.WriteString("你是「")
+		b.WriteString(name)
+		b.WriteString("」。\n")
+		if role != "" {
+			b.WriteString("岗位：")
+			b.WriteString(role)
+			if dept != "" {
+				b.WriteString(" · ")
+				b.WriteString(dept)
+			}
+			b.WriteString("\n")
+		}
+		if desc := str(emp["description"]); desc != "" {
+			b.WriteString("职责说明：")
+			b.WriteString(desc)
+			b.WriteString("\n")
+		}
+		if resp := stringSlice(emp["responsibilities"]); len(resp) > 0 {
+			b.WriteString("职责边界：")
+			b.WriteString(strings.Join(resp, "、"))
+			b.WriteString("\n")
+		}
+		if proh := stringSlice(emp["prohibitedActions"]); len(proh) > 0 {
+			b.WriteString("禁止行为：")
+			b.WriteString(strings.Join(proh, "、"))
+			b.WriteString("\n")
+		}
+		b.WriteString("请用中文简洁、可执行地回答，严格遵守岗位边界；涉及审批、写操作或敏感数据时提示人工接管。\n")
+		b.WriteString("若用户使用「刚才/上面/之前」等指代，请结合对话历史与跨会话记忆作答，不要假装遗忘。\n")
+	} else {
+		b.WriteString("你是企业数字员工平台的协作助手。请用中文简洁、可执行地回答。\n")
+		b.WriteString("若用户使用「刚才/上面/之前」等指代，请结合对话历史与跨会话记忆作答。\n")
+	}
+	if len(memoryHits) > 0 {
+		b.WriteString("\n跨会话记忆（按相关性，可修正；括号内为记忆 ID，便于审计追溯）：\n")
+		for i, hit := range memoryHits {
+			if i >= copilotMemoryMaxItems {
+				break
+			}
+			b.WriteString("- [")
+			b.WriteString(hit.Layer)
+			b.WriteString("]")
+			if mid := coalesce(hit.ID, hit.Source); mid != "" {
+				b.WriteString("(")
+				b.WriteString(mid)
+				b.WriteString(") ")
+			} else {
+				b.WriteString(" ")
+			}
+			if hit.Title != "" {
+				b.WriteString(hit.Title)
+				b.WriteString("：")
+			}
+			b.WriteString(hit.Content)
+			b.WriteString("\n")
+		}
+	}
+	if snippets := ragSnippetsForPrompt(ragHits); len(snippets) > 0 {
+		b.WriteString("\n已检索已发布知识（仅供参考，与记忆分栏）：\n")
+		for i, sn := range snippets {
+			if i >= 5 {
+				break
+			}
+			b.WriteString("- ")
+			b.WriteString(sn)
+			b.WriteString("\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func lastUserContent(messages []modelprov.ChatMessage) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role == "user" {
+			return messages[i].Content
+		}
+	}
+	return ""
+}

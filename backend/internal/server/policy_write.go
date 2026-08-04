@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/digital-employee-platform/backend/internal/depolicy"
 	"github.com/digital-employee-platform/backend/internal/policy"
@@ -28,7 +29,9 @@ func (s *Server) evaluateWriteLocked(r *http.Request, resource, action string, e
 	in.WorkspaceID = s.workspaceID(r)
 	in.Resource = resource
 	in.Action = action
-	if in.ApproverID == "" {
+	// 仅在「批准」动作下把当前用户视为批准人。
+	// 若对 submit/release 也默认填 ApproverID，会与 SubmitterID 相同，误触发「提交人不可自批」。
+	if in.ApproverID == "" && strings.EqualFold(action, "approve") {
 		in.ApproverID = id.ID
 	}
 	dec := s.decidePolicy(r.Context(), in)

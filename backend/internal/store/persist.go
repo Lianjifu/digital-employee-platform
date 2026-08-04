@@ -16,6 +16,7 @@ var DurableCollections = []string{
 	"policy_versions",
 	"model_audit",
 	"model_budgets",
+	"model_secrets",
 	"workflows",
 	"workflow_runs",
 	"employees",
@@ -23,9 +24,12 @@ var DurableCollections = []string{
 	"tasks",
 	"conversations",
 	"messages",
+	"sessions",
+	"actions",
 	"knowledge_docs",
 	"knowledge_extra",
 	"memory_candidates",
+	"evolve_candidates",
 	"memory_records",
 	"memory_policies",
 	"memory_audits",
@@ -36,6 +40,7 @@ var DurableCollections = []string{
 	"channel_templates",
 	"channel_blacklist",
 	"channel_audit",
+	"channel_inbound",
 	"release_approvals",
 	"skills",
 	"skill_catalog",
@@ -91,6 +96,12 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 		return s.ModelAudit
 	case "model_budgets":
 		return s.ModelBudgets
+	case "model_secrets":
+		out := make([]map[string]any, 0, len(s.ModelSecrets))
+		for ref, val := range s.ModelSecrets {
+			out = append(out, map[string]any{"id": ref, "workspaceId": "*", "value": val})
+		}
+		return out
 	case "workflows":
 		return s.Workflows
 	case "workflow_runs":
@@ -118,6 +129,21 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 			})
 		}
 		return out
+	case "sessions":
+		return s.Sessions
+	case "actions":
+		out := make([]map[string]any, 0, len(s.Actions))
+		for id, a := range s.Actions {
+			cp := map[string]any{"id": id}
+			for k, v := range a {
+				cp[k] = v
+			}
+			if str(cp["id"]) == "" {
+				cp["id"] = id
+			}
+			out = append(out, cp)
+		}
+		return out
 	case "knowledge_docs":
 		return s.KnowledgeDocs
 	case "knowledge_extra":
@@ -125,6 +151,8 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 		return []map[string]any{{"id": "knowledge_extra", "workspaceId": "*", "payload": s.KnowledgeExtra}}
 	case "memory_candidates":
 		return s.MemoryCands
+	case "evolve_candidates":
+		return s.EvolveCands
 	case "memory_records":
 		return s.MemoryRecords
 	case "memory_policies":
@@ -156,6 +184,8 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 		return s.ChannelBlacklist
 	case "channel_audit":
 		return s.ChannelAudit
+	case "channel_inbound":
+		return s.ChannelInbound
 	case "release_approvals":
 		return s.ReleaseApprovals
 	case "skills":
@@ -219,6 +249,15 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 		s.ModelAudit = items
 	case "model_budgets":
 		s.ModelBudgets = items
+	case "model_secrets":
+		s.ModelSecrets = map[string]string{}
+		for _, doc := range items {
+			ref := str(doc["id"])
+			val := str(doc["value"])
+			if ref != "" && val != "" {
+				s.ModelSecrets[ref] = val
+			}
+		}
 	case "workflows":
 		s.Workflows = items
 	case "workflow_runs":
@@ -250,6 +289,17 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 				s.Messages[cid] = arr
 			}
 		}
+	case "sessions":
+		s.Sessions = items
+	case "actions":
+		s.Actions = map[string]map[string]any{}
+		for _, a := range items {
+			id := str(a["id"])
+			if id == "" {
+				continue
+			}
+			s.Actions[id] = a
+		}
 	case "knowledge_docs":
 		s.KnowledgeDocs = items
 	case "knowledge_extra":
@@ -261,6 +311,8 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 		}
 	case "memory_candidates":
 		s.MemoryCands = items
+	case "evolve_candidates":
+		s.EvolveCands = items
 	case "memory_records":
 		s.MemoryRecords = items
 	case "memory_policies":
@@ -288,6 +340,8 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 		s.ChannelBlacklist = items
 	case "channel_audit":
 		s.ChannelAudit = items
+	case "channel_inbound":
+		s.ChannelInbound = items
 	case "release_approvals":
 		s.ReleaseApprovals = items
 	case "skills":

@@ -1,4 +1,4 @@
-import type { ModelLevel, ModelProviderStatus, ProviderImpact, RoutingPolicyDraft, RoutingPolicyStatus, Role } from '@de/web-types';
+import type { ModelLevel, ModelProvider, ModelProviderStatus, ProviderImpact, RoutingPolicyDraft, RoutingPolicyStatus, Role } from '@de/web-types';
 import { resolveAppRole } from '@/features/role-nav/role-nav';
 
 export type ModelWorkspaceTab = 'access' | 'routing' | 'governance' | 'audit';
@@ -39,9 +39,22 @@ export function routingPolicyNextAction(status: RoutingPolicyStatus): string {
   return ({
     draft: '校验草稿',
     ready: '发布版本',
-    published: '查看版本 / 调整需重校验',
+    published: '可取消发布 / 调整需重校验',
     superseded: '查看历史快照',
   } as const)[status];
+}
+
+/** Provider 是否被当前已发布策略引用（用于列表删除按钮）。 */
+export function providerReferencedByPublishedPolicies(
+  provider: Pick<ModelProvider, 'id' | 'models'>,
+  policies: Array<Pick<RoutingPolicyDraft, 'status' | 'primaryModelId' | 'fallbackModelIds'>>,
+) {
+  const modelIds = new Set((provider.models ?? []).map((model) => model.id));
+  return policies.some((policy) => {
+    if (policy.status !== 'published') return false;
+    if (modelIds.has(policy.primaryModelId)) return true;
+    return policy.fallbackModelIds.some((id) => modelIds.has(id));
+  });
 }
 
 export function summarizeRoutingPolicies(policies: RoutingPolicyDraft[]) {
@@ -116,7 +129,7 @@ export function providerLifecycleAction(impact: Pick<ProviderImpact, 'deletionAl
   }
   return impact.deletionAllowed
     ? { disabled: false, label: '删除供应商' }
-    : { disabled: true, label: '已被路由引用' };
+    : { disabled: true, label: '已被已发布路由引用' };
 }
 
 /** Normalize impact payload so null slices never crash the provider detail drawer. */

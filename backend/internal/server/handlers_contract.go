@@ -284,12 +284,6 @@ func (s *Server) employeeOverviewAligned(r *http.Request) (any, error) {
 	}, nil
 }
 
-func (s *Server) capabilityCatalogAligned(r *http.Request) (any, error) {
-	s.Store.RLock()
-	defer s.Store.RUnlock()
-	return s.Store.CapabilityCatalog, nil
-}
-
 func (s *Server) listTemplateAdoptions(r *http.Request) (any, error) {
 	ws := s.workspaceID(r)
 	s.Store.RLock()
@@ -371,6 +365,9 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 				if draft := s.Store.ConfigDrafts[sub]; draft != nil {
 					applyEmployeeConfig(emp, draft)
 					delete(s.Store.ConfigDrafts, sub)
+					empSnap := make([]map[string]any, len(s.Store.Employees))
+					copy(empSnap, s.Store.Employees)
+					s.Store.PersistCollection("employees", empSnap)
 				}
 				s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "批准员工受控配置变更", str(emp["name"]), "success", "")
 				return v, nil
@@ -386,15 +383,22 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 		if err := validateEmployeeConfigurationBody(body); err != nil {
 			return nil, err
 		}
-		requires := str(emp["lifecycle"]) == "active"
-		if profile, ok := body["profile"].(map[string]any); ok {
-			if str(profile["environment"]) == "production" || str(profile["risk"]) == "high" {
-				requires = true
+		requires := false
+		if str(body["scope"]) != "capability" {
+			requires = str(emp["lifecycle"]) == "active"
+			if profile, ok := body["profile"].(map[string]any); ok {
+				if str(profile["environment"]) == "production" || str(profile["risk"]) == "high" {
+					requires = true
+				}
 			}
+		}
+		summary := "更新岗位授权契约"
+		if str(body["scope"]) == "capability" {
+			summary = "更新能力装配"
 		}
 		ver := map[string]any{
 			"id": s.Store.ID("cfg"), "employeeId": eid, "version": "配置 v" + itoa(len(s.Store.ConfigVersions)+1),
-			"status": "current", "changeSummary": "更新岗位授权契约", "changedFields": []string{"岗位档案"},
+			"status": "current", "changeSummary": summary, "changedFields": []string{"岗位档案", "能力装配", "授权契约"},
 			"updatedBy": id.Name, "updatedById": id.ID, "updatedAt": time.Now().UTC().Format(time.RFC3339),
 			"requiresApproval": requires,
 		}
@@ -402,13 +406,20 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 			ver["status"] = "pending_approval"
 			ver["changeSummary"] = "生产、在岗或高风险配置变更，等待审批后生效"
 			s.Store.ConfigDrafts[str(ver["id"])] = body
-		} else if profile, ok := body["profile"].(map[string]any); ok {
-			for k, v := range profile {
-				emp[k] = v
+		} else {
+			// Sandbox / draft / capability assembly: apply immediately
+			for _, prev := range s.Store.ConfigVersions {
+				if str(prev["employeeId"]) == eid && str(prev["status"]) == "current" {
+					prev["status"] = "superseded"
+				}
 			}
+			applyEmployeeConfig(emp, body)
 		}
 		s.Store.ConfigVersions = append([]map[string]any{ver}, s.Store.ConfigVersions...)
 		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "更新员工配置", str(emp["name"]), "success", "")
+		empSnap := make([]map[string]any, len(s.Store.Employees))
+		copy(empSnap, s.Store.Employees)
+		s.Store.PersistCollection("employees", empSnap)
 		return ver, nil
 	}
 
@@ -457,35 +468,27 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 			if err := validateEmployeeReleaseGates(emp); err != nil {
 				return nil, err
 			}
-			if err := s.evaluateWriteLocked(r, "employee", "release", policy.Input{SubmitterID: id.ID}); err != nil {
-				return nil, err
+			// 上岗已改为条件满足后直接生效，不再走「提交人/批准人」职责分离。
+			now := time.Now().UTC().Format(time.RFC3339)
+			emp["lifecycle"] = "active"
+			emp["release"] = map[string]any{
+				"status": "released", "releasedAt": now,
+				"requestedBy": id.Name, "requestedById": id.ID,
 			}
-			emp["lifecycle"] = "pending_approval"
-			emp["release"] = map[string]any{"status": "pending_approval", "requestedBy": id.Name, "requestedById": id.ID}
 		}
 	case "lifecycle":
 		target := str(body["lifecycle"])
 		rel, _ := emp["release"].(map[string]any)
 		if target == "active" {
 			if rel != nil && str(rel["status"]) == "pending_approval" {
-				if id.Role != "admin" {
-					return nil, apperr.Forbidden(apperr.AdminRequired, "确认双重审批上岗")
-				}
-				if str(rel["requestedById"]) == id.ID {
-					return nil, apperr.Forbidden(apperr.SODSelfApproval, "上岗申请人不能批准自己的申请")
-				}
-				if err := s.evaluateWriteLocked(r, "employee", "approve", policy.Input{
-					ApproverID: id.ID, SubmitterID: str(rel["requestedById"]),
-				}); err != nil {
-					return nil, err
-				}
+				// 兼容历史待审批记录：确认即可上岗，不再要求双重审批。
 				emp["release"] = map[string]any{
 					"status": "released", "releasedAt": time.Now().UTC().Format(time.RFC3339),
 					"requestedBy": rel["requestedBy"], "requestedById": rel["requestedById"],
 					"approver": id.Name, "approverId": id.ID,
 				}
 			} else if rel == nil || str(rel["status"]) != "released" {
-				return nil, apperr.BadReq(apperr.DigitalEmployeePublish, "须先完成评测并经双重审批后方可上岗")
+				return nil, apperr.BadReq(apperr.DigitalEmployeePublish, "须先完成评测并申请上岗")
 			}
 		}
 		if target == "paused" || target == "quarantined" {
@@ -503,27 +506,26 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 		if err := validateEmployeeReleaseGates(emp); err != nil {
 			return nil, err
 		}
-		emp["lifecycle"] = "pending_approval"
-		emp["release"] = map[string]any{"status": "pending_approval", "requestedBy": id.Name, "requestedById": id.ID}
+		now := time.Now().UTC().Format(time.RFC3339)
+		emp["lifecycle"] = "active"
+		emp["release"] = map[string]any{
+			"status": "released", "releasedAt": now,
+			"requestedBy": id.Name, "requestedById": id.ID,
+		}
 	case "approve":
-		if str(emp["ownerId"]) == id.ID {
-			return nil, apperr.Forbidden(apperr.SODSelfApproval, "创建者不能审批自己的生产发布")
-		}
+		// 兼容旧「上岗审批」入口：确认即可上岗，不再做提交人/批准人分离。
 		rel, _ := emp["release"].(map[string]any)
-		if rel != nil && str(rel["requestedById"]) == id.ID {
-			return nil, apperr.Forbidden(apperr.SODSelfApproval, "上岗申请人不能批准自己的申请")
-		}
-		submitter := str(emp["ownerId"])
+		requestedBy, requestedById := "", ""
 		if rel != nil {
-			submitter = coalesce(str(rel["requestedById"]), submitter)
-		}
-		if err := s.evaluateWriteLocked(r, "employee", "approve", policy.Input{
-			ApproverID: id.ID, SubmitterID: submitter,
-		}); err != nil {
-			return nil, err
+			requestedBy = str(rel["requestedBy"])
+			requestedById = str(rel["requestedById"])
 		}
 		emp["lifecycle"] = "active"
-		emp["release"] = map[string]any{"status": "released", "releasedAt": time.Now().UTC().Format(time.RFC3339), "approver": id.Name, "approverId": id.ID}
+		emp["release"] = map[string]any{
+			"status": "released", "releasedAt": time.Now().UTC().Format(time.RFC3339),
+			"requestedBy": requestedBy, "requestedById": requestedById,
+			"approver": id.Name, "approverId": id.ID,
+		}
 	case "reject":
 		if str(emp["ownerId"]) == id.ID {
 			return nil, apperr.Forbidden(apperr.SODSelfApproval, "创建者不能审批自己的生产发布")
@@ -560,6 +562,20 @@ func applyEmployeeConfig(emp map[string]any, draft map[string]any) {
 	if mem, ok := draft["memoryPolicy"]; ok {
 		emp["memoryPolicy"] = mem
 	}
+	if boundary, ok := draft["boundary"].(map[string]any); ok {
+		if resp := boundary["responsibilities"]; resp != nil {
+			emp["responsibilities"] = resp
+		}
+		if prohib := boundary["prohibitedActions"]; prohib != nil {
+			emp["prohibitedActions"] = prohib
+		}
+		if policy := boundary["boundaryPolicy"]; policy != nil {
+			emp["boundaryPolicy"] = policy
+		} else if policy := boundary["policy"]; policy != nil {
+			emp["boundaryPolicy"] = policy
+		}
+	}
+	emp["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
 }
 
 func (s *Server) adoptTemplate(r *http.Request) (any, error) {
@@ -682,12 +698,153 @@ func (s *Server) listSessions(r *http.Request) (any, error) {
 			if name := str(cp["digitalEmployeeName"]); name != "" {
 				cp["agent"] = name
 			} else {
-				cp["agent"] = "岗位专家"
+				cp["agent"] = "助手"
 			}
 		}
 		out = append(out, cp)
 	}
 	return out, nil
+}
+
+func (s *Server) createSession(r *http.Request) (any, error) {
+	id := identityFrom(r.Context())
+	body, _ := decodeMap(r)
+	ws := s.workspaceID(r)
+	now := time.Now().UTC().Format(time.RFC3339)
+	deID := body["digitalEmployeeId"]
+	deName := strings.TrimSpace(coalesce(str(body["digitalEmployeeName"]), str(body["agent"])))
+	if deName == "" {
+		if str(deID) != "" {
+			deName = "岗位专家"
+		} else {
+			deName = "助手"
+		}
+	}
+	title := coalesce(str(body["title"]), "新会话")
+	modelID := coalesce(str(body["modelId"]), "sonnet-4")
+	convID := coalesce(str(body["conversationId"]), s.Store.ID("conv"))
+	sessID := coalesce(str(body["id"]), s.Store.ID("sess"))
+
+	conv := map[string]any{
+		"id": convID, "workspaceId": ws, "title": title,
+		"digitalEmployeeId": deID, "modelId": modelID, "updatedAt": now,
+	}
+	session := map[string]any{
+		"id": sessID, "workspaceId": ws, "ownerId": id.ID, "title": title,
+		"preview": coalesce(str(body["preview"]), "暂无消息"), "agent": deName,
+		"digitalEmployeeId": deID, "digitalEmployeeName": deName,
+		"conversationId": convID, "status": "active", "modelId": modelID,
+		"createdAt": now, "updatedAt": now, "lastMessageAt": now,
+	}
+
+	s.Store.Lock()
+	for _, existing := range s.Store.Sessions {
+		if str(existing["id"]) == sessID && str(existing["workspaceId"]) == ws {
+			s.Store.Unlock()
+			return existing, nil
+		}
+	}
+	s.Store.Conversations = append([]map[string]any{conv}, s.Store.Conversations...)
+	s.Store.Sessions = append([]map[string]any{session}, s.Store.Sessions...)
+	if s.Store.Messages[convID] == nil {
+		s.Store.Messages[convID] = []map[string]any{}
+	}
+	s.Store.AppendAudit(ws, id.Name, "创建专家会话", title, "success", "")
+	s.Store.Unlock()
+	s.Store.Persist("conversations")
+	s.Store.Persist("sessions")
+	s.Store.Persist("messages")
+	return session, nil
+}
+
+func (s *Server) deleteSession(r *http.Request) (any, error) {
+	id := identityFrom(r.Context())
+	ws := s.workspaceID(r)
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	// api/sessions/:id
+	if len(parts) < 3 || parts[2] == "" {
+		return nil, apperr.BadReq(apperr.BadRequest, "缺少会话 ID")
+	}
+	sessID := parts[2]
+
+	s.Store.Lock()
+	var removed map[string]any
+	kept := make([]map[string]any, 0, len(s.Store.Sessions))
+	convID := ""
+	for _, sess := range s.Store.Sessions {
+		if str(sess["id"]) == sessID && str(sess["workspaceId"]) == ws {
+			removed = sess
+			convID = str(sess["conversationId"])
+			continue
+		}
+		kept = append(kept, sess)
+	}
+	if removed == nil {
+		s.Store.Unlock()
+		return nil, apperr.NotFoundErr(apperr.NotFound, "会话不存在")
+	}
+	s.Store.Sessions = kept
+	if convID != "" {
+		convs := make([]map[string]any, 0, len(s.Store.Conversations))
+		for _, c := range s.Store.Conversations {
+			if str(c["id"]) == convID && (str(c["workspaceId"]) == "" || str(c["workspaceId"]) == ws) {
+				continue
+			}
+			convs = append(convs, c)
+		}
+		s.Store.Conversations = convs
+		delete(s.Store.Messages, convID)
+	}
+	s.Store.AppendAudit(ws, id.Name, "删除专家会话", coalesce(str(removed["title"]), sessID), "success", "")
+	s.Store.Unlock()
+	s.Store.Persist("sessions")
+	s.Store.Persist("conversations")
+	s.Store.Persist("messages")
+	return map[string]any{"ok": true, "id": sessID, "conversationId": convID}, nil
+}
+
+func (s *Server) deleteConversation(r *http.Request) (any, error) {
+	id := identityFrom(r.Context())
+	ws := s.workspaceID(r)
+	cid := conversationIDFromPath(r.URL.Path)
+	if cid == "" {
+		return nil, apperr.BadReq(apperr.BadRequest, "缺少会话 ID")
+	}
+	s.Store.Lock()
+	found := false
+	convs := make([]map[string]any, 0, len(s.Store.Conversations))
+	for _, c := range s.Store.Conversations {
+		if str(c["id"]) == cid && (str(c["workspaceId"]) == "" || str(c["workspaceId"]) == ws) {
+			found = true
+			continue
+		}
+		convs = append(convs, c)
+	}
+	if !found {
+		// also allow deleting message buckets / orphan ids
+		if _, ok := s.Store.Messages[cid]; !ok {
+			s.Store.Unlock()
+			return nil, apperr.NotFoundErr(apperr.NotFound, "会话不存在")
+		}
+		found = true
+	}
+	s.Store.Conversations = convs
+	delete(s.Store.Messages, cid)
+	// drop sessions pointing at this conversation
+	kept := make([]map[string]any, 0, len(s.Store.Sessions))
+	for _, sess := range s.Store.Sessions {
+		if str(sess["conversationId"]) == cid || str(sess["id"]) == cid {
+			continue
+		}
+		kept = append(kept, sess)
+	}
+	s.Store.Sessions = kept
+	s.Store.AppendAudit(ws, id.Name, "删除协作会话", cid, "success", "")
+	s.Store.Unlock()
+	s.Store.Persist("conversations")
+	s.Store.Persist("messages")
+	s.Store.Persist("sessions")
+	return map[string]any{"ok": true, "id": cid}, nil
 }
 
 func (s *Server) listSlashCommands(r *http.Request) (any, error) {
@@ -697,11 +854,10 @@ func (s *Server) listSlashCommands(r *http.Request) (any, error) {
 }
 
 func (s *Server) getConversation(r *http.Request) (any, error) {
-	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 3 {
+	cid := conversationIDFromPath(r.URL.Path)
+	if cid == "" {
 		return nil, apperr.NotFoundErr(apperr.NotFound, "会话不存在")
 	}
-	cid := parts[2]
 	ws := s.workspaceID(r)
 	s.Store.RLock()
 	defer s.Store.RUnlock()

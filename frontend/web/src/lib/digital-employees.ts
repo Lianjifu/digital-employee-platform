@@ -205,13 +205,14 @@ export type ReleaseOnboardingCompleteness = {
   contractOk: boolean;
   capabilityOk: boolean;
   evaluationOk: boolean;
+  /** @deprecated 上岗不再要求双重审批；保留字段以兼容旧调用方。 */
   approvalOk: boolean;
   configReady: boolean;
   stage: ReleaseOnboardingStage;
-  label: '待评测' | '评测未通过' | '可申请上岗' | '待双重审批' | '已上岗';
+  label: '待评测' | '评测未通过' | '可申请上岗' | '待确认上岗' | '已上岗';
   missing: string[];
   gates: Array<{
-    key: 'contract' | 'capability' | 'evaluation' | 'approval';
+    key: 'contract' | 'capability' | 'evaluation';
     label: string;
     passed: boolean;
     detail: string;
@@ -227,7 +228,7 @@ const RELEASE_STAGE_RANK: Record<ReleaseOnboardingStage, number> = {
   released: 4,
 };
 
-/** 上岗门禁：与 release API 硬校验对齐（档案/职责/模型与执行能力/评测/双重审批）。 */
+/** 上岗门禁：与 release API 硬校验对齐（档案/职责/模型与执行能力/质量评测）。 */
 export function releaseOnboardingCompleteness(employee: ReleaseOnboardingEmployee): ReleaseOnboardingCompleteness {
   const role = roleSetupCompleteness(employee);
   const capability = capabilityAssemblyCompleteness(employee);
@@ -245,7 +246,6 @@ export function releaseOnboardingCompleteness(employee: ReleaseOnboardingEmploye
   if (!capability.assetsOk) missing.push('技能/工具/流程技能');
   if (configReady && employee.evaluation.status === 'failed') missing.push('评测未通过');
   if (configReady && employee.evaluation.status === 'not_started') missing.push('尚未评测');
-  if (employee.release.status === 'pending_approval') missing.push('待另一名管理员批准');
 
   let stage: ReleaseOnboardingStage;
   if (approvalOk) stage = 'released';
@@ -257,7 +257,7 @@ export function releaseOnboardingCompleteness(employee: ReleaseOnboardingEmploye
   const label: ReleaseOnboardingCompleteness['label'] = stage === 'released'
     ? '已上岗'
     : stage === 'pending_approval'
-      ? '待双重审批'
+      ? '待确认上岗'
       : stage === 'ready_to_request'
         ? '可申请上岗'
         : stage === 'eval_failed'
@@ -288,16 +288,6 @@ export function releaseOnboardingCompleteness(employee: ReleaseOnboardingEmploye
         : employee.evaluation.score
           ? `${employee.evaluation.score} 分`
           : '尚未通过',
-    },
-    {
-      key: 'approval',
-      label: '双重审批上岗',
-      passed: approvalOk,
-      detail: approvalOk
-        ? `申请人 ${employee.release.requestedBy ?? '—'} · 批准人 ${employee.release.approver ?? '—'}`
-        : employee.release.status === 'pending_approval'
-          ? `待批准 · 申请人 ${employee.release.requestedBy ?? '—'}`
-          : '尚未申请',
     },
   ];
 

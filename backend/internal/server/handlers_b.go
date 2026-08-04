@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
-	"github.com/digital-employee-platform/backend/internal/policy"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
@@ -153,36 +152,29 @@ func (s *Server) employeeAction(r *http.Request) (any, error) {
 		if err := s.validatePublishedCapabilities(emp); err != nil {
 			return nil, err
 		}
-		emp["lifecycle"] = "pending_approval"
-		emp["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
-		s.Store.ReleaseApprovals = append([]map[string]any{{
-			"id": s.Store.ID("approval"), "workspaceId": emp["workspaceId"], "environment": "production",
-			"resourceType": "agent", "resourceName": str(emp["name"]) + " " + str(emp["version"]),
-			"submittedBy": id.Name, "submittedById": id.ID, "submittedAt": time.Now().UTC().Format(time.RFC3339),
-			"status": "pending", "risk": emp["risk"], "correlationId": s.Store.ID("corr"),
-			"digitalEmployeeId": eid,
-		}}, s.Store.ReleaseApprovals...)
-		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "提交数字员工上岗审批", str(emp["name"]), "success", "")
+		now := time.Now().UTC().Format(time.RFC3339)
+		emp["lifecycle"] = "active"
+		emp["release"] = map[string]any{
+			"status": "released", "releasedAt": now,
+			"requestedBy": id.Name, "requestedById": id.ID,
+		}
+		emp["updatedAt"] = now
+		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "数字员工上岗", str(emp["name"]), "success", "")
 		return emp, nil
 	case "approve":
-		if !auth.Has(id, "release.approve") && id.Role != "admin" {
-			return nil, apperr.Forbidden(apperr.ReleaseApproveForbidden, "无权审批上岗")
-		}
-		if str(emp["ownerId"]) == id.ID {
-			return nil, apperr.Forbidden(apperr.SODSelfApproval, "创建者不能审批自己的生产发布")
-		}
-		if err := s.evaluateWrite(r, "employee", "approve", policy.Input{
-			SubmitterID: str(emp["ownerId"]), ApproverID: id.ID, PublishedBinding: true,
-		}); err != nil {
-			return nil, err
-		}
+		// 兼容历史待审批记录：确认即可上岗，不再要求职责分离双人批。
 		if err := s.validatePublishedCapabilities(emp); err != nil {
 			return nil, err
 		}
+		now := time.Now().UTC().Format(time.RFC3339)
 		emp["lifecycle"] = "active"
 		emp["version"] = strings.TrimSuffix(str(emp["version"]), "-draft")
-		emp["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
-		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "批准数字员工上岗", str(emp["name"]), "success", "")
+		emp["release"] = map[string]any{
+			"status": "released", "releasedAt": now,
+			"approver": id.Name, "approverId": id.ID,
+		}
+		emp["updatedAt"] = now
+		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "确认数字员工上岗", str(emp["name"]), "success", "")
 		return emp, nil
 	case "reject":
 		if !auth.Has(id, "release.approve") && id.Role != "admin" {

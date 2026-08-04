@@ -13,7 +13,7 @@ func TestCheckModelBudgetLocked(t *testing.T) {
 	srv := New(st)
 	st.Lock()
 	st.ModelBudgets = []map[string]any{
-		{"workspaceId": "w1", "usedUsd": 600.0, "limitUsd": 500},
+		{"workspaceId": "w1", "usedUsd": 800.0, "limitUsd": 500},
 	}
 	err := srv.checkModelBudgetLocked("w1")
 	st.Unlock()

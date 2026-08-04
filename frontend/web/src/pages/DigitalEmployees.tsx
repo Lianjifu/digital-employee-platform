@@ -69,7 +69,7 @@ const tabs: Array<{ key: ModuleTab; labelKey: string; icon: typeof BriefcaseBusi
 ];
 
 const lifecycleMeta: Record<DigitalEmployeeLifecycle, { label: string; tone: 'neutral' | 'success' | 'warn' | 'error' | 'info' }> = {
-  draft: { label: '草稿', tone: 'neutral' }, testing: { label: '试运行', tone: 'info' }, pending_approval: { label: '待上岗审批', tone: 'warn' }, active: { label: '在岗', tone: 'success' }, paused: { label: '已暂停', tone: 'neutral' }, quarantined: { label: '已隔离', tone: 'error' },
+  draft: { label: '配置中', tone: 'neutral' }, testing: { label: '试运行', tone: 'info' }, pending_approval: { label: '待上岗审批', tone: 'warn' }, active: { label: '在岗', tone: 'success' }, paused: { label: '已暂停', tone: 'neutral' }, quarantined: { label: '已隔离', tone: 'error' },
 };
 
 const riskMeta = { low: { label: '低风险', tone: 'success' as const }, medium: { label: '中风险', tone: 'warn' as const }, high: { label: '高风险', tone: 'error' as const } };
@@ -78,7 +78,7 @@ const departmentOrder = DIGITAL_EMPLOYEE_DEPARTMENT_ORDER;
 const catalogSegments = [
   { key: 'all', label: '全部' },
   { key: 'active', label: '可协作', hint: '已上岗，可发起专家协同' },
-  { key: 'onboarding', label: '待上岗', hint: '草稿、试运行或待双重审批' },
+  { key: 'onboarding', label: '待上岗', hint: '配置中或试运行' },
   { key: 'attention', label: '需关注', hint: '异常、暂停或隔离' },
 ] as const;
 
@@ -98,7 +98,7 @@ function EmployeeAvatar({ employee, size = 40 }: { employee: DigitalEmployee; si
 function gateLabel(employee: DigitalEmployee) {
   if (employee.lifecycle === 'quarantined' || (employee.lifecycle === 'active' && employee.runtime.anomalies > 0)) return '需关注';
   if (employee.lifecycle === 'active') return '可协作';
-  if (employee.release.status === 'pending_approval') return '待双重审批上岗';
+  if (employee.release.status === 'pending_approval') return '待确认上岗';
   if (employee.evaluation.status === 'passed') return `评测 ${employee.evaluation.score ?? '—'} · 可申请上岗`;
   if (employee.evaluation.status === 'failed') return '评测未通过';
   if (employee.lifecycle === 'paused') return '已暂停';
@@ -283,7 +283,7 @@ export default function DigitalEmployees() {
                 <h2 className="text-sm font-semibold">专家目录</h2>
                 <p className="mt-1 text-xs text-[var(--text-muted)]">
                   {catalogSegment === 'all'
-                    ? '按岗位与部门发现可协作的数字员工；上岗与双重审批在门禁中推进。'
+                    ? '按岗位与部门发现可协作的数字员工；上岗门禁在「上岗发布」中推进。'
                     : (catalogSegments.find((item) => item.key === catalogSegment) as { hint?: string } | undefined)?.hint ?? '按分类浏览数字员工。'}
                 </p>
               </div>
@@ -319,7 +319,7 @@ export default function DigitalEmployees() {
               </div>
             )}
           </section>
-          <Modal open={templateOpen} onClose={() => setTemplateOpen(false)} title="从岗位蓝图创建" description="采用经治理验证的岗位模板，在当前工作区生成可配置草稿；仍需评测与双重审批后上岗。" size="xl"><EmployeePlaza employees={employees} onCreate={() => setCreateOpen(true)} onAdopt={(employeeId) => { setTemplateOpen(false); setSelectedId(employeeId); }} onClose={() => setTemplateOpen(false)} /></Modal>
+          <Modal open={templateOpen} onClose={() => setTemplateOpen(false)} title="从岗位蓝图创建" description="采用经治理验证的岗位模板，在当前工作区创建数字员工；仍需完善配置、完成评测后即可申请上岗。" size="xl"><EmployeePlaza employees={employees} onCreate={() => setCreateOpen(true)} onAdopt={(employeeId) => { setTemplateOpen(false); setSelectedId(employeeId); }} onClose={() => setTemplateOpen(false)} /></Modal>
         </>}
 
         {tab === 'roleSetup' && (
@@ -484,7 +484,7 @@ function EmployeePlaza({ employees, onCreate, onAdopt, onClose }: { employees: D
               <div className="de-employee-icon-tile grid h-8 w-8 place-items-center rounded-lg"><Sparkles className="h-4 w-4" /></div>
               <h3 className="text-base font-semibold">岗位蓝图</h3>
             </div>
-            <p className="mt-2 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">采用已认证蓝图生成草稿；仍需配置、评测与双重审批后上岗。步骤：选蓝图 → 生成草稿 → 完善门禁。</p>
+            <p className="mt-2 max-w-2xl text-xs leading-5 text-[var(--text-muted)]">采用已认证蓝图创建数字员工；仍需配置、评测后申请上岗。步骤：选蓝图 → 创建员工 → 完善门禁。</p>
           </div>
           <div className="flex flex-wrap gap-2">
             {isAdmin && canMutate && <Button size="sm" variant="secondary" onClick={() => setPublishOpen(true)}><Plus className="h-3.5 w-3.5" />发布部门蓝图</Button>}
@@ -545,7 +545,7 @@ function EmployeePlaza({ employees, onCreate, onAdopt, onClose }: { employees: D
                   <span className="text-right">已采用 {template.adoptionCount} 次</span>
                 </div>
                 <div className="mt-3 flex items-center gap-2">
-                  {canMutate && <Button size="sm" className="flex-1" disabled={template.status === 'deprecated'} loading={adopt.isPending && adopt.variables?.templateId === template.id} onClick={() => adopt.mutate({ templateId: template.id })}>采用为草稿</Button>}
+                  {canMutate && <Button size="sm" className="flex-1" disabled={template.status === 'deprecated'} loading={adopt.isPending && adopt.variables?.templateId === template.id} onClick={() => adopt.mutate({ templateId: template.id })}>采用并创建</Button>}
                   {isAdmin && canMutate && template.source === 'department' && template.status !== 'deprecated' && (
                     <Button size="sm" variant="secondary" loading={govern.isPending && govern.variables?.id === template.id} onClick={() => govern.mutate({ id: template.id, status: template.status === 'review' ? 'certified' : 'deprecated' })}>
                       {template.status === 'review' ? '认证' : '下架'}
@@ -640,7 +640,7 @@ function OnboardingManagementView({ employees, onSelect, onGoToModule }: { emplo
     { key: 'pending_eval', label: '待评测' },
     { key: 'eval_failed', label: '评测未通过' },
     { key: 'ready_to_request', label: '可申请上岗' },
-    { key: 'pending_approval', label: '待双重审批' },
+    { key: 'pending_approval', label: '待确认上岗' },
   ];
 
   const filtered = useMemo(
@@ -658,7 +658,7 @@ function OnboardingManagementView({ employees, onSelect, onGoToModule }: { emplo
   return (
     <div className="space-y-3">
       <div className="de-employee-hint rounded-xl px-4 py-3 text-xs leading-5 text-[var(--text-secondary)]">
-        上岗发布只做质量评测与双重审批；岗位档案请到「岗位配置」，能力引用请到「能力装配」。
+        上岗发布只做质量评测与上岗生效；岗位档案请到「岗位配置」，能力引用请到「能力装配」。
         <div className="mt-2 flex flex-wrap gap-2">
           <button type="button" className="de-employee-btn text-[11px]" onClick={() => onGoToModule('roleSetup')}>岗位配置</button>
           <button type="button" className="de-employee-btn text-[11px]" onClick={() => onGoToModule('capabilities')}>能力装配</button>
@@ -675,12 +675,12 @@ function OnboardingManagementView({ employees, onSelect, onGoToModule }: { emplo
           <KpiCard label="可申请上岗" value={counts.ready_to_request} sub="个" icon={CheckCircle2} tone="success" size="comfortable" />
         </button>
         <button type="button" className="text-left" onClick={() => setSegment('pending_approval')} aria-pressed={segment === 'pending_approval'}>
-          <KpiCard label="待双重审批" value={counts.pending_approval} sub="个" icon={Clock3} tone={counts.pending_approval ? 'warn' : 'success'} size="comfortable" />
+          <KpiCard label="待确认上岗" value={counts.pending_approval} sub="个" icon={Clock3} tone={counts.pending_approval ? 'warn' : 'success'} size="comfortable" />
         </button>
       </section>
       <WorkbenchListShell
         title="上岗发布"
-        description="按「配置完成 → 质量评测 → 上岗申请 → 双重审批生效」推进；行内展示门禁检查，点击查看处置。"
+        description="按「配置完成 → 质量评测 → 申请上岗」推进；条件满足后即可上岗，行内展示门禁检查。"
         countLabel={`${filtered.length} 个待办`}
         pageSize={pageSize}
         onPageSizeChange={setPageSize}
@@ -847,7 +847,7 @@ function OperationsView({ employees, onSelect, onGoToModule }: { employees: Digi
             )}
           </>
         ) : (
-          <EmptyState icon={HeartPulse} title={segment === 'all' ? '完成双重审批上岗后，在岗专家会出现在此' : '当前分段暂无在岗专家'} />
+          <EmptyState icon={HeartPulse} title={segment === 'all' ? '完成上岗后，在岗专家会出现在此' : '当前分段暂无在岗专家'} />
         )}
       </section>
 
@@ -1214,6 +1214,8 @@ function ReleaseListRow({ employee, onSelect }: { employee: DigitalEmployee; onS
 }
 
 type EmployeeConfigurationInput = {
+  /** capability = 能力装配（直接生效）；role = 岗位授权契约（在岗/生产/高风险仍需审批） */
+  scope?: 'capability' | 'role';
   profile: Pick<DigitalEmployee, 'name' | 'role' | 'department' | 'description' | 'owner' | 'escalationOwner' | 'serviceObject' | 'risk' | 'environment'>;
   boundary: Pick<DigitalEmployee, 'responsibilities' | 'prohibitedActions' | 'handoffPolicy' | 'boundaryPolicy'>;
   capabilities: DigitalEmployee['capabilities'];
@@ -1387,23 +1389,23 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
     onError: (err) => setMessage(err instanceof Error ? err.message : '评测失败'),
   });
   const release = useApiMutation<DigitalEmployee, Record<string, never>>(() => `/api/digital-employees/${employee.id}/release`, {
-    onSuccess: () => setMessage('已提交上岗申请，须由另一名管理员完成双重审批。'),
-    onError: (err) => setMessage(err instanceof Error ? err.message : '申请失败'),
+    onSuccess: () => setMessage('已完成上岗，员工可进入运行协作。'),
+    onError: (err) => setMessage(err instanceof Error ? err.message : '上岗失败'),
   });
   const withdraw = useApiMutation<DigitalEmployee, Record<string, never>>(() => `/api/digital-employees/${employee.id}/release/withdraw`, {
-    onSuccess: () => setMessage('已撤回上岗申请，可在补齐后重新申请。'),
+    onSuccess: () => setMessage('已撤回历史申请，可在补齐后重新申请上岗。'),
     onError: (err) => setMessage(err instanceof Error ? err.message : '撤回失败'),
   });
   const reject = useApiMutation<DigitalEmployee, { reason: string }>(() => `/api/digital-employees/${employee.id}/release/reject`, {
-    onSuccess: () => { setMessage('已驳回上岗申请。'); setRejectReason(''); },
+    onSuccess: () => { setMessage('已驳回历史申请。'); setRejectReason(''); },
     onError: (err) => setMessage(err instanceof Error ? err.message : '驳回失败'),
   });
   const transition = useApiMutation<DigitalEmployee, { lifecycle: DigitalEmployeeLifecycle; reason?: string; confirmed?: boolean }>(() => `/api/digital-employees/${employee.id}/lifecycle`, {
-    onSuccess: (_, input) => setMessage(input.lifecycle === 'active' ? (employee.release.status === 'pending_approval' ? '双重审批已通过，员工已上岗。' : '已恢复运行。') : input.lifecycle === 'paused' ? '已暂停员工运行。' : input.lifecycle === 'quarantined' ? '已隔离员工运行。' : '状态已更新。'),
+    onSuccess: (_, input) => setMessage(input.lifecycle === 'active' ? (employee.release.status === 'pending_approval' ? '已确认上岗。' : '已恢复运行。') : input.lifecycle === 'paused' ? '已暂停员工运行。' : input.lifecycle === 'quarantined' ? '已隔离员工运行。' : '状态已更新。'),
     onError: (err) => setMessage(err instanceof Error ? err.message : '状态变更失败'),
   });
   const meta = context === 'release'
-    ? { title: '上岗发布详情', description: '集中处理质量评测、上岗门禁与双重审批。' }
+    ? { title: '上岗发布详情', description: '集中处理质量评测与上岗门禁。' }
     : { title: '运行管理详情', description: '仅展示岗位服务健康、人工交接与运行处置；不可修改岗位或能力。' };
   const selfRequested = Boolean(employee.release.requestedById && user?.id && employee.release.requestedById === user.id);
   const completeness = releaseOnboardingCompleteness(employee);
@@ -1420,17 +1422,14 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
       {employee.evaluation.status === 'passed' && employee.release.status === 'not_released' && (
         <Button size="sm" loading={release.isPending} onClick={() => release.mutate({})}><Route className="h-3.5 w-3.5" />申请上岗</Button>
       )}
+      {employee.release.status === 'pending_approval' && (
+        <Button size="sm" loading={transition.isPending} onClick={() => transition.mutate({ lifecycle: 'active' })}><CheckCircle2 className="h-3.5 w-3.5" />确认上岗</Button>
+      )}
       {employee.release.status === 'pending_approval' && selfRequested && (
         <Button size="sm" variant="secondary" loading={withdraw.isPending} onClick={() => withdraw.mutate({})}>撤回申请</Button>
       )}
       {employee.release.status === 'pending_approval' && isAdmin && !selfRequested && (
-        <>
-          <Button size="sm" loading={transition.isPending} onClick={() => transition.mutate({ lifecycle: 'active' })}><CheckCircle2 className="h-3.5 w-3.5" />确认双重审批上岗</Button>
-          <Button size="sm" variant="secondary" loading={reject.isPending} onClick={() => reject.mutate({ reason: rejectReason || '未满足上岗门禁或需补充配置' })}>驳回</Button>
-        </>
-      )}
-      {employee.release.status === 'pending_approval' && selfRequested && (
-        <span className="text-[11px] text-[var(--text-muted)]">您是申请人，须由另一名管理员批准</span>
+        <Button size="sm" variant="secondary" loading={reject.isPending} onClick={() => reject.mutate({ reason: rejectReason || '未满足上岗门禁或需补充配置' })}>驳回</Button>
       )}
       <Button size="sm" variant="ghost" onClick={onClose}>关闭</Button>
     </>
@@ -1484,7 +1483,7 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
           <section className="space-y-5">
             <div>
               <h3 className="text-sm font-semibold">质量与上岗门禁</h3>
-              <p className="mt-1 text-xs text-[var(--text-muted)]">缺岗位契约、未完成能力装配、评测未过或审批未齐时不可上岗；申请人与批准人必须分离。</p>
+              <p className="mt-1 text-xs text-[var(--text-muted)]">缺岗位契约、未完成能力装配或评测未过时不可上岗；三项均满足后即可申请上岗。</p>
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
               {releaseGate.map((gate) => (
@@ -1627,7 +1626,7 @@ function EmployeeDetailModal({ employee, context, onClose, onGoToModule }: { emp
     { key: 'evidence', label: '审计证据' },
   ];
   const nextStepHint = employee.release.status === 'pending_approval'
-    ? '上岗申请待双重审批'
+    ? '下一步：上岗发布 · 确认上岗'
     : employee.evaluation.status !== 'passed'
       ? '下一步：上岗发布 · 执行评测'
       : employee.release.status !== 'released'
@@ -1663,7 +1662,16 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
   const canMutate = roleCanMutate(user?.role);
   const { data: versions = [] } = useApiQuery<DigitalEmployeeConfigurationVersion[]>(['digital-employee', employee.id, 'configuration-versions'], `/api/digital-employees/${employee.id}/configuration-versions`, undefined, { enabled: open });
   const { data: capabilityCatalog } = useApiQuery<DigitalEmployeeCapabilityCatalog>(['digital-employee-capability-catalog'], '/api/digital-employee-capability-catalog', undefined, { enabled: open });
-  const save = useApiMutation<EmployeeConfigurationResult, EmployeeConfigurationInput>(() => `/api/digital-employees/${employee.id}/configuration`, { onSuccess: (result) => setMessage(result.requiresApproval ? `${result.version} 已提交双重审批；批准前不会影响在岗员工。` : `${result.version} 已保存，可继续执行评测与上岗流程。`), onError: () => setMessage('保存未完成，请检查必填项与岗位边界。') });
+  const save = useApiMutation<EmployeeConfigurationResult, EmployeeConfigurationInput>(() => `/api/digital-employees/${employee.id}/configuration`, {
+    onSuccess: (result) => setMessage(
+      result.requiresApproval
+        ? `${result.version} 已提交双重审批；批准前不会影响在岗员工。`
+        : mode === 'capability'
+          ? `${result.version} 能力装配已保存并生效。`
+          : `${result.version} 已保存，可继续执行评测与上岗流程。`,
+    ),
+    onError: () => setMessage('保存未完成，请检查必填项与岗位边界。'),
+  });
   const approve = useApiMutation<DigitalEmployeeConfigurationVersion, { versionId: string }>(({ versionId }) => `/api/digital-employees/${employee.id}/configuration-versions/${versionId}/approve`);
   const lines = (value: string) => value.split('\n').map((item) => item.trim()).filter(Boolean);
   useEffect(() => { if (!open) return; setSection(initialSection); setMessage(null); setProfile({ name: employee.name, role: employee.role, department: employee.department, description: employee.description, owner: employee.owner, escalationOwner: employee.escalationOwner, serviceObject: employee.serviceObject, risk: employee.risk, environment: employee.environment }); setBoundaryPolicy(resolveBoundaryPolicy(employee)); setCapabilities({ ...employee.capabilities, knowledge: employee.capabilities.knowledge.join('\n'), skills: employee.capabilities.skills.join('\n'), tools: employee.capabilities.tools.join('\n'), workflows: employee.capabilities.workflows.join('\n'), channels: employee.capabilities.channels.join('\n') }); setMemory({ ...employee.memoryPolicy }); }, [employee, open, initialSection]);
@@ -1690,7 +1698,9 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
     capabilityCount > 0 && !modesComplete && '执行授权模式',
   ].filter(Boolean) as string[];
   const blocking = mode === 'capability' ? capabilityBlocking : roleBlocking;
-  const controlled = employee.lifecycle === 'active' || profile.environment === 'production' || profile.risk === 'high';
+  const controlled = mode === 'capability'
+    ? false
+    : employee.lifecycle === 'active' || profile.environment === 'production' || profile.risk === 'high';
   const roleContractReady = roleSetupCompleteness(employee).ready;
   const submit = () => {
     if (blocking.length) { setMessage(`请补齐：${blocking.join('、')}`); return; }
@@ -1716,6 +1726,7 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
       : profile;
     const nextMemory = mode === 'capability' ? employee.memoryPolicy : memory;
     save.mutate({
+      scope: mode,
       profile: nextProfile,
       boundary: {
         responsibilities: normalizedPolicy.responsibilities.map((item) => item.title),
@@ -1733,7 +1744,7 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
   const pendingVersion = versions.find((item) => item.status === 'pending_approval');
   const workbenchTitle = mode === 'capability' ? '受控能力装配' : '配置岗位授权契约';
   const workbenchDescription = mode === 'capability'
-    ? '引用已发布模型与能力资产，并为技能/工具/流程设置执行授权；岗位职责请到「岗位配置」。'
+    ? '引用已发布模型与能力资产，并为技能/工具/流程设置执行授权；保存后立即生效。岗位职责请到「岗位配置」。'
     : '维护岗位档案、职责边界、人工接管与记忆策略；能力引用请到「能力装配」。高风险与在岗变更需双重审批后生效。';
   const validationAside = (
     <aside className="space-y-3 lg:w-[220px] lg:shrink-0">
@@ -1743,7 +1754,7 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
           {blocking.length
             ? blocking.map((item) => <div key={item} className="flex gap-1.5 text-[var(--danger)]"><XCircle className="mt-0.5 h-3 w-3 shrink-0" />待补齐：{item}</div>)
             : <div className="flex gap-1.5 text-[var(--success)]"><CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" />必填配置已完整</div>}
-          <div className="flex gap-1.5 text-[var(--text-secondary)]"><ShieldCheck className="mt-0.5 h-3 w-3 shrink-0 text-[var(--brand)]" />{controlled ? '需双重审批后生效' : '可保存为草稿配置'}</div>
+          <div className="flex gap-1.5 text-[var(--text-secondary)]"><ShieldCheck className="mt-0.5 h-3 w-3 shrink-0 text-[var(--brand)]" />{controlled ? '需双重审批后生效' : '可保存当前配置'}</div>
         </div>
       </section>
       <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3">
@@ -1767,7 +1778,7 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
     </aside>
   );
   return (
-    <Modal open={open} onClose={onClose} title={workbenchTitle} description={canMutate ? workbenchDescription : '只读核查岗位契约与能力装配证据，不提交变更。'} size="xl" footer={canMutate ? <><Button variant="ghost" onClick={onClose}>取消</Button><Button loading={save.isPending} disabled={Boolean(blocking.length)} onClick={submit}><Save className="h-3.5 w-3.5" />{controlled ? '提交双重审批变更' : '保存配置草稿'}</Button></> : <Button variant="ghost" onClick={onClose}>关闭</Button>}>
+    <Modal open={open} onClose={onClose} title={workbenchTitle} description={canMutate ? workbenchDescription : '只读核查岗位契约与能力装配证据，不提交变更。'} size="xl" footer={canMutate ? <><Button variant="ghost" onClick={onClose}>取消</Button><Button loading={save.isPending} disabled={Boolean(blocking.length)} onClick={submit}><Save className="h-3.5 w-3.5" />{controlled ? '提交双重审批变更' : '保存配置'}</Button></> : <Button variant="ghost" onClick={onClose}>关闭</Button>}>
       <div className="space-y-4">
         <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[var(--bg-elevated)] px-4 py-3" style={{ boxShadow: 'var(--saas-ring)' }}>
           <div className="flex min-w-0 items-center gap-3">
@@ -1782,7 +1793,7 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
             </div>
           </div>
           <div className={cn('rounded-lg px-3 py-1.5 text-[11px]', controlled ? 'bg-[var(--warning-bg)] text-[var(--text-secondary)]' : 'bg-[var(--success-bg)] text-[var(--text-secondary)]')} style={{ boxShadow: 'var(--saas-ring)' }}>
-            {controlled ? '变更将进入双重审批后生效' : '可保存草稿，仍需评测上岗'}
+            {controlled ? '变更将进入双重审批后生效' : mode === 'capability' ? '能力装配可直接保存生效' : '配置可保存，上岗前仍需完成评测'}
           </div>
         </section>
         {mode === 'capability' && !roleContractReady && (
@@ -1862,7 +1873,7 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
   );
 }
 
-function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityType, modeOf, onModeChange, compact }: {
+function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityType, modeOf, onModeChange, compact, emptyHint }: {
   label: string;
   hint: string;
   options: CapabilityCatalogOption[];
@@ -1872,6 +1883,7 @@ function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityT
   modeOf?: (name: string) => DigitalEmployeeExecutionMode;
   onModeChange?: (name: string, mode: DigitalEmployeeExecutionMode) => void;
   compact?: boolean;
+  emptyHint?: string;
 }) {
   const [filter, setFilter] = useState('');
   const available = options.filter((item) => !values.includes(item.name) && (!filter.trim() || `${item.name} ${item.meta}`.toLowerCase().includes(filter.trim().toLowerCase())));
@@ -1898,6 +1910,7 @@ function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityT
           <select
             aria-label={`添加${label}`}
             value=""
+            disabled={!available.length}
             onChange={(event) => {
               const selected = event.target.value;
               if (selected) {
@@ -1905,9 +1918,9 @@ function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityT
                 setFilter('');
               }
             }}
-            className="h-8 max-w-[160px] rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)]"
+            className="h-8 max-w-[160px] rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)] disabled:opacity-50"
           >
-            <option value="">+ 添加</option>
+            <option value="">{available.length ? '+ 添加' : '无可选资产'}</option>
             {available.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
           </select>
         </div>
@@ -1919,7 +1932,7 @@ function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityT
             <div key={value} className="flex items-center gap-2 rounded-lg bg-[var(--surface-1)] px-2.5 py-2" style={{ boxShadow: 'var(--saas-ring)' }}>
               <div className="min-w-0 flex-1">
                 <span className="block truncate text-xs font-medium">{value}</span>
-                {!compact && <span className="block truncate text-[10px] text-[var(--text-muted)]">{option?.meta ?? '历史已绑定资产'}</span>}
+                {!compact && <span className="block truncate text-[10px] text-[var(--text-muted)]">{option?.meta ?? '历史已绑定资产（目录中已不存在）'}</span>}
               </div>
               {withMode && modeOf && onModeChange && (
                 <select
@@ -1934,7 +1947,11 @@ function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityT
               <button type="button" onClick={() => remove(value)} className="shrink-0 rounded-md px-1 text-xs text-[var(--text-muted)] hover:bg-[var(--danger-light)] hover:text-[var(--danger)]" aria-label={`移除 ${value}`}>×</button>
             </div>
           );
-        }) : <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[11px] text-[var(--text-muted)]">尚未选择</p>}
+        }) : (
+          <p className="rounded-lg border border-dashed border-[var(--border)] px-2.5 py-2 text-[11px] text-[var(--text-muted)]">
+            {options.length ? '尚未选择' : (emptyHint ?? '暂无可选资产')}
+          </p>
+        )}
       </div>
     </section>
   );
@@ -1978,7 +1995,9 @@ function CapabilityAssemblySelector({ catalog, capabilities, policy, onChangeCap
     });
   };
   const modelOptions = catalog?.models ?? [];
+  const modelInCatalog = modelOptions.some((item) => item.name === capabilities.model);
   const executableCount = capabilities.skills.length + capabilities.tools.length + capabilities.workflows.length;
+  const catalogEmpty = Boolean(catalog) && modelOptions.length === 0 && (catalog?.skills.length ?? 0) === 0 && (catalog?.tools.length ?? 0) === 0 && (catalog?.workflows.length ?? 0) === 0;
   return (
     <div className="space-y-4">
       <section className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3.5 py-2.5">
@@ -1986,15 +2005,22 @@ function CapabilityAssemblySelector({ catalog, capabilities, policy, onChangeCap
           <div className="flex items-center gap-1.5 text-xs font-semibold">
             模型路由 <span className="text-[var(--danger)]">*</span>
           </div>
-          <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">仅可选当前工作区已激活供应商的可用模型</p>
+          <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">可选已发布路由策略，或当前工作区已激活供应商的可用对话模型</p>
         </div>
         <select
           value={capabilities.model}
           onChange={(event) => onChangeCapabilities({ ...capabilities, model: event.target.value })}
-          className="h-9 min-w-[220px] max-w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)]"
+          className="h-9 min-w-[260px] max-w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)]"
         >
-          <option value={capabilities.model}>{capabilities.model || '请选择模型'}</option>
-          {modelOptions.filter((item) => item.name !== capabilities.model).map((item) => <option key={item.id} value={item.name}>{item.name} · {item.meta}</option>)}
+          {!capabilities.model && <option value="">请选择已发布路由或对话模型</option>}
+          {capabilities.model && !modelInCatalog && (
+            <option value={capabilities.model}>{capabilities.model}（历史绑定，建议改选目录中的路由）</option>
+          )}
+          {modelOptions.map((item) => (
+            <option key={`${item.id}:${item.name}`} value={item.name} title={item.meta}>
+              {item.meta.startsWith('已发布') ? `${item.name} · ${item.meta}` : `${item.name} · ${item.meta}`}
+            </option>
+          ))}
         </select>
         {capabilities.agentId && (
           <span className="w-full text-[11px] text-[var(--text-muted)] sm:w-auto sm:border-l sm:border-[var(--border)] sm:pl-3">
@@ -2005,19 +2031,25 @@ function CapabilityAssemblySelector({ catalog, capabilities, policy, onChangeCap
 
       {!catalog && <div className="rounded-xl px-3 py-8 text-center text-xs text-[var(--text-muted)]" style={{ boxShadow: 'var(--saas-ring)' }}>正在同步各能力中心的可选资产…</div>}
 
+      {catalogEmpty && (
+        <div className="rounded-xl border border-dashed border-[var(--warning)]/40 bg-[var(--warning-bg)]/40 px-3.5 py-3 text-[11px] leading-5 text-[var(--text-secondary)]">
+          当前工作区暂无已发布可装配资产。请先在「模型服务」发布路由并激活供应商，在「技能中心 / 工作流程 / 知识中心 / 消息渠道」发布对应资产后返回刷新。
+        </div>
+      )}
+
       {catalog && (
         <>
           <section className="space-y-2.5">
             <div className="flex items-end justify-between gap-3">
               <div>
                 <h3 className="text-sm font-semibold">执行能力</h3>
-                <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">技能、工具与流程须设置授权模式 · 已绑 {executableCount} 项</p>
+                <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">仅列出已启用技能/工具与已发布流程 · 已绑 {executableCount} 项</p>
               </div>
             </div>
             <div className="space-y-2.5">
-              <LinkedAssetPicker label="技能" hint="" options={catalog.skills} values={capabilities.skills} onChange={(values) => updateAssets('skills', values)} capabilityType="skill" modeOf={(name) => modeOf('skill', name)} onModeChange={(name, mode) => setMode('skill', name, mode)} />
-              <LinkedAssetPicker label="工具接入" hint="" options={catalog.tools} values={capabilities.tools} onChange={(values) => updateAssets('tools', values)} capabilityType="tool" modeOf={(name) => modeOf('tool', name)} onModeChange={(name, mode) => setMode('tool', name, mode)} />
-              <LinkedAssetPicker label="流程技能与工作流" hint="" options={catalog.workflows} values={capabilities.workflows} onChange={(values) => updateAssets('workflows', values)} capabilityType="workflow" modeOf={(name) => modeOf('workflow', name)} onModeChange={(name, mode) => setMode('workflow', name, mode)} />
+              <LinkedAssetPicker label="技能" hint="" options={catalog.skills} values={capabilities.skills} onChange={(values) => updateAssets('skills', values)} capabilityType="skill" modeOf={(name) => modeOf('skill', name)} onModeChange={(name, mode) => setMode('skill', name, mode)} emptyHint="技能中心暂无已启用技能" />
+              <LinkedAssetPicker label="工具接入" hint="" options={catalog.tools} values={capabilities.tools} onChange={(values) => updateAssets('tools', values)} capabilityType="tool" modeOf={(name) => modeOf('tool', name)} onModeChange={(name, mode) => setMode('tool', name, mode)} emptyHint="暂无已启用工具 / MCP" />
+              <LinkedAssetPicker label="流程技能与工作流" hint="" options={catalog.workflows} values={capabilities.workflows} onChange={(values) => updateAssets('workflows', values)} capabilityType="workflow" modeOf={(name) => modeOf('workflow', name)} onModeChange={(name, mode) => setMode('workflow', name, mode)} emptyHint="请先在工作流程中心发布流程技能" />
             </div>
           </section>
 
@@ -2027,15 +2059,15 @@ function CapabilityAssemblySelector({ catalog, capabilities, policy, onChangeCap
               <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">知识与渠道为引用，不设执行授权</p>
             </div>
             <div className="grid gap-2.5 sm:grid-cols-2">
-              <LinkedAssetPicker label="知识" hint="" options={catalog.knowledge} values={capabilities.knowledge} onChange={(values) => updateAssets('knowledge', values)} compact />
-              <LinkedAssetPicker label="渠道" hint="" options={catalog.channels} values={capabilities.channels} onChange={(values) => updateAssets('channels', values)} compact />
+              <LinkedAssetPicker label="知识" hint="" options={catalog.knowledge} values={capabilities.knowledge} onChange={(values) => updateAssets('knowledge', values)} compact emptyHint="请先发布知识包" />
+              <LinkedAssetPicker label="渠道" hint="" options={catalog.channels} values={capabilities.channels} onChange={(values) => updateAssets('channels', values)} compact emptyHint="请先启用消息渠道" />
             </div>
           </section>
         </>
       )}
 
       <p className="text-[11px] leading-4 text-[var(--text-muted)]">
-        仅可选择已发布资产；生产、在岗或高风险岗位的装配变更将提交双重审批（提交人不可自批）。
+        仅可选择各能力中心已发布/已启用资产；能力装配保存后立即生效。技能执行授权仍可按项设为「需双重审批后执行」。
       </p>
     </div>
   );
@@ -2068,5 +2100,58 @@ function SelectField({ label, value, onChange, options }: { label: string; value
 function TextAreaField({ label, value, onChange, hint }: { label: string; value: string; onChange: (value: string) => void; hint: string }) { return <label className="grid gap-1.5 text-xs font-medium">{label}<textarea value={value} onChange={(event) => onChange(event.target.value)} rows={4} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs font-normal leading-5 outline-none focus:border-[var(--brand)]" /><span className="font-normal leading-5 text-[var(--text-muted)]">{hint}</span></label>; }
 function NumberField({ label, value, suffix, onChange }: { label: string; value: number; suffix: string; onChange: (value: number) => void }) { return <label className="grid gap-1.5 text-xs font-medium">{label}<div className="flex h-9 rounded-lg border border-[var(--border)] bg-[var(--bg)]"><input type="number" min={1} value={value} onChange={(event) => onChange(Math.max(1, Number(event.target.value) || 1))} className="min-w-0 flex-1 bg-transparent px-3 text-xs font-normal outline-none" /><span className="flex items-center pr-3 text-xs text-[var(--text-muted)]">{suffix}</span></div></label>; }
 
-function CreateEmployeeModal({ open, onClose, loading, onCreate }: { open: boolean; onClose: () => void; loading: boolean; onCreate: (input: Partial<DigitalEmployee>) => void }) { const [name, setName] = useState(''); const [role, setRole] = useState(''); const [department, setDepartment] = useState(''); const [description, setDescription] = useState(''); const submit = () => { if (!name.trim() || !role.trim() || !department.trim()) return; onCreate({ name, role, department, description, risk: 'low', responsibilities: ['待配置岗位职责'], prohibitedActions: ['待配置禁止行为'] }); }; return <Modal open={open} onClose={onClose} title="新建数字员工" description="创建岗位档案后，再装配能力、完成评测并申请上岗。" size="md" footer={<><Button variant="ghost" onClick={onClose}>取消</Button><Button loading={loading} disabled={!name.trim() || !role.trim() || !department.trim()} onClick={submit}>创建草稿</Button></>}><div className="grid gap-4"><Field label="员工名称（花名）" value={name} onChange={setName} placeholder="例如：听潮" required /><Field label="岗位名称" value={role} onChange={setRole} placeholder="例如：安全事件分析专员" required /><Field label="所属部门" value={department} onChange={setDepartment} placeholder="例如：信息技术部" required /><label className="grid gap-1.5 text-xs font-medium">岗位说明<textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={3} placeholder="说明服务对象、业务目标与人工升级条件。" className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs font-normal outline-none focus:border-[var(--brand)]" /></label></div></Modal>; }
+function CreateEmployeeModal({ open, onClose, loading, onCreate }: { open: boolean; onClose: () => void; loading: boolean; onCreate: (input: Partial<DigitalEmployee>) => void }) {
+  const [name, setName] = useState('');
+  const [role, setRole] = useState('');
+  const [department, setDepartment] = useState('');
+  const [description, setDescription] = useState('');
+  const submit = () => {
+    if (!name.trim() || !role.trim() || !department.trim()) return;
+    onCreate({
+      name,
+      role,
+      department,
+      description,
+      risk: 'low',
+      responsibilities: ['待配置岗位职责'],
+      prohibitedActions: ['待配置禁止行为'],
+    });
+  };
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="新建数字员工"
+      description="填写花名与岗位信息即可创建。创建后进入「配置中」，请继续完善授权契约与能力装配，完成评测后再申请上岗。"
+      size="md"
+      footer={(
+        <>
+          <Button variant="ghost" onClick={onClose}>取消</Button>
+          <Button loading={loading} disabled={!name.trim() || !role.trim() || !department.trim()} onClick={submit}>
+            创建数字员工
+          </Button>
+        </>
+      )}
+    >
+      <div className="grid gap-4">
+        <Field label="员工名称（花名）" value={name} onChange={setName} placeholder="例如：听潮" required />
+        <Field label="岗位名称" value={role} onChange={setRole} placeholder="例如：安全事件分析专员" required />
+        <Field label="所属部门" value={department} onChange={setDepartment} placeholder="例如：信息技术部" required />
+        <label className="grid gap-1.5 text-xs font-medium">
+          岗位说明
+          <textarea
+            value={description}
+            onChange={(event) => setDescription(event.target.value)}
+            rows={3}
+            placeholder="说明服务对象、业务目标与人工升级条件。"
+            className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs font-normal outline-none focus:border-[var(--brand)]"
+          />
+        </label>
+        <p className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-[11px] leading-5 text-[var(--text-muted)]">
+          下一步建议：岗位配置 → 能力装配 → 质量评测 → 申请上岗。
+        </p>
+      </div>
+    </Modal>
+  );
+}
 function Field({ label, value, onChange, placeholder, required }: { label: string; value: string; onChange: (value: string) => void; placeholder: string; required?: boolean }) { return <label className="grid gap-1.5 text-xs font-medium">{label}{required && <span className="ml-1 text-[var(--danger)]">*</span>}<input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="h-9 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 text-xs font-normal outline-none focus:border-[var(--brand)]" /></label>; }

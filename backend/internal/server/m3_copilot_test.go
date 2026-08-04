@@ -79,12 +79,134 @@ func TestCopilotStreamStages(t *testing.T) {
 		t.Fatalf("stream %d %s", rr.Code, rr.Body.String())
 	}
 	body := rr.Body.String()
-	for _, stage := range []string{"policy", "employee", "rag", "runtime", "meter"} {
+	for _, stage := range []string{"policy", "employee", "memory", "runtime", "meter", "route"} {
 		if !strings.Contains(body, stage) {
-			t.Fatalf("missing stage %s in SSE: %s", stage, body)
+			t.Fatalf("missing stage/event %s in SSE: %s", stage, body)
 		}
 	}
 	if !strings.Contains(body, "corr-stream-1") {
 		t.Fatalf("missing correlationId in SSE")
+	}
+	if !strings.Contains(body, `"ok":true`) {
+		t.Fatalf("missing done ok in SSE: %s", body)
+	}
+}
+
+func TestCopilotStreamPersistsUnderConversationID(t *testing.T) {
+	st := store.New()
+	h := server.New(st).Handler()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/copilot/conversations/conv-1/stream",
+		bytes.NewBufferString(`{"content":"persist-me","digitalEmployeeId":"de-1","correlationId":"corr-persist-1","modelId":"sonnet-4"}`))
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("stream %d %s", rr.Code, rr.Body.String())
+	}
+	st.RLock()
+	msgs := st.Messages["conv-1"]
+	bad := st.Messages["conversations"]
+	st.RUnlock()
+	if len(bad) > 0 {
+		t.Fatalf("messages incorrectly stored under key conversations: %d", len(bad))
+	}
+	if len(msgs) < 2 {
+		t.Fatalf("expected persisted user+assistant under conv-1, got %d", len(msgs))
+	}
+
+	rr2 := httptest.NewRecorder()
+	get := httptest.NewRequest(http.MethodGet, "/api/conversations/conv-1", nil)
+	get.Header.Set("Authorization", "Bearer mock-admin-token")
+	get.Header.Set("X-Workspace-Id", "w1")
+	h.ServeHTTP(rr2, get)
+	if rr2.Code != 200 {
+		t.Fatalf("get conversation %d %s", rr2.Code, rr2.Body.String())
+	}
+	if !strings.Contains(rr2.Body.String(), "persist-me") {
+		t.Fatalf("GET conversation missing user message: %s", rr2.Body.String())
+	}
+}
+
+func TestDeleteSessionRemovesPersistedRecord(t *testing.T) {
+	st := store.New()
+	srv := server.New(st).Handler()
+
+	create := httptest.NewRecorder()
+	creq := httptest.NewRequest(http.MethodPost, "/api/sessions",
+		strings.NewReader(`{"title":"to-delete","modelId":"mdl-local"}`))
+	creq.Header.Set("Authorization", "Bearer mock-admin-token")
+	creq.Header.Set("Content-Type", "application/json")
+	creq.Header.Set("X-Workspace-Id", "w1")
+	srv.ServeHTTP(create, creq)
+	if create.Code != 200 {
+		t.Fatalf("create %d %s", create.Code, create.Body.String())
+	}
+	var created struct {
+		Data map[string]any `json:"data"`
+	}
+	_ = json.Unmarshal(create.Body.Bytes(), &created)
+	sessID, _ := created.Data["id"].(string)
+	if sessID == "" {
+		t.Fatalf("missing session id: %s", create.Body.String())
+	}
+
+	del := httptest.NewRecorder()
+	dreq := httptest.NewRequest(http.MethodDelete, "/api/sessions/"+sessID, nil)
+	dreq.Header.Set("Authorization", "Bearer mock-admin-token")
+	dreq.Header.Set("X-Workspace-Id", "w1")
+	srv.ServeHTTP(del, dreq)
+	if del.Code != 200 {
+		t.Fatalf("delete %d %s", del.Code, del.Body.String())
+	}
+
+	st.RLock()
+	for _, sess := range st.Sessions {
+		if id, _ := sess["id"].(string); id == sessID {
+			st.RUnlock()
+			t.Fatalf("session still present after delete")
+		}
+	}
+	st.RUnlock()
+
+	list := httptest.NewRecorder()
+	lreq := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	lreq.Header.Set("Authorization", "Bearer mock-admin-token")
+	lreq.Header.Set("X-Workspace-Id", "w1")
+	srv.ServeHTTP(list, lreq)
+	if strings.Contains(list.Body.String(), sessID) {
+		t.Fatalf("list still contains deleted session: %s", list.Body.String())
+	}
+}
+
+func TestCreateSessionAndApproveAction(t *testing.T) {
+	st := store.New()
+	h := server.New(st).Handler()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions",
+		bytes.NewBufferString(`{"title":"审批联调","digitalEmployeeId":"de-1","digitalEmployeeName":"故障自愈助手"}`))
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("create session %d %s", rr.Code, rr.Body.String())
+	}
+
+	// approve seeded s1 message as admin (signer index 1)
+	rr2 := httptest.NewRecorder()
+	apr := httptest.NewRequest(http.MethodPost, "/api/actions/msg-s1-2/approve",
+		bytes.NewBufferString(`{"signerIndex":1,"conversationId":"s1"}`))
+	apr.Header.Set("Authorization", "Bearer mock-admin-token")
+	apr.Header.Set("X-Workspace-Id", "w1")
+	apr.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr2, apr)
+	if rr2.Code != 200 {
+		t.Fatalf("approve %d %s", rr2.Code, rr2.Body.String())
+	}
+	if !strings.Contains(rr2.Body.String(), `"completed":true`) {
+		t.Fatalf("expected completed approve: %s", rr2.Body.String())
 	}
 }

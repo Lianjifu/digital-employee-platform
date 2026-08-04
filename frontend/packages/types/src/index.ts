@@ -744,6 +744,33 @@ export interface MemoryKnowledgeCandidate {
   knowledgePackageId?: ID;
 }
 
+/** Phase 4 Self-Evolution：回合/反馈产生的受控候选，审核前不改生产策略。 */
+export type EvolveCandidateKind = 'memory_promote' | 'skill_patch' | 'routing_hint' | 'dream';
+export type EvolveCandidateStatus = 'pending_review' | 'pending_countersign' | 'approved' | 'rejected' | 'applied';
+
+export interface EvolveCandidate {
+  id: ID;
+  workspaceId: ID;
+  kind: EvolveCandidateKind;
+  status: EvolveCandidateStatus;
+  title: string;
+  summary: string;
+  fingerprint?: string;
+  payload?: Record<string, unknown>;
+  conversationId?: ID;
+  messageId?: ID;
+  correlationId?: string;
+  sourceCorrelationId?: string;
+  submittedAt: ISODate;
+  reviewedAt?: ISODate;
+  reviewer?: string;
+  firstReviewer?: string;
+  createdBy?: string;
+  effect?: Record<string, unknown>;
+  feedbackKind?: 'like' | 'dislike';
+  signers?: Array<{ userId?: ID; name?: string; role?: string; signedAt?: ISODate }>;
+}
+
 export interface MemoryPolicy {
   workspaceId: ID;
   shortTermTtlHours: number;
@@ -850,6 +877,8 @@ export interface SkillIntegration {
   writeApprovalRequired: boolean;
   allowedEgress: string[];
   lastError?: string;
+  /** 关联技能 ID（包导入 / 注册时写入，供连通性验证） */
+  skillId?: ID;
   /** MCP 协议规范：mcp-streamable-http | mcp-sse | mcp-stdio */
   protocol?: string;
   authMode?: string;
@@ -1105,7 +1134,7 @@ export interface ModelGovernanceSnapshot {
 }
 
 // ============ 渠道 P10 ============
-export type ChannelKind = 'feishu' | 'wecom' | 'slack' | 'dingtalk' | 'email' | 'webhook' | 'sms' | 'phone';
+export type ChannelKind = 'feishu' | 'wecom' | 'weixin' | 'slack' | 'dingtalk' | 'email' | 'webhook' | 'sms' | 'phone';
 
 export interface Channel {
   id: ID;
@@ -1131,6 +1160,26 @@ export interface ChannelDeployment {
   credentialMasked: string;
   owner: string;
   lastVerifiedAt?: ISODate;
+  /** Provider Open API / ilink base */
+  domain?: string;
+  appIdMasked?: string;
+  clientIdMasked?: string;
+  corpIdMasked?: string;
+  tokenMasked?: string;
+  botOpenId?: string;
+  botName?: string;
+  robotCode?: string;
+  agentId?: string;
+  accountId?: string;
+  connectionMode?: 'long_connection' | 'webhook' | 'stream' | 'websocket' | 'long_poll';
+  webhookPath?: string;
+  webhookUrl?: string;
+  hasEncryptKey?: boolean;
+  hasVerificationToken?: boolean;
+  hasCallbackToken?: boolean;
+  hasCallbackAesKey?: boolean;
+  lastVerifyError?: string;
+  latencyMs?: number;
 }
 
 export interface DeliveryPolicyDraft {

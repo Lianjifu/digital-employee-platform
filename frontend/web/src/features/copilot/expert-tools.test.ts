@@ -1,0 +1,60 @@
+import { describe, expect, it } from 'vitest';
+import { buildExpertTools, defaultEnabledToolKeys } from './expert-tools';
+
+describe('buildExpertTools', () => {
+  it('always includes platform builtins and employee assembly', () => {
+    const tools = buildExpertTools({
+      capabilities: {
+        tools: ['HRIS', '企业微信', '知识库'],
+        skills: ['政策问答'],
+        workflows: ['人事服务协同流'],
+      },
+    });
+    expect(tools.map((t) => t.key).slice(0, 2)).toEqual([
+      'builtin:knowledge.retrieve',
+      'builtin:memory.recall',
+    ]);
+    expect(tools.map((t) => t.name)).toEqual([
+      'knowledge.retrieve',
+      'memory.recall',
+      'HRIS',
+      '企业微信',
+      '知识库',
+      '政策问答',
+      '人事服务协同流',
+    ]);
+    expect(tools.some((t) => /hr-policy|kubectl|offer-approve/i.test(t.name) || /hr-policy|offer-approve/.test(t.key))).toBe(false);
+    expect(defaultEnabledToolKeys(tools)).toHaveLength(7);
+  });
+
+  it('marks approval_required from boundaryPolicy and skips prohibited', () => {
+    const tools = buildExpertTools({
+      capabilities: {
+        tools: ['CMDB', 'kubectl'],
+        skills: [],
+        workflows: [],
+      },
+      boundaryPolicy: {
+        capabilityModes: [
+          { capabilityType: 'tool', capabilityName: 'kubectl', mode: 'approval_required' },
+          { capabilityType: 'tool', capabilityName: 'CMDB', mode: 'execute' },
+        ],
+      },
+    });
+    expect(tools.find((t) => t.name === 'kubectl')?.requiresApproval).toBe(true);
+    expect(tools.find((t) => t.name === 'CMDB')?.requiresApproval).toBe(false);
+    expect(defaultEnabledToolKeys(tools).some((k) => k.includes('cmdb'))).toBe(true);
+    expect(defaultEnabledToolKeys(tools).some((k) => k.includes('kubectl'))).toBe(false);
+  });
+
+  it('still returns builtins when no employee assembly', () => {
+    expect(buildExpertTools(null).map((t) => t.key)).toEqual([
+      'builtin:knowledge.retrieve',
+      'builtin:memory.recall',
+    ]);
+    expect(buildExpertTools({ capabilities: { tools: [], skills: [], workflows: [] } }).map((t) => t.key)).toEqual([
+      'builtin:knowledge.retrieve',
+      'builtin:memory.recall',
+    ]);
+  });
+});

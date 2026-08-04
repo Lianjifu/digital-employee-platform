@@ -17,6 +17,54 @@ export type CopilotSSEEvent = {
   units?: number;
   employee?: unknown;
   ok?: boolean;
+  modelId?: string;
+  modelName?: string;
+  providerId?: string;
+  source?: string;
+  warning?: string;
+  mode?: string;
+  maxSteps?: number;
+  enabledTools?: string[];
+  args?: Record<string, unknown>;
+  id?: string;
+  durationMs?: number;
+  permission?: string;
+  error?: string;
+  sandboxId?: string;
+  step?: number;
+  action?: string;
+  toolCount?: number;
+  reactSteps?: number;
+  reason?: string;
+  goal?: string;
+  steps?: unknown;
+  stepId?: string;
+  title?: string;
+  index?: number;
+  total?: number;
+  critique?: string;
+  round?: number;
+  maxRounds?: number;
+  reflectRounds?: number;
+  policyLevel?: string;
+  policyId?: string;
+  requestedLevel?: string;
+  specialists?: unknown;
+  employeeId?: string;
+  role?: string;
+  department?: string;
+  task?: string;
+  preview?: string;
+  resultStatus?: string;
+  supervisorId?: string;
+  provenance?: Array<{ id?: string; title?: string; layer?: string; score?: number }>;
+  memoryProvenance?: Array<{ id?: string; title?: string; layer?: string; score?: number }>;
+  kind?: string;
+  summary?: string;
+  evolveCandidates?: number;
+  hitCount?: number;
+  messageId?: string;
+  memoryHits?: number;
 };
 
 export function isMockChatMode(): boolean {
@@ -57,6 +105,10 @@ export type StreamTurnInput = {
   content: string;
   correlationId: string;
   digitalEmployeeId?: string;
+  modelId?: string;
+  enabledTools?: string[];
+  modeHint?: string;
+  reflectHint?: string;
   signal?: AbortSignal;
   onEvent: (event: string, data: CopilotSSEEvent) => void;
 };
@@ -92,6 +144,10 @@ export async function streamCopilotTurn(input: StreamTurnInput): Promise<void> {
         content: input.content,
         correlationId: input.correlationId,
         digitalEmployeeId: input.digitalEmployeeId,
+        modelId: input.modelId,
+        enabledTools: input.enabledTools,
+        modeHint: input.modeHint,
+        reflectHint: input.reflectHint,
       }),
       signal: input.signal,
     },

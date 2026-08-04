@@ -153,7 +153,7 @@ type runtimeConnect struct{ s *Server }
 
 func (c *runtimeConnect) Invoke(ctx context.Context, req *connect.Request[runtimev1.InvokeRequest]) (*connect.Response[runtimev1.InvokeResponse], error) {
 	_ = ctx
-	out := c.s.runtimeReply(req.Msg.GetInput())
+	out := c.s.runtimeReply(req.Msg.GetInput(), "sonnet-4", nil)
 	corr := req.Msg.GetCorrelationId()
 	if corr == "" {
 		corr = c.s.Store.ID("corr")

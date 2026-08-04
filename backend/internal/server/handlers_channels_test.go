@@ -37,7 +37,9 @@ func TestChannelControlOverviewAligned(t *testing.T) {
 }
 
 func TestChannelDeploymentFieldsAndVerify(t *testing.T) {
-	h := server.New(store.New()).Handler()
+	st := store.New()
+	srv := server.New(st)
+	h := srv.Handler()
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/channel-control/deployments", nil)
 	req.Header.Set("Authorization", "Bearer mock-admin-token")
@@ -61,8 +63,16 @@ func TestChannelDeploymentFieldsAndVerify(t *testing.T) {
 	}
 
 	rr = httptest.NewRecorder()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/cgi-bin/gettoken", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"errcode":0,"access_token":"tok","expires_in":7200}`))
+	})
+	fs := httptest.NewServer(mux)
+	t.Cleanup(fs.Close)
+	srv.WecomHTTP = fs.Client()
+	h = srv.Handler()
 	req = httptest.NewRequest(http.MethodPost, "/api/channel-control/deployments",
-		strings.NewReader(`{"name":"企微沙箱","kind":"wecom","credential":"secret-token-1234","environment":"sandbox"}`))
+		strings.NewReader(`{"name":"企微沙箱","kind":"wecom","corpId":"ww_demo","corpSecret":"secret-token-1234","agentId":"1000002","callbackToken":"tok","callbackAesKey":"abcdefghijklmnopqrstuvwxyz0123456789ABCDE","apiBaseUrl":"`+fs.URL+`","environment":"sandbox"}`))
 	req.Header.Set("Authorization", "Bearer mock-admin-token")
 	req.Header.Set("X-Workspace-Id", "w1")
 	req.Header.Set("Content-Type", "application/json")
@@ -70,9 +80,6 @@ func TestChannelDeploymentFieldsAndVerify(t *testing.T) {
 	if rr.Code != 200 {
 		t.Fatalf("create %d %s", rr.Code, rr.Body.String())
 	}
-	_ = json.Unmarshal(rr.Body.Bytes(), &env)
-	created := env.Data
-	// envelope data is object for create
 	var createdEnv struct {
 		Data map[string]any `json:"data"`
 	}
@@ -83,7 +90,9 @@ func TestChannelDeploymentFieldsAndVerify(t *testing.T) {
 	if strAny(createdEnv.Data["status"]) != "draft" {
 		t.Fatalf("new deploy status want draft got %v", createdEnv.Data["status"])
 	}
-	_ = created
+	if !strings.Contains(strAny(createdEnv.Data["webhookPath"]), "/api/channel/wecom/events/") {
+		t.Fatalf("webhookPath=%v", createdEnv.Data["webhookPath"])
+	}
 
 	id := strAny(createdEnv.Data["id"])
 	rr = httptest.NewRecorder()

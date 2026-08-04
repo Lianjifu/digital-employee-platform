@@ -5,7 +5,7 @@ import {
   FileUp, History, Layers3, Search, ShieldCheck, Trash2, XCircle,
 } from 'lucide-react';
 import { Badge, Button, Input, toast } from '@de/web-ui';
-import type { DigitalEmployee, MemoryAuditEvent, MemoryKnowledgeCandidate, MemoryLayer, MemoryPolicy, MemoryRecord, MemoryStatus } from '@de/web-types';
+import type { DigitalEmployee, EvolveCandidate, MemoryAuditEvent, MemoryKnowledgeCandidate, MemoryLayer, MemoryPolicy, MemoryRecord, MemoryStatus } from '@de/web-types';
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { ConfirmDialog, EmptyState, Modal, RoleReadonlyBanner } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
@@ -106,6 +106,7 @@ export default function Memory() {
   const overview = useApiQuery<any>(['memory', 'overview'], '/api/memory/overview');
   const records = useApiQuery<MemoryRecord[]>(['memory', 'records'], '/api/memory/records');
   const candidates = useApiQuery<MemoryKnowledgeCandidate[]>(['memory', 'candidates'], '/api/memory/candidates');
+  const evolveCands = useApiQuery<EvolveCandidate[]>(['evolve', 'candidates'], '/api/evolve/candidates');
   const policy = useApiQuery<MemoryPolicy>(['memory', 'policy'], '/api/memory/policy');
   const audit = useApiQuery<MemoryAuditEvent[]>(['memory', 'audit'], '/api/memory/audit');
   const employees = useApiQuery<DigitalEmployee[]>(['digital-employees'], '/api/digital-employees');
@@ -114,8 +115,10 @@ export default function Memory() {
   const remove = useApiMutation<{ id: string }, { id: string }>(({ id }) => `/api/memory/records/${id}`, undefined, 'DELETE');
   const candidate = useApiMutation<MemoryKnowledgeCandidate, { id: string }>(({ id }) => `/api/memory/records/${id}/candidate`);
   const review = useApiMutation<MemoryKnowledgeCandidate, { id: string; action: 'approve' | 'reject' }>(({ id, action }) => `/api/memory/candidates/${id}/${action}`);
+  const evolveReview = useApiMutation<EvolveCandidate, { id: string; action: 'approve' | 'reject' }>(({ id, action }) => `/api/evolve/candidates/${id}/${action}`);
   const updatePolicy = useApiMutation<MemoryPolicy, Partial<MemoryPolicy>>('/api/memory/policy', undefined, 'PATCH');
   const runRefinement = useApiMutation<{ scheduledFor: string; workingCreated: number; longCreated: number; candidatesCreated: number }, Record<string, never>>('/api/memory/refinement/run');
+  const runDream = useApiMutation<{ applied: number }, Record<string, never>>('/api/evolve/dream/run');
 
   const employeeMap = useMemo(() => {
     const map = new Map<string, DigitalEmployee>();
@@ -273,10 +276,24 @@ export default function Memory() {
             <GovernanceProgressive
               policy={policy.data}
               audit={audit.data ?? []}
+              evolveItems={evolveCands.data ?? []}
               canMutate={canMutate}
               onUpdate={(patch) => updatePolicy.mutate(patch, { onSuccess: () => toast.success('记忆策略已更新并写入审计'), onError: report })}
               onRun={() => runRefinement.mutate({}, { onSuccess: (result) => toast.success(`渐进提炼完成：工作 ${result.workingCreated}，长期 ${result.longCreated}，候选 ${result.candidatesCreated}`), onError: report })}
+              onDream={() => runDream.mutate({}, {
+                onSuccess: (result) => toast.success(`Dream 压缩完成：${result.applied} 个会话`),
+                onError: report,
+              })}
+              onEvolveReview={(id, action) => evolveReview.mutate({ id, action }, {
+                onSuccess: (cand) => {
+                  if (action === 'reject') toast.success('自进化候选已拒绝');
+                  else if (cand.status === 'pending_countersign') toast.success('已首签，等待审计员会签');
+                  else toast.success('自进化候选已通过（仅草稿/工作记忆）');
+                },
+                onError: report,
+              })}
               running={runRefinement.isPending}
+              dreaming={runDream.isPending}
             />
           )}
         </section>
@@ -746,17 +763,25 @@ function PolicyToggle({ checked, onChange, label }: { checked: boolean; onChange
 function GovernanceProgressive({
   policy,
   audit,
+  evolveItems = [],
   canMutate = false,
   onUpdate,
   onRun,
+  onDream,
+  onEvolveReview,
   running,
+  dreaming,
 }: {
   policy?: MemoryPolicy;
   audit: MemoryAuditEvent[];
+  evolveItems?: EvolveCandidate[];
   canMutate?: boolean;
   onUpdate: (patch: Partial<MemoryPolicy>) => void;
   onRun: () => void;
+  onDream?: () => void;
+  onEvolveReview?: (id: string, action: 'approve' | 'reject') => void;
   running: boolean;
+  dreaming?: boolean;
 }) {
   const [time, setTime] = useState(policy?.dailyRefinementTime ?? '02:00');
   const [confidence, setConfidence] = useState(String(policy?.minimumConfidence ?? .85));
@@ -765,9 +790,60 @@ function GovernanceProgressive({
     { key: 'workingToLongEnabled' as const, label: '工作 → 长期', desc: '每日筛选达到置信阈值的任务经验，沉淀为可复用长期记忆。' },
     { key: 'longToKnowledgeEnabled' as const, label: '长期 → 知识候选', desc: '每日提炼长期记忆为待审核候选，审核后才创建知识包草稿。' },
   ];
+  const kindLabel: Record<EvolveCandidate['kind'], string> = {
+    memory_promote: '记忆晋升',
+    skill_patch: '技能补丁',
+    routing_hint: '路由草稿',
+    dream: 'Dream 压缩',
+  };
+  const pendingEvolve = evolveItems.filter((item) => item.status === 'pending_review' || item.status === 'pending_countersign');
 
   return (
     <div className="memory-governance">
+      <section className="memory-panel">
+        <div className="memory-panel__head">
+          <div>
+            <h3>自进化候选（审核前不改生产）</h3>
+            <p>回合偏好、点赞点踩与路由建议仅生成候选；通过后写入工作记忆或草稿，不会直接 published 路由/技能。</p>
+          </div>
+          {canMutate && onDream && (
+            <Button size="sm" variant="secondary" loading={dreaming} onClick={onDream}>运行 Dream</Button>
+          )}
+        </div>
+        {evolveItems.length ? (
+          <div className="memory-audit-list">
+            {evolveItems.slice(0, 20).map((item) => (
+              <div key={item.id} className="memory-audit-item">
+                <div>
+                  <strong>{item.title}</strong>
+                  <p>{item.summary}</p>
+                  <span className="font-mono">
+                    {kindLabel[item.kind] ?? item.kind} · {item.status}
+                    {item.correlationId ? ` · ${item.correlationId}` : ''}
+                  </span>
+                </div>
+                <div className="flex flex-col items-end gap-1.5">
+                  <time>{formatFullTime(item.submittedAt)}</time>
+                  {canMutate && (item.status === 'pending_review' || item.status === 'pending_countersign') && onEvolveReview && (
+                    <div className="flex gap-1">
+                      <Button size="sm" onClick={() => onEvolveReview(item.id, 'approve')}>
+                        {item.status === 'pending_countersign' ? '会签通过' : (item.kind === 'skill_patch' || item.kind === 'routing_hint' ? '首签' : '通过')}
+                      </Button>
+                      <Button size="sm" variant="secondary" onClick={() => onEvolveReview(item.id, 'reject')}>拒绝</Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState icon={BrainCircuit} title="暂无自进化候选" description="会话偏好、点踩反馈或多专家回合后会出现待审项。" />
+        )}
+        {pendingEvolve.length > 0 && (
+          <p className="mt-2 text-xs text-[var(--text-muted)]">待审 {pendingEvolve.length} 条</p>
+        )}
+      </section>
+
       <section className="memory-panel">
         <div className="memory-panel__head">
           <div>

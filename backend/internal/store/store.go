@@ -43,6 +43,9 @@ type Store struct {
 	ModelRoutes     []map[string]any
 	ModelBudgets    []map[string]any
 	UsageMeters     []map[string]any
+	// ModelSecrets maps credentialRef → plaintext for local durability when Vault is unset.
+	// Never expose via HTTP list APIs.
+	ModelSecrets    map[string]string
 	KnowledgeDocs   []map[string]any
 	KBList          []map[string]any
 	KnowledgeExtra  map[string]any // packages, sources, governance, …
@@ -50,6 +53,7 @@ type Store struct {
 	Messages        map[string][]map[string]any
 	Sessions        []map[string]any
 	SlashCommands   []map[string]any
+	Actions         map[string]map[string]any
 
 	Workflows       []map[string]any
 	WorkflowSkills  []map[string]any
@@ -65,6 +69,7 @@ type Store struct {
 	SkillExtra         map[string]any // policies, runtimes, permissions, versions, bindings, incidents, events
 	MemoryRecords      []map[string]any
 	MemoryCands     []map[string]any
+	EvolveCands     []map[string]any // Self-Evolution candidates (Phase 4)
 	MemoryPolicies  map[string]map[string]any
 	MemoryAudits    []map[string]any
 	Channels        []map[string]any
@@ -76,6 +81,7 @@ type Store struct {
 	ChannelAudit    []map[string]any
 	ChannelDLQ      []map[string]any
 	ChannelHealth   map[string]map[string]any
+	ChannelInbound  []map[string]any // Feishu/Lark inbound events (normalized)
 
 	HomeKPIs             map[string]any
 	HomeExtra            map[string]any
@@ -103,6 +109,8 @@ func New() *Store {
 		WorkspacePolicy:  map[string]map[string]any{},
 		ConfigDrafts:     map[string]map[string]any{},
 		Messages:         map[string][]map[string]any{},
+		Actions:          map[string]map[string]any{},
+		ModelSecrets:     map[string]string{},
 		MemoryPolicies:   map[string]map[string]any{},
 		WorkflowVersions: map[string][]map[string]any{},
 		KnowledgeExtra:   map[string]any{},
@@ -263,6 +271,18 @@ func (s *Store) seed() {
 			"templateId": "tpl-sre", "templateVersion": "1.0.0", "updatedAt": "2026-07-20T00:00:00Z",
 		},
 		{
+			"id": "de-hr", "workspaceId": "w1", "name": "听风", "role": "人事专员", "department": "人事部",
+			"description": "入职办理、假期政策与人事制度问答", "owner": "郑人", "ownerId": "u2", "escalationOwner": "人事负责人", "serviceObject": "在职与入职员工",
+			"version": "1.0.0", "environment": "production", "lifecycle": "active", "risk": "low",
+			"responsibilities": []string{"入职办理", "假期政策解答", "人事制度问答"}, "prohibitedActions": []string{"不得承诺未审批编制", "不得泄露员工隐私"},
+			"capabilities": map[string]any{"model": "gpt-4o", "knowledge": []string{"人事制度库"}, "skills": []string{"政策问答"}, "tools": []string{"HRIS"}, "workflows": []string{"人事服务协同流"}, "channels": []string{"Web"}},
+			"memoryPolicy": map[string]any{"shortTermHours": 8, "workingDays": 14, "longTermCadence": "weekly", "knowledgePromotion": "approval_required"},
+			"runtime": map[string]any{"calls24h": 48, "successRate": 0.99, "p95Ms": 380, "costToday": 3.2, "handoffs24h": 1, "anomalies": 0},
+			"evaluation": map[string]any{"status": "passed", "score": 95.0, "lastRunAt": "2026-07-21T00:00:00Z"},
+			"release": map[string]any{"status": "released", "releasedAt": "2026-07-10T00:00:00Z", "requestedBy": "业务构建者", "requestedById": "u2", "approver": "平台管理员", "approverId": "u1"},
+			"updatedAt": "2026-07-21T00:00:00Z",
+		},
+		{
 			"id": "de-2", "workspaceId": "w1", "name": "客服质检助手", "role": "QA", "department": "运营部",
 			"description": "会话质检", "owner": "业务构建者", "ownerId": "u2", "escalationOwner": "运营负责人", "serviceObject": "客服团队",
 			"version": "2.1.0", "environment": "sandbox", "lifecycle": "pending_approval", "risk": "low",
@@ -285,13 +305,18 @@ func (s *Store) seed() {
 	}
 
 	s.ModelProviders = []map[string]any{
-		{"id": "mp-1", "workspaceId": "w1", "name": "Azure OpenAI CN", "tier": "official", "protocol": "azure_openai", "baseUrl": "https://example.openai.azure.com", "cloudRegion": "cn-east", "dataResidency": "cn", "status": "active", "credentialRef": "vault://model-providers/mp-1/credential", "credentialMasked": "••••abcd", "lastVerifiedAt": "2026-07-20T00:00:00Z", "lastProbeLatencyMs": 420, "models": []map[string]any{{"id": "mdl-gpt4", "providerId": "mp-1", "name": "gpt-4o", "cloudRegion": "cn-east", "dataResidency": "cn", "capabilities": []string{"chat", "reasoning"}, "status": "available", "contextWindow": 128000}}},
+		{"id": "mp-1", "workspaceId": "w1", "name": "Azure OpenAI CN", "tier": "official", "protocol": "azure_openai", "baseUrl": "https://example.openai.azure.com", "cloudRegion": "cn-east", "dataResidency": "cn", "status": "active", "credentialRef": "vault://model-providers/mp-1/credential", "credentialMasked": "••••abcd", "lastVerifiedAt": "2026-07-20T00:00:00Z", "lastProbeLatencyMs": 420, "models": []map[string]any{
+			{"id": "mdl-gpt4", "providerId": "mp-1", "name": "gpt-4o", "cloudRegion": "cn-east", "dataResidency": "cn", "capabilities": []string{"chat", "reasoning"}, "status": "available", "contextWindow": 128000},
+			{"id": "mdl-mini", "providerId": "mp-1", "name": "gpt-4o-mini", "cloudRegion": "cn-east", "dataResidency": "cn", "capabilities": []string{"chat"}, "status": "available", "contextWindow": 128000},
+		}},
 		{"id": "mp-2", "workspaceId": "w1", "name": "本地 Embedding", "tier": "self_hosted", "protocol": "ollama", "baseUrl": "http://127.0.0.1:11434", "cloudRegion": "cn-east", "dataResidency": "cn", "status": "standby", "credentialRef": "vault://model-providers/mp-2/credential", "credentialMasked": "••••••••", "models": []map[string]any{{"id": "mdl-emb", "providerId": "mp-2", "name": "bge-m3", "cloudRegion": "cn-east", "dataResidency": "cn", "capabilities": []string{"embedding"}, "status": "available", "contextWindow": 8192}}},
 		{"id": "mp-9", "workspaceId": "w2", "name": "隔离工作区供应商", "tier": "self_hosted", "protocol": "custom", "baseUrl": "http://isolated-llm.internal/v1", "cloudRegion": "cn-east", "dataResidency": "cn", "status": "active", "credentialRef": "vault://model-providers/mp-9/credential", "credentialMasked": "••••••••", "models": []map[string]any{{"id": "mdl-w2", "providerId": "mp-9", "name": "local-chat", "cloudRegion": "cn-east", "dataResidency": "cn", "capabilities": []string{"chat"}, "status": "available", "contextWindow": 32000}}},
 	}
 	s.RoutingPolicies = []map[string]any{
-		{"id": "rp-p0", "workspaceId": "w1", "level": "P0", "primaryModelId": "mdl-gpt4", "fallbackModelIds": []string{"mdl-emb"}, "dataScope": "internal", "egressAllowed": false, "budgetLimitUsd": 500, "status": "published", "validationIssues": []string{}},
-		{"id": "rp-draft", "workspaceId": "w1", "level": "P1", "primaryModelId": "mdl-gpt4", "fallbackModelIds": []string{}, "dataScope": "internal", "egressAllowed": false, "budgetLimitUsd": 200, "status": "draft", "validationIssues": []string{}},
+		{"id": "rp-p0", "workspaceId": "w1", "level": "P0", "primaryModelId": "mdl-gpt4", "fallbackModelIds": []string{"mdl-mini"}, "dataScope": "internal", "egressAllowed": false, "budgetLimitUsd": 500, "status": "published", "validationIssues": []string{}},
+		{"id": "rp-p1", "workspaceId": "w1", "level": "P1", "primaryModelId": "mdl-gpt4", "fallbackModelIds": []string{"mdl-mini"}, "dataScope": "internal", "egressAllowed": false, "budgetLimitUsd": 200, "status": "published", "validationIssues": []string{}},
+		{"id": "rp-p3", "workspaceId": "w1", "level": "P3", "primaryModelId": "mdl-mini", "fallbackModelIds": []string{"mdl-gpt4"}, "dataScope": "internal", "egressAllowed": false, "budgetLimitUsd": 50, "status": "published", "validationIssues": []string{}},
+		{"id": "rp-draft", "workspaceId": "w1", "level": "P2", "primaryModelId": "mdl-gpt4", "fallbackModelIds": []string{}, "dataScope": "internal", "egressAllowed": false, "budgetLimitUsd": 100, "status": "draft", "validationIssues": []string{}},
 	}
 	s.PolicyVersions = []map[string]any{
 		{"id": "rpv-1", "policyId": "rp-p0", "version": 1, "snapshot": map[string]any{
@@ -304,7 +329,7 @@ func (s *Store) seed() {
 		{"id": "ma-1", "time": "2026-07-18T00:00:00Z", "workspaceId": "w1", "actor": "平台管理员", "action": "发布路由策略", "target": "P0", "result": "success", "correlationId": "corr-model-1"},
 	}
 	s.ModelRoutes = []map[string]any{
-		{"id": "mr-p0", "workspaceId": "w1", "name": "P0 对话路由", "level": "P0", "primaryModelId": "mdl-gpt4", "fallbackModelIds": []string{"mdl-emb"}, "budgetLimitUsd": 500, "dataScope": "internal", "egressAllowed": false, "status": "published"},
+		{"id": "mr-p0", "workspaceId": "w1", "name": "企业通用路由 v2", "level": "P0", "primaryModelId": "mdl-gpt4", "fallbackModelIds": []string{"mdl-emb"}, "budgetLimitUsd": 500, "dataScope": "internal", "egressAllowed": false, "status": "published"},
 	}
 	s.ModelBudgets = []map[string]any{
 		{"workspaceId": "w1", "month": "2026-07", "usedUsd": 124.5, "limitUsd": 500},
@@ -323,7 +348,20 @@ func (s *Store) seed() {
 	}
 	s.Messages["s1"] = []map[string]any{
 		{"id": "msg-s1-1", "role": "user", "content": "prod-redis-01 内存打满了，怎么扩容？", "createdAt": "2026-07-22T12:47:00Z"},
-		{"id": "msg-s1-2", "role": "assistant", "content": "建议先确认 maxmemory 与 eviction policy，再评估是否扩容到 16GB。", "createdAt": "2026-07-22T12:53:42Z"},
+		{
+			"id": "msg-s1-2", "role": "assistant",
+			"content":   "建议先确认 maxmemory 与 eviction policy，再评估是否扩容到 16GB。高危变更需双重审批。",
+			"createdAt": "2026-07-22T12:53:42Z",
+			"approvalRequest": map[string]any{
+				"action": "CONFIG SET maxmemory 16GB", "resource": "prod-redis-01",
+				"reason": "等保 3 · 高危配置变更", "ticketId": "CHG-2026-0198",
+				"required": 2, "signed": 1, "decision": "pending", "policyHash": "pol_redis_oom_s1",
+				"signers": []map[string]any{
+					{"userId": "u2", "name": "王昊", "role": "operator", "signed": true, "signedAt": "2026-07-22T12:48:20Z", "signatureHash": "sig_m3_u2_op"},
+					{"userId": "u1", "name": "平台管理员", "role": "approver", "signed": false},
+				},
+			},
+		},
 	}
 	s.Messages["conv-1"] = []map[string]any{
 		{"id": "msg-1", "role": "user", "content": "缓存命中率下降怎么排查？", "createdAt": "2026-07-22T08:00:00Z"},
@@ -348,8 +386,18 @@ func (s *Store) seed() {
 		},
 	}
 	s.SlashCommands = []map[string]any{
-		{"id": "cmd-help", "name": "help", "description": "显示可用指令"},
-		{"id": "cmd-task", "name": "task", "description": "从对话创建任务"},
+		{"cmd": "/expert", "desc": "切换岗位专家", "icon": "Bot", "category": "agent", "id": "cmd-expert", "name": "expert"},
+		{"cmd": "/search", "desc": "检索知识库", "icon": "Search", "category": "kb", "id": "cmd-search", "name": "search"},
+		{"cmd": "/task", "desc": "创建任务", "icon": "ListChecks", "category": "task", "id": "cmd-task", "name": "task"},
+		{"cmd": "/skill", "desc": "调用技能", "icon": "Wrench", "category": "tool", "id": "cmd-skill", "name": "skill"},
+		{"cmd": "/workflow", "desc": "触发已装配流程技能", "icon": "Workflow", "category": "tool", "id": "cmd-workflow", "name": "workflow"},
+		{"cmd": "/model", "desc": "切换模型", "icon": "Cpu", "category": "tool", "id": "cmd-model", "name": "model"},
+		{"cmd": "/doc", "desc": "查询文档", "icon": "FileText", "category": "kb", "id": "cmd-doc", "name": "doc"},
+		{"cmd": "/member", "desc": "@ 提及成员", "icon": "Users", "category": "collab", "id": "cmd-member", "name": "member"},
+		{"cmd": "/clear", "desc": "清空会话", "icon": "X", "category": "tool", "id": "cmd-clear", "name": "clear"},
+		{"cmd": "/export", "desc": "导出对话", "icon": "Download", "category": "tool", "id": "cmd-export", "name": "export"},
+		{"cmd": "/help", "desc": "显示所有命令", "icon": "Sparkles", "category": "tool", "id": "cmd-help", "name": "help"},
+		{"cmd": "/summary", "desc": "生成会话摘要", "icon": "FileText", "category": "kb", "id": "cmd-summary", "name": "summary"},
 	}
 
 	s.Workflows = []map[string]any{
@@ -386,6 +434,13 @@ func (s *Store) seed() {
 			"lifecycleStatus": "enabled", "status": "installed", "version": "1.0.0",
 			"riskLevel": "low", "rating": 4.5, "installCount": 210, "cacheable": true, "source": "import",
 			"environment": "production", "classification": "internal", "lastVerifiedAt": "昨天",
+		},
+		{
+			"id": "tool-cmdb", "workspaceId": "w1", "ownerId": "u1", "owner": "平台管理员", "team": "CMDB",
+			"name": "CMDB 查询", "kind": "tool", "description": "资产与配置项只读查询",
+			"lifecycleStatus": "enabled", "status": "installed", "version": "1.0.0",
+			"riskLevel": "low", "rating": 4.4, "installCount": 180, "cacheable": true, "source": "market",
+			"environment": "production", "classification": "internal", "lastVerifiedAt": "今天",
 		},
 	}
 	s.SkillCatalog = []map[string]any{
@@ -506,6 +561,7 @@ func (s *Store) seed() {
 			"status": "pending_review", "submittedAt": "2026-07-21T09:00:00.000Z",
 		},
 	}
+	s.EvolveCands = []map[string]any{}
 	s.MemoryPolicies["w1"] = map[string]any{
 		"workspaceId": "w1", "shortTermTtlHours": 24, "workingMemoryTtlDays": 30, "dailyRefinementTime": "02:00",
 		"shortToWorkingEnabled": true, "workingToLongEnabled": true, "longToKnowledgeEnabled": true,
@@ -517,6 +573,7 @@ func (s *Store) seed() {
 		{"id": "ma-2", "workspaceId": "w1", "time": "2026-07-21T08:24:00.000Z", "actor": "夜航", "action": "写入记忆", "target": "Redis OOM 会话上下文", "result": "success", "correlationId": "corr_conversation_cv1"},
 	}
 	s.Channels = []map[string]any{
+		{"id": "ch-web", "workspaceId": "w1", "name": "Web", "kind": "web", "enabled": true, "monthlySent": 0, "successRate": 1},
 		{"id": "ch-feishu", "workspaceId": "w1", "name": "飞书", "kind": "feishu", "enabled": true, "monthlySent": 820, "successRate": 0.998},
 		{"id": "ch-email", "workspaceId": "w1", "name": "邮件", "kind": "email", "enabled": true, "monthlySent": 210, "successRate": 0.978},
 	}

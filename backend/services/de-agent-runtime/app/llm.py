@@ -11,15 +11,21 @@ def env(name: str, default: str = "") -> str:
     return (os.environ.get(name) or default).strip()
 
 
-def invoke_openai_compatible(prompt: str) -> str | None:
-    base = env("DE_LLM_BASE_URL")
+def invoke_openai_compatible(
+    prompt: str,
+    *,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
+) -> str | None:
+    base = (base_url or env("DE_LLM_BASE_URL")).strip()
     if not base:
         return None
-    api_key = env("DE_LLM_API_KEY")
-    model = env("DE_LLM_MODEL", "gpt-4o-mini")
+    key = (api_key if api_key is not None else env("DE_LLM_API_KEY")).strip()
+    model_name = (model or env("DE_LLM_MODEL", "gpt-4o-mini")).strip() or "gpt-4o-mini"
     url = base.rstrip("/") + "/chat/completions"
     payload = {
-        "model": model,
+        "model": model_name,
         "messages": [
             {"role": "system", "content": "You are a digital-employee runtime assistant."},
             {"role": "user", "content": prompt},
@@ -32,7 +38,7 @@ def invoke_openai_compatible(prompt: str) -> str | None:
         data=data,
         headers={
             "Content-Type": "application/json",
-            **({"Authorization": f"Bearer {api_key}"} if api_key else {}),
+            **({"Authorization": f"Bearer {key}"} if key else {}),
         },
         method="POST",
     )

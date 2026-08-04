@@ -67,8 +67,8 @@ export interface ToolCall {
   status: 'pending' | 'running' | 'success' | 'failed' | 'denied';
   durationMs?: number;
   retryCount?: number;
-  /** 权限策略：auto / approval-required / denied */
-  permission?: 'auto' | 'approval-required' | 'denied';
+  /** 权限策略：auto / approval-required / denied / disabled / prohibited … */
+  permission?: string;
   /** gVisor 沙箱执行 ID，可审计 */
   sandboxId?: string;
   /** 调用 traceId，与审计事件关联 */
@@ -151,6 +151,9 @@ export interface MessageMetrics {
   /** 模型 / 提供商 */
   model?: string;
   provider?: string;
+  /** 本轮注入的记忆白盒溯源 */
+  memoryHits?: number;
+  memoryProvenance?: Array<{ id?: string; title?: string; layer?: string; score?: number }>;
 }
 
 /* ---------- 消息 ---------- */
@@ -190,6 +193,8 @@ export interface ChatMessageEx {
   thinkingSummary?: string;
   /** 用户反馈 */
   feedback?: MessageFeedback;
+  /** 本轮注入记忆白盒溯源 */
+  memoryProvenance?: Array<{ id?: string; title?: string; layer?: string; score?: number }>;
   /** 内容安全 */
   safety?: SafetyInfo;
   /** 指标 */
@@ -241,6 +246,10 @@ export interface ChatSession {
   workspaceId?: string;
   /** 服务端会话详情 id；缺省时与 session.id 相同 */
   conversationId?: string;
+  /** 会话选用的模型路由 key */
+  modelId?: string;
+  /** 启用的工具链 */
+  enabledTools?: string[];
   /** 会话所有者 */
   ownerId?: string;
   ownerName?: string;
@@ -274,8 +283,12 @@ export interface SendMessageInput {
   digitalEmployeeId?: string;
   /** @deprecated 内部执行内核引用 */
   agentId?: string;
-  /** 显式指定模型 */
+  /** 显式指定模型（兼容旧字段） */
   model?: string;
+  /** 运行配置：模型 ID（优先于 session.modelId） */
+  modelId?: string;
+  /** 运行配置：本会话启用的工具链 */
+  enabledTools?: string[];
   /** 携带的 @ 提及 */
   mentions?: { kind: 'expert' | 'skill' | 'doc' | 'member' | 'agent'; key: string }[];
 }

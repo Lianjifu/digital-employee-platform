@@ -13,6 +13,7 @@ import type {
   Channel,
   ChannelAuditEvent,
   ChannelDeployment,
+  ChannelKind,
   DeliveryAttempt,
   DeliveryPolicyDraft,
   DeliveryPolicyVersion,
@@ -36,7 +37,7 @@ import type {
   ModelProfile,
   ModelProvider,
   ModelRoute,
-  MemoryAuditEvent, MemoryKnowledgeCandidate, MemoryPolicy, MemoryRecord,
+  MemoryAuditEvent, MemoryKnowledgeCandidate, MemoryPolicy, MemoryRecord, EvolveCandidate,
   Provider,
   ProviderImpact,
   RoutingPolicyDraft,
@@ -790,6 +791,8 @@ const mockDigitalEmployeeTemplateAdoptions: DigitalEmployeeTemplateAdoption[] = 
 ];
 
 type DigitalEmployeeConfigurationInput = {
+  /** capability 装配直接生效；role/缺省仍按在岗·生产·高风险走审批 */
+  scope?: 'capability' | 'role';
   profile: Pick<DigitalEmployee, 'name' | 'role' | 'department' | 'description' | 'owner' | 'escalationOwner' | 'serviceObject' | 'risk' | 'environment'>;
   boundary: Pick<DigitalEmployee, 'responsibilities' | 'prohibitedActions' | 'handoffPolicy' | 'boundaryPolicy'>;
   capabilities: DigitalEmployee['capabilities'];
@@ -1945,9 +1948,10 @@ const mockChannelRoutes = [
 
 // 渠道控制面：部署、版本化投递策略、失败队列和审计均由同一领域状态持有。
 const channelDeployments: ChannelDeployment[] = [
-  { id: 'delivery-feishu', workspaceId: 'w1', name: '飞书生产投递', kind: 'feishu', environment: 'production', status: 'active', credentialRef: 'vault://channel-deployments/delivery-feishu/credential', credentialMasked: 'app-…prod', owner: '消息平台组', lastVerifiedAt: '2026-07-19T12:00:00.000Z' },
+  { id: 'delivery-feishu', workspaceId: 'w1', name: '飞书生产投递', kind: 'feishu', environment: 'production', status: 'active', credentialRef: 'vault://channel-deployments/delivery-feishu/credential', credentialMasked: 'app-…prod', owner: '消息平台组', lastVerifiedAt: '2026-07-21T12:00:00.000Z', connectionMode: 'webhook', webhookPath: '/api/channel/feishu/events/delivery-feishu' },
   { id: 'delivery-email', workspaceId: 'w1', name: '邮件生产投递', kind: 'email', environment: 'production', status: 'active', credentialRef: 'vault://channel-deployments/delivery-email/credential', credentialMasked: 'smtp-…prod', owner: '消息平台组', lastVerifiedAt: '2026-07-19T12:00:00.000Z' },
 ];
+const channelInbound: Array<{ id: string; workspaceId: string; deploymentId: string; text?: string; eventType?: string; receivedAt: string }> = [];
 const deliveryPolicies: DeliveryPolicyDraft[] = [
   { id: 'delivery-policy-p0', workspaceId: 'w1', eventType: 'P0 紧急告警', primaryDeploymentId: 'delivery-feishu', fallbackDeploymentIds: ['delivery-email'], audience: 'SRE 值班组', dataClassification: 'internal', status: 'draft', validationIssues: [] },
 ];
@@ -2080,10 +2084,21 @@ function validateRoutingPolicy(policy: RoutingPolicyDraft) {
 }
 
 function providerImpact(providerId: string): ProviderImpact {
-  const routeReferences = routingVersions
-    .filter((version) => [version.snapshot.primaryModelId, ...version.snapshot.fallbackModelIds].some((modelId) => modelById(modelId)?.providerId === providerId))
-    .map((version) => ({ policyId: version.policyId, level: version.snapshot.level, versionId: version.id }));
-  return { providerId, routeReferences, deletionAllowed: routeReferences.length === 0, blockedReason: routeReferences.length ? '供应商被已发布路由引用，需先替换或停用路由。' : undefined };
+  const routeReferences = routingPolicies
+    .filter((policy) => policy.status === 'published')
+    .filter((policy) => [policy.primaryModelId, ...policy.fallbackModelIds].some((modelId) => modelById(modelId)?.providerId === providerId))
+    .map((policy) => {
+      const latest = routingVersions.find((version) => version.policyId === policy.id);
+      return { policyId: policy.id, level: policy.level, versionId: latest?.id ?? '' };
+    });
+  return {
+    providerId,
+    routeReferences,
+    deletionAllowed: routeReferences.length === 0,
+    blockedReason: routeReferences.length
+      ? '供应商被已发布路由引用，请先在「模型路由」取消发布或替换模型后再删除。'
+      : undefined,
+  };
 }
 
 // ============ P11 设置扩展数据 ============
@@ -2464,6 +2479,14 @@ const memoryAudits: MemoryAuditEvent[] = [
   { id: 'ma-1', workspaceId: 'w1', time: '2026-07-21T09:00:00.000Z', actor: '观星', action: '提炼知识候选', target: '告警静默窗口经验', result: 'success', correlationId: 'corr_task_t2' },
   { id: 'ma-2', workspaceId: 'w1', time: '2026-07-21T08:24:00.000Z', actor: '夜航', action: '写入记忆', target: 'Redis OOM 会话上下文', result: 'success', correlationId: 'corr_conversation_cv1' },
 ];
+const evolveCandidates: EvolveCandidate[] = [
+  {
+    id: 'evolve-1', workspaceId: 'w1', kind: 'memory_promote', status: 'pending_review',
+    title: '会话偏好晋升候选', summary: '用户偏好：以后默认用邮件催办',
+    submittedAt: '2026-07-21T10:00:00.000Z', createdBy: '夜航',
+    payload: { targetLayer: 'working', title: '用户偏好 · 邮件催办', content: '以后默认用邮件催办', scope: 'user', confidence: 0.9 },
+  },
+];
 
 // ============ 运行时 Mock 领域状态 ============
 // 让会话中的行动、审批、任务、审计和通知共享同一份数据。
@@ -2509,7 +2532,10 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // Mock 阶段也执行服务端式的职责边界：前端隐藏按钮不构成授权校验。
   if (identity && path !== '/api/auth/login') {
-    if (identity.role === 'auditor' && method !== 'GET') throw new Error('E_AUDITOR_READ_ONLY: 审计用户仅可读取证据，不能修改平台资源');
+    const evolveCountersign = /^\/api\/evolve\/candidates\/[^/]+\/(approve|reject)$/.test(path);
+    if (identity.role === 'auditor' && method !== 'GET' && !evolveCountersign) {
+      throw new Error('E_AUDITOR_READ_ONLY: 审计用户仅可读取证据，不能修改平台资源');
+    }
     if (identity.role === 'user' && (path.startsWith('/api/model') || path.startsWith('/api/channel') || path.startsWith('/api/access'))) {
       throw new Error('E_ROLE_FORBIDDEN: 普通用户无权管理平台能力或访问治理');
     }
@@ -2811,6 +2837,127 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/memory/policy' && method === 'PATCH') { evaluateZeroTrust({ resource: 'memory', action: 'write' }); requireAdministrator('更新记忆策略'); const body = (opts.body ?? {}) as Partial<MemoryPolicy>; let policy = memoryPolicies.find((item) => item.workspaceId === currentWorkspaceId); if (!policy) { policy = { workspaceId: currentWorkspaceId, shortTermTtlHours: 24, workingMemoryTtlDays: 30, dailyRefinementTime: '02:00', shortToWorkingEnabled: true, workingToLongEnabled: true, longToKnowledgeEnabled: true, minimumConfidence: .85, longTermWriteApproval: true, sensitiveDataMasking: true, longTermCapacity: 5000, usedCapacity: 0 }; memoryPolicies.push(policy); } Object.assign(policy, body, { workspaceId: currentWorkspaceId }); memoryAudit('更新记忆策略', '记忆策略'); return policy; }
   if (path === '/api/memory/audit' && method === 'GET') return memoryAudits.filter(inCurrentWorkspace);
 
+  // Phase 4 Self-Evolution
+  if (path === '/api/evolve/candidates' && method === 'GET') return evolveCandidates.filter(inCurrentWorkspace);
+  if (path === '/api/evolve/dream/run' && method === 'POST') {
+    evaluateZeroTrust({ resource: 'memory', action: 'write' });
+    requireAdministrator('执行 Dream 压缩');
+    const policy = memoryPolicies.find((item) => item.workspaceId === currentWorkspaceId);
+    if (policy && policy.shortToWorkingEnabled === false) return { applied: 0, candidates: [] };
+    const bySource = new Map<string, MemoryRecord[]>();
+    memoryRecords.filter((item) => inCurrentWorkspace(item) && item.layer === 'short_term' && item.status === 'active').forEach((item) => {
+      const list = bySource.get(item.sourceId) ?? [];
+      list.push(item);
+      bySource.set(item.sourceId, list);
+    });
+    let applied = 0;
+    const now = new Date().toISOString();
+    const created: EvolveCandidate[] = [];
+    bySource.forEach((shorts, sourceId) => {
+      if (shorts.length < 3) return;
+      if (memoryRecords.some((item) => item.layer === 'working' && item.sourceId === sourceId && (item as any).sourceType === 'dream_compress' && item.status === 'active')) return;
+      const content = `Dream 压缩（会话摘要）：\n${shorts.slice(0, 8).map((s) => `- ${s.title}：${s.content.slice(0, 160)}`).join('\n')}`;
+      const working: MemoryRecord = {
+        id: mockId('memory_dream'), workspaceId: currentWorkspaceId, ownerId: identity?.id ?? 'u1',
+        layer: 'working', scope: 'team', title: `Dream 压缩 · ${sourceId.slice(0, 24)}`, content,
+        classification: 'internal', sourceType: 'manual', sourceId, correlationId: mockId('dream_corr'),
+        confidence: 0.88, status: 'active', expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+        createdAt: now, updatedAt: now,
+      };
+      (working as any).sourceType = 'dream_compress';
+      memoryRecords.unshift(working);
+      shorts.forEach((s) => { s.status = 'expired'; s.updatedAt = now; });
+      const cand: EvolveCandidate = {
+        id: mockId('evolve'), workspaceId: currentWorkspaceId, kind: 'dream', status: 'applied',
+        title: 'Dream 压缩已应用', summary: `合并 ${shorts.length} 条短期记忆 → 工作记忆 ${working.id}`,
+        submittedAt: now, reviewedAt: now, reviewer: 'dream',
+        payload: { workingMemoryId: working.id, count: shorts.length },
+      };
+      evolveCandidates.unshift(cand);
+      created.push(cand);
+      applied += 1;
+      memoryAudit('Dream压缩', cand.title, 'success', working.correlationId);
+    });
+    return { applied, candidates: created };
+  }
+  const evolveRoute = path.match(/^\/api\/evolve\/candidates\/([^/]+)\/(approve|reject)$/);
+  if (evolveRoute && method === 'POST') {
+    evaluateZeroTrust({ resource: 'memory', action: 'write' });
+    const cand = evolveCandidates.find((item) => item.id === evolveRoute[1]);
+    if (!cand || !inCurrentWorkspace(cand)) throw new Error('E_WORKSPACE_SCOPE: 无权操作其他工作区候选');
+    const action = evolveRoute[2];
+    const role = identity?.role ?? 'admin';
+    if (action === 'reject') {
+      if (role !== 'admin' && role !== 'auditor') throw new Error('E_ADMIN_REQUIRED: 拒绝自进化候选仅限管理员或审计员');
+      cand.status = 'rejected'; cand.reviewedAt = new Date().toISOString(); cand.reviewer = workspaceContext().actor;
+      memoryAudit('拒绝自进化候选', cand.title); return cand;
+    }
+    const needsDual = cand.kind === 'skill_patch' || cand.kind === 'routing_hint';
+    if (needsDual) {
+      const signers = cand.signers ?? [];
+      if (signers.some((sg) => sg.userId === identity?.id)) throw new Error('E_BAD_REQUEST: 同一人不可重复会签');
+      if (cand.status === 'pending_review') {
+        if (role !== 'admin') throw new Error('E_ADMIN_REQUIRED: 技能/路由候选首签仅限管理员');
+        cand.signers = [...signers, { userId: identity?.id, name: workspaceContext().actor, role, signedAt: new Date().toISOString() }];
+        cand.status = 'pending_countersign';
+        cand.firstReviewer = workspaceContext().actor;
+        memoryAudit('自进化首签', cand.title); return cand;
+      }
+      if (cand.status === 'pending_countersign') {
+        if (role !== 'auditor' && role !== 'admin') throw new Error('E_ADMIN_REQUIRED: 会签仅限审计员或另一管理员');
+        cand.signers = [...signers, { userId: identity?.id, name: workspaceContext().actor, role, signedAt: new Date().toISOString() }];
+      } else throw new Error('E_BAD_REQUEST: 候选已审或已应用');
+    } else {
+      requireAdministrator('审核自进化候选');
+      if (cand.status !== 'pending_review') throw new Error('E_BAD_REQUEST: 候选已审或已应用');
+    }
+    if (cand.kind === 'memory_promote') {
+      const payload = (cand.payload ?? {}) as Record<string, any>;
+      const now = new Date().toISOString();
+      const record: MemoryRecord = {
+        id: mockId('memory'), workspaceId: currentWorkspaceId, ownerId: identity?.id ?? 'u1',
+        layer: 'working', scope: (payload.scope as MemoryRecord['scope']) ?? 'team',
+        title: String(payload.title ?? cand.title), content: String(payload.content ?? cand.summary),
+        classification: 'internal', sourceType: 'manual', sourceId: cand.conversationId ?? cand.id,
+        correlationId: cand.correlationId ?? mockId('evolve_corr'), confidence: Number(payload.confidence ?? 0.9),
+        status: 'active', createdAt: now, updatedAt: now,
+        expiresAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+      };
+      memoryRecords.unshift(record);
+      cand.effect = { memoryId: record.id, layer: 'working' };
+    } else if (cand.kind === 'routing_hint') {
+      cand.effect = { routingPolicyId: mockId('rp'), status: 'draft' };
+    } else if (cand.kind === 'skill_patch') {
+      cand.effect = { skillDraftId: mockId('skill_draft'), status: 'draft' };
+    }
+    cand.status = 'approved'; cand.reviewedAt = new Date().toISOString(); cand.reviewer = workspaceContext().actor;
+    memoryAudit('通过自进化候选', cand.title); return cand;
+  }
+  const feedbackRoute = path.match(/^\/api\/copilot\/conversations\/([^/]+)\/messages\/([^/]+)\/feedback$/);
+  if (feedbackRoute && method === 'POST') {
+    const [, , mid] = feedbackRoute;
+    const body = (opts.body ?? {}) as { kind?: string; comment?: string; tags?: string[] };
+    const kind = (body.kind ?? '').toLowerCase();
+    if (kind !== 'like' && kind !== 'dislike' && kind !== 'none' && kind !== '') throw new Error('E_BAD_REQUEST: kind 仅支持 like / dislike / none');
+    if (kind === 'none' || kind === '') return { ok: true, messageId: mid, feedback: null };
+    const fb = { kind, comment: body.comment, tags: body.tags, ratedBy: workspaceContext().actor, ratedAt: new Date().toISOString() };
+    let evolveCandidate: EvolveCandidate | undefined;
+    if (kind === 'like' || kind === 'dislike') {
+      evolveCandidate = {
+        id: mockId('evolve'), workspaceId: currentWorkspaceId,
+        kind: kind === 'like' ? 'memory_promote' : 'skill_patch',
+        status: 'pending_review',
+        title: kind === 'like' ? '点赞晋升候选' : '点踩修正候选',
+        summary: body.comment || (kind === 'like' ? '用户点赞该回答' : '用户点踩，请审核提示词补丁'),
+        messageId: mid, submittedAt: new Date().toISOString(), createdBy: workspaceContext().actor,
+        feedbackKind: kind,
+      };
+      evolveCandidates.unshift(evolveCandidate);
+      memoryAudit('反馈自进化', evolveCandidate.title);
+    }
+    return { ok: true, messageId: mid, feedback: fb, evolveCandidate };
+  }
+
   // 任务：所有写操作都经由受控任务领域，保证版本、审计和通知一致。
   const canReadTask = (task: ControlledTask) => !identity || isAdministrator || task.ownerId === identity.id || task.createdBy === identity.id || task.assignee === identity.name;
   const canChangeTask = (task: ControlledTask) => !identity || isAdministrator || task.ownerId === identity.id || task.createdBy === identity.id || task.assignee === identity.name;
@@ -2847,9 +2994,27 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/digital-employee-template-adoptions' && method === 'GET') return mockDigitalEmployeeTemplateAdoptions.filter((item) => item.workspaceId === currentWorkspaceId);
   // 数字员工仅能从各能力中心已准入/已发布资产中选择，不能由前端手填名称。
   if (path === '/api/digital-employee-capability-catalog' && method === 'GET') {
-    const modelOptions = modelProviders.filter((provider) => provider.workspaceId === currentWorkspaceId && provider.status === 'active').flatMap((provider) => provider.models.filter((model) => model.status === 'available').map((model) => ({ id: model.id, name: model.name, meta: `${provider.name} · ${model.cloudRegion}` })));
+    const allModels = modelProviders.flatMap((provider) => provider.models.map((model) => ({ ...model, providerName: provider.name, providerStatus: provider.status, providerWorkspaceId: provider.workspaceId })));
+    const routeOptions = routingPolicies
+      .filter((policy) => policy.workspaceId === currentWorkspaceId && policy.status === 'published')
+      .map((policy) => {
+        const primary = allModels.find((m) => m.id === policy.primaryModelId);
+        const routeName = (policy as { name?: string }).name?.trim() || `${policy.level} 路由`;
+        return { id: policy.id, name: routeName, meta: `已发布策略 ${policy.level} · 主模型 ${primary?.name ?? policy.primaryModelId}` };
+      });
+    const providerModelOptions = modelProviders
+      .filter((provider) => provider.workspaceId === currentWorkspaceId && (provider.status === 'active' || provider.status === 'standby'))
+      .flatMap((provider) => provider.models
+        .filter((model) => model.status === 'available' && (model.capabilities?.some((c) => /chat|reasoning/i.test(c)) ?? true))
+        .map((model) => ({ id: model.id, name: model.name, meta: `对话模型 · ${provider.name} · ${model.cloudRegion}` })));
+    const seen = new Set<string>();
+    const models = [...routeOptions, ...providerModelOptions].filter((item) => {
+      if (seen.has(item.name)) return false;
+      seen.add(item.name);
+      return true;
+    });
     const knowledgeOptions = mockKnowledgePackages.filter(inCurrentWorkspace).filter((item) => item.status === 'published').map((item) => ({ id: item.id, name: item.name, meta: `${item.domain} · ${item.currentVersion.version}` }));
-    const capabilityAssets = mockSkills.filter(inCurrentWorkspace).map(skillAsset).filter((item) => item.lifecycleStatus === 'enabled');
+    const capabilityAssets = mockSkills.filter(inCurrentWorkspace).map(skillAsset).filter((item) => item.lifecycleStatus === 'enabled' || item.lifecycleStatus === 'installed' || item.status === 'installed');
     const skillOptions = capabilityAssets.filter((item) => item.kind === 'skill').map((item) => ({ id: item.id, name: item.name, meta: `技能 · ${item.version}` }));
     const toolOptions = capabilityAssets.filter((item) => item.kind === 'tool' || item.kind === 'mcp').map((item) => ({ id: item.id, name: item.name, meta: item.kind === 'mcp' ? `MCP · ${item.version}` : `工具 · ${item.version}` }));
     const workflowSkillOptions = mockWorkflowSkills.filter((item) => item.status === 'published').map((item) => ({ id: item.id, name: item.name, meta: `流程技能 · ${item.sourceVersionId}` }));
@@ -2857,8 +3022,11 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       ...workflowSkillOptions,
       ...[{ ...mockWorkflow, workspaceId: currentWorkspaceId, lifecycleStatus: mockWorkflow.status }].filter((item) => item.status === 'active').map((item) => ({ id: item.id, name: item.name, meta: `工作流 · ${item.nodes.length} 个节点` })),
     ];
-    const channelOptions = mockChannels.filter((item) => item.enabled).map((item) => ({ id: item.id, name: item.name, meta: `渠道 · ${item.kind}` }));
-    return { models: modelOptions, knowledge: knowledgeOptions, skills: skillOptions, tools: toolOptions, workflows: workflowOptions, channels: channelOptions };
+    const channelOptions = [
+      { id: 'ch-web', name: 'Web', meta: '渠道 · web' },
+      ...mockChannels.filter((item) => item.enabled).map((item) => ({ id: item.id, name: item.name, meta: `渠道 · ${item.kind}` })),
+    ];
+    return { models, knowledge: knowledgeOptions, skills: skillOptions, tools: toolOptions, workflows: workflowOptions, channels: channelOptions };
   }
   if (path === '/api/digital-employee-templates' && method === 'POST') {
     requireAdministrator('发布部门岗位模板');
@@ -2968,10 +3136,11 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       JSON.stringify(employee.memoryPolicy) !== JSON.stringify(body.memoryPolicy) ? '记忆策略' : null,
       ['name', 'role', 'department', 'description', 'owner', 'escalationOwner', 'serviceObject', 'risk', 'environment'].some((key) => (employee as any)[key] !== (body.profile as any)[key]) ? '岗位档案' : null,
     ].filter(Boolean) as string[];
-    const requiresApproval = employee.lifecycle === 'active' || body.profile.environment === 'production' || body.profile.risk === 'high';
+    const requiresApproval = body.scope !== 'capability'
+      && (employee.lifecycle === 'active' || body.profile.environment === 'production' || body.profile.risk === 'high');
     const revisions = mockDigitalEmployeeConfigurationVersions.filter((item) => item.employeeId === employee.id).length + 1;
     const executionElevated = policy.capabilityModes.some((item) => item.mode === 'execute');
-    const version: DigitalEmployeeConfigurationVersion = { id: mockId('digital_employee_config'), employeeId: employee.id, version: `配置 v${revisions}`, status: requiresApproval ? 'pending_approval' : 'current', changeSummary: requiresApproval ? `${executionElevated ? '包含可执行授权；' : ''}生产、在岗或高风险配置变更，等待审批后生效` : '更新岗位授权契约', changedFields: changedFields.length ? changedFields : ['职责与边界'], updatedBy: identity.name, updatedById: identity.id, updatedAt: new Date().toISOString() };
+    const version: DigitalEmployeeConfigurationVersion = { id: mockId('digital_employee_config'), employeeId: employee.id, version: `配置 v${revisions}`, status: requiresApproval ? 'pending_approval' : 'current', changeSummary: requiresApproval ? `${executionElevated ? '包含可执行授权；' : ''}生产、在岗或高风险配置变更，等待审批后生效` : (body.scope === 'capability' ? '更新能力装配' : '更新岗位授权契约'), changedFields: changedFields.length ? changedFields : ['职责与边界'], updatedBy: identity.name, updatedById: identity.id, updatedAt: new Date().toISOString() };
     if (requiresApproval) { mockDigitalEmployeeConfigurationDrafts.set(version.id, body); workspaceAudit(currentWorkspaceId, '提交员工受控配置变更', `${employee.role} · ${employee.name} · ${version.version}`); }
     else { mockDigitalEmployeeConfigurationVersions.filter((item) => item.employeeId === employee.id && item.status === 'current').forEach((item) => { item.status = 'superseded'; }); applyDigitalEmployeeConfiguration(employee, body); workspaceAudit(currentWorkspaceId, '更新员工配置', `${employee.role} · ${employee.name} · ${version.version}`); }
     mockDigitalEmployeeConfigurationVersions.unshift(version); return { ...version, requiresApproval };
@@ -3026,10 +3195,14 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       const capabilityCount = employee.capabilities.skills.length + employee.capabilities.tools.length + employee.capabilities.workflows.length;
       if (!employee.capabilities.model || capabilityCount === 0) throw new Error('E_DIGITAL_EMPLOYEE_CAPABILITY_REQUIRED: 请先装配已发布模型与至少一项技能/工具/流程技能');
       if (employee.evaluation.status !== 'passed') throw new Error('E_DIGITAL_EMPLOYEE_EVALUATION_REQUIRED: 质量评测未通过，无法申请上岗');
-      if (employee.release.status === 'pending_approval') throw new Error('E_DIGITAL_EMPLOYEE_RELEASE_PENDING: 上岗申请已提交，等待双重审批');
       if (employee.release.status === 'released' && employee.lifecycle === 'active') throw new Error('E_DIGITAL_EMPLOYEE_ALREADY_RELEASED: 员工已上岗');
-      employee.lifecycle = 'pending_approval';
-      employee.release = { status: 'pending_approval', requestedBy: identity.name, requestedById: identity.id };
+      employee.lifecycle = 'active';
+      employee.release = {
+        status: 'released',
+        releasedAt: new Date().toISOString(),
+        requestedBy: identity.name,
+        requestedById: identity.id,
+      };
     }
     if (action === 'lifecycle' && method === 'POST') {
       const target = body.lifecycle as DigitalEmployee['lifecycle'];
@@ -3040,10 +3213,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
           if (!body.confirmed) throw new Error('E_DIGITAL_EMPLOYEE_RESUME_CONFIRM_REQUIRED: 恢复运行前请确认异常已处置并保留证据');
           employee.opsControl = { lastAction: 'resumed', reason: reason || '确认异常已处置并保留证据', actor: identity.name, at: new Date().toISOString() };
         } else if (employee.release.status === 'pending_approval') {
-          requireAdministrator('确认双重审批上岗');
-          if (employee.release.requestedById && employee.release.requestedById === identity.id) {
-            throw new Error('E_SOD_SELF_APPROVAL: 上岗申请人不能批准自己的申请');
-          }
+          // 兼容历史「待双重审批」记录：确认即可上岗，不再做申请人/批准人分离。
           employee.release = {
             status: 'released',
             releasedAt: new Date().toISOString(),
@@ -3053,7 +3223,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
             approverId: identity.id,
           };
         } else {
-          throw new Error('E_DIGITAL_EMPLOYEE_RELEASE_REQUIRED: 须先完成评测并经双重审批后方可上岗');
+          throw new Error('E_DIGITAL_EMPLOYEE_RELEASE_REQUIRED: 须先完成评测并申请上岗');
         }
       }
       if ((target === 'paused' || target === 'quarantined') && employee.lifecycle !== 'active' && employee.lifecycle !== 'paused') {
@@ -4405,7 +4575,32 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     const integration = mockSkillIntegrations.find((item) => item.id === integrationAction[1]);
     if (!integration) throw new Error('接入任务不存在');
     const body = (opts.body ?? {}) as Partial<SkillIntegration>;
-    if (integrationAction[2] === 'test' && method === 'POST') { integration.lastVerifiedAt = '刚刚'; integration.health = integration.status === 'failed' ? 'attention' : 'healthy'; appendControlPlaneAudit('skill', '执行接入连通性验证', integration.name, integration.health === 'healthy' ? 'success' : 'failed'); return integration; }
+    if (integrationAction[2] === 'test' && method === 'POST') {
+      const verifiedAt = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      if (!integration.skillId && integration.credentialRef?.startsWith('vault://skills/')) {
+        integration.skillId = integration.credentialRef.split('/')[3];
+      }
+      if (integration.type === 'skill' && integration.skillId) {
+        const linked = mockSkills.find((item) => item.id === integration.skillId);
+        if (!linked) {
+          integration.lastVerifiedAt = verifiedAt;
+          integration.health = 'attention';
+          integration.status = 'failed';
+          integration.lastError = '关联技能不存在或已卸载';
+          appendControlPlaneAudit('skill', '执行接入连通性验证', integration.name, 'failed');
+          throw new Error(integration.lastError);
+        }
+        (linked as any).lastVerifiedAt = verifiedAt;
+      }
+      integration.lastVerifiedAt = verifiedAt;
+      delete integration.lastError;
+      integration.health = 'healthy';
+      if (integration.status === 'validating' || integration.status === 'draft' || integration.status === 'failed') {
+        integration.status = 'enabled';
+      }
+      appendControlPlaneAudit('skill', '执行接入连通性验证', integration.name, 'success');
+      return integration;
+    }
     if (integrationAction[2] === 'discover' && method === 'POST') { if (integration.status === 'failed') throw new Error(integration.lastError ?? '接入验证未通过'); integration.discoveredCapabilities = integration.discoveredCapabilities || (integration.type === 'mcp' ? 12 : integration.type === 'tool' ? 6 : 1); integration.status = integration.writeApprovalRequired && integration.environment === 'production' ? 'pending_approval' : 'enabled'; appendControlPlaneAudit('skill', '发现接入能力', integration.name); return integration; }
     if (integrationAction[2] === 'lifecycle' && method === 'PATCH') { Object.assign(integration, body); appendControlPlaneAudit('skill', '更新接入任务状态', `${integration.name}:${integration.status}`); return integration; }
   }
@@ -4574,6 +4769,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     mockSkillIntegrations.unshift({
       id: mockId('integration'), name: skill.name, type: 'skill', environment: 'test', status: 'enabled', owner: '当前用户',
       endpoint: `package://${skill.name}@${skill.version}`, credentialRef: `vault://skills/${skill.id}/runtime`,
+      skillId: skill.id,
       lastVerifiedAt: '刚刚', health: 'healthy', discoveredCapabilities: 1, writeApprovalRequired: false, allowedEgress: [],
     });
     appendControlPlaneAudit('skill', '导入技能包', `${skill.name}@${skill.version}`);
@@ -4818,7 +5014,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     appendModelAudit(opts, '创建路由草稿', policy.level, 'success');
     return policy;
   }
-  const policyAction = path.match(/^\/api\/model-routing\/policies\/([^/]+)(?:\/(draft|validate|publish|versions|rollback))?$/);
+  const policyAction = path.match(/^\/api\/model-routing\/policies\/([^/]+)(?:\/(draft|validate|publish|unpublish|versions|rollback))?$/);
   if (policyAction) {
     const [, policyId, action] = policyAction;
     const policy = routingPolicies.find((item) => item.id === policyId);
@@ -4848,6 +5044,16 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       policy.status = 'published';
       appendModelAudit(opts, '发布路由版本', policy.level, 'success', { reason: body.reason, policyVersion: version.id });
       return version;
+    }
+    if (method === 'POST' && action === 'unpublish') {
+      if (policy.status !== 'published') {
+        appendModelAudit(opts, '取消发布路由', policy.level, 'failed', { reason: '仅已发布路由可取消发布' });
+        throw new Error('E_POLICY_NOT_PUBLISHED: 仅已发布路由可取消发布');
+      }
+      policy.status = 'draft';
+      policy.validationIssues = [];
+      appendModelAudit(opts, '取消发布路由', policy.level, 'success', { reason: body.reason });
+      return { ...policy, fallbackModelIds: [...policy.fallbackModelIds], validationIssues: [...policy.validationIssues] };
     }
     if (method === 'POST' && action === 'rollback') {
       const target = routingVersions.find((version) => version.id === body.versionId && version.policyId === policy.id);
@@ -4951,9 +5157,94 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/channel-control/deployments' && method === 'GET') { const context = requireChannel(opts, 'channel.read'); return channelDeployments.filter((item) => item.workspaceId === context.workspaceId).map((item) => ({ ...item })); }
   if (path === '/api/channel-control/deployments' && method === 'POST') {
     const body = (opts.body ?? {}) as any; const context = requireChannel(opts, 'channel.write', body.workspaceId ?? 'w1');
-    if (!body.name?.trim() || !body.kind || !body.credential?.trim()) throw new Error('E_CHANNEL_DEPLOYMENT_INVALID: 名称、类型和凭据不能为空');
-    const id = mockId('channel_deployment'); const deployment: ChannelDeployment = { id, workspaceId: context.workspaceId, name: body.name.trim(), kind: body.kind, environment: body.environment ?? 'sandbox', status: 'draft', credentialRef: `vault://channel-deployments/${id}/credential`, credentialMasked: '••••••••', owner: body.owner?.trim() || context.actor };
+    const kind = String(body.kind ?? '');
+    const isFeishu = kind === 'feishu' || kind === 'lark';
+    const isDingtalk = kind === 'dingtalk';
+    const isWecom = kind === 'wecom';
+    const isWeixin = kind === 'weixin' || kind === 'wechat';
+    let appId = String(body.appId ?? body.app_id ?? '').trim();
+    let appSecret = String(body.appSecret ?? body.app_secret ?? body.credential ?? '').trim();
+    if (!body.name?.trim() || !kind) throw new Error('E_CHANNEL_DEPLOYMENT_INVALID: 名称和类型不能为空');
+    if (isFeishu) {
+      if (!appId && appSecret.includes(':')) {
+        const i = appSecret.indexOf(':');
+        appId = appSecret.slice(0, i);
+        appSecret = appSecret.slice(i + 1);
+      }
+      if (!appId && appSecret) appId = 'cli_legacy';
+      if (!appId || !appSecret) throw new Error('E_CHANNEL_DEPLOYMENT_INVALID: 飞书接入需要 appId 与 appSecret');
+    } else if (isDingtalk) {
+      const clientId = String(body.clientId ?? body.client_id ?? body.appId ?? '').trim();
+      const clientSecret = String(body.clientSecret ?? body.client_secret ?? body.credential ?? '').trim();
+      if (!clientId || !clientSecret) throw new Error('E_CHANNEL_DEPLOYMENT_INVALID: 钉钉接入需要 clientId 与 clientSecret');
+    } else if (isWecom) {
+      const mode = body.connectionMode === 'websocket' || body.mode === 'websocket' ? 'websocket' : 'webhook';
+      if (mode === 'websocket') {
+        if (!String(body.botId ?? body.bot_id ?? '').trim() || !String(body.botSecret ?? body.bot_secret ?? '').trim()) {
+          throw new Error('E_CHANNEL_DEPLOYMENT_INVALID: 企微 websocket 需要 botId 与 botSecret');
+        }
+      } else if (!String(body.corpId ?? body.corp_id ?? '').trim() || !String(body.corpSecret ?? body.corp_secret ?? body.credential ?? '').trim() || !String(body.agentId ?? body.agent_id ?? '').trim()) {
+        throw new Error('E_CHANNEL_DEPLOYMENT_INVALID: 企微自建应用需要 corpId/corpSecret/agentId');
+      }
+    } else if (isWeixin) {
+      if (!String(body.token ?? body.credential ?? '').trim()) throw new Error('E_CHANNEL_DEPLOYMENT_INVALID: 个人微信需要 token');
+    } else if (!String(body.credential ?? '').trim()) {
+      throw new Error('E_CHANNEL_DEPLOYMENT_INVALID: 名称、类型和凭据不能为空');
+    }
+    const id = mockId('channel_deployment');
+    const masked = isFeishu ? `••••${(appId || 'xxxx').slice(-4)}`
+      : isDingtalk ? `••••${String(body.clientId ?? body.client_id ?? 'xxxx').slice(-4)}`
+        : isWecom ? `••••${String(body.corpId ?? body.botId ?? 'xxxx').slice(-4)}`
+          : isWeixin ? `••••${String(body.token ?? 'xxxx').slice(-4)}`
+            : '••••••••';
+    const feishuMode = (body.connectionMode === 'websocket' || body.connectionMode === 'long_connection' || body.connectionMode === 'ws')
+      ? 'websocket' : (isFeishu ? 'webhook' : undefined);
+    const webhookPath = (isFeishu && feishuMode === 'webhook') ? `/api/channel/feishu/events/${id}`
+      : (isWecom && body.connectionMode !== 'websocket') ? `/api/channel/wecom/events/${id}`
+        : (isDingtalk && body.connectionMode === 'webhook') ? `/api/channel/dingtalk/events/${id}`
+          : undefined;
+    const mode = isFeishu
+      ? feishuMode
+      : isDingtalk
+        ? (body.connectionMode === 'webhook' ? 'webhook' : 'stream')
+        : isWecom
+          ? (body.connectionMode === 'websocket' || body.mode === 'websocket' ? 'websocket' : 'webhook')
+          : isWeixin ? 'long_poll' : undefined;
+    const deployment: ChannelDeployment = {
+      id, workspaceId: context.workspaceId, name: body.name.trim(), kind: kind as ChannelKind,
+      environment: body.environment ?? 'sandbox', status: 'draft',
+      credentialRef: `vault://channel-deployments/${id}/credential`, credentialMasked: masked,
+      owner: body.owner?.trim() || context.actor,
+      ...(isFeishu ? {
+        domain: String(body.domain || 'https://open.feishu.cn').trim(),
+        appIdMasked: masked, connectionMode: mode as ChannelDeployment['connectionMode'],
+        ...(webhookPath ? { webhookPath } : {}),
+        hasEncryptKey: feishuMode === 'webhook' && Boolean(String(body.encryptKey ?? body.encrypt_key ?? '').trim()),
+        hasVerificationToken: feishuMode === 'webhook' && Boolean(String(body.verificationToken ?? body.verification_token ?? '').trim()),
+      } : {}),
+      ...(isDingtalk ? {
+        domain: String(body.domain || 'https://api.dingtalk.com').trim(),
+        clientIdMasked: masked, robotCode: String(body.robotCode ?? body.robot_code ?? body.clientId ?? '').trim() || undefined,
+        connectionMode: mode as ChannelDeployment['connectionMode'], webhookPath,
+      } : {}),
+      ...(isWecom ? {
+        domain: String(body.apiBaseUrl ?? body.api_base_url ?? 'https://qyapi.weixin.qq.com').trim(),
+        corpIdMasked: masked, agentId: String(body.agentId ?? body.agent_id ?? '').trim() || undefined,
+        connectionMode: mode as ChannelDeployment['connectionMode'], webhookPath,
+        hasCallbackToken: Boolean(String(body.callbackToken ?? '').trim()),
+        hasCallbackAesKey: Boolean(String(body.callbackAesKey ?? '').trim()),
+      } : {}),
+      ...(isWeixin ? {
+        domain: String(body.baseUrl ?? body.base_url ?? 'https://ilinkai.weixin.qq.com').trim(),
+        tokenMasked: masked, accountId: String(body.accountId ?? '').trim() || undefined,
+        connectionMode: 'long_poll',
+      } : {}),
+    };
     channelDeployments.unshift(deployment); appendChannelAudit(opts, '接入渠道部署', deployment.name, 'success', { reason: body.reason }); return deployment;
+  }
+  if (path === '/api/channel-control/inbound' && method === 'GET') {
+    const context = requireChannel(opts, 'channel.read');
+    return channelInbound.filter((item) => item.workspaceId === context.workspaceId);
   }
   const deploymentAction = path.match(/^\/api\/channel-control\/deployments\/([^/]+)(?:\/(verify|disable|impact))?$/);
   if (deploymentAction) {
@@ -4962,6 +5253,65 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     requireChannel(opts, 'channel.write', deployment.workspaceId); const body = (opts.body ?? {}) as any;
     if (method === 'POST' && action === 'verify') { deployment.lastVerifiedAt = new Date().toISOString(); deployment.status = 'active'; appendChannelAudit(opts, '验证渠道连通性', deployment.name, 'success', { reason: body.reason }); return deployment; }
     if (method === 'POST' && action === 'disable') { deployment.status = 'disabled'; appendChannelAudit(opts, '停用渠道部署', deployment.name, 'success', { reason: body.reason }); return deployment; }
+    if (method === 'PATCH' && !action) {
+      if (typeof body.name === 'string' && body.name.trim()) deployment.name = body.name.trim();
+      if (body.environment === 'production' || body.environment === 'sandbox') deployment.environment = body.environment;
+      if (typeof body.owner === 'string' && body.owner.trim()) deployment.owner = body.owner.trim();
+      if (body.status === 'active' || body.status === 'disabled' || body.status === 'draft' || body.status === 'offline') deployment.status = body.status;
+      if (typeof body.domain === 'string' && body.domain.trim()) deployment.domain = body.domain.trim();
+      const nextMode = typeof body.connectionMode === 'string' ? String(body.connectionMode) : undefined;
+      if (nextMode) {
+        const normalized = (nextMode === 'ws' || nextMode === 'long_connection') ? 'websocket' : nextMode;
+        deployment.connectionMode = normalized as ChannelDeployment['connectionMode'];
+      }
+      const kind = deployment.kind;
+      const mode = deployment.connectionMode;
+      if (kind === 'feishu' || kind === 'lark') {
+        if (typeof body.appId === 'string' && body.appId.trim()) deployment.appIdMasked = `••••${body.appId.trim().slice(-4)}`;
+        if (typeof body.appSecret === 'string' && body.appSecret.trim()) deployment.credentialMasked = deployment.appIdMasked ?? deployment.credentialMasked;
+        if (mode === 'webhook') {
+          deployment.webhookPath = `/api/channel/feishu/events/${id}`;
+          if (body.encryptKey !== undefined) deployment.hasEncryptKey = Boolean(String(body.encryptKey).trim());
+          if (body.verificationToken !== undefined) deployment.hasVerificationToken = Boolean(String(body.verificationToken).trim());
+        } else {
+          delete deployment.webhookPath;
+          delete deployment.webhookUrl;
+          delete deployment.hasEncryptKey;
+          delete deployment.hasVerificationToken;
+        }
+      } else if (kind === 'dingtalk') {
+        if (typeof body.clientId === 'string' && body.clientId.trim()) {
+          deployment.clientIdMasked = `••••${body.clientId.trim().slice(-4)}`;
+          deployment.credentialMasked = deployment.clientIdMasked;
+        }
+        if (typeof body.robotCode === 'string') deployment.robotCode = body.robotCode.trim() || undefined;
+        if (mode === 'webhook') deployment.webhookPath = `/api/channel/dingtalk/events/${id}`;
+        else { delete deployment.webhookPath; delete deployment.webhookUrl; }
+      } else if (kind === 'wecom') {
+        if (mode === 'websocket') {
+          if (typeof body.botId === 'string' && body.botId.trim()) {
+            deployment.corpIdMasked = `••••${body.botId.trim().slice(-4)}`;
+            deployment.credentialMasked = deployment.corpIdMasked;
+          }
+          delete deployment.webhookPath; delete deployment.webhookUrl;
+        } else {
+          if (typeof body.corpId === 'string' && body.corpId.trim()) {
+            deployment.corpIdMasked = `••••${body.corpId.trim().slice(-4)}`;
+            deployment.credentialMasked = deployment.corpIdMasked;
+          }
+          if (typeof body.agentId === 'string') deployment.agentId = body.agentId.trim() || undefined;
+          deployment.webhookPath = `/api/channel/wecom/events/${id}`;
+        }
+      } else if (kind === 'weixin' || kind === 'wechat') {
+        if (typeof body.token === 'string' && body.token.trim()) {
+          deployment.tokenMasked = `••••${body.token.trim().slice(-4)}`;
+          deployment.credentialMasked = deployment.tokenMasked;
+        }
+        if (typeof body.accountId === 'string') deployment.accountId = body.accountId.trim() || undefined;
+      }
+      appendChannelAudit(opts, '更新渠道部署', deployment.name, 'success', { reason: body.reason });
+      return { ...deployment };
+    }
     if (method === 'DELETE' && !action) { const referenced = deliveryVersions.some((version) => [version.snapshot.primaryDeploymentId, ...version.snapshot.fallbackDeploymentIds].includes(id)); if (referenced) { appendChannelAudit(opts, '删除渠道部署', deployment.name, 'failed', { reason: '渠道被已发布投递策略引用' }); throw new Error('E_CHANNEL_IN_USE: 渠道被已发布投递策略引用'); } channelDeployments.splice(channelDeployments.indexOf(deployment), 1); appendChannelAudit(opts, '删除渠道部署', deployment.name, 'success', { reason: body.reason }); return { id, status: 'deleted' }; }
   }
   if (path === '/api/channel-control/policies' && method === 'GET') { const context = requireChannel(opts, 'channel.read'); return deliveryPolicies.filter((item) => item.workspaceId === context.workspaceId).map((item) => ({ ...item, fallbackDeploymentIds: [...item.fallbackDeploymentIds], validationIssues: [...item.validationIssues] })); }
@@ -5073,7 +5423,58 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     throw new Error('E_NOT_FOUND: 会话不存在');
   }
   if (path === `/api/conversations/${mockConversation.id}/ex`) return mockConversationEx;
-  if (path === '/api/sessions') return mockSessions.filter(inCurrentWorkspace);
+  if (path === '/api/sessions' && (!opts.method || opts.method === 'GET')) return mockSessions.filter(inCurrentWorkspace);
+  if (path === '/api/sessions' && opts.method === 'POST') {
+    const body = (opts.body ?? {}) as {
+      title?: string;
+      digitalEmployeeId?: string;
+      digitalEmployeeName?: string;
+      modelId?: string;
+    };
+    const id = mockId('sess');
+    const conversationId = mockId('conv');
+    const now = new Date().toISOString();
+    const name = body.digitalEmployeeName ?? '岗位专家';
+    const session = {
+      id,
+      workspaceId: currentWorkspaceId,
+      ownerId: mockIdentity(opts.headers)?.id ?? 'u1',
+      correlationId: mockId('corr_session'),
+      title: body.title ?? '新会话',
+      preview: '暂无消息',
+      agent: name,
+      digitalEmployeeId: body.digitalEmployeeId,
+      digitalEmployeeName: name,
+      conversationId,
+      status: 'active' as const,
+      modelId: body.modelId ?? 'sonnet-4',
+      createdAt: now,
+      updatedAt: now,
+      lastMessageAt: now,
+    };
+    mockSessions.unshift(session as unknown as (typeof mockSessions)[number]);
+    return session;
+  }
+  const sessionDelete = path.match(/^\/api\/sessions\/([^/]+)$/);
+  if (sessionDelete && method === 'DELETE') {
+    const sessionId = sessionDelete[1];
+    const index = mockSessions.findIndex((item) => item.id === sessionId && item.workspaceId === currentWorkspaceId);
+    if (index < 0) throw new Error('E_NOT_FOUND: 会话不存在');
+    const [removed] = mockSessions.splice(index, 1);
+    return { ok: true, id: removed.id, conversationId: (removed as { conversationId?: string }).conversationId };
+  }
+  const conversationDelete = path.match(/^\/api\/conversations\/([^/]+)$/);
+  if (conversationDelete && method === 'DELETE') {
+    const conversationId = conversationDelete[1];
+    // remove linked sessions
+    for (let i = mockSessions.length - 1; i >= 0; i -= 1) {
+      const item = mockSessions[i] as { id: string; workspaceId: string; conversationId?: string };
+      if (item.workspaceId === currentWorkspaceId && (item.conversationId === conversationId || item.id === conversationId)) {
+        mockSessions.splice(i, 1);
+      }
+    }
+    return { ok: true, id: conversationId };
+  }
   if (path === '/api/slash-commands') return mockSlashCommands;
   if (path.startsWith('/api/agents/') && path.endsWith('/meta')) return mockAgentMeta;
 

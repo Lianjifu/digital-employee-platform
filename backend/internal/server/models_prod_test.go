@@ -120,6 +120,51 @@ func TestProviderImpactBlocksDelete(t *testing.T) {
 	}
 }
 
+func TestUnpublishClearsProviderImpactAndAllowsDelete(t *testing.T) {
+	st := store.New()
+	h := server.New(st).Handler()
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, adminReq(http.MethodGet, "/api/model-providers/mp-1/impact", ""))
+	if rr.Code != 200 {
+		t.Fatalf("impact %d %s", rr.Code, rr.Body.String())
+	}
+	impact := decodeData(t, rr)
+	if impact["deletionAllowed"] == true {
+		t.Fatalf("expected published route to block delete, got %#v", impact)
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, adminReq(http.MethodPost, "/api/model-routing/policies/rp-p0/unpublish", `{"reason":"下线以便退役供应商"}`))
+	if rr.Code != 200 {
+		t.Fatalf("unpublish p0 %d %s", rr.Code, rr.Body.String())
+	}
+	for _, pid := range []string{"rp-p1", "rp-p3"} {
+		rr = httptest.NewRecorder()
+		h.ServeHTTP(rr, adminReq(http.MethodPost, "/api/model-routing/policies/"+pid+"/unpublish", `{"reason":"下线以便退役供应商"}`))
+		if rr.Code != 200 {
+			t.Fatalf("unpublish %s %d %s", pid, rr.Code, rr.Body.String())
+		}
+	}
+	pol := decodeData(t, rr)
+	if pol["status"] != "draft" {
+		t.Fatalf("status=%v", pol["status"])
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, adminReq(http.MethodGet, "/api/model-providers/mp-1/impact", ""))
+	impact = decodeData(t, rr)
+	if impact["deletionAllowed"] != true {
+		t.Fatalf("expected deletionAllowed after unpublish, got %#v", impact)
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, adminReq(http.MethodDelete, "/api/model-providers/mp-1", `{"reason":"退役"}`))
+	if rr.Code != 200 {
+		t.Fatalf("delete %d %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestRoutingValidateReadyPublishRollback(t *testing.T) {
 	st := store.New()
 	h := server.New(st).Handler()

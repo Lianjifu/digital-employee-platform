@@ -24,7 +24,7 @@ function lifecycleLabel(lifecycle: DigitalEmployee['lifecycle']) {
   return ({
     draft: '草稿',
     testing: '试运行',
-    pending_approval: '待双重审批',
+    pending_approval: '待确认上岗',
     active: '已上岗',
     paused: '已暂停',
     quarantined: '已隔离',

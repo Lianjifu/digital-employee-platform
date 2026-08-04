@@ -29,6 +29,8 @@ static_resources:
                           route: { cluster: de_collab, timeout: 60s }
                         - match: { prefix: "/api/sessions" }
                           route: { cluster: de_collab, timeout: 30s }
+                        - match: { prefix: "/api/actions" }
+                          route: { cluster: de_collab, timeout: 30s }
                         - match: { prefix: "/api/tasks" }
                           route: { cluster: de_collab, timeout: 30s }
                         - match: { prefix: "/api/digital-employees" }
@@ -45,6 +47,9 @@ static_resources:
                         - match: { prefix: "/api/workflow-" }
                           route: { cluster: de_workflow, timeout: 60s }
 
+                        # model-invoke before /api/model (prefix match is first-wins; stream needs long timeout)
+                        - match: { prefix: "/api/model-invoke" }
+                          route: { cluster: de_cap, timeout: 120s }
                         - match: { prefix: "/api/model" }
                           route: { cluster: de_cap, timeout: 30s }
                         - match: { prefix: "/api/knowledge" }

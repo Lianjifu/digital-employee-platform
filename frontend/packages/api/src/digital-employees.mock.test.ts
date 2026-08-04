@@ -77,31 +77,31 @@ describe('digital employee control plane', () => {
     const evaluated = await mockHandler(`/api/digital-employees/${employee.id}/evaluate`, { method: 'POST', headers: admin }) as any;
     expect(evaluated.evaluation.status).toBe('passed');
 
-    const submitted = await mockHandler(`/api/digital-employees/${employee.id}/release`, { method: 'POST', headers: builder }) as any;
-    expect(submitted).toMatchObject({ lifecycle: 'pending_approval', release: { status: 'pending_approval', requestedBy: '业务构建者' } });
+    const released = await mockHandler(`/api/digital-employees/${employee.id}/release`, { method: 'POST', headers: builder }) as any;
+    expect(released).toMatchObject({ lifecycle: 'active', release: { status: 'released', requestedBy: '业务构建者' } });
 
-    await expect(mockHandler(`/api/digital-employees/${employee.id}/lifecycle`, { method: 'POST', headers: builder, body: { lifecycle: 'active' } })).rejects.toThrow();
-
-    const approved = await mockHandler(`/api/digital-employees/${employee.id}/lifecycle`, { method: 'POST', headers: admin, body: { lifecycle: 'active' } }) as any;
-    expect(approved).toMatchObject({ lifecycle: 'active', release: { status: 'released', approver: '平台管理员' } });
+    await expect(mockHandler(`/api/digital-employees/${employee.id}/release`, { method: 'POST', headers: admin })).rejects.toThrow('E_DIGITAL_EMPLOYEE_ALREADY_RELEASED');
   });
 
-  it('blocks self-approval on release and rejects lifecycle bypass', async () => {
-    const employee = await mockHandler('/api/digital-employees', { method: 'POST', headers: admin, body: { name: '自批校验专员', role: '门禁校验', department: '信息技术部' } }) as { id: string };
+  it('blocks lifecycle bypass without release and allows resume after pause', async () => {
+    const draft = await mockHandler('/api/digital-employees', { method: 'POST', headers: admin, body: { name: '旁路校验', role: '旁路', department: '信息技术部' } }) as { id: string };
+    await expect(mockHandler(`/api/digital-employees/${draft.id}/lifecycle`, { method: 'POST', headers: admin, body: { lifecycle: 'active' } })).rejects.toThrow('E_DIGITAL_EMPLOYEE_RELEASE_REQUIRED');
+
+    const employee = await mockHandler('/api/digital-employees', { method: 'POST', headers: admin, body: { name: '恢复校验专员', role: '恢复校验', department: '信息技术部' } }) as { id: string };
     await mockHandler(`/api/digital-employees/${employee.id}/configuration`, {
       method: 'POST',
       headers: admin,
-      body: sandboxConfiguration({ profile: { name: '自批校验专员', role: '门禁校验', department: '信息技术部', description: 'SoD', owner: '王昊', escalationOwner: '值班经理', serviceObject: '门禁', risk: 'low', environment: 'sandbox' } }),
+      body: sandboxConfiguration({ profile: { name: '恢复校验专员', role: '恢复校验', department: '信息技术部', description: 'resume', owner: '王昊', escalationOwner: '值班经理', serviceObject: '门禁', risk: 'low', environment: 'sandbox' } }),
     });
     await mockHandler(`/api/digital-employees/${employee.id}/evaluate`, { method: 'POST', headers: admin });
     await mockHandler(`/api/digital-employees/${employee.id}/release`, { method: 'POST', headers: admin });
-    await expect(mockHandler(`/api/digital-employees/${employee.id}/lifecycle`, { method: 'POST', headers: admin, body: { lifecycle: 'active' } })).rejects.toThrow('E_SOD_SELF_APPROVAL');
-
-    const draft = await mockHandler('/api/digital-employees', { method: 'POST', headers: admin, body: { name: '旁路校验', role: '旁路', department: '信息技术部' } }) as { id: string };
-    await expect(mockHandler(`/api/digital-employees/${draft.id}/lifecycle`, { method: 'POST', headers: admin, body: { lifecycle: 'active' } })).rejects.toThrow('E_DIGITAL_EMPLOYEE_RELEASE_REQUIRED');
+    await mockHandler(`/api/digital-employees/${employee.id}/lifecycle`, { method: 'POST', headers: admin, body: { lifecycle: 'paused', reason: '值班复核' } });
+    await expect(mockHandler(`/api/digital-employees/${employee.id}/lifecycle`, { method: 'POST', headers: admin, body: { lifecycle: 'active' } })).rejects.toThrow('E_DIGITAL_EMPLOYEE_RESUME_CONFIRM_REQUIRED');
+    const resumed = await mockHandler(`/api/digital-employees/${employee.id}/lifecycle`, { method: 'POST', headers: admin, body: { lifecycle: 'active', confirmed: true, reason: '已处置' } }) as any;
+    expect(resumed.lifecycle).toBe('active');
   });
 
-  it('allows applicant withdraw and other admin reject on pending release', async () => {
+  it('rejects withdraw and reject when release is already completed', async () => {
     const employee = await mockHandler('/api/digital-employees', { method: 'POST', headers: admin, body: { name: '撤回校验专员', role: '撤回校验', department: '信息技术部' } }) as { id: string };
     await mockHandler(`/api/digital-employees/${employee.id}/configuration`, {
       method: 'POST',
@@ -111,18 +111,8 @@ describe('digital employee control plane', () => {
     await mockHandler(`/api/digital-employees/${employee.id}/evaluate`, { method: 'POST', headers: admin });
     await mockHandler(`/api/digital-employees/${employee.id}/release`, { method: 'POST', headers: builder });
 
-    const withdrawn = await mockHandler(`/api/digital-employees/${employee.id}/release/withdraw`, { method: 'POST', headers: builder }) as any;
-    expect(withdrawn.release.status).toBe('not_released');
-
-    await mockHandler(`/api/digital-employees/${employee.id}/release`, { method: 'POST', headers: admin });
-    await expect(mockHandler(`/api/digital-employees/${employee.id}/release/reject`, { method: 'POST', headers: admin, body: { reason: '自驳' } })).rejects.toThrow('E_SOD_SELF_APPROVAL');
-    await expect(mockHandler(`/api/digital-employees/${employee.id}/release/reject`, { method: 'POST', headers: builder, body: { reason: '非管理员' } })).rejects.toThrow('E_ADMIN_REQUIRED');
-
-    // 另一管理员（工作区管理员再次以非申请人身份不可用时）：用 builder 申请后由 admin 驳回
-    await mockHandler(`/api/digital-employees/${employee.id}/release/withdraw`, { method: 'POST', headers: admin });
-    await mockHandler(`/api/digital-employees/${employee.id}/release`, { method: 'POST', headers: builder });
-    const rejected = await mockHandler(`/api/digital-employees/${employee.id}/release/reject`, { method: 'POST', headers: admin, body: { reason: '职责边界需补充' } }) as any;
-    expect(rejected).toMatchObject({ lifecycle: 'testing', release: { status: 'not_released', rejectedReason: '职责边界需补充', rejectedBy: '平台管理员' } });
+    await expect(mockHandler(`/api/digital-employees/${employee.id}/release/withdraw`, { method: 'POST', headers: builder })).rejects.toThrow('E_DIGITAL_EMPLOYEE_RELEASE_NOT_PENDING');
+    await expect(mockHandler(`/api/digital-employees/${employee.id}/release/reject`, { method: 'POST', headers: admin, body: { reason: '已上岗' } })).rejects.toThrow('E_DIGITAL_EMPLOYEE_RELEASE_NOT_PENDING');
   });
 
   it('keeps auditors read-only while allowing evidence lookup', async () => {
@@ -194,9 +184,8 @@ describe('digital employee control plane', () => {
 
     await mockHandler(`/api/digital-employees/${employee.id}/release`, { method: 'POST', headers: builder });
     const submittedRecords = await mockHandler('/api/digital-employee-template-adoptions', { method: 'GET', headers: admin }) as any[];
-    expect(submittedRecords.find((record) => record.employeeId === employee.id)?.status).toBe('pending_approval');
+    expect(submittedRecords.find((record) => record.employeeId === employee.id)?.status).toBe('active');
 
-    await mockHandler(`/api/digital-employees/${employee.id}/lifecycle`, { method: 'POST', headers: admin, body: { lifecycle: 'active' } });
     const updatedRecords = await mockHandler('/api/digital-employee-template-adoptions', { method: 'GET', headers: admin }) as any[];
     expect(updatedRecords.find((record) => record.employeeId === employee.id)?.status).toBe('active');
   });
@@ -224,7 +213,6 @@ describe('digital employee control plane', () => {
     });
     await mockHandler(`/api/digital-employees/${employee.id}/evaluate`, { method: 'POST', headers: admin });
     await mockHandler(`/api/digital-employees/${employee.id}/release`, { method: 'POST', headers: builder });
-    await mockHandler(`/api/digital-employees/${employee.id}/lifecycle`, { method: 'POST', headers: admin, body: { lifecycle: 'active' } });
 
     const configuration = {
       profile: { name: '配置验证专员', role: '配置验证', department: '信息技术部', description: '验证受控配置流程。', owner: '王昊', escalationOwner: '技术平台主管', serviceObject: '平台配置', risk: 'medium', environment: 'production' },
@@ -253,6 +241,30 @@ describe('digital employee control plane', () => {
     expect(saved.handoffPolicy).toMatchObject({ triggers: ['需要人工判断'], approvalRequiredFor: ['配置协同流'] });
     expect(saved.boundaryPolicy).toMatchObject({ dataClassification: 'confidential', allowedEnvironments: ['production'], capabilityModes: [{ capabilityName: '配置协同流', mode: 'approval_required' }] });
     await expect(mockHandler(`/api/digital-employees/${employee.id}/configuration`, { method: 'POST', headers: auditor, body: configuration })).rejects.toThrow('E_AUDITOR_READ_ONLY');
+  });
+
+  it('applies capability-scope configuration immediately without dual approval', async () => {
+    const employee = await mockHandler('/api/digital-employees', { method: 'POST', headers: admin, body: { name: '装配直通专员', role: '装配验证', department: '信息技术部' } }) as any;
+    const base = sandboxConfiguration({
+      profile: { name: '装配直通专员', role: '装配验证', department: '信息技术部', description: '验证能力装配直通。', owner: '王昊', escalationOwner: '技术平台主管', serviceObject: '平台配置', risk: 'low', environment: 'sandbox' },
+    });
+    await mockHandler(`/api/digital-employees/${employee.id}/configuration`, { method: 'POST', headers: admin, body: base });
+    await mockHandler(`/api/digital-employees/${employee.id}/evaluate`, { method: 'POST', headers: admin });
+    await mockHandler(`/api/digital-employees/${employee.id}/release`, { method: 'POST', headers: builder });
+
+    const submitted = await mockHandler(`/api/digital-employees/${employee.id}/configuration`, {
+      method: 'POST',
+      headers: admin,
+      body: {
+        ...base,
+        scope: 'capability',
+        profile: { ...base.profile, environment: 'production' },
+        capabilities: { ...base.capabilities, model: 'deepseek-v4-flash' },
+      },
+    }) as any;
+    expect(submitted).toMatchObject({ status: 'current', requiresApproval: false });
+    const saved = await mockHandler(`/api/digital-employees/${employee.id}`, { method: 'GET', headers: admin }) as any;
+    expect(saved.capabilities.model).toBe('deepseek-v4-flash');
   });
 
   it('rejects a boundary policy that grants execution to an unbound capability', async () => {

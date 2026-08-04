@@ -16,6 +16,7 @@ import {
   parseModelTab,
   policyStatusLabel,
   providerLifecycleAction,
+  providerReferencedByPublishedPolicies,
   providerStatusLabel,
   providerStatusTone,
   routingDataScopeLabel,
@@ -79,6 +80,7 @@ export default function Models() {
   const [validatePolicyTarget, setValidatePolicyTarget] = useState<RoutingPolicyDraft | null>(null);
   const [policyDetailTab, setPolicyDetailTab] = useState<'draft' | 'validate' | 'versions' | null>(null);
   const [publishPolicy, setPublishPolicy] = useState<RoutingPolicyDraft | null>(null);
+  const [unpublishPolicy, setUnpublishPolicy] = useState<RoutingPolicyDraft | null>(null);
   const [deleteProvider, setDeleteProvider] = useState<ModelProvider | null>(null);
   const [rollbackTarget, setRollbackTarget] = useState<{ policyId: string; versionId: string; label: string } | null>(null);
   const [auditResultFilter, setAuditResultFilter] = useState<'all' | 'success' | 'failed'>('all');
@@ -115,6 +117,7 @@ export default function Models() {
   const updatePolicy = useApiMutation<RoutingPolicyDraft, Record<string, unknown>>((value: any) => `/api/model-routing/policies/${value.id}/draft`, undefined, 'PATCH');
   const validatePolicy = useApiMutation<RoutingPolicyDraft, { id: string }>((value) => `/api/model-routing/policies/${value.id}/validate`);
   const publish = useApiMutation<RoutingPolicyVersion, { id: string; reason: string }>((value) => `/api/model-routing/policies/${value.id}/publish`);
+  const unpublish = useApiMutation<RoutingPolicyDraft, { id: string; reason: string }>((value) => `/api/model-routing/policies/${value.id}/unpublish`);
   const rollback = useApiMutation<RoutingPolicyVersion, { id: string; versionId: string; reason: string }>((value) => `/api/model-routing/policies/${value.id}/rollback`);
   const runDrill = useApiMutation<{ status: string }, { policyId: string; scope: 'sandbox'; reason: string }>('/api/model-routing/failover-tests');
 
@@ -319,7 +322,8 @@ export default function Models() {
           ) : workspace === 'access' ? (
             <AccessWorkspace
               providers={providers}
-              description={activeWorkspace.description}
+              policies={policies}
+              description="接入后验证连通性；被已发布路由引用的供应商需先取消发布或替换模型后再删除。"
               canWrite={canWrite}
               onSelect={setProviderModal}
               onDelete={(provider) => setDeleteProvider(provider)}
@@ -410,6 +414,12 @@ export default function Models() {
             })}
             onDisable={() => disableProvider.mutate({ id: activeProvider.id, reason: '停止新流量' }, { onSuccess: () => toast.success('供应商已停止新流量'), onError: reportError })}
             onDelete={() => setDeleteProvider(activeProvider)}
+            onOpenPolicy={(policyId) => {
+              setProviderModal(null);
+              setWorkspace('routing');
+              setPolicyDrawer(policyId);
+              setPolicyDetailTab('validate');
+            }}
           />
         )}
       </Modal>
@@ -440,8 +450,8 @@ export default function Models() {
         title={selectedPolicy ? `${selectedPolicy.level} 路由策略` : '路由策略'}
         description={selectedPolicy ? routingLevelPurpose(selectedPolicy.level) : '草稿校验通过后才能发布；版本快照不可改写。'}
         size="lg"
-        closeOnEscape={!savePolicyDraft && !validatePolicyTarget && !publishPolicy && !rollbackTarget}
-        closeOnBackdrop={!savePolicyDraft && !validatePolicyTarget && !publishPolicy && !rollbackTarget}
+        closeOnEscape={!savePolicyDraft && !validatePolicyTarget && !publishPolicy && !unpublishPolicy && !rollbackTarget}
+        closeOnBackdrop={!savePolicyDraft && !validatePolicyTarget && !publishPolicy && !unpublishPolicy && !rollbackTarget}
       >
         {selectedPolicy && (
           <PolicyDetail
@@ -455,6 +465,7 @@ export default function Models() {
             onSave={(draft) => setSavePolicyDraft(draft)}
             onValidate={() => setValidatePolicyTarget(selectedPolicy)}
             onPublish={() => setPublishPolicy(selectedPolicy)}
+            onUnpublish={() => setUnpublishPolicy(selectedPolicy)}
             onRollback={(versionId, label) => setRollbackTarget({ policyId: selectedPolicy.id, versionId, label })}
           />
         )}
@@ -559,6 +570,28 @@ export default function Models() {
         confirmText="确认发布"
       />
       <ConfirmDialog
+        open={Boolean(unpublishPolicy)}
+        onClose={() => setUnpublishPolicy(null)}
+        onConfirm={() => {
+          if (!unpublishPolicy) return;
+          unpublish.mutate({ id: unpublishPolicy.id, reason: '人工取消发布' }, {
+            onSuccess: () => {
+              toast.success(`${unpublishPolicy.level} 路由已取消发布，可替换模型或删除相关供应商`);
+              setUnpublishPolicy(null);
+              setPolicyDetailTab('validate');
+              void impactQuery.refetch();
+            },
+            onError: reportError,
+          });
+        }}
+        title="取消发布路由？"
+        description={unpublishPolicy
+          ? `将把 ${unpublishPolicy.level} 从已发布回退为草稿；历史版本快照保留。取消后引用该策略的供应商可再删除。`
+          : ''}
+        confirmText="确认取消发布"
+        tone="danger"
+      />
+      <ConfirmDialog
         open={Boolean(rollbackTarget)}
         onClose={() => setRollbackTarget(null)}
         onConfirm={() => {
@@ -624,7 +657,7 @@ export default function Models() {
           );
         }}
         title={`删除供应商「${deleteProvider?.name ?? ''}」？`}
-        description="删除后凭据引用一并清理。若仍被已发布路由引用，服务端会拒绝删除。"
+        description="删除后凭据引用一并清理。若仍被已发布路由引用，请先到「模型路由」取消发布或替换模型。"
         confirmText="删除"
         tone="danger"
       />
@@ -633,9 +666,10 @@ export default function Models() {
 }
 
 function AccessWorkspace({
-  providers, description, canWrite, onSelect, onDelete,
+  providers, policies, description, canWrite, onSelect, onDelete,
 }: {
   providers: ModelProvider[];
+  policies: RoutingPolicyDraft[];
   description: string;
   canWrite: boolean;
   onSelect: (id: string) => void;
@@ -656,39 +690,44 @@ function AccessWorkspace({
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 md:p-4">
-          {providers.map((provider) => (
-            <div key={provider.id} className="de-employee-card rounded-xl bg-[var(--surface-1)] p-3.5 text-left">
-              <div className="flex items-start justify-between gap-2">
-                <button type="button" onClick={() => onSelect(provider.id)} className="min-w-0 flex-1 text-left">
-                  <div className="truncate text-sm font-semibold text-[var(--text)]">{provider.name}</div>
-                  <div className="mt-1 text-[11px] text-[var(--text-muted)]">
-                    {protocolLabel(provider.protocol)} · {TIER_LABEL[provider.tier]} · {provider.cloudRegion}
+          {providers.map((provider) => {
+            const referenced = providerReferencedByPublishedPolicies(provider, policies);
+            return (
+              <div key={provider.id} className="de-employee-card rounded-xl bg-[var(--surface-1)] p-3.5 text-left">
+                <div className="flex items-start justify-between gap-2">
+                  <button type="button" onClick={() => onSelect(provider.id)} className="min-w-0 flex-1 text-left">
+                    <div className="truncate text-sm font-semibold text-[var(--text)]">{provider.name}</div>
+                    <div className="mt-1 text-[11px] text-[var(--text-muted)]">
+                      {protocolLabel(provider.protocol)} · {TIER_LABEL[provider.tier]} · {provider.cloudRegion}
+                    </div>
+                  </button>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <Badge tone={providerStatusTone(provider.status)}>{providerStatusLabel(provider.status)}</Badge>
+                    {canWrite && (
+                      <button
+                        type="button"
+                        title={referenced ? '已被已发布路由引用，请先取消发布' : '删除供应商'}
+                        aria-label={`删除 ${provider.name}`}
+                        disabled={referenced}
+                        className="grid h-7 w-7 place-items-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--danger-bg)] hover:text-[var(--danger)] disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[var(--text-muted)]"
+                        onClick={() => onDelete(provider)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <button type="button" onClick={() => onSelect(provider.id)} className="mt-2 w-full text-left">
+                  <div className="truncate font-mono text-[10px] text-[var(--text-muted)]">{provider.baseUrl ?? '未配置 Endpoint'}</div>
+                  <div className="mt-1.5 text-[11px] leading-5 text-[var(--text-secondary)]">{provider.models.map((model) => model.name).join(' · ') || '未配置模型'}</div>
+                  <div className="mt-2 flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
+                    <FileKey2 className="h-3 w-3" />{provider.credentialMasked} · {provider.lastVerifiedAt ? '已验证' : '待验证'}
+                    {referenced ? ' · 路由引用中' : ''}
                   </div>
                 </button>
-                <div className="flex shrink-0 items-center gap-1">
-                  <Badge tone={providerStatusTone(provider.status)}>{providerStatusLabel(provider.status)}</Badge>
-                  {canWrite && (
-                    <button
-                      type="button"
-                      title="删除供应商"
-                      aria-label={`删除 ${provider.name}`}
-                      className="grid h-7 w-7 place-items-center rounded-md text-[var(--text-muted)] transition-colors hover:bg-[var(--danger-bg)] hover:text-[var(--danger)]"
-                      onClick={() => onDelete(provider)}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
               </div>
-              <button type="button" onClick={() => onSelect(provider.id)} className="mt-2 w-full text-left">
-                <div className="truncate font-mono text-[10px] text-[var(--text-muted)]">{provider.baseUrl ?? '未配置 Endpoint'}</div>
-                <div className="mt-1.5 text-[11px] leading-5 text-[var(--text-secondary)]">{provider.models.map((model) => model.name).join(' · ') || '未配置模型'}</div>
-                <div className="mt-2 flex items-center gap-1 text-[10px] text-[var(--text-muted)]">
-                  <FileKey2 className="h-3 w-3" />{provider.credentialMasked} · {provider.lastVerifiedAt ? '已验证' : '待验证'}
-                </div>
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -1515,7 +1554,7 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit, creating }: {
 }
 
 function ProviderDetail({
-  provider, impact, canWrite, workspaceId, onClose, onSave, onTest, onDisable, onDelete,
+  provider, impact, canWrite, workspaceId, onClose, onSave, onTest, onDisable, onDelete, onOpenPolicy,
 }: {
   provider: ModelProvider;
   impact?: ProviderImpact;
@@ -1526,6 +1565,7 @@ function ProviderDetail({
   onTest: () => void;
   onDisable: () => void;
   onDelete: () => void;
+  onOpenPolicy?: (policyId: string) => void;
 }) {
   const deletion = providerLifecycleAction(impact);
   const routeReferences = impact?.routeReferences ?? [];
@@ -1588,8 +1628,19 @@ function ProviderDetail({
           : (impact.blockedReason ?? '未发现已发布路由引用，可执行删除。')}
       </p>
       {routeReferences.map((item) => (
-        <div key={`${item.policyId}:${item.versionId}`} className="mt-1.5 flex items-center gap-1 text-[var(--text-secondary)]">
-          <Network className="h-3 w-3" />{item.level} · {item.versionId || item.policyId}
+        <div key={`${item.policyId}:${item.versionId}`} className="mt-1.5 flex flex-wrap items-center gap-2 text-[var(--text-secondary)]">
+          <span className="inline-flex items-center gap-1">
+            <Network className="h-3 w-3" />{item.level} · {item.versionId || item.policyId}
+          </span>
+          {onOpenPolicy ? (
+            <button
+              type="button"
+              className="text-[11px] font-medium text-[var(--brand)] hover:underline"
+              onClick={() => onOpenPolicy(item.policyId)}
+            >
+              去取消发布
+            </button>
+          ) : null}
         </div>
       ))}
     </div>
@@ -2009,7 +2060,7 @@ function CreatePolicyForm({ canWrite, workspaceId, models, onSubmit }: { canWrit
 }
 
 function PolicyDetail({
-  policy, models, versions, canWrite, focusTab, onFocusTabConsumed, onSave, onValidate, onPublish, onRollback,
+  policy, models, versions, canWrite, focusTab, onFocusTabConsumed, onSave, onValidate, onPublish, onUnpublish, onRollback,
 }: {
   policy: RoutingPolicyDraft;
   models: ModelProvider['models'];
@@ -2020,6 +2071,7 @@ function PolicyDetail({
   onSave: (value: Record<string, unknown>) => void;
   onValidate: () => void;
   onPublish: () => void;
+  onUnpublish: () => void;
   onRollback: (versionId: string, label: string) => void;
 }) {
   const [tab, setTab] = useState<'draft' | 'validate' | 'versions'>('draft');
@@ -2076,7 +2128,7 @@ function PolicyDetail({
 
       {policy.status === 'published' && (
         <div className="rounded-lg border border-[var(--warning)]/35 bg-[var(--warning-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--warning)]">
-          当前已有已发布快照生效。此处编辑只改草稿，不会立刻影响线上路由；保存后须重新校验并发布新版本。
+          当前已有已发布快照生效。此处编辑只改草稿，不会立刻影响线上路由；保存后须重新校验并发布新版本。若要退役引用中的供应商，请先取消发布。
         </div>
       )}
 
@@ -2153,6 +2205,9 @@ function PolicyDetail({
             </div>
           )}
           <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--border)] pt-4">
+            {policy.status === 'published' ? (
+              <Button size="sm" variant="outline" disabled={!canWrite} onClick={onUnpublish}>取消发布</Button>
+            ) : null}
             <Button size="sm" variant="secondary" disabled={!canWrite || dirty} onClick={onValidate}><CheckCircle2 className="h-3.5 w-3.5" />校验</Button>
             <Button size="sm" disabled={!canWrite || dirty || policy.status !== 'ready'} onClick={onPublish}>发布版本</Button>
           </div>

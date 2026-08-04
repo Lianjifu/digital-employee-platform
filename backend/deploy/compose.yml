@@ -497,10 +497,15 @@ services:
       DE_AGENT_RUNTIME_URL: http://de-agent-runtime:8091
       DE_RAG_URL: http://de-rag:8092
       DE_SKILL_RUNTIME_URL: http://de-skill-runtime:8093
+      DE_CAP_URL: ${DE_CAP_URL:-http://de-cap:8102}
+      DE_WORKFLOW_URL: ${DE_WORKFLOW_URL:-http://de-workflow:8103}
       DE_BAN_MOCK_TOKEN: ${DE_BAN_MOCK_TOKEN:-0}
       DE_POLICY_URL: ${DE_COLLAB_POLICY_URL:-http://de-sys:8100}
       DE_SKILL_RUN_SECRET: ${DE_SKILL_RUN_SECRET:-de-skill-run-dev}
       DE_JWT_SECRET: ${DE_JWT_SECRET:-}
+      DE_LLM_BASE_URL: ${DE_LLM_BASE_URL:-}
+      DE_LLM_API_KEY: ${DE_LLM_API_KEY:-}
+      DE_LLM_MODEL: ${DE_LLM_MODEL:-}
     ports:
       - "8101:8101"
     healthcheck:
@@ -541,6 +546,11 @@ services:
       DE_SKILL_RUN_SECRET: ${DE_SKILL_RUN_SECRET:-de-skill-run-dev}
       DE_POLICY_URL: ${DE_CAP_POLICY_URL:-http://de-sys:8100}
       DE_JWT_SECRET: ${DE_JWT_SECRET:-}
+      # Local Ollama / private LLM endpoints (set 1 only when intentional)
+      DE_MODEL_ALLOW_PRIVATE: ${DE_MODEL_ALLOW_PRIVATE:-0}
+      DE_LLM_BASE_URL: ${DE_LLM_BASE_URL:-}
+      DE_LLM_API_KEY: ${DE_LLM_API_KEY:-}
+      DE_LLM_MODEL: ${DE_LLM_MODEL:-}
     ports:
       - "8102:8102"
     healthcheck:

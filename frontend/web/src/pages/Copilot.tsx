@@ -25,6 +25,7 @@
 import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useApiQuery } from '@/services/query';
+import { useQueryClient } from '@tanstack/react-query';
 import { Avatar, Badge, Button, Input, Row, CollapsedPanelHandle } from '@de/web-ui';
 import {
   Bot, Search, ListChecks as ListChecksIcon, Wrench, Workflow as WorkflowIcon, FileText, ShieldCheck,
@@ -43,7 +44,8 @@ import { DualSignModal } from '@/components/DualSignModal';
 import { DigitalEmployeeAvatar } from '@/components/DigitalEmployeeAvatar';
 import { compareDigitalEmployees, employeePrimaryLabel, employeeSecondaryLabel, isDepartmentHead } from '@/lib/digital-employees';
 import { Modal } from '@/components/shared';
-import type { DigitalEmployee } from '@de/web-types';
+import type { DigitalEmployee, ModelProvider, RoutingPolicyDraft } from '@de/web-types';
+import { buildCopilotModelOptions, defaultCopilotModelKey, matchCopilotModelKey, resolveCopilotModelId, resolveSendModelId, isDemoCopilotModelKey } from '@/features/copilot/copilot-models';
 import { DebugPanel } from '@/components/DebugPanel';
 import { useChat } from '@/hooks/useChat';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
@@ -51,6 +53,9 @@ import { useAuthStore } from '@/stores/authStore';
 import { useT } from '@/i18n';
 import { Markdown } from '@/components/Markdown';
 import { deriveWorkbenchSummary, type WorkbenchContextTab } from '@/features/copilot/workbench';
+import { buildExpertSuggestions, type ExpertSuggestionIcon } from '@/features/copilot/expert-suggestions';
+import { buildExpertTools, defaultEnabledToolKeys } from '@/features/copilot/expert-tools';
+import { deriveExpertContextOverview } from '@/features/copilot/expert-context';
 import { sessionHistoryPresentation } from '@/features/copilot/layout';
 import { RoleReadonlyBanner } from '@/components/shared';
 import { roleCanMutate, rolePageCopy } from '@/features/role-nav/role-nav';
@@ -130,7 +135,7 @@ function toChatSession(session: SessionItem): ChatSession {
     conversationId: session.conversationId ?? session.id,
     title: session.title || '未命名会话',
     preview: session.preview || '暂无消息',
-    agent: session.digitalEmployeeName ?? session.agent ?? '岗位专家',
+    agent: session.digitalEmployeeName ?? session.agent ?? (session.digitalEmployeeId ? '岗位专家' : '助手'),
     digitalEmployeeId: session.digitalEmployeeId,
     digitalEmployeeName: session.digitalEmployeeName ?? session.agent,
     status: session.status === 'done' ? 'done' : 'active',
@@ -191,24 +196,6 @@ interface ComposerAttachment {
   type: 'file' | 'image';
 }
 
-const MODELS: { key: string; label: string; tier: string; tone: 'success' | 'brand' | 'warn' | 'neutral'; desc: string }[] = [
-  { key: 'sonnet-4', label: 'Sonnet-4', tier: 'P0', tone: 'success', desc: '复杂推理 · 长上下文 · 默认' },
-  { key: 'haiku-4.5', label: 'Haiku-4.5', tier: 'P2', tone: 'brand', desc: '低成本 · 高吞吐 · FAQ 场景' },
-  { key: 'opus-4.8', label: 'Opus-4.8', tier: 'P0+', tone: 'success', desc: '深度分析 · 合规审计' },
-  { key: 'gpt-5', label: 'GPT-5', tier: 'P1', tone: 'brand', desc: '通用 · 多模态' },
-  { key: 'deepseek-r2', label: 'DeepSeek-R2', tier: 'P1', tone: 'brand', desc: '代码生成 · 技术问答' },
-];
-
-const availableTools: { key: string; name: string; desc: string; requiresApproval?: boolean }[] = [
-  { key: 'redis-cli', name: 'redis-cli', desc: '查询 / 设置 Redis 配置' },
-  { key: 'kubectl', name: 'kubectl', desc: 'K8s 资源管理（需双重审批）', requiresApproval: true },
-  { key: 'prometheus', name: 'prometheus', desc: '指标查询 · PromQL' },
-  { key: 'loki-query', name: 'loki-query', desc: '日志检索' },
-  { key: 'siem', name: 'siem', desc: '威胁狩猎 · ATT&CK 时间线' },
-  { key: 'jira', name: 'jira', desc: '工单 / 任务创建' },
-  { key: 'cmdb', name: 'cmdb', desc: '资产查询' },
-];
-
 const FEEDBACK_TAGS: { key: FeedbackTag; label: string }[] = [
   { key: 'factuality', label: '事实性' },
   { key: 'helpfulness', label: '有用' },
@@ -260,6 +247,7 @@ const ERROR_HINT: Record<ErrorCategory, string> = {
 };
 
 export default function Copilot() {
+  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { id: routeSessionId } = useParams<{ id?: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -308,8 +296,8 @@ export default function Copilot() {
   // Composer 增强状态
   const [modelOpen, setModelOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
-  const [currentModelKey, setCurrentModelKey] = useState('sonnet-4');
-  const [enabledTools, setEnabledTools] = useState<string[]>(availableTools.map((t) => t.key));
+  const [currentModelKey, setCurrentModelKey] = useState('');
+  const [enabledTools, setEnabledTools] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -386,48 +374,156 @@ export default function Copilot() {
     window.addEventListener('pointerup', onUp);
   }, [persistDetailsW]);
 
-  const currentModel = MODELS.find((m) => m.key === currentModelKey) ?? MODELS[0];
-  const enabledToolCount = enabledTools.length;
-
   const { data: employeesData } = useApiQuery<DigitalEmployee[]>(['digital-employees'], '/api/digital-employees');
   const employees = useMemo(() => employeesData ?? [], [employeesData]);
+  const { data: modelProvidersData } = useApiQuery<ModelProvider[]>(['model-providers', 'copilot'], '/api/model-providers');
+  const { data: routingPoliciesData } = useApiQuery<RoutingPolicyDraft[]>(['model-routing-policies', 'copilot'], '/api/model-routing/policies');
+  const modelOptions = useMemo(
+    () => buildCopilotModelOptions(modelProvidersData, routingPoliciesData),
+    [modelProvidersData, routingPoliciesData],
+  );
+
+  const currentModel = modelOptions.find((m) => m.key === currentModelKey) ?? modelOptions[0];
+  const runModelId = resolveCopilotModelId(currentModel, currentModelKey);
+
+  // 供应商列表加载后，若当前 key 无效则切到路由默认模型
+  useEffect(() => {
+    if (!modelOptions.length) return;
+    if (!modelOptions.some((m) => m.key === currentModelKey)) {
+      setCurrentModelKey(defaultCopilotModelKey(modelOptions));
+    }
+  }, [modelOptions, currentModelKey]);
+
   const onDutyEmployees = useMemo(
     () => employees.filter((item) => item.lifecycle === 'active').sort(compareDigitalEmployees),
     [employees],
   );
-  const { data: slashCmdsData } = useApiQuery<{ cmd: string; desc: string; icon: string; category: string }[]>(
+  const { data: slashCmdsData } = useApiQuery<{ cmd?: string; desc?: string; icon?: string; category?: string; name?: string; description?: string }[]>(
     ['slash-cmds'], '/api/slash-commands'
   );
-  const slashCmds = useMemo(() => slashCmdsData ?? [], [slashCmdsData]);
-  const { data: sessionHistoryData, isLoading: sessionsLoading } = useApiQuery<SessionItem[]>(['sessions'], '/api/sessions');
+  const slashCmds = useMemo(() => {
+    const raw = slashCmdsData ?? [];
+    return raw.map((item) => {
+      if (item.cmd) {
+        return {
+          cmd: item.cmd,
+          desc: item.desc ?? item.description ?? '',
+          icon: item.icon ?? 'Sparkles',
+          category: item.category ?? 'tool',
+        };
+      }
+      const name = item.name ?? '';
+      return {
+        cmd: name.startsWith('/') ? name : `/${name}`,
+        desc: item.desc ?? item.description ?? '',
+        icon: item.icon ?? 'Sparkles',
+        category: item.category ?? 'tool',
+      };
+    });
+  }, [slashCmdsData]);
+  const { data: sessionHistoryData, isLoading: sessionsLoading, isError: sessionsError, isFetching: sessionsFetching } = useApiQuery<SessionItem[]>(['sessions'], '/api/sessions');
   const sessionHistory = useMemo(() => sessionHistoryData ?? [], [sessionHistoryData]);
   const chat = useChat({ name: '岗位专家' });
   const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
   const activeSession = chat.activeSession;
+
+  // 切会话时恢复会话级模型 / 工具配置
+  useEffect(() => {
+    if (activeSession?.modelId) {
+      const match = modelOptions.find(
+        (m) => m.key === activeSession.modelId || m.modelId === activeSession.modelId || m.apiModel === activeSession.modelId || m.label === activeSession.modelId,
+      );
+      setCurrentModelKey(match?.key ?? activeSession.modelId);
+    }
+    if (activeSession?.enabledTools?.length) {
+      setEnabledTools(activeSession.enabledTools);
+    }
+  }, [activeSession?.id, activeSession?.modelId, activeSession?.enabledTools, modelOptions]);
+
   const serverSession = useMemo(
     () => sessionHistory.find((item) => item.id === chat.state.activeId),
     [sessionHistory, chat.state.activeId],
   );
-  // 仅拉取服务端已知会话；本地新建 s_* 不请求，避免 404 刷屏
-  const conversationFetchId = serverSession
-    ? (serverSession.conversationId || serverSession.id)
-    : undefined;
+  // 优先用本地会话 conversationId；本地临时 s_* 不请求，避免 404 刷屏
+  const conversationFetchId = activeSession?.conversationId
+    || (serverSession ? (serverSession.conversationId || serverSession.id) : undefined);
+  const canFetchConversation = Boolean(conversationFetchId) && !/^s_/.test(conversationFetchId ?? '');
   const { data: activeConversation, isError: conversationMissing } = useApiQuery<any>(
     ['conversation', conversationFetchId],
     `/api/conversations/${conversationFetchId ?? '__none__'}`,
     undefined,
-    { enabled: Boolean(conversationFetchId), retry: false, staleTime: 30_000 },
+    { enabled: canFetchConversation, retry: false, staleTime: 30_000 },
   );
 
   const activeEmployeeId = activeSession?.digitalEmployeeId ?? employeeIdFromQuery ?? undefined;
   const activeEmployee = employees.find((item) => item.id === activeEmployeeId) ?? null;
-  const expertName = activeEmployee ? employeePrimaryLabel(activeEmployee) : (activeSession?.digitalEmployeeName ?? activeSession?.agent ?? '岗位专家');
-  const expertMeta = activeEmployee ? employeeSecondaryLabel(activeEmployee) : null;
-  const expertDescription = activeEmployee?.description ?? '选择在岗数字员工后开始专家协作。';
+  const availableTools = useMemo(() => buildExpertTools(activeEmployee), [activeEmployee]);
+  const enabledToolCount = enabledTools.length;
+  const hasBoundExpert = Boolean(activeEmployee);
+  const employeeBoundModel = activeEmployee?.capabilities?.model ?? null;
+  const sendModelId = resolveSendModelId({
+    runModelId,
+    runKey: currentModelKey,
+    employeeBoundModel,
+    options: modelOptions,
+  });
+
+  // 绑定专家后：若运行配置仍是演示别名，自动切到员工装配模型/路由
+  useEffect(() => {
+    const empKey = matchCopilotModelKey(modelOptions, employeeBoundModel);
+    if (!empKey) return;
+    if (isDemoCopilotModelKey(currentModelKey) || !activeSession?.modelId || isDemoCopilotModelKey(activeSession.modelId)) {
+      setCurrentModelKey(empKey);
+    }
+  }, [employeeBoundModel, modelOptions, activeSession?.id, activeSession?.modelId, currentModelKey]);
+
+  // 专家切换后重置工具链（保留会话已存工具中仍合法的项）
+  useEffect(() => {
+    const keys = new Set(availableTools.map((t) => t.key));
+    setEnabledTools((prev) => {
+      const kept = prev.filter((k) => keys.has(k));
+      if (kept.length > 0) return kept;
+      return defaultEnabledToolKeys(availableTools);
+    });
+  }, [availableTools]);
+
+  const persistRunConfig = useCallback((modelId: string, tools: string[]) => {
+    const sess = chat.activeSession;
+    if (!sess) return;
+    if (sess.modelId === modelId && JSON.stringify(sess.enabledTools ?? []) === JSON.stringify(tools)) return;
+    chat.syncSession({ ...sess, modelId, enabledTools: tools });
+  }, [chat]);
+
+  // 仅展示真实在岗专家；无绑定 / 失效 ID 不沿用会话里的残留 SRE 名称
+  const expertName = hasBoundExpert
+    ? employeePrimaryLabel(activeEmployee!)
+    : (currentModel?.label ?? '助手');
+  const expertMeta = hasBoundExpert ? employeeSecondaryLabel(activeEmployee!) : null;
+  const expertDescription = hasBoundExpert
+    ? (activeEmployee!.description ?? '选择在岗数字员工后开始专家协作。')
+    : '未绑定数字员工，将以通用助手直接调用已选模型。可点选专家后改绑。';
+  const expertSuggestions = useMemo(
+    () => (activeEmployee ? buildExpertSuggestions(activeEmployee) : []),
+    [activeEmployee],
+  );
+  const suggestionIconMap: Record<ExpertSuggestionIcon, typeof Zap> = {
+    zap: Zap,
+    server: Server,
+    shield: ShieldCheck,
+    bell: BellOff,
+    users: Users,
+    file: FileText,
+    clipboard: ListChecksIcon,
+    book: BookOpenCheck,
+    activity: Activity,
+    briefcase: BriefcaseBusiness,
+    search: Search,
+    wrench: Wrench,
+  };
   const agentMeta = {
     id: activeEmployee?.capabilities.agentId ?? 'runtime',
     name: expertName,
-    category: activeEmployee?.department ?? '专家团队',
+    category: activeEmployee?.department ?? (hasBoundExpert ? '专家团队' : '通用助手'),
     version: activeEmployee?.version ?? '—',
     rating: 0,
     ratingCount: 0,
@@ -443,6 +539,18 @@ export default function Copilot() {
     description: expertDescription,
   };
 
+  // 会话残留失效 digitalEmployeeId（如已删除的 SRE）时清掉，避免 UI 冒充专家
+  useEffect(() => {
+    if (!employeesData || !activeSession?.digitalEmployeeId || activeEmployee) return;
+    chat.syncSession({
+      ...activeSession,
+      digitalEmployeeId: undefined,
+      digitalEmployeeName: undefined,
+      agent: '助手',
+      agentKey: undefined,
+    });
+  }, [employeesData, activeSession, activeEmployee, chat.syncSession]);
+
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sessionToggleRef = useRef<HTMLButtonElement>(null);
@@ -450,11 +558,20 @@ export default function Copilot() {
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const historyIdx = useRef(0);
 
-  // 服务器历史是当前工作区的权威列表；仅合并缺失项，避免覆盖本地正在编辑或刚创建的会话。
+  // 服务器历史是当前工作区的权威列表；合并缺失项，并剔除服务端已删除的本地残留。
   useEffect(() => {
-    chat.importSessions(sessionHistory.map(toChatSession));
-    if (!sessionsLoading) setHistoryReady(true);
-  }, [chat.importSessions, sessionHistory, sessionsLoading]);
+    if (sessionsLoading || sessionsFetching) return;
+    // 请求失败时不要用空列表 reconcile，否则会误删本地会话
+    if (sessionsError && sessionHistoryData === undefined) {
+      setHistoryReady(true);
+      return;
+    }
+    chat.importSessions(sessionHistory.map(toChatSession), {
+      workspaceId: currentWorkspaceId,
+      reconcile: sessionHistoryData !== undefined,
+    });
+    setHistoryReady(true);
+  }, [chat.importSessions, sessionHistory, sessionHistoryData, sessionsLoading, sessionsFetching, sessionsError, currentWorkspaceId]);
 
   useEffect(() => {
     if (conversationMissing || !activeConversation || !chat.state.activeId || !conversationFetchId) return;
@@ -462,8 +579,9 @@ export default function Copilot() {
     const summary = sessionHistory.find((item) => item.id === chat.state.activeId)
       ?? sessionHistory.find((item) => item.conversationId === activeConversation.id);
     if (!summary) return;
+    if (!sessionInWorkspace(summary, currentWorkspaceId)) return;
     chat.syncSession({ ...toChatSession(summary), messages: (activeConversation.messages ?? []) as ChatMessageEx[] });
-  }, [activeConversation, conversationMissing, chat.state.activeId, chat.syncSession, conversationFetchId, sessionHistory]);
+  }, [activeConversation, conversationMissing, chat.state.activeId, chat.syncSession, conversationFetchId, sessionHistory, currentWorkspaceId]);
 
   // 深链：URL → state（仅当路由会话在当前工作区有效时）
   useEffect(() => {
@@ -480,6 +598,8 @@ export default function Copilot() {
   useEffect(() => {
     if (!historyReady || !chat.state.activeId) return;
     if (routeSessionId === chat.state.activeId) return;
+    const active = chat.state.sessions[chat.state.activeId];
+    if (!sessionInWorkspace(active, currentWorkspaceId)) return;
     if (routeSessionId) {
       const routeLocal = chat.state.sessions[routeSessionId];
       const routeServer = sessionHistory.find((item) => item.id === routeSessionId);
@@ -505,15 +625,18 @@ export default function Copilot() {
     if (existing) {
       chat.switchSession(existing.id);
     } else if (canMutate) {
-      const id = chat.newSession({
+      void chat.newSession({
         digitalEmployeeId: employee.id,
         digitalEmployeeName: employeePrimaryLabel(employee),
         agentKey: employee.capabilities.agentId,
+        modelId: sendModelId,
+        enabledTools: enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools),
+      }).then((id) => {
+        if (id) navigate(`/copilot/${id}`, { replace: true });
       });
-      if (id) navigate(`/copilot/${id}`, { replace: true });
     }
     setSearchParams({}, { replace: true });
-  }, [historyReady, employeeIdFromQuery, employees, chat.state.sessions, chat.switchSession, chat.newSession, navigate, setSearchParams, canMutate, currentWorkspaceId]);
+  }, [historyReady, employeeIdFromQuery, employees, chat.state.sessions, chat.switchSession, chat.newSession, navigate, setSearchParams, canMutate, currentWorkspaceId, sendModelId, enabledTools, availableTools]);
 
   const startSessionWithExpert = (employee: DigitalEmployee) => {
     if (!canMutate) return;
@@ -541,19 +664,32 @@ export default function Copilot() {
       setRebindBlockedReason(null);
       return;
     }
-    const id = chat.newSession({
+    void chat.newSession({
       digitalEmployeeId: employee.id,
       digitalEmployeeName: employeePrimaryLabel(employee),
       agentKey: employee.capabilities.agentId,
+      modelId: sendModelId,
+      enabledTools: enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools),
+    }).then((id) => {
+      setExpertPickerOpen(false);
+      setExpertPickerQuery('');
+      setRebindBlockedReason(null);
+      if (id) navigate(`/copilot/${id}`);
     });
-    setExpertPickerOpen(false);
-    setExpertPickerQuery('');
-    setRebindBlockedReason(null);
-    if (id) navigate(`/copilot/${id}`);
   };
 
   const openNewSessionPicker = () => {
     if (!canMutate) return;
+    // 无在岗专家时直接开通用助手会话，避免只能弹空选择器
+    if (onDutyEmployees.length === 0) {
+      void chat.newSession({
+        modelId: sendModelId,
+        enabledTools: enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools),
+      }).then((id) => {
+        if (id) navigate(`/copilot/${id}`);
+      });
+      return;
+    }
     setExpertPickerMode('new');
     setExpertPickerOpen(true);
     setExpertPickerQuery('');
@@ -752,11 +888,11 @@ export default function Copilot() {
   const handleSend = () => {
     if (!canMutate) return;
     if (!chat.state.draftInput.trim() || chat.state.typing || isClosed || handoffActive) return;
-    if (!activeSession?.digitalEmployeeId && !activeEmployee) {
-      openNewSessionPicker();
+    if (!sendModelId) {
+      window.alert('当前工作区没有可用模型。请先在「模型中心」接入并探测供应商，或为数字员工装配可用模型。');
       return;
     }
-    // 研判模式：仅允许检索与分析指令；写操作类 slash 需先切到受控执行
+    // 无数字员工也可直接对话（通用助手 + 已选模型）；选专家为增强能力，非硬门槛
     if (sessionMode === 'investigate') {
       const draft = chat.state.draftInput.trim();
       const writeHint = /\/(exec|kubectl|write|apply|config)|CONFIG SET|kubectl\s+(apply|delete|exec)/i.test(draft);
@@ -764,7 +900,14 @@ export default function Copilot() {
         setSessionMode('execute');
       }
     }
-    if (editingMessageId) { chat.replaceAndSend(editingMessageId, chat.state.draftInput); setEditingMessageId(null); } else chat.send(chat.state.draftInput);
+    const tools = enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools);
+    persistRunConfig(sendModelId, tools);
+    if (editingMessageId) {
+      chat.replaceAndSend(editingMessageId, chat.state.draftInput, { modelId: sendModelId, enabledTools: tools });
+      setEditingMessageId(null);
+    } else {
+      chat.send(chat.state.draftInput, { modelId: sendModelId, enabledTools: tools });
+    }
     setShowSlash(false);
     setShowMention(false);
   };
@@ -829,7 +972,9 @@ export default function Copilot() {
     setFocusedCitation(citation);
   };
 
-  const currentSession = chat.activeSession;
+  const currentSession = chat.activeSession && sessionInWorkspace(chat.activeSession, currentWorkspaceId)
+    ? chat.activeSession
+    : undefined;
   const sessionUsage = useMemo(() => {
     const messages = currentSession?.messages ?? [];
     const tokens = messages.reduce((sum, message) => sum + (message.metrics?.promptTokens ?? 0) + (message.metrics?.completionTokens ?? 0), 0);
@@ -850,15 +995,10 @@ export default function Copilot() {
       if (routeSessionId !== visible[0].id) navigate(`/copilot/${visible[0].id}`, { replace: true });
       return;
     }
-    if (canMutate && onDutyEmployees[0]) {
-      const id = chat.newSession({
-        digitalEmployeeId: onDutyEmployees[0].id,
-        digitalEmployeeName: employeePrimaryLabel(onDutyEmployees[0]),
-        agentKey: onDutyEmployees[0].capabilities.agentId,
-      });
-      if (id) navigate(`/copilot/${id}`, { replace: true });
-    }
-  }, [chat.state.activeId, chat.state.sessions, currentWorkspaceId, historyReady, sessionsLoading, onDutyEmployees, chat.switchSession, chat.newSession, canMutate, navigate, routeSessionId]);
+    // 无可见会话：清空主区残留，避免侧栏 0 条仍显示旧对话
+    if (chat.state.activeId) chat.clearActive();
+    if (routeSessionId) navigate('/copilot', { replace: true });
+  }, [chat.state.activeId, chat.state.sessions, currentWorkspaceId, historyReady, sessionsLoading, chat.switchSession, chat.clearActive, navigate, routeSessionId]);
   const sessionSignals = useMemo(() => {
     const messages = currentSession?.messages ?? [];
     const executions = messages.reduce((total, message) => total + (message.toolCalls?.length ?? 0), 0);
@@ -885,7 +1025,15 @@ export default function Copilot() {
       : workbench,
     [contextMessages, currentSession, workbench],
   );
+  const expertContext = useMemo(
+    () => deriveExpertContextOverview(contextMessages),
+    [contextMessages],
+  );
   const hasSessionContext = workbench.evidence + workbench.linkedTasks + workbench.pendingApprovals + workbench.executions > 0;
+  const hasStreamingAssistant = Boolean(
+    currentSession?.messages.some((message) => message.role === 'assistant' && message.status === 'streaming'),
+  );
+  const showTypingFallback = chat.state.typing && !hasStreamingAssistant;
   const canOpenExpertContext = Boolean(currentSession && (activeEmployee || currentSession.digitalEmployeeId || hasSessionContext));
   const hasSelectedContext = !!selectedContextMessage && (
     (selectedContextMessage.citations?.length ?? 0) > 0
@@ -998,7 +1146,7 @@ export default function Copilot() {
   useEffect(() => {
     if (sessionMode !== 'investigate') return;
     setEnabledTools((prev) => prev.filter((key) => !availableTools.find((tool) => tool.key === key)?.requiresApproval));
-  }, [sessionMode]);
+  }, [sessionMode, availableTools]);
 
   useEffect(() => {
     if (!moreMenuOpen) return;
@@ -1105,7 +1253,17 @@ export default function Copilot() {
                         {canMutate && (
                           <button
                             type="button"
-                            onClick={() => chat.delSession(s.id)}
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              void (async () => {
+                                await chat.delSession(s.id);
+                                queryClient.setQueryData<SessionItem[]>(['sessions', currentWorkspaceId], (prev) =>
+                                  (prev ?? []).filter((item) => item.id !== s.id),
+                                );
+                                void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+                              })();
+                            }}
                             className="copilot-session-item__delete"
                             aria-label={`删除会话：${s.title}`}
                             title="删除"
@@ -1197,16 +1355,16 @@ export default function Copilot() {
                 <button type="button" disabled={isClosed || handoffActive} onClick={() => setSessionMode('investigate')} className={cn('copilot-mode-toggle__btn', sessionMode === 'investigate' && 'is-active')}>研判</button>
                 <button type="button" disabled={isClosed || handoffActive} onClick={() => setSessionMode('execute')} className={cn('copilot-mode-toggle__btn', sessionMode === 'execute' && 'is-active is-execute')}>受控执行</button>
               </div>
-              <button type="button" onClick={openRebindExpertPicker} className="copilot-toolbar-btn copilot-toolbar-btn--expert hidden sm:inline-flex" title="查看或改绑数字员工">
+              <button type="button" onClick={openRebindExpertPicker} className="copilot-toolbar-btn copilot-toolbar-btn--expert hidden sm:inline-flex" title={hasBoundExpert ? '查看或改绑数字员工' : '选择数字员工（可选）'}>
                 <span className="copilot-toolbar-btn__icon relative !bg-transparent !p-0" style={{ boxShadow: 'none' }}>
                   <DigitalEmployeeAvatar
-                    employee={activeEmployee ?? { id: activeEmployeeId ?? 'expert', name: expertName }}
+                    employee={activeEmployee ?? { id: 'assistant', name: expertName }}
                     size={22}
                   />
-                  {activeEmployee?.lifecycle === 'active' && <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-[var(--success)] ring-1 ring-white" />}
+                  {hasBoundExpert && activeEmployee?.lifecycle === 'active' && <span className="absolute -right-0.5 -top-0.5 h-1.5 w-1.5 rounded-full bg-[var(--success)] ring-1 ring-white" />}
                 </span>
                 <span className="copilot-toolbar-btn__label">
-                  <span className="copilot-toolbar-btn__name">{expertName}</span>
+                  <span className="copilot-toolbar-btn__name">{hasBoundExpert ? expertName : '选择专家'}</span>
                   {expertMeta && <span className="copilot-toolbar-btn__role">{expertMeta}</span>}
                 </span>
               </button>
@@ -1303,10 +1461,10 @@ export default function Copilot() {
                       setExpandedApproval={setExpandedApproval}
                       onApprove={(mid) => setShowApproval({ messageId: mid, signerIndex: 0 })}
                       onCitation={(citation) => openCitation(citation, m.id)}
-                      onRetry={(name) => chat.regenerate(m.id)}
+                      onRetry={(name) => chat.regenerate(m.id, { modelId: sendModelId, enabledTools: enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools) })}
                       onCopy={copyMessage}
                       onEdit={(message) => { setEditingMessageId(message.id); chat.setDraft(message.content); inputRef.current?.focus(); }}
-                      onRegenerate={(mid) => chat.regenerate(mid)}
+                      onRegenerate={(mid) => chat.regenerate(mid, { modelId: sendModelId, enabledTools: enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools) })}
                       onDelete={(mid) => chat.delMessage(mid)}
                       onRetryMessage={(mid) => chat.retryMessage(mid)}
                       onFeedback={(mid, kind) => {
@@ -1324,7 +1482,7 @@ export default function Copilot() {
                       copiedId={copiedId}
                       agentName={expertName}
                       expertRole={expertMeta ?? undefined}
-                      expert={activeEmployee ?? (activeEmployeeId ? { id: activeEmployeeId, name: expertName } : { id: 'expert', name: expertName })}
+                      expert={activeEmployee ?? { id: 'assistant', name: expertName }}
                       onOpenContext={openContext}
                       selectedContextMessageId={contextSelection.scope === 'message' ? contextSelection.messageId : undefined}
                       messageRef={(element) => { messageRefs.current[m.id] = element; }}
@@ -1332,17 +1490,34 @@ export default function Copilot() {
                   ))}
                 </div>
 
-                {chat.state.typing && (
-                  <div className="copilot-streaming-status flex gap-3 px-4 sm:px-8 md:px-12 pb-4" aria-live="polite" aria-label="数字员工正在思考">
-                    <DigitalEmployeeAvatar
-                      employee={activeEmployee ?? { id: activeEmployeeId ?? 'expert', name: expertName }}
-                      size={32}
-                    />
-                    <div className="inline-flex items-center gap-1.5 pt-2 text-[12px] text-[var(--text-muted)]">
-                      {[0, 1, 2].map((i) => (
-                        <span key={i} aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-[var(--text-secondary)] animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
-                      ))}
-                      <span className="ml-1.5">{expertName} 正在思考</span>
+                {showTypingFallback && (
+                  <div className="copilot-message-list px-4 sm:px-8 md:px-12 pb-4 pt-0" aria-live="polite" aria-label={`${expertName}正在思考`}>
+                    <div className="copilot-message copilot-message--assistant flex gap-3">
+                      <div className="shrink-0 pt-0.5">
+                        <DigitalEmployeeAvatar
+                          employee={activeEmployee ?? { id: 'assistant', name: expertName }}
+                          size={28}
+                          className="copilot-message__avatar copilot-message__avatar--assistant"
+                        />
+                      </div>
+                      <div className="copilot-message__content min-w-0 space-y-2.5 w-full max-w-[960px]">
+                        <div className="copilot-message__meta flex items-center gap-1.5 text-[11px]">
+                          <span className="font-semibold text-[var(--text)]">{expertName}</span>
+                          {expertMeta && <span className="truncate text-[10px] text-[var(--text-muted)]">{expertMeta}</span>}
+                          <span className="inline-flex items-center gap-1 text-[10px] text-[var(--brand)]">
+                            <span className="h-1.5 w-1.5 rounded-full bg-[var(--brand)] animate-pulse" aria-hidden="true" />
+                            生成中
+                          </span>
+                        </div>
+                        <div className="copilot-message__body copilot-message__body--pending inline-flex items-center gap-2 text-[var(--text-muted)] text-sm py-1" role="status">
+                          <span className="copilot-thinking-dots" aria-hidden="true">
+                            {[0, 1, 2].map((i) => (
+                              <span key={i} style={{ animationDelay: `${i * 0.15}s` }} />
+                            ))}
+                          </span>
+                          <span>正在思考</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -1387,19 +1562,17 @@ export default function Copilot() {
                         <Sparkles className="h-3 w-3" />建议试试
                       </div>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                        {[
-                          { Icon: Zap, title: 'Redis 集群 OOM', desc: 'prod-redis-01 触发 maxmemory 限制' },
-                          { Icon: Server, title: 'K8s 节点扩容', desc: '为 cn-east-1 增加 2 个 worker' },
-                          { Icon: ShieldCheck, title: 'CVE 周报', desc: '本周漏洞与影响资产' },
-                          { Icon: BellOff, title: '告警降噪', desc: '合并重复告警规则' },
-                        ].map((p) => (
+                        {expertSuggestions.map((p) => {
+                          const Icon = suggestionIconMap[p.icon] ?? Sparkles;
+                          return (
                           <button
-                            key={p.title}
+                            key={p.id}
+                            type="button"
                             onClick={() => { chat.setDraft(`${p.title} - ${p.desc}`); inputRef.current?.focus(); }}
                             className="copilot-suggestion-card group flex items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3 text-left transition-colors hover:border-[var(--brand)] hover:bg-[var(--bg-elevated)]"
                           >
                             <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-[var(--brand-light)] text-[var(--brand)] group-hover:bg-[var(--brand)] group-hover:text-white transition-colors">
-                              <p.Icon className="h-4.5 w-4.5" />
+                              <Icon className="h-4.5 w-4.5" />
                             </span>
                             <div className="min-w-0">
                               <div className="text-sm font-semibold text-[var(--text)]">{p.title}</div>
@@ -1407,7 +1580,8 @@ export default function Copilot() {
                             </div>
                             <ArrowUp className="h-3.5 w-3.5 text-[var(--text-muted)] opacity-0 group-hover:opacity-100 ml-auto self-center" />
                           </button>
-                        ))}
+                          );
+                        })}
                       </div>
                     </>
                   )}
@@ -1512,7 +1686,7 @@ export default function Copilot() {
               >
                 <Settings className="h-3 w-3 text-[var(--text-muted)]" />
                 <span className="font-medium">{isAdmin ? '运行配置' : '受控运行路由'}</span>
-                <span className="font-mono text-[var(--text-muted)]">{isAdmin ? `${currentModel.label} · ${enabledToolCount} 工具` : '由工作区策略分配'}</span>
+                <span className="font-mono text-[var(--text-muted)]">{isAdmin ? `${currentModel?.label ?? sendModelId} · ${enabledToolCount} 工具` : '由工作区策略分配'}</span>
                 {isAdmin && <ChevronDown className="h-3 w-3 opacity-60" />}
               </button>
           </div>
@@ -1521,10 +1695,20 @@ export default function Copilot() {
           {isAdmin && modelOpen && (
             <div role="menu" className="absolute right-3 bottom-full mb-2 w-72 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-1 z-30">
               <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">运行配置 · 模型</div>
-              {MODELS.map((m) => (
+              {modelOptions.length === 0 && (
+                <div className="px-3 py-3 text-[12px] leading-5 text-[var(--text-secondary)]">
+                  当前工作区暂无可用模型。请到「模型中心」接入供应商并完成探测；数字员工装配的模型会在此显示。
+                </div>
+              )}
+              {modelOptions.map((m) => (
                 <button
                   key={m.key}
-                  onClick={() => { setCurrentModelKey(m.key); setModelOpen(false); }}
+                  onClick={() => {
+                    setCurrentModelKey(m.key);
+                    setModelOpen(false);
+                    const tools = enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools);
+                    persistRunConfig(m.modelId, tools);
+                  }}
                   role="menuitemradio"
                   aria-checked={currentModelKey === m.key}
                   className={cn(
@@ -1565,9 +1749,19 @@ export default function Copilot() {
             <div role="menu" className="absolute right-3 bottom-full mb-2 w-72 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-1 z-30">
               <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
                 <Wrench className="h-3 w-3" />本会话工具链
-                <button className="ml-auto text-[10px] text-[var(--text-secondary)] hover:underline" onClick={() => setEnabledTools(availableTools.map((t) => t.key))}>全选</button>
+                <button className="ml-auto text-[10px] text-[var(--text-secondary)] hover:underline" onClick={() => {
+                  const next = availableTools.map((t) => t.key);
+                  setEnabledTools(next);
+                  persistRunConfig(runModelId, next);
+                }}>全选</button>
               </div>
-              {availableTools.map((t) => {
+              {availableTools.length === 0 ? (
+                <div className="px-3 py-4 text-[11px] leading-5 text-[var(--text-muted)]">
+                  {hasBoundExpert
+                    ? '当前专家尚未装配工具或技能。请到「数字员工」能力装配中启用后再会话启用。'
+                    : '未绑定数字员工，本会话无可装配工具链。可先选择在岗专家。'}
+                </div>
+              ) : availableTools.map((t) => {
                 const on = enabledTools.includes(t.key);
                 const writeLocked = Boolean(t.requiresApproval && sessionMode === 'investigate');
                 return (
@@ -1579,7 +1773,11 @@ export default function Copilot() {
                         setToolsOpen(false);
                         return;
                       }
-                      setEnabledTools((prev) => on ? prev.filter((k) => k !== t.key) : [...prev, t.key]);
+                      setEnabledTools((prev) => {
+                        const next = on ? prev.filter((k) => k !== t.key) : [...prev, t.key];
+                        persistRunConfig(runModelId, next);
+                        return next;
+                      });
                     }}
                     role="menuitemcheckbox"
                     aria-checked={on && !writeLocked}
@@ -1593,7 +1791,7 @@ export default function Copilot() {
                       <div className="text-xs font-mono font-semibold">{t.name}</div>
                       <div className="text-[10px] text-[var(--text-muted)]">{writeLocked ? '研判模式不可用 · 点击切换到受控执行' : t.desc}</div>
                     </div>
-                    {t.requiresApproval && <Badge tone="warn" className="text-[9px]">需双重审批</Badge>}
+                    {t.requiresApproval && <Badge tone="warn" className="text-[9px]">需审批</Badge>}
                   </button>
                 );
               })}
@@ -1794,7 +1992,7 @@ export default function Copilot() {
               <div className="flex min-w-0 items-start gap-2.5">
                 <span className="copilot-agent-details__avatar shrink-0">
                   <DigitalEmployeeAvatar
-                    employee={activeEmployee ?? { id: activeEmployeeId ?? 'expert', name: expertName }}
+                    employee={activeEmployee ?? { id: 'assistant', name: expertName }}
                     size={32}
                     rounded="lg"
                   />
@@ -1894,20 +2092,46 @@ export default function Copilot() {
                     <div className="copilot-details-card__heading">
                       <Database className="h-3.5 w-3.5 text-[var(--brand)]" />
                       RAG 检索
-                      <Badge tone="success" className="ml-auto text-[10px]">实时</Badge>
+                      <Badge tone={expertContext.rag.attempted ? 'success' : 'neutral'} className="ml-auto text-[10px]">
+                        {expertContext.rag.attempted ? '本会话' : '未触发'}
+                      </Badge>
                     </div>
                     <div className="copilot-rag-grid">
-                      <div><span>召回耗时</span><strong className="font-mono">320ms</strong></div>
-                      <div><span>Top-K</span><strong className="font-mono">8</strong></div>
-                      <div><span>命中率</span><strong className="text-[var(--success)]">92%</strong></div>
-                      <div><span>重排</span><strong className="truncate font-mono text-[11px]">bge-reranker</strong></div>
+                      <div>
+                        <span>状态</span>
+                        <strong className="truncate text-[11px]">{expertContext.rag.label}</strong>
+                      </div>
+                      <div>
+                        <span>Top-K</span>
+                        <strong className="font-mono">{expertContext.rag.topK ?? '—'}</strong>
+                      </div>
+                      <div>
+                        <span>命中</span>
+                        <strong className="font-mono">{expertContext.rag.hitCount}</strong>
+                      </div>
+                      <div>
+                        <span>后端</span>
+                        <strong className="truncate font-mono text-[11px]">{expertContext.rag.backend ?? '—'}</strong>
+                      </div>
                     </div>
                     <div className="copilot-token-meter">
                       <div className="copilot-token-meter__label">
                         <span>上下文 Token</span>
-                        <strong className="font-mono">1.2k / 200k</strong>
+                        <strong className="font-mono">
+                          {expertContext.tokenUsed != null
+                            ? expertContext.tokenUsed >= 1000
+                              ? `${(expertContext.tokenUsed / 1000).toFixed(1)}k`
+                              : String(expertContext.tokenUsed)
+                            : '—'}
+                          {expertContext.modelLabel ? ` · ${expertContext.modelLabel}` : ''}
+                        </strong>
                       </div>
-                      <div className="copilot-token-meter__track"><span style={{ width: '0.6%' }} /></div>
+                      <div className="copilot-token-meter__track">
+                        <span style={{ width: expertContext.tokenUsed != null ? `${Math.min(100, (expertContext.tokenUsed / 200000) * 100)}%` : '0%' }} />
+                      </div>
+                      {expertContext.providerLabel && (
+                        <div className="mt-1.5 text-[10px] text-[var(--text-muted)]">供应商 {expertContext.providerLabel}</div>
+                      )}
                     </div>
                   </div>
                 </section>
@@ -1917,49 +2141,60 @@ export default function Copilot() {
                     <Link2 className="h-3.5 w-3.5 text-[var(--brand)]" />
                     最近引用
                   </div>
-                  <div className="copilot-details-list">
-                    {[
-                      { src: 'Redis Runbook v3.2', source: 'Runbook', page: 12, score: 0.92 },
-                      { src: 'CMDB PRD-CACHE-019', source: 'CMDB', page: null, score: 0.78 },
-                      { src: 'INC-019 处理记录', source: 'Runbook', page: 5, score: 0.71 },
-                    ].map((c, i) => (
-                      <button
-                        key={i}
-                        type="button"
-                        onClick={() => openCitation(c)}
-                        className="copilot-evidence-item block w-full text-left p-2.5"
-                      >
-                        <div className="mb-1.5 flex items-center gap-1.5">
-                          <span className={cn('nav-pill text-[9px]', SOURCE_COLOR[c.source])}>{c.source}</span>
-                          <span className="flex-1 truncate text-[11px] font-semibold">{c.src}</span>
-                          {c.page && <span className="text-[10px] text-[var(--text-muted)]">p.{c.page}</span>}
-                        </div>
-                        <div className="flex items-center gap-2 text-[10px]">
-                          <span className="shrink-0 text-[var(--text-muted)]">置信度</span>
-                          <div className={cn('copilot-confidence-bar', c.score >= 0.85 ? 'is-high' : c.score >= 0.7 ? 'is-mid' : 'is-low')}>
-                            <span style={{ width: `${c.score * 100}%` }} />
+                  {expertContext.citations.length === 0 ? (
+                    <div className="copilot-expert-empty">
+                      <p>本会话尚未产生可追溯引用。</p>
+                    </div>
+                  ) : (
+                    <div className="copilot-details-list">
+                      {expertContext.citations.map((c) => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          onClick={() => openCitation(c)}
+                          className="copilot-evidence-item block w-full text-left p-2.5"
+                        >
+                          <div className="mb-1.5 flex items-center gap-1.5">
+                            <span className={cn('nav-pill text-[9px]', SOURCE_COLOR[c.source] ?? 'text-[var(--text-secondary)] bg-[var(--bg-elevated)]')}>{c.source}</span>
+                            <span className="flex-1 truncate text-[11px] font-semibold">{c.docId || c.source}</span>
+                            {c.page != null && <span className="text-[10px] text-[var(--text-muted)]">p.{c.page}</span>}
                           </div>
-                          <span className={cn('font-mono', c.score >= 0.85 ? 'text-[var(--success)]' : c.score >= 0.7 ? 'text-[var(--text-secondary)]' : 'text-[var(--warning)]')}>
-                            {(c.score * 100).toFixed(0)}%
-                          </span>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+                          {c.text ? (
+                            <p className="mb-1.5 line-clamp-2 text-[10px] text-[var(--text-secondary)]">{c.text}</p>
+                          ) : null}
+                          <div className="flex items-center gap-2 text-[10px]">
+                            <span className="shrink-0 text-[var(--text-muted)]">置信度</span>
+                            <div className={cn('copilot-confidence-bar', c.score >= 0.85 ? 'is-high' : c.score >= 0.7 ? 'is-mid' : 'is-low')}>
+                              <span style={{ width: `${Math.min(100, Math.max(0, c.score * 100))}%` }} />
+                            </div>
+                            <span className={cn('font-mono', c.score >= 0.85 ? 'text-[var(--success)]' : c.score >= 0.7 ? 'text-[var(--text-secondary)]' : 'text-[var(--warning)]')}>
+                              {(c.score * 100).toFixed(0)}%
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </section>
 
                 <section className="copilot-agent-details__section">
                   <div className="copilot-details-card__heading mb-2.5">
                     <Wrench className="h-3.5 w-3.5 text-[var(--brand)]" />
                     工具调用
-                    <Badge tone="brand" className="ml-auto text-[10px]">3</Badge>
+                    <Badge tone="brand" className="ml-auto text-[10px]">{expertContext.tools.total}</Badge>
                   </div>
-                  <div className="copilot-mini-grid">
-                    <Mini label="成功" value="3" tone="success" />
-                    <Mini label="失败" value="0" tone="success" />
-                    <Mini label="平均" value="42ms" />
-                    <Mini label="缓存" value="32%" tone="success" />
-                  </div>
+                  {expertContext.tools.total === 0 ? (
+                    <div className="copilot-expert-empty">
+                      <p>本会话尚未调用工具。</p>
+                    </div>
+                  ) : (
+                    <div className="copilot-mini-grid">
+                      <Mini label="成功" value={String(expertContext.tools.success)} tone="success" />
+                      <Mini label="失败" value={String(expertContext.tools.failed)} tone={expertContext.tools.failed === 0 ? 'success' : undefined} />
+                      <Mini label="平均" value={expertContext.tools.avgMs != null ? `${expertContext.tools.avgMs}ms` : '—'} />
+                      <Mini label="合计" value={String(expertContext.tools.total)} />
+                    </div>
+                  )}
                 </section>
 
                 <section className="copilot-agent-details__section copilot-agent-details__section--last">
@@ -1967,23 +2202,34 @@ export default function Copilot() {
                     <Clock className="h-3.5 w-3.5 text-[var(--brand)]" />
                     活动时间线
                   </div>
-                  <div className="activity-timeline">
-                    {[
-                      { tone: 'success' as const, icon: CheckCircle2, text: `${expertName} 完成处置`, time: '14:32' },
-                      { tone: 'success' as const, icon: ShieldCheck, text: '双重审批通过（王昊 + 李婷）', time: '14:28' },
-                      { tone: 'info' as const, icon: Search, text: '检索 2 个 Runbook 文档', time: '14:25' },
-                    ].map((a, i) => (
-                      <div key={i} className="activity-timeline__item">
-                        <div className={cn('activity-timeline__dot', `activity-timeline__dot--${a.tone}`)}>
-                          <a.icon className="h-3 w-3" />
-                        </div>
-                        <div className="activity-timeline__content">
-                          <div className="activity-timeline__text">{a.text}</div>
-                          <div className="activity-timeline__time">{a.time}</div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  {expertContext.timeline.length === 0 ? (
+                    <div className="copilot-expert-empty">
+                      <p>暂无活动记录。</p>
+                    </div>
+                  ) : (
+                    <div className="activity-timeline">
+                      {expertContext.timeline.map((a, i) => {
+                        const TimelineIcon = a.tone === 'success'
+                          ? CheckCircle2
+                          : a.tone === 'warn'
+                            ? AlertTriangle
+                            : a.tone === 'error'
+                              ? AlertCircle
+                              : Search;
+                        return (
+                          <div key={`${a.text}-${a.time}-${i}`} className="activity-timeline__item">
+                            <div className={cn('activity-timeline__dot', `activity-timeline__dot--${a.tone}`)}>
+                              <TimelineIcon className="h-3 w-3" />
+                            </div>
+                            <div className="activity-timeline__content">
+                              <div className="activity-timeline__text">{a.text}</div>
+                              <div className="activity-timeline__time">{a.time}</div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </section>
               </div>
             )}
@@ -2260,7 +2506,16 @@ export default function Copilot() {
               </div>
               <FeedbackForm
                 target={target}
-                onSubmit={(payload) => { chat.setFeedback(target.id, { kind: 'dislike', ...payload }); setFeedbackOpen(null); }}
+                onSubmit={(payload) => {
+                  chat.setFeedback(target.id, { kind: 'dislike', ...payload });
+                  setFeedbackOpen(null);
+                  const hint = [payload.tags?.join(','), payload.comment].filter(Boolean).join(' · ');
+                  chat.regenerate(target.id, {
+                    modelId: sendModelId,
+                    enabledTools: enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools),
+                    reflectHint: hint || '用户点踩，请自我修正回答',
+                  });
+                }}
               />
             </div>
           </div>
@@ -2411,7 +2666,7 @@ function MessageBubble({
   const isTool = m.role === 'tool';
   const isEmpty = !m.content;
   const isStreaming = m.status === 'streaming';
-  const agentDisplayName = agentName || m.agentName || (isUser ? '王昊' : isTool ? '能力调用' : '数字员工');
+  const agentDisplayName = agentName || m.agentName || (isUser ? '王昊' : isTool ? '能力调用' : '助手');
   const [traceOpen, setTraceOpen] = useState(false);
   const needsDecision = !isUser && /CVE|高危|高风险|影响资产/.test(m.content ?? '');
   const expectedPlatformRole: Record<Signer['role'], 'user' | 'admin' | 'auditor'> = { operator: 'user', approver: 'admin', auditor: 'auditor' };
@@ -2576,10 +2831,13 @@ function MessageBubble({
             )}
           </div>
         ) : isStreaming ? (
-          <div className="copilot-message__body copilot-message__body--pending inline-flex items-center gap-2 text-[var(--text-muted)] text-sm py-1" role="status" aria-label="消息正在生成">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
-            <span>{agentDisplayName} 正在思考</span>
-            <span className="inline-block h-3.5 w-1.5 align-text-bottom bg-[var(--brand)] animate-pulse rounded-sm" aria-hidden="true" />
+          <div className="copilot-message__body copilot-message__body--pending inline-flex items-center gap-2.5 text-[var(--text-muted)] text-sm py-1" role="status" aria-label="消息正在生成">
+            <span className="copilot-thinking-dots" aria-hidden="true">
+              {[0, 1, 2].map((i) => (
+                <span key={i} style={{ animationDelay: `${i * 0.15}s` }} />
+              ))}
+            </span>
+            <span>正在思考</span>
           </div>
         ) : null}
 

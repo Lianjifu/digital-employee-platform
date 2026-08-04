@@ -16,7 +16,7 @@ run-sys: infra-env
 	$(GO) run ./cmd/de-sys
 
 run-collab: infra-env
-	$(GO) run ./cmd/de-collab
+	DE_CAP_URL=$${DE_CAP_URL:-http://127.0.0.1:8102} DE_WORKFLOW_URL=$${DE_WORKFLOW_URL:-http://127.0.0.1:8103} $(GO) run ./cmd/de-collab
 
 run-cap: infra-env
 	$(GO) run ./cmd/de-cap
@@ -36,6 +36,11 @@ build:
 	$(GO) build -o ./bin/de-collab ./cmd/de-collab
 	$(GO) build -o ./bin/de-cap ./cmd/de-cap
 	$(GO) build -o ./bin/de-workflow ./cmd/de-workflow
+	$(GO) build -o ./bin/de-local-llm ./cmd/de-local-llm
+
+# Local OpenAI-compatible chat (default :18080) for Copilot when no cloud key is set.
+local-llm:
+	$(GO) run ./cmd/de-local-llm
 
 docker-engine:
 	@command -v docker >/dev/null || { echo "docker CLI missing; brew install docker colima"; exit 1; }

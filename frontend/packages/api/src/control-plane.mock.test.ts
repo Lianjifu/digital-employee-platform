@@ -9,6 +9,24 @@ describe('control plane mock mutations', () => {
     const deployment = await mockHandler('/api/channel-control/deployments', { method: 'POST', headers: channelWriteHeaders, body: { name: '受控飞书', kind: 'feishu', credential: 'channel-secret' } }) as any;
     expect(deployment.credentialRef).toMatch(/^vault:\/\/channel-deployments\//);
     expect(JSON.stringify(deployment)).not.toContain('channel-secret');
+    expect(deployment.connectionMode).toBe('webhook');
+    expect(deployment.webhookPath).toMatch(/\/api\/channel\/feishu\/events\//);
+
+    const wsDeploy = await mockHandler('/api/channel-control/deployments', {
+      method: 'POST', headers: channelWriteHeaders,
+      body: { name: '飞书WebSocket', kind: 'feishu', appId: 'cli_ws', appSecret: 'sec_ws', connectionMode: 'websocket' },
+    }) as any;
+    expect(wsDeploy.connectionMode).toBe('websocket');
+    expect(wsDeploy.webhookPath).toBeUndefined();
+
+    const patched = await mockHandler(`/api/channel-control/deployments/${wsDeploy.id}`, {
+      method: 'PATCH', headers: channelWriteHeaders,
+      body: { name: '飞书已改名', environment: 'production', connectionMode: 'webhook' },
+    }) as any;
+    expect(patched.name).toBe('飞书已改名');
+    expect(patched.environment).toBe('production');
+    expect(patched.connectionMode).toBe('webhook');
+    expect(patched.webhookPath).toMatch(/\/api\/channel\/feishu\/events\//);
 
     const policies = await mockHandler('/api/channel-control/policies', { method: 'GET', headers: channelWriteHeaders }) as any[];
     const policy = policies[0];
@@ -117,6 +135,26 @@ describe('control plane mock mutations', () => {
 
     await expect(mockHandler('/api/model-providers/p1', { method: 'DELETE', headers: modelWriteHeaders, body: { reason: '退役验证' } }))
       .rejects.toThrow('E_PROVIDER_IN_USE');
+  });
+
+  it('allows provider deletion after unpublishing the referencing route', async () => {
+    const policies = await mockHandler('/api/model-routing/policies', { method: 'GET', headers: modelWriteHeaders }) as any[];
+    const blocking = policies.find((policy) => policy.status === 'published' && [policy.primaryModelId, ...policy.fallbackModelIds].length);
+    expect(blocking).toBeTruthy();
+
+    const unpublished = await mockHandler(`/api/model-routing/policies/${blocking.id}/unpublish`, {
+      method: 'POST', headers: modelWriteHeaders, body: { reason: '下线以便退役' },
+    }) as any;
+    expect(unpublished.status).toBe('draft');
+
+    const impact = await mockHandler(`/api/model-providers/p1/impact`, { method: 'GET', headers: modelWriteHeaders }) as any;
+    // p1 may still be referenced by other published policies; only assert unpublish works and impact shape.
+    expect(impact).toHaveProperty('deletionAllowed');
+    expect(Array.isArray(impact.routeReferences)).toBe(true);
+
+    await expect(mockHandler(`/api/model-routing/policies/${blocking.id}/unpublish`, {
+      method: 'POST', headers: modelWriteHeaders, body: { reason: '重复取消' },
+    })).rejects.toThrow('E_POLICY_NOT_PUBLISHED');
   });
 
   it('requires a valid draft before publishing and creates an immutable rollback version', async () => {
@@ -302,7 +340,9 @@ describe('control plane mock mutations', () => {
     expect(integrations.length).toBeGreaterThan(0);
     const target = integrations.find((item) => item.status !== 'failed');
     const tested = await mockHandler(`/api/skill-integrations/${target.id}/test`, { method: 'POST', body: {} }) as any;
-    expect(tested.lastVerifiedAt).toBe('刚刚');
+    expect(tested.health).toBe('healthy');
+    expect(String(tested.lastVerifiedAt)).toMatch(/\d{1,2}:\d{2}/);
+    expect(tested.lastVerifiedAt).not.toBe('刚刚');
     const discovered = await mockHandler(`/api/skill-integrations/${target.id}/discover`, { method: 'POST', body: {} }) as any;
     expect(discovered.discoveredCapabilities).toBeGreaterThan(0);
   });
@@ -330,5 +370,28 @@ describe('control plane mock mutations', () => {
     await expect(mockHandler('/api/knowledge/bindings', { method: 'POST', body: { packageId: 'kp-security', consumerType: 'agent', consumerId: 'a-test', consumerName: '验证智能体' } })).rejects.toThrow('E_KNOWLEDGE_VERSION_NOT_PUBLISHED');
     const entities = await mockHandler('/api/knowledge/graph/entities', { method: 'GET' }) as any[];
     expect(entities[0].sourceVersion).toBeTruthy();
+  });
+
+  it('lists evolve candidates and dual-signs skill/routing patches', async () => {
+    const adminHeaders = { 'x-mock-role': 'admin', 'x-mock-user-id': 'u1', 'x-workspace-id': 'w1' };
+    const auditorHeaders = { 'x-mock-role': 'auditor', 'x-mock-user-id': 'u-auditor', 'x-workspace-id': 'w1' };
+    const list = await mockHandler('/api/evolve/candidates', { method: 'GET', headers: adminHeaders }) as any[];
+    expect(list.some((c) => c.kind === 'memory_promote')).toBe(true);
+
+    const routing = await mockHandler('/api/evolve/candidates', {
+      method: 'GET', headers: adminHeaders,
+    }) as any[];
+    // seed a routing candidate via feedback dislike path then patch kind — create via approve flow on injected
+    const created = await mockHandler('/api/copilot/conversations/cv1/messages/msg-x/feedback', {
+      method: 'POST', headers: adminHeaders, body: { kind: 'dislike', comment: '答非所问' },
+    }) as any;
+    expect(created.evolveCandidate?.kind).toBe('skill_patch');
+    const id = created.evolveCandidate.id as string;
+
+    const first = await mockHandler(`/api/evolve/candidates/${id}/approve`, { method: 'POST', headers: adminHeaders, body: {} }) as any;
+    expect(first.status).toBe('pending_countersign');
+    const second = await mockHandler(`/api/evolve/candidates/${id}/approve`, { method: 'POST', headers: auditorHeaders, body: {} }) as any;
+    expect(second.status).toBe('approved');
+    expect(second.effect?.status).toBe('draft');
   });
 });

@@ -36,6 +36,11 @@ type Server struct {
 	OIDC       auth.OIDCConfig
 	Workflows  *deworkflow.Engine
 	ModelProbe *modelprov.Client
+	// Optional HTTP clients override Open API transport in tests.
+	FeishuHTTP   *http.Client
+	DingTalkHTTP *http.Client
+	WecomHTTP    *http.Client
+	WeixinHTTP   *http.Client
 }
 
 func New(st *store.Store) *Server {
@@ -225,6 +230,11 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.modelGovernanceOverview(r)
 	case path == "/api/model-audit" && method == http.MethodGet:
 		data, err = s.listModelAudit(r)
+	case path == "/api/model-invoke" && method == http.MethodPost:
+		data, err = s.modelInvoke(r)
+	case path == "/api/model-invoke/stream" && method == http.MethodPost:
+		s.modelInvokeStream(w, r)
+		return
 	case path == "/api/models/providers" && method == http.MethodGet:
 		data, err = s.listModelProvidersFE(r)
 	case path == "/api/models/providers" && method == http.MethodPost:
@@ -300,9 +310,15 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/knowledge/evaluations/run" && method == http.MethodPost:
 		data, err = s.runKnowledgeEvaluation(r)
 
-	// Copilot — Mock sessions/conversations
+	// Copilot — sessions / conversations / actions
 	case path == "/api/sessions" && method == http.MethodGet:
 		data, err = s.listSessions(r)
+	case path == "/api/sessions" && method == http.MethodPost:
+		data, err = s.createSession(r)
+	case strings.HasPrefix(path, "/api/sessions/") && method == http.MethodDelete:
+		data, err = s.deleteSession(r)
+	case strings.HasPrefix(path, "/api/conversations/") && method == http.MethodDelete && !strings.Contains(path, "/stream") && !strings.Contains(path, "/messages") && !strings.Contains(path, "/tasks"):
+		data, err = s.deleteConversation(r)
 	case path == "/api/slash-commands" && method == http.MethodGet:
 		data, err = s.listSlashCommands(r)
 	case path == "/api/conversations" && method == http.MethodGet:
@@ -325,6 +341,12 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	case strings.HasPrefix(path, "/api/copilot/conversations/") && strings.HasSuffix(path, "/stream") && method == http.MethodPost:
 		s.copilotStream(w, r)
 		return
+	case strings.HasPrefix(path, "/api/copilot/conversations/") && strings.Contains(path, "/messages/") && strings.HasSuffix(path, "/feedback") && method == http.MethodPost:
+		data, err = s.copilotMessageFeedback(r)
+	case strings.HasPrefix(path, "/api/actions/") && strings.HasSuffix(path, "/approve") && method == http.MethodPost:
+		data, err = s.approveAction(r)
+	case strings.HasPrefix(path, "/api/actions/") && strings.HasSuffix(path, "/execute") && method == http.MethodPost:
+		data, err = s.executeAction(r)
 
 	// Workflows
 	case path == "/api/workflows" && method == http.MethodGet:
@@ -416,12 +438,20 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/memory/audit" && method == http.MethodGet:
 		data, err = s.listMemoryAudits(r)
 
+	// Self-Evolution (Phase 4)
+	case path == "/api/evolve/candidates" && method == http.MethodGet:
+		data, err = s.listEvolveCandidates(r)
+	case strings.HasPrefix(path, "/api/evolve/candidates/") && method == http.MethodPost:
+		data, err = s.evolveCandidateAction(r)
+	case path == "/api/evolve/dream/run" && method == http.MethodPost:
+		data, err = s.evolveDreamRun(r)
+
 	// Channels — Mock channel-control
 	case path == "/api/channel-control/deployments" && method == http.MethodGet:
 		data, err = s.channelControlDeployments(r)
 	case path == "/api/channel-control/deployments" && method == http.MethodPost:
 		data, err = s.channelControlCreateDeploy(r)
-	case strings.HasPrefix(path, "/api/channel-control/deployments/") && (method == http.MethodGet || method == http.MethodPost || method == http.MethodDelete):
+	case strings.HasPrefix(path, "/api/channel-control/deployments/") && (method == http.MethodGet || method == http.MethodPost || method == http.MethodPatch || method == http.MethodDelete):
 		data, err = s.channelDeployAction(r)
 	case path == "/api/channel-control/policies" && method == http.MethodGet:
 		data, err = s.channelControlPolicies(r)
@@ -441,6 +471,17 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.channelControlHealth(r)
 	case path == "/api/channel-control/deliveries" && method == http.MethodPost:
 		data, err = s.channelControlDeliveries(r)
+	case path == "/api/channel-control/inbound" && method == http.MethodGet:
+		data, err = s.channelControlInbound(r)
+	case strings.HasPrefix(path, "/api/channel/feishu/events/") && method == http.MethodPost:
+		s.handleFeishuWebhook(w, r)
+		return
+	case strings.HasPrefix(path, "/api/channel/wecom/events/") && (method == http.MethodGet || method == http.MethodPost):
+		s.handleWecomWebhook(w, r)
+		return
+	case strings.HasPrefix(path, "/api/channel/dingtalk/events/") && method == http.MethodPost:
+		s.handleDingtalkWebhook(w, r)
+		return
 	case path == "/api/channel-templates" && method == http.MethodGet:
 		data, err = s.listChannelTemplates(r)
 	case path == "/api/channel-templates" && method == http.MethodPost:

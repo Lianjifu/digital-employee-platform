@@ -100,3 +100,47 @@ func InferProtocolFromURL(raw string) string {
 		return ""
 	}
 }
+
+// JoinChatURL builds the chat-completions (or native chat) URL for a protocol.
+func JoinChatURL(protocol, baseURL, apiVersion, deployment, modelName string) string {
+	base := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	protocol = normalizeProtocol(protocol)
+	switch protocol {
+	case "azure_openai":
+		ver := apiVersion
+		if ver == "" {
+			ver = "2024-10-21"
+		}
+		dep := strings.TrimSpace(deployment)
+		if dep == "" {
+			dep = strings.TrimSpace(modelName)
+		}
+		if dep == "" {
+			dep = "gpt-4o"
+		}
+		return base + "/openai/deployments/" + dep + "/chat/completions?api-version=" + urlQueryEscape(ver)
+	case "anthropic":
+		if strings.HasSuffix(base, "/v1") {
+			return base + "/messages"
+		}
+		return base + "/v1/messages"
+	case "ollama":
+		if strings.HasSuffix(base, "/v1") {
+			return base + "/chat/completions"
+		}
+		return strings.TrimSuffix(base, "/v1") + "/api/chat"
+	case "dashscope":
+		if strings.Contains(base, "compatible-mode") || strings.HasSuffix(base, "/v1") {
+			if strings.HasSuffix(base, "/v1") {
+				return base + "/chat/completions"
+			}
+			return base + "/v1/chat/completions"
+		}
+		return base + "/compatible-mode/v1/chat/completions"
+	default:
+		if strings.HasSuffix(base, "/v1") || strings.HasSuffix(base, "/anthropic") {
+			return base + "/chat/completions"
+		}
+		return base + "/v1/chat/completions"
+	}
+}
