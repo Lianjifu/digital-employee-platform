@@ -147,25 +147,41 @@ func (s *Server) executeSkill(r *http.Request) (any, error) {
 	result, runtimeErr := s.callSkillRuntime(body)
 	status := "success"
 	detail := "runtime=skill;runToken=issued;corr=" + dec.CorrelationID
+	durationMs := 0
 	if runtimeErr != nil {
 		status = "failed"
 		detail = runtimeErr.Error()
 		s.Store.Lock()
-		s.Store.AppendAudit(ws, id.Name, "沙箱执行技能", skillID, status, detail)
+		if _, sk2 := s.findSkillLocked(ws, skillID); sk2 != nil {
+			s.recordSkillInvocationLocked(ws, sk2, 0, false, id.Name, "HTTP 执行")
+		} else {
+			s.Store.AppendAudit(ws, id.Name, "沙箱执行技能", skillID, status, detail)
+		}
 		s.Store.Unlock()
+		s.Store.Persist("skill_health")
+		s.Store.Persist("skill_extra")
 		return nil, apperr.BadReq(apperr.BadRequest, "技能运行时不可用: "+runtimeErr.Error())
 	}
 	if b, ok := result["ok"].(bool); ok && !b {
 		status = "failed"
 		detail = coalesce(str(result["error"]), "skill runtime failed")
 	}
+	if d := intFrom(result["durationMs"]); d > 0 {
+		durationMs = d
+	}
 	if stdout := str(result["stdout"]); stdout != "" {
 		result["stdout"] = maskSkillOutput(stdout, boolFrom(govPolicy["dataMaskingEnabled"]))
 	}
 	result["correlationId"] = dec.CorrelationID
 	s.Store.Lock()
-	s.Store.AppendAudit(ws, id.Name, "沙箱执行技能", skillID, status, detail)
+	if _, sk2 := s.findSkillLocked(ws, skillID); sk2 != nil {
+		s.recordSkillInvocationLocked(ws, sk2, durationMs, status == "success", id.Name, "HTTP 执行")
+	} else {
+		s.Store.AppendAudit(ws, id.Name, "沙箱执行技能", skillID, status, detail)
+	}
 	s.Store.Unlock()
+	s.Store.Persist("skill_health")
+	s.Store.Persist("skill_extra")
 	return result, nil
 }
 

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -149,6 +150,132 @@ func (s *Server) ensureSkillHealthLocked(skill map[string]any) map[string]any {
 	return item
 }
 
+// recordSkillInvocationLocked updates SkillHealth + gov events + audit after a real execution.
+// Caller must hold Store.Lock.
+func (s *Server) recordSkillInvocationLocked(ws string, skill map[string]any, durationMs int, ok bool, actor, source string) {
+	if skill == nil || str(skill["id"]) == "" {
+		return
+	}
+	if actor == "" {
+		actor = "系统"
+	}
+	if source == "" {
+		source = "执行技能"
+	}
+	h := s.ensureSkillHealthLocked(skill)
+	calls := intFrom(h["calls24h"]) + 1
+	succ := intFrom(h["successCount24h"])
+	if ok {
+		succ++
+	}
+	h["calls24h"] = calls
+	h["successCount24h"] = succ
+	rate := 100.0
+	if calls > 0 {
+		rate = 100.0 * float64(succ) / float64(calls)
+	}
+	h["successRate"] = round2(rate)
+	h["errorRate"] = round2(100.0 - rate)
+	if durationMs < 0 {
+		durationMs = 0
+	}
+	// Lightweight latency tracker: keep observed max as P95 proxy for the 24h window.
+	if durationMs > intFrom(h["p95Ms"]) {
+		h["p95Ms"] = durationMs
+	}
+	h["updatedAt"] = "刚刚"
+	h["name"] = skill["name"]
+	h["kind"] = skill["kind"]
+	if str(skill["lifecycleStatus"]) == "quarantined" {
+		h["status"] = "quarantined"
+	} else if floatFrom(h["errorRate"]) >= 35 && calls >= 3 {
+		h["status"] = "attention"
+	} else if str(h["status"]) == "paused" {
+		// keep paused
+	} else {
+		h["status"] = "healthy"
+	}
+	result := "success"
+	if !ok {
+		result = "failed"
+	}
+	s.appendSkillGovEventLocked(ws, str(skill["name"]), "call", source, actor, result)
+	s.Store.AppendAudit(ws, actor, "执行技能", str(skill["name"]), result,
+		fmt.Sprintf("source=%s;durationMs=%d", source, durationMs))
+	s.bumpSkillTrendLocked(ws, durationMs, ok)
+}
+
+func (s *Server) recordSkillInvocation(ws string, skill map[string]any, durationMs int, ok bool, actor, source string) {
+	if skill == nil {
+		return
+	}
+	s.Store.Lock()
+	s.recordSkillInvocationLocked(ws, skill, durationMs, ok, actor, source)
+	s.Store.Unlock()
+	// Sync persist so Cap governance refresh sees Copilot/HTTP calls immediately.
+	s.Store.Persist("skill_health")
+	s.Store.Persist("skill_extra")
+}
+
+func defaultSkillTrendBuckets() []map[string]any {
+	return []map[string]any{
+		{"time": "00:00", "calls": 0, "fails": 0, "errorRate": 0, "p95": 0},
+		{"time": "04:00", "calls": 0, "fails": 0, "errorRate": 0, "p95": 0},
+		{"time": "08:00", "calls": 0, "fails": 0, "errorRate": 0, "p95": 0},
+		{"time": "12:00", "calls": 0, "fails": 0, "errorRate": 0, "p95": 0},
+		{"time": "16:00", "calls": 0, "fails": 0, "errorRate": 0, "p95": 0},
+		{"time": "20:00", "calls": 0, "fails": 0, "errorRate": 0, "p95": 0},
+	}
+}
+
+func (s *Server) skillTrendBucketsLocked(ws string) []map[string]any {
+	byWS := s.skillExtraMap("trendByWorkspace")
+	raw := knowledgeSliceMaps(byWS[ws])
+	if len(raw) == 0 {
+		raw = defaultSkillTrendBuckets()
+		byWS[ws] = raw
+		return raw
+	}
+	// Ensure canonical 6 slots exist.
+	index := map[string]map[string]any{}
+	for _, b := range raw {
+		index[str(b["time"])] = b
+	}
+	out := defaultSkillTrendBuckets()
+	for i, b := range out {
+		if prev, ok := index[str(b["time"])]; ok {
+			out[i] = prev
+		}
+	}
+	byWS[ws] = out
+	return out
+}
+
+func (s *Server) bumpSkillTrendLocked(ws string, durationMs int, ok bool) {
+	buckets := s.skillTrendBucketsLocked(ws)
+	slot := (time.Now().Hour() / 4) * 4
+	key := fmt.Sprintf("%02d:00", slot)
+	for _, b := range buckets {
+		if str(b["time"]) != key {
+			continue
+		}
+		calls := intFrom(b["calls"]) + 1
+		fails := intFrom(b["fails"])
+		if !ok {
+			fails++
+		}
+		b["calls"] = calls
+		b["fails"] = fails
+		if calls > 0 {
+			b["errorRate"] = round2(100.0 * float64(fails) / float64(calls))
+		}
+		if durationMs > intFrom(b["p95"]) {
+			b["p95"] = durationMs
+		}
+		return
+	}
+}
+
 func (s *Server) listSkills(r *http.Request) (any, error) {
 	id := identityFrom(r.Context())
 	if err := requireSkillRead(id); err != nil {
@@ -170,11 +297,29 @@ func (s *Server) listSkillsAligned(r *http.Request) (any, error) {
 	return s.listSkills(r)
 }
 
+func (s *Server) refreshSkillGovernanceFromKV() {
+	if s.KV == nil || !s.KV.Available() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	// Only metrics/events — do not rehydrate `skills` (would wipe EnsureDocxSkillReady / local installs).
+	for _, coll := range []string{"skill_health", "skill_extra"} {
+		items, err := s.KV.List(ctx, coll)
+		if err != nil || len(items) == 0 {
+			continue
+		}
+		// HydrateFrom already acquires Store.Lock — do not wrap it.
+		s.Store.HydrateFrom(coll, items)
+	}
+}
+
 func (s *Server) skillsGovernanceOverview(r *http.Request) (any, error) {
 	id := identityFrom(r.Context())
 	if err := requireSkillRead(id); err != nil {
 		return nil, err
 	}
+	s.refreshSkillGovernanceFromKV()
 	ws := s.workspaceID(r)
 	s.Store.RLock()
 	defer s.Store.RUnlock()
@@ -275,6 +420,7 @@ func (s *Server) skillsGovernanceHealth(r *http.Request) (any, error) {
 	if err := requireSkillRead(id); err != nil {
 		return nil, err
 	}
+	s.refreshSkillGovernanceFromKV()
 	ws := s.workspaceID(r)
 	s.Store.Lock()
 	defer s.Store.Unlock()
@@ -297,14 +443,21 @@ func (s *Server) skillsGovernanceTrends(r *http.Request) (any, error) {
 	if err := requireSkillRead(identityFrom(r.Context())); err != nil {
 		return nil, err
 	}
-	return []map[string]any{
-		{"time": "00:00", "calls": 0, "errorRate": 0, "p95": 0},
-		{"time": "04:00", "calls": 0, "errorRate": 0, "p95": 0},
-		{"time": "08:00", "calls": 0, "errorRate": 0, "p95": 0},
-		{"time": "12:00", "calls": 0, "errorRate": 0, "p95": 0},
-		{"time": "16:00", "calls": 0, "errorRate": 0, "p95": 0},
-		{"time": "20:00", "calls": 0, "errorRate": 0, "p95": 0},
-	}, nil
+	s.refreshSkillGovernanceFromKV()
+	ws := s.workspaceID(r)
+	s.Store.Lock()
+	buckets := s.skillTrendBucketsLocked(ws)
+	out := make([]map[string]any, 0, len(buckets))
+	for _, b := range buckets {
+		out = append(out, map[string]any{
+			"time":      str(b["time"]),
+			"calls":     intFrom(b["calls"]),
+			"errorRate": floatFrom(b["errorRate"]),
+			"p95":       intFrom(b["p95"]),
+		})
+	}
+	s.Store.Unlock()
+	return out, nil
 }
 
 func (s *Server) skillsGovernanceEmpty(r *http.Request) (any, error) {
@@ -990,13 +1143,19 @@ func (s *Server) skillTest(r *http.Request, id *auth.Identity, ws, skillID strin
 	output = maskSkillOutput(output, boolFrom(govPolicy["dataMaskingEnabled"]))
 
 	s.Store.Lock()
-	ev := s.Store.AppendAudit(ws, id.Name, ternary(status == "success", "执行沙箱测试", "沙箱测试失败"), skillName, ternary(status == "success", "success", "failed"), "mode="+mode+";corr="+dec.CorrelationID)
-	corr := coalesce(str(ev["correlationId"]), dec.CorrelationID)
+	_, skRec := s.findSkillLocked(ws, skillID)
+	if skRec != nil {
+		s.recordSkillInvocationLocked(ws, skRec, duration, status == "success", id.Name, "沙箱测试 · "+mode)
+	} else {
+		s.Store.AppendAudit(ws, id.Name, ternary(status == "success", "执行沙箱测试", "沙箱测试失败"), skillName, ternary(status == "success", "success", "failed"), "mode="+mode+";corr="+dec.CorrelationID)
+	}
 	s.Store.Unlock()
+	s.Store.Persist("skill_health")
+	s.Store.Persist("skill_extra")
 
 	return map[string]any{
 		"command": command, "status": status, "output": output, "durationMs": duration,
-		"correlationId": corr, "runtime": mode, "retries": retries,
+		"correlationId": dec.CorrelationID, "runtime": mode, "retries": retries,
 		"sim": mode == "policy-sim",
 	}, nil
 }

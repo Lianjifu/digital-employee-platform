@@ -325,7 +325,7 @@ export default function DigitalEmployees() {
         {tab === 'roleSetup' && (
           <div className="space-y-3">
             <div className="de-employee-hint rounded-xl px-4 py-3 text-xs leading-5 text-[var(--text-secondary)]">
-              岗位配置只维护授权契约；能力引用请到「能力装配」；评测上岗请到「上岗发布」。生产/高风险/在岗变更需另一名管理员双重审批后生效。
+              岗位配置只维护授权契约；能力引用请到「能力装配」；评测上岗请到「上岗发布」。保存后立即生效。
             </div>
             <section className="grid grid-cols-2 gap-3 lg:grid-cols-3">
               <KpiCard label="待补档案" value={roleSetupKpis.profilePending} sub="个" icon={BriefcaseBusiness} tone={roleSetupKpis.profilePending ? 'warn' : 'success'} size="comfortable" />
@@ -906,7 +906,7 @@ function OperationsListRow({
 
       <div className="grid grid-cols-4 gap-2 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 py-2">
         <OperationsMetric label="调用" value={employee.runtime.calls24h} />
-        <OperationsMetric label="成功率" value={employee.runtime.successRate ? `${(employee.runtime.successRate * 100).toFixed(0)}%` : '—'} />
+        <OperationsMetric label="成功率" value={employee.runtime.calls24h > 0 ? `${(employee.runtime.successRate * 100).toFixed(0)}%` : '—'} />
         <OperationsMetric label="交接" value={employee.runtime.handoffs24h} emphasize={employee.runtime.handoffs24h >= OPERATIONS_HANDOFF_THRESHOLD} />
         <OperationsMetric label="异常" value={employee.runtime.anomalies} emphasize={employee.runtime.anomalies > 0} />
       </div>
@@ -1537,9 +1537,9 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
               <Metric label="24 小时调用" value={employee.runtime.calls24h} />
-              <Metric label="成功率" value={employee.runtime.successRate ? `${(employee.runtime.successRate * 100).toFixed(1)}%` : '—'} />
+              <Metric label="成功率" value={employee.runtime.calls24h > 0 ? `${(employee.runtime.successRate * 100).toFixed(1)}%` : '—'} />
               <Metric label="P95 延迟" value={employee.runtime.p95Ms || '—'} sub={employee.runtime.p95Ms ? 'ms' : undefined} />
-              <Metric label="今日成本" value={`¥${employee.runtime.costToday}`} />
+              <Metric label="今日成本" value={`¥${Number(employee.runtime.costToday || 0).toFixed(2)}`} />
               <Metric label="人工交接" value={employee.runtime.handoffs24h} sub="次" />
               <Metric label="异常信号" value={employee.runtime.anomalies} sub="项" />
             </div>
@@ -1664,10 +1664,10 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
   const { data: capabilityCatalog } = useApiQuery<DigitalEmployeeCapabilityCatalog>(['digital-employee-capability-catalog'], '/api/digital-employee-capability-catalog', undefined, { enabled: open });
   const save = useApiMutation<EmployeeConfigurationResult, EmployeeConfigurationInput>(() => `/api/digital-employees/${employee.id}/configuration`, {
     onSuccess: (result) => setMessage(
-      result.requiresApproval
-        ? `${result.version} 已提交双重审批；批准前不会影响在岗员工。`
-        : mode === 'capability'
-          ? `${result.version} 能力装配已保存并生效。`
+      mode === 'capability'
+        ? `${result.version} 能力装配已保存并生效。`
+        : employee.release.status === 'released' || employee.lifecycle === 'active'
+          ? `${result.version} 岗位授权契约已保存并生效。`
           : `${result.version} 已保存，可继续执行评测与上岗流程。`,
     ),
     onError: () => setMessage('保存未完成，请检查必填项与岗位边界。'),
@@ -1698,10 +1698,8 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
     capabilityCount > 0 && !modesComplete && '执行授权模式',
   ].filter(Boolean) as string[];
   const blocking = mode === 'capability' ? capabilityBlocking : roleBlocking;
-  const controlled = mode === 'capability'
-    ? false
-    : employee.lifecycle === 'active' || profile.environment === 'production' || profile.risk === 'high';
   const roleContractReady = roleSetupCompleteness(employee).ready;
+  const alreadyOnDuty = employee.release.status === 'released' || employee.lifecycle === 'active';
   const submit = () => {
     if (blocking.length) { setMessage(`请补齐：${blocking.join('、')}`); return; }
     const nextCapabilities = mode === 'role'
@@ -1745,7 +1743,7 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
   const workbenchTitle = mode === 'capability' ? '受控能力装配' : '配置岗位授权契约';
   const workbenchDescription = mode === 'capability'
     ? '引用已发布模型与能力资产，并为技能/工具/流程设置执行授权；保存后立即生效。岗位职责请到「岗位配置」。'
-    : '维护岗位档案、职责边界、人工接管与记忆策略；能力引用请到「能力装配」。高风险与在岗变更需双重审批后生效。';
+    : '维护岗位档案、职责边界、人工接管与记忆策略；能力引用请到「能力装配」。保存后立即生效。';
   const validationAside = (
     <aside className="space-y-3 lg:w-[220px] lg:shrink-0">
       <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3">
@@ -1754,7 +1752,7 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
           {blocking.length
             ? blocking.map((item) => <div key={item} className="flex gap-1.5 text-[var(--danger)]"><XCircle className="mt-0.5 h-3 w-3 shrink-0" />待补齐：{item}</div>)
             : <div className="flex gap-1.5 text-[var(--success)]"><CheckCircle2 className="mt-0.5 h-3 w-3 shrink-0" />必填配置已完整</div>}
-          <div className="flex gap-1.5 text-[var(--text-secondary)]"><ShieldCheck className="mt-0.5 h-3 w-3 shrink-0 text-[var(--brand)]" />{controlled ? '需双重审批后生效' : '可保存当前配置'}</div>
+          <div className="flex gap-1.5 text-[var(--text-secondary)]"><ShieldCheck className="mt-0.5 h-3 w-3 shrink-0 text-[var(--brand)]" />可保存当前配置</div>
         </div>
       </section>
       <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] p-3">
@@ -1778,7 +1776,7 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
     </aside>
   );
   return (
-    <Modal open={open} onClose={onClose} title={workbenchTitle} description={canMutate ? workbenchDescription : '只读核查岗位契约与能力装配证据，不提交变更。'} size="xl" footer={canMutate ? <><Button variant="ghost" onClick={onClose}>取消</Button><Button loading={save.isPending} disabled={Boolean(blocking.length)} onClick={submit}><Save className="h-3.5 w-3.5" />{controlled ? '提交双重审批变更' : '保存配置'}</Button></> : <Button variant="ghost" onClick={onClose}>关闭</Button>}>
+    <Modal open={open} onClose={onClose} title={workbenchTitle} description={canMutate ? workbenchDescription : '只读核查岗位契约与能力装配证据，不提交变更。'} size="xl" footer={canMutate ? <><Button variant="ghost" onClick={onClose}>取消</Button><Button loading={save.isPending} disabled={Boolean(blocking.length)} onClick={submit}><Save className="h-3.5 w-3.5" />保存配置</Button></> : <Button variant="ghost" onClick={onClose}>关闭</Button>}>
       <div className="space-y-4">
         <section className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-[var(--bg-elevated)] px-4 py-3" style={{ boxShadow: 'var(--saas-ring)' }}>
           <div className="flex min-w-0 items-center gap-3">
@@ -1792,8 +1790,8 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
               <p className="mt-0.5 text-xs text-[var(--text-muted)]">{employeeSecondaryLabel(employee)} · {versions.find((item) => item.status === 'current')?.version ?? '配置 v1'}</p>
             </div>
           </div>
-          <div className={cn('rounded-lg px-3 py-1.5 text-[11px]', controlled ? 'bg-[var(--warning-bg)] text-[var(--text-secondary)]' : 'bg-[var(--success-bg)] text-[var(--text-secondary)]')} style={{ boxShadow: 'var(--saas-ring)' }}>
-            {controlled ? '变更将进入双重审批后生效' : mode === 'capability' ? '能力装配可直接保存生效' : '配置可保存，上岗前仍需完成评测'}
+          <div className="rounded-lg bg-[var(--success-bg)] px-3 py-1.5 text-[11px] text-[var(--text-secondary)]" style={{ boxShadow: 'var(--saas-ring)' }}>
+            {mode === 'capability' ? '能力装配可直接保存生效' : alreadyOnDuty ? '岗位授权契约保存后立即生效' : '配置可保存，上岗前仍需完成评测'}
           </div>
         </section>
         {mode === 'capability' && !roleContractReady && (
@@ -2094,7 +2092,7 @@ function CapabilityContent({ employee }: { employee: DigitalEmployee }) {
   return <div className="space-y-3"><p className="text-xs leading-5 text-[var(--text-muted)]">仅绑定工作区内已发布、经治理批准的能力版本。能力本体仍由模型、知识、技能、工作流和渠道中心独立治理。</p>{employee.capabilities.agentId && <p className="rounded-lg px-3 py-2 text-[11px] text-[var(--text-muted)]" style={{ boxShadow: 'var(--saas-ring)' }}>执行运行时已绑定（内部），不作为对外岗位身份。</p>}{rows.map((row) => <div key={row.label} className="rounded-lg bg-[var(--bg)] p-3" style={{ boxShadow: 'var(--saas-ring)' }}><div className="text-xs font-semibold">{row.label}</div><div className="mt-2 flex flex-wrap gap-1.5">{row.values.length ? row.values.map((value) => <Badge key={value} tone="neutral">{value}</Badge>) : <span className="text-xs text-[var(--text-muted)]">未绑定</span>}</div></div>)}</div>;
 }
 function MemoryContent({ employee }: { employee: DigitalEmployee }) { const policy = employee.memoryPolicy; return <div className="space-y-4"><div><h3 className="text-sm font-semibold">三层记忆策略</h3><p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">会话短期记忆、岗位工作记忆和经审核的长期记忆彼此分层，长期记忆不会自动成为企业知识。</p></div><div className="grid grid-cols-2 gap-3"><Metric label="短期记忆" value={policy.shortTermHours} sub="小时" /><Metric label="工作记忆" value={policy.workingDays} sub="天" /><Metric label="长期提炼" value={policy.longTermCadence === 'daily' ? '每日' : '每周'} /><Metric label="转知识" value={policy.knowledgePromotion === 'approval_required' ? '需审核' : '已关闭'} /></div><div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3 text-xs leading-5 text-[var(--text-secondary)]"><Database className="mr-1 inline h-3.5 w-3.5 text-[var(--brand)]" />长期记忆按策略提炼为知识候选，审核通过后才进入知识中心的权威资产目录。</div></div>; }
-function RuntimeContent({ employee }: { employee: DigitalEmployee }) { const runtime = employee.runtime; return <div className="space-y-4"><div className="grid grid-cols-2 gap-3"><Metric label="24 小时调用" value={runtime.calls24h} /><Metric label="成功率" value={runtime.successRate ? `${(runtime.successRate * 100).toFixed(1)}%` : '—'} /><Metric label="P95 延迟" value={runtime.p95Ms || '—'} sub={runtime.p95Ms ? 'ms' : undefined} /><Metric label="今日成本" value={`¥${runtime.costToday}`} /><Metric label="人工交接" value={runtime.handoffs24h} sub="次" /><Metric label="异常信号" value={runtime.anomalies} sub="项" /></div><div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3 text-xs leading-5 text-[var(--text-secondary)]"><HeartPulse className="mr-1 inline h-3.5 w-3.5 text-[var(--success)]" />运行运营聚焦业务服务质量；模型、工具与渠道的深度技术指标分别在其所属控制面查看。</div></div>; }
+function RuntimeContent({ employee }: { employee: DigitalEmployee }) { const runtime = employee.runtime; return <div className="space-y-4"><div className="grid grid-cols-2 gap-3"><Metric label="24 小时调用" value={runtime.calls24h} /><Metric label="成功率" value={runtime.calls24h > 0 ? `${(runtime.successRate * 100).toFixed(1)}%` : '—'} /><Metric label="P95 延迟" value={runtime.p95Ms || '—'} sub={runtime.p95Ms ? 'ms' : undefined} /><Metric label="今日成本" value={`¥${Number(runtime.costToday || 0).toFixed(2)}`} /><Metric label="人工交接" value={runtime.handoffs24h} sub="次" /><Metric label="异常信号" value={runtime.anomalies} sub="项" /></div><div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3 text-xs leading-5 text-[var(--text-secondary)]"><HeartPulse className="mr-1 inline h-3.5 w-3.5 text-[var(--success)]" />运行运营聚焦业务服务质量；模型、工具与渠道的深度技术指标分别在其所属控制面查看。</div></div>; }
 
 function SelectField({ label, value, onChange, options }: { label: string; value: string; onChange: (value: string) => void; options: Array<[string, string]> }) { return <label className="grid gap-1.5 text-xs font-medium">{label}<select value={value} onChange={(event) => onChange(event.target.value)} className="h-9 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2 text-xs font-normal outline-none focus:border-[var(--brand)]">{options.map(([key, text]) => <option value={key} key={key}>{text}</option>)}</select></label>; }
 function TextAreaField({ label, value, onChange, hint }: { label: string; value: string; onChange: (value: string) => void; hint: string }) { return <label className="grid gap-1.5 text-xs font-medium">{label}<textarea value={value} onChange={(event) => onChange(event.target.value)} rows={4} className="rounded-lg border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs font-normal leading-5 outline-none focus:border-[var(--brand)]" /><span className="font-normal leading-5 text-[var(--text-muted)]">{hint}</span></label>; }

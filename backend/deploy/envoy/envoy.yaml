@@ -20,12 +20,12 @@ static_resources:
                         - match: { prefix: "/agent" }
                           route:
                             cluster: de_core
-                            timeout: 60s
+                            timeout: 180s
                             prefix_rewrite: "/api/copilot"
                         - match: { prefix: "/api" }
                           route:
                             cluster: de_core
-                            timeout: 30s
+                            timeout: 180s
                         - match: { prefix: "/healthz" }
                           route: { cluster: de_core }
                         - match: { prefix: "/readyz" }

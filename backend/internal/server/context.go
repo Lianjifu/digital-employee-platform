@@ -51,9 +51,11 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			r.URL.Path == "/v1/evaluate" ||
 			r.URL.Path == "/api/auth/login" ||
 			r.URL.Path == "/api/auth/oidc/login" || r.URL.Path == "/api/auth/oidc/callback" ||
+			strings.HasPrefix(r.URL.Path, "/api/share/") ||
 			strings.HasPrefix(r.URL.Path, "/api/channel/feishu/events/") ||
 			strings.HasPrefix(r.URL.Path, "/api/channel/wecom/events/") ||
-			strings.HasPrefix(r.URL.Path, "/api/channel/dingtalk/events/") {
+			strings.HasPrefix(r.URL.Path, "/api/channel/dingtalk/events/") ||
+			(r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.HasPrefix(r.URL.Path, "/api/skill-artifacts/") {
 			next.ServeHTTP(w, r)
 			return
 		}

@@ -202,7 +202,7 @@ describe('digital employee control plane', () => {
     await expect(mockHandler(`/api/digital-employee-templates/${template.id}`, { method: 'PATCH', headers: auditor, body: { status: 'deprecated' } })).rejects.toThrow('E_AUDITOR_READ_ONLY');
   });
 
-  it('creates a versioned, approval-gated configuration change for an active employee', async () => {
+  it('applies role-scope configuration immediately for an active employee without dual approval', async () => {
     const employee = await mockHandler('/api/digital-employees', { method: 'POST', headers: admin, body: { name: '配置验证专员', role: '配置验证', department: '信息技术部' } }) as any;
     await mockHandler(`/api/digital-employees/${employee.id}/configuration`, {
       method: 'POST',
@@ -229,15 +229,13 @@ describe('digital employee control plane', () => {
       memoryPolicy: { shortTermHours: 24, workingDays: 7, longTermCadence: 'daily', knowledgePromotion: 'approval_required' },
     };
     const submitted = await mockHandler(`/api/digital-employees/${employee.id}/configuration`, { method: 'POST', headers: builder, body: configuration }) as any;
-    expect(submitted).toMatchObject({ status: 'pending_approval', requiresApproval: true });
+    expect(submitted).toMatchObject({ status: 'current', requiresApproval: false, changeSummary: '更新岗位授权契约' });
 
     const versions = await mockHandler(`/api/digital-employees/${employee.id}/configuration-versions`, { method: 'GET', headers: admin }) as any[];
-    expect(versions.some((version) => version.id === submitted.id && version.status === 'pending_approval')).toBe(true);
-    await expect(mockHandler(`/api/digital-employees/${employee.id}/configuration-versions/${submitted.id}/approve`, { method: 'POST', headers: builder })).rejects.toThrow();
-    const approved = await mockHandler(`/api/digital-employees/${employee.id}/configuration-versions/${submitted.id}/approve`, { method: 'POST', headers: admin }) as any;
-    expect(approved.status).toBe('current');
+    expect(versions.some((version) => version.id === submitted.id && version.status === 'current')).toBe(true);
 
     const saved = await mockHandler(`/api/digital-employees/${employee.id}`, { method: 'GET', headers: admin }) as any;
+    expect(saved.environment).toBe('production');
     expect(saved.handoffPolicy).toMatchObject({ triggers: ['需要人工判断'], approvalRequiredFor: ['配置协同流'] });
     expect(saved.boundaryPolicy).toMatchObject({ dataClassification: 'confidential', allowedEnvironments: ['production'], capabilityModes: [{ capabilityName: '配置协同流', mode: 'approval_required' }] });
     await expect(mockHandler(`/api/digital-employees/${employee.id}/configuration`, { method: 'POST', headers: auditor, body: configuration })).rejects.toThrow('E_AUDITOR_READ_ONLY');

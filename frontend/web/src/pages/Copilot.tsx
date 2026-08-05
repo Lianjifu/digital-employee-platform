@@ -26,7 +26,7 @@ import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useApiQuery } from '@/services/query';
 import { useQueryClient } from '@tanstack/react-query';
-import { Avatar, Badge, Button, Input, Row, CollapsedPanelHandle } from '@de/web-ui';
+import { Avatar, Badge, Button, Input, Row, CollapsedPanelHandle, toast } from '@de/web-ui';
 import {
   Bot, Search, ListChecks as ListChecksIcon, Wrench, Workflow as WorkflowIcon, FileText, ShieldCheck,
   AlertTriangle, Upload, MoreHorizontal, Download,
@@ -55,6 +55,25 @@ import { Markdown } from '@/components/Markdown';
 import { deriveWorkbenchSummary, type WorkbenchContextTab } from '@/features/copilot/workbench';
 import { buildExpertSuggestions, type ExpertSuggestionIcon } from '@/features/copilot/expert-suggestions';
 import { buildExpertTools, defaultEnabledToolKeys } from '@/features/copilot/expert-tools';
+import {
+  MENTION_CATEGORIES,
+  filterByQuery,
+  mergeMentionedTools,
+  replaceMentionTrigger,
+  shouldShowMentionMenu,
+  type MentionKind,
+} from '@/features/copilot/mentions';
+import {
+  filterSlashCommands,
+  parseSlashCommand,
+  planSlashPick,
+  planSlashSend,
+  slashHelpText,
+  type SlashUiAction,
+} from '@/features/copilot/slash-commands';
+import { extractSkillArtifacts, stripArtifactNoise } from '@/features/copilot/artifact-links';
+import { sortSessionsByRecency } from '@/features/copilot/session-sort';
+import { getApiClient } from '@de/web-api';
 import { deriveExpertContextOverview } from '@/features/copilot/expert-context';
 import { sessionHistoryPresentation } from '@/features/copilot/layout';
 import { RoleReadonlyBanner } from '@/components/shared';
@@ -80,12 +99,17 @@ interface SessionItem {
   agent?: string;
   digitalEmployeeId?: string;
   digitalEmployeeName?: string;
-  status?: 'active' | 'done' | string;
+  status?: 'active' | 'done' | 'closed' | 'archived' | string;
   createdAt?: string;
   updatedAt?: string;
   lastMessageAt?: string;
   pinned?: boolean;
   unread?: number;
+  sessionMode?: 'investigate' | 'execute' | string;
+  riskLevel?: 'low' | 'medium' | 'high' | string;
+  handoff?: { active?: boolean; ownerId?: string; ownerName?: string; at?: string; note?: string };
+  closeSummary?: string;
+  shareToken?: string;
 }
 
 function sessionGroup(lastMessageAt: string | undefined | null): ChatSession['group'] {
@@ -138,15 +162,19 @@ function toChatSession(session: SessionItem): ChatSession {
     agent: session.digitalEmployeeName ?? session.agent ?? (session.digitalEmployeeId ? '岗位专家' : '助手'),
     digitalEmployeeId: session.digitalEmployeeId,
     digitalEmployeeName: session.digitalEmployeeName ?? session.agent,
-    status: session.status === 'done' ? 'done' : 'active',
-    lifecycle: session.status === 'done' ? 'idle' : 'active',
+    status: session.status === 'closed' || session.status === 'done' ? 'closed' : (session.status === 'archived' ? 'archived' : 'active'),
+    lifecycle: session.status === 'closed' || session.status === 'done' ? 'idle' : 'active',
     group: sessionGroup(stamp),
     time: sessionTime(stamp),
     pinned: session.pinned,
     messages: [],
     createdAt: created,
     lastActiveAt: updated,
-    encrypted: true,
+    sessionMode: session.sessionMode === 'execute' ? 'execute' : 'investigate',
+    riskLevel: session.riskLevel === 'high' || session.riskLevel === 'low' ? session.riskLevel : 'medium',
+    handoff: session.handoff,
+    closeSummary: session.closeSummary,
+    shareToken: session.shareToken,
   };
 }
 
@@ -183,17 +211,20 @@ const SOURCE_COLOR: Record<string, string> = {
   SIEM: 'text-[var(--warning)] bg-[var(--warning-bg)]',
 };
 
-const MENTIONS = [
-  { key: '@expert', label: '专家', icon: BriefcaseBusiness, desc: '在岗数字员工 ...' },
-  { key: '@skill', label: '技能', icon: Wrench, desc: 'redis-cli / 流程技能 ...' },
-  { key: '@doc', label: '文档', icon: FileText, desc: 'Runbook / CMDB ...' },
-  { key: '@member', label: '成员', icon: Users, desc: '王昊 / 李婷 ...' },
-];
+const MENTION_ICONS: Record<MentionKind, typeof Wrench> = {
+  expert: BriefcaseBusiness,
+  skill: Wrench,
+  doc: FileText,
+  member: Users,
+};
 
 interface ComposerAttachment {
   name: string;
   size: string;
   type: 'file' | 'image';
+  id?: string;
+  uploading?: boolean;
+  error?: string;
 }
 
 const FEEDBACK_TAGS: { key: FeedbackTag; label: string }[] = [
@@ -261,6 +292,8 @@ export default function Copilot() {
   const [historyReady, setHistoryReady] = useState(false);
   const [showSlash, setShowSlash] = useState(false);
   const [showMention, setShowMention] = useState(false);
+  const [mentionPane, setMentionPane] = useState<'root' | MentionKind>('root');
+  const [mentionQuery, setMentionQuery] = useState('');
   const [showApproval, setShowApproval] = useState<{ messageId: string; signerIndex: number } | null>(null);
   const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [expandedArgs, setExpandedArgs] = useState<Record<string, boolean>>({});
@@ -491,7 +524,7 @@ export default function Copilot() {
     const sess = chat.activeSession;
     if (!sess) return;
     if (sess.modelId === modelId && JSON.stringify(sess.enabledTools ?? []) === JSON.stringify(tools)) return;
-    chat.syncSession({ ...sess, modelId, enabledTools: tools });
+    chat.persistSession({ ...sess, modelId, enabledTools: tools });
   }, [chat]);
 
   // 仅展示真实在岗专家；无绑定 / 失效 ID 不沿用会话里的残留 SRE 名称
@@ -560,15 +593,18 @@ export default function Copilot() {
 
   // 服务器历史是当前工作区的权威列表；合并缺失项，并剔除服务端已删除的本地残留。
   useEffect(() => {
-    if (sessionsLoading || sessionsFetching) return;
+    // 首屏无缓存时等加载；已有数据时允许在后台 refetch 期间仍合并，避免侧栏空白。
+    if (sessionsLoading && sessionHistoryData === undefined) return;
     // 请求失败时不要用空列表 reconcile，否则会误删本地会话
     if (sessionsError && sessionHistoryData === undefined) {
       setHistoryReady(true);
       return;
     }
+    if (sessionHistoryData === undefined && sessionsFetching) return;
     chat.importSessions(sessionHistory.map(toChatSession), {
       workspaceId: currentWorkspaceId,
-      reconcile: sessionHistoryData !== undefined,
+      // 仅非空列表才 reconcile（空列表可能是权限过滤，不能清空本地会话记录）
+      reconcile: Array.isArray(sessionHistoryData) && sessionHistoryData.length > 0,
     });
     setHistoryReady(true);
   }, [chat.importSessions, sessionHistory, sessionHistoryData, sessionsLoading, sessionsFetching, sessionsError, currentWorkspaceId]);
@@ -580,8 +616,12 @@ export default function Copilot() {
       ?? sessionHistory.find((item) => item.conversationId === activeConversation.id);
     if (!summary) return;
     if (!sessionInWorkspace(summary, currentWorkspaceId)) return;
-    chat.syncSession({ ...toChatSession(summary), messages: (activeConversation.messages ?? []) as ChatMessageEx[] });
-  }, [activeConversation, conversationMissing, chat.state.activeId, chat.syncSession, conversationFetchId, sessionHistory, currentWorkspaceId]);
+    const serverMessages = (activeConversation.messages ?? []) as ChatMessageEx[];
+    // 服务端暂无消息时不要把本地已渲染的回合冲掉（刷新竞态 / 空桶误持久化）
+    const localMessages = chat.state.sessions[chat.state.activeId]?.messages ?? [];
+    if (serverMessages.length === 0 && localMessages.length > 0) return;
+    chat.syncSession({ ...toChatSession(summary), messages: serverMessages });
+  }, [activeConversation, conversationMissing, chat.state.activeId, chat.state.sessions, chat.syncSession, conversationFetchId, sessionHistory, currentWorkspaceId]);
 
   // 深链：URL → state（仅当路由会话在当前工作区有效时）
   useEffect(() => {
@@ -633,6 +673,8 @@ export default function Copilot() {
         enabledTools: enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools),
       }).then((id) => {
         if (id) navigate(`/copilot/${id}`, { replace: true });
+      }).catch((err) => {
+        toast.error(err instanceof Error ? err.message : '创建会话失败，请重试');
       });
     }
     setSearchParams({}, { replace: true });
@@ -652,7 +694,7 @@ export default function Copilot() {
         setRebindBlockedReason(isClosed ? '会话已结案，无法改绑专家。' : '人工交接中，无法改绑专家。');
         return;
       }
-      chat.syncSession({
+      chat.persistSession({
         ...active,
         digitalEmployeeId: employee.id,
         digitalEmployeeName: employeePrimaryLabel(employee),
@@ -675,6 +717,8 @@ export default function Copilot() {
       setExpertPickerQuery('');
       setRebindBlockedReason(null);
       if (id) navigate(`/copilot/${id}`);
+    }).catch((err) => {
+      toast.error(err instanceof Error ? err.message : '创建会话失败，请重试');
     });
   };
 
@@ -687,6 +731,8 @@ export default function Copilot() {
         enabledTools: enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools),
       }).then((id) => {
         if (id) navigate(`/copilot/${id}`);
+      }).catch((err) => {
+        toast.error(err instanceof Error ? err.message : '创建会话失败，请重试');
       });
       return;
     }
@@ -745,8 +791,10 @@ export default function Copilot() {
       setShareDialog({ open: true, token: currentSession.shareToken });
       return;
     }
-    const token = chat.shareSession(currentSession.id);
-    setShareDialog({ open: true, token: token ?? undefined });
+    void chat.shareSession(currentSession.id).then((token) => {
+      setShareDialog({ open: true, token: token ?? undefined });
+      if (!token) toast.error('创建分享失败');
+    });
   };
 
   // 复制分享链接
@@ -807,13 +855,155 @@ export default function Copilot() {
     chat.archiveSession(currentSession.id, !archived);
   };
 
-  // 分组的 slash 命令
+  // 分组的 slash 命令（按当前输入过滤）
+  const slashFiltered = useMemo(
+    () => filterSlashCommands(slashCmds, chat.state.draftInput.startsWith('/') ? chat.state.draftInput : '/'),
+    [slashCmds, chat.state.draftInput],
+  );
   const slashGrouped = useMemo(() => {
-    const g: Record<string, any[]> = { agent: [], kb: [], task: [], tool: [], collab: [] };
-    slashCmds.forEach((c) => { g[c.category]?.push(c); });
+    const g: Record<string, typeof slashFiltered> = { agent: [], kb: [], task: [], tool: [], collab: [] };
+    slashFiltered.forEach((c) => { g[c.category]?.push(c); });
     return g;
-  }, [slashCmds]);
+  }, [slashFiltered]);
 
+  const applySlashAction = async (action: SlashUiAction) => {
+    switch (action.type) {
+      case 'open_expert_picker':
+        setExpertPickerMode(chat.activeSession ? 'rebind' : 'new');
+        setExpertPickerOpen(true);
+        setExpertPickerQuery(action.query ?? '');
+        setRebindBlockedReason(null);
+        chat.setDraft('');
+        break;
+      case 'open_model_picker':
+        if (isAdmin) {
+          setToolsOpen(false);
+          setModelOpen(true);
+        } else {
+          chat.appendLocalAssistant('当前角色由工作区策略分配受控运行路由，无法通过 /model 手动切换。');
+        }
+        chat.setDraft('');
+        break;
+      case 'open_mention': {
+        chat.setDraft('@');
+        setShowMention(true);
+        setShowSlash(false);
+        setMentionPane(action.pane);
+        setMentionQuery('');
+        inputRef.current?.focus();
+        break;
+      }
+      case 'open_tools':
+        if (isAdmin) {
+          setModelOpen(false);
+          setToolsOpen(true);
+        }
+        chat.setDraft('');
+        break;
+      case 'export':
+        handleExport(action.format);
+        chat.setDraft('');
+        chat.appendLocalAssistant('已导出当前会话为 Markdown，请查看浏览器下载。');
+        break;
+      case 'clear_session':
+        chat.clearActiveMessages();
+        chat.setDraft('');
+        chat.appendLocalAssistant('已清空本会话消息。岗位专家与运行配置保持不变。');
+        break;
+      case 'show_help':
+        chat.setDraft('');
+        chat.appendLocalAssistant(slashHelpText(slashCmds));
+        break;
+      case 'switch_model': {
+        const q = action.query.toLowerCase();
+        const match = modelOptions.find((m) =>
+          [m.key, m.label, m.modelId, m.apiModel, m.desc].filter(Boolean).join(' ').toLowerCase().includes(q),
+        );
+        if (!match) {
+          chat.appendLocalAssistant(`未找到匹配模型「${action.query}」。可用：${modelOptions.map((m) => m.label).join('、') || '无'}`);
+          chat.setDraft('');
+          break;
+        }
+        setCurrentModelKey(match.key);
+        const tools = enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools);
+        persistRunConfig(match.modelId, tools);
+        chat.setDraft('');
+        chat.appendLocalAssistant(`已切换本会话模型为「${match.label}」。`);
+        break;
+      }
+      case 'switch_expert': {
+        const q = action.query.toLowerCase();
+        const match = onDutyEmployees.find((e) =>
+          [e.name, e.role, e.department].join(' ').toLowerCase().includes(q),
+        );
+        if (!match) {
+          chat.appendLocalAssistant(`未找到在岗专家「${action.query}」。可用：${onDutyEmployees.map((e) => e.role || e.name).join('、') || '无'}`);
+          chat.setDraft('');
+          break;
+        }
+        chat.setDraft('');
+        startSessionWithExpert(match);
+        break;
+      }
+      case 'create_task': {
+        const sess = chat.activeSession;
+        if (!sess) {
+          chat.appendLocalAssistant('请先打开或创建会话，再使用 /task。');
+          break;
+        }
+        try {
+          const conversationId = sess.conversationId ?? sess.id;
+          const task = await getApiClient().post<{ id: string; code?: string; title?: string }>(
+            `/api/conversations/${encodeURIComponent(conversationId)}/tasks`,
+            {
+              title: action.title,
+              priority: 'P2',
+              digitalEmployeeId: sess.digitalEmployeeId,
+            },
+          );
+          chat.setDraft('');
+          chat.appendLocalAssistant(`已创建任务「${task.title ?? action.title}」${task.code ? `（${task.code}）` : ''}，可在任务中心继续跟踪。`);
+        } catch (err) {
+          chat.appendLocalAssistant(`创建任务失败：${err instanceof Error ? err.message : '未知错误'}`);
+          chat.setDraft('');
+        }
+        break;
+      }
+      case 'send': {
+        const baseTools = enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools);
+        let tools = baseTools;
+        if (action.enableTools?.length) {
+          const known = new Set(availableTools.map((t) => t.key));
+          for (const key of action.enableTools) {
+            if (known.has(key) && !tools.includes(key)) tools = [...tools, key];
+          }
+          // builtins always allowed even if not in availableTools list edge case
+          for (const key of action.enableTools) {
+            if (key.startsWith('builtin:') && !tools.includes(key)) tools = [...tools, key];
+          }
+          setEnabledTools(tools);
+        }
+        persistRunConfig(sendModelId, tools);
+        chat.setDraft('');
+        chat.send(action.content, {
+          modelId: sendModelId,
+          enabledTools: tools,
+          modeHint: action.modeHint,
+          reflectHint: action.reflectHint,
+        });
+        break;
+      }
+      case 'noop':
+        if (action.message && action.message !== 'await_args') {
+          chat.appendLocalAssistant(action.message);
+          chat.setDraft('');
+        }
+        break;
+      default:
+        break;
+    }
+    setShowSlash(false);
+  };
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTo({
@@ -828,7 +1018,13 @@ export default function Copilot() {
       if (event.key !== 'Escape') return;
       if (showSlash || showMention) {
         setShowSlash(false);
+        if (showMention && mentionPane !== 'root') {
+          setMentionPane('root');
+          return;
+        }
         setShowMention(false);
+        setMentionPane('root');
+        setMentionQuery('');
         return;
       }
       if (sessionsOpen) {
@@ -841,7 +1037,7 @@ export default function Copilot() {
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [contextSelection.open, sessionsOpen, showMention, showSlash]);
+  }, [contextSelection.open, sessionsOpen, showMention, showSlash, mentionPane]);
 
   // 平板与桌面固定保留会话历史；只有窄屏允许收起为抽屉，避免主内容被遮挡。
   useEffect(() => {
@@ -857,11 +1053,13 @@ export default function Copilot() {
     setTimeout(() => inputRef.current?.focus(), 50);
   }, [chat.state.activeId]);
 
-  // 过滤会话
+  // 过滤会话（按最近活跃降序，新建会话置顶）
   const filteredSessions = useMemo(() => {
     const list = Object.values(chat.state.sessions).filter((session) => sessionInWorkspace(session, currentWorkspaceId));
     const q = searchQ.trim().toLowerCase();
-    return list.filter((s) => !q || s.title.toLowerCase().includes(q) || s.preview.toLowerCase().includes(q));
+    return sortSessionsByRecency(
+      list.filter((s) => !q || s.title.toLowerCase().includes(q) || s.preview.toLowerCase().includes(q)),
+    );
   }, [chat.state.sessions, currentWorkspaceId, searchQ]);
 
   const grouped = useMemo(() => ({
@@ -877,51 +1075,177 @@ export default function Copilot() {
   const tokenEstimate = Math.round(charCount * 0.6);
   const tokenPercent = (tokenEstimate / (MAX_CHARS * 0.6)) * 100;
 
+  const mentionSkillItems = useMemo(
+    () => availableTools.filter((t) => t.kind === 'skill' || t.kind === 'tool' || t.kind === 'workflow'),
+    [availableTools],
+  );
+  const mentionExpertItems = useMemo(
+    () => employees.filter((e) => e.lifecycle === 'active' || e.release?.status === 'released').map((e) => ({
+      key: e.id,
+      name: e.role || e.name,
+      label: e.name,
+      desc: `${e.department} · ${e.name}`,
+    })),
+    [employees],
+  );
+  const mentionDocItems = useMemo(
+    () => (activeEmployee?.capabilities?.knowledge ?? []).map((name) => ({ key: name, name, desc: '已装配知识库' })),
+    [activeEmployee],
+  );
+  const mentionMemberItems = useMemo(() => {
+    const names = Array.from(new Set(
+      [activeEmployee?.owner, activeEmployee?.escalationOwner, '王昊', '李婷'].filter(Boolean) as string[],
+    ));
+    return names.map((name) => ({ key: name, name, desc: '协作成员' }));
+  }, [activeEmployee]);
+
   const onInputChange = (v: string) => {
     chat.setDraft(v);
-    if (v === '/') { setShowSlash(true); setShowMention(false); return; }
-    if (v.endsWith('@') || / @\w*$/.test(v)) { setShowMention(true); setShowSlash(false); return; }
+    if (v === '/') {
+      setShowSlash(true);
+      setShowMention(false);
+      setMentionPane('root');
+      setMentionQuery('');
+      return;
+    }
+    if (shouldShowMentionMenu(v)) {
+      const trigger = v.match(/(?:^|[\s\u3000])@([^\s@]*)$/u);
+      const q = trigger?.[1] ?? '';
+      setShowMention(true);
+      setShowSlash(false);
+      setMentionQuery(q);
+      setMentionPane((prev) => {
+        if (prev !== 'root') return prev;
+        if (/^(skill|tool|workflow)/i.test(q)) return 'skill';
+        if (/^expert/i.test(q)) return 'expert';
+        if (/^doc/i.test(q)) return 'doc';
+        if (/^member/i.test(q)) return 'member';
+        return prev;
+      });
+      return;
+    }
     setShowSlash(v.startsWith('/') && v.length > 1 && !v.includes(' '));
-    setShowMention(v.endsWith('@') || / @\w*$/.test(v));
+    setShowMention(false);
+    setMentionPane('root');
+    setMentionQuery('');
   };
 
   const handleSend = () => {
     if (!canMutate) return;
     if (!chat.state.draftInput.trim() || chat.state.typing || isClosed || handoffActive) return;
+
+    const slash = parseSlashCommand(chat.state.draftInput);
+    if (slash) {
+      void applySlashAction(planSlashSend(slash));
+      return;
+    }
+
     if (!sendModelId) {
       window.alert('当前工作区没有可用模型。请先在「模型中心」接入并探测供应商，或为数字员工装配可用模型。');
       return;
     }
     // 无数字员工也可直接对话（通用助手 + 已选模型）；选专家为增强能力，非硬门槛
-    if (sessionMode === 'investigate') {
-      const draft = chat.state.draftInput.trim();
-      const writeHint = /\/(exec|kubectl|write|apply|config)|CONFIG SET|kubectl\s+(apply|delete|exec)/i.test(draft);
-      if (writeHint) {
-        setSessionMode('execute');
-      }
+    const draft = chat.state.draftInput.trim();
+    const writeHint = sessionMode === 'investigate'
+      && /\/(exec|kubectl|write|apply|config)|CONFIG SET|kubectl\s+(apply|delete|exec)/i.test(draft);
+    const baseTools = enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools);
+    const tools = mergeMentionedTools(baseTools, chat.state.draftInput, availableTools.map((t) => t.key));
+    const needsExecute = writeHint
+      || (tools.some((key) => availableTools.find((t) => t.key === key)?.requiresApproval) && sessionMode === 'investigate');
+    const mode: 'investigate' | 'execute' = needsExecute ? 'execute' : sessionMode;
+    const risk = riskLevel;
+    if (mode !== sessionMode) setSessionMode(mode);
+    if (tools.length !== enabledTools.length || tools.some((k, i) => k !== enabledTools[i])) {
+      setEnabledTools(tools);
     }
-    const tools = enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools);
     persistRunConfig(sendModelId, tools);
+    const attachmentIds = attachments.map((a) => a.id).filter((id): id is string => Boolean(id));
+    if (attachments.some((a) => a.uploading)) {
+      toast.error('附件仍在上传，请稍候再发送');
+      return;
+    }
+    if (attachments.some((a) => a.error || !a.id)) {
+      toast.error('存在上传失败的附件，请移除后重试');
+      return;
+    }
+    if (chat.activeSession) {
+      chat.persistSession({
+        ...chat.activeSession,
+        modelId: sendModelId,
+        enabledTools: tools,
+        sessionMode: mode,
+        riskLevel: risk,
+      });
+    }
     if (editingMessageId) {
-      chat.replaceAndSend(editingMessageId, chat.state.draftInput, { modelId: sendModelId, enabledTools: tools });
+      chat.replaceAndSend(editingMessageId, chat.state.draftInput, {
+        modelId: sendModelId, enabledTools: tools, sessionMode: mode, riskLevel: risk, attachmentIds,
+      });
       setEditingMessageId(null);
     } else {
-      chat.send(chat.state.draftInput, { modelId: sendModelId, enabledTools: tools });
+      chat.send(chat.state.draftInput, {
+        modelId: sendModelId,
+        enabledTools: tools,
+        sessionMode: mode,
+        riskLevel: risk,
+        attachmentIds: attachmentIds.length ? attachmentIds : undefined,
+      });
     }
+    setAttachments([]);
     setShowSlash(false);
     setShowMention(false);
+    setMentionPane('root');
+    setMentionQuery('');
   };
 
   const insertSlash = (c: string) => {
-    chat.setDraft(c + ' ');
-    setShowSlash(false);
+    const pick = planSlashPick(c);
+    if (pick.type === 'noop' && pick.message === 'await_args') {
+      chat.setDraft(`${c} `);
+      setShowSlash(false);
+      inputRef.current?.focus();
+      return;
+    }
+    void applySlashAction(pick);
     inputRef.current?.focus();
   };
 
-  const insertMention = (m: typeof MENTIONS[number]) => {
+  const openMentionMenu = () => {
     const cur = chat.state.draftInput;
-    chat.setDraft(cur.replace(/ @?\w*$/, ` ${m.key} `));
+    const next = shouldShowMentionMenu(cur)
+      ? cur
+      : `${cur}${cur && !/[\s\u3000]$/u.test(cur) ? ' ' : ''}@`;
+    onInputChange(next);
+    setMentionPane('root');
+    inputRef.current?.focus();
+  };
+
+  const pickMentionCategory = (kind: MentionKind) => {
+    setMentionPane(kind);
+    setMentionQuery('');
+    inputRef.current?.focus();
+  };
+
+  const applyMentionToken = (token: string, toolKey?: string) => {
+    const next = replaceMentionTrigger(chat.state.draftInput, token);
+    chat.setDraft(next);
     setShowMention(false);
+    setMentionPane('root');
+    setMentionQuery('');
+    if (toolKey) {
+      setEnabledTools((prev) => {
+        const base = prev.length ? prev : defaultEnabledToolKeys(availableTools);
+        return base.includes(toolKey) ? base : [...base, toolKey];
+      });
+      const tool = availableTools.find((t) => t.key === toolKey);
+      if (tool?.requiresApproval && sessionMode === 'investigate') {
+        setSessionMode('execute');
+      }
+      persistRunConfig(sendModelId, (() => {
+        const base = enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools);
+        return base.includes(toolKey) ? base : [...base, toolKey];
+      })());
+    }
     inputRef.current?.focus();
   };
 
@@ -936,12 +1260,59 @@ export default function Copilot() {
       fileInputRef.current?.click();
       return;
     }
-    const next: ComposerAttachment[] = files.map((f) => ({
+    const conversationId = chat.activeSession?.conversationId ?? chat.activeSession?.id;
+    if (!conversationId || !sessionInWorkspace(chat.activeSession, currentWorkspaceId)) {
+      toast.error('请先选择或创建会话后再上传附件');
+      return;
+    }
+    const placeholders: ComposerAttachment[] = files.map((f) => ({
       name: f.name,
       size: formatBytes(f.size),
       type: f.type.startsWith('image/') ? 'image' : 'file',
+      uploading: true,
     }));
-    setAttachments((prev) => [...prev, ...next]);
+    setAttachments((prev) => [...prev, ...placeholders]);
+    void (async () => {
+      const api = getApiClient();
+      for (let i = 0; i < files.length; i += 1) {
+        const file = files[i];
+        const form = new FormData();
+        form.append('file', file);
+        try {
+          const uploaded = await api.upload<{ id: string; name?: string }>(
+            `/api/conversations/${encodeURIComponent(conversationId)}/attachments`,
+            form,
+          );
+          setAttachments((prev) => {
+            const next = [...prev];
+            const idx = next.findIndex((a) => a.uploading && a.name === file.name && !a.id);
+            if (idx >= 0) {
+              next[idx] = {
+                ...next[idx],
+                id: uploaded.id,
+                uploading: false,
+                error: undefined,
+              };
+            }
+            return next;
+          });
+        } catch (err) {
+          setAttachments((prev) => {
+            const next = [...prev];
+            const idx = next.findIndex((a) => a.uploading && a.name === file.name && !a.id);
+            if (idx >= 0) {
+              next[idx] = {
+                ...next[idx],
+                uploading: false,
+                error: err instanceof Error ? err.message : '上传失败',
+              };
+            }
+            return next;
+          });
+          toast.error(`${file.name} 上传失败`);
+        }
+      }
+    })();
   };
   const removeAttachment = (i: number) => setAttachments((prev) => prev.filter((_, idx) => idx !== i));
   const onPaste: React.ClipboardEventHandler<HTMLTextAreaElement> = (e) => {
@@ -975,6 +1346,23 @@ export default function Copilot() {
   const currentSession = chat.activeSession && sessionInWorkspace(chat.activeSession, currentWorkspaceId)
     ? chat.activeSession
     : undefined;
+
+  useEffect(() => {
+    if (!currentSession) return;
+    setSessionMode(currentSession.sessionMode === 'execute' ? 'execute' : 'investigate');
+    setRiskLevel(currentSession.riskLevel === 'high' || currentSession.riskLevel === 'low' ? currentSession.riskLevel : 'medium');
+    const h = currentSession.handoff;
+    setHandoffActive(Boolean(h?.active));
+    if (h?.ownerName) setHandoffOwner(h.ownerName);
+    setIsClosed(
+      currentSession.status === 'closed'
+      || currentSession.status === 'done'
+      || currentSession.status === 'archived'
+      || currentSession.lifecycle === 'archived'
+      || currentSession.lifecycle === 'deleted',
+    );
+  }, [currentSession?.id, currentSession?.sessionMode, currentSession?.riskLevel, currentSession?.handoff?.active, currentSession?.status, currentSession?.lifecycle]);
+
   const sessionUsage = useMemo(() => {
     const messages = currentSession?.messages ?? [];
     const tokens = messages.reduce((sum, message) => sum + (message.metrics?.promptTokens ?? 0) + (message.metrics?.completionTokens ?? 0), 0);
@@ -1321,9 +1709,9 @@ export default function Copilot() {
             const decision = handoffActive
               ? { label: '人工交接', tone: 'warn' as const, text: `写操作已暂停，由 ${handoffOwner} 继续处置。` }
               : workbench.pendingApprovals
-                ? { label: '需审批', tone: 'warn' as const, text: `${workbench.pendingApprovals} 项写操作待双重审批 · 打开消息中的审批卡签署` }
+                ? { label: '需审批', tone: 'warn' as const, text: `${workbench.pendingApprovals} 项写操作待人工审核 · 打开消息中的审批卡授权` }
                 : sessionMode === 'execute' && riskLevel === 'high'
-                  ? { label: '需审批', tone: 'warn' as const, text: '高风险受控执行 · 写操作需双重审批与回滚点' }
+                  ? { label: '需审批', tone: 'warn' as const, text: '高风险受控执行 · 写操作需人工审核授权' }
                   : sessionMode === 'execute'
                     ? { label: '脱敏放行', tone: 'info' as const, text: '受控执行中 · 写操作进入审批与审计' }
                     : { label: '允许研判', tone: 'success' as const, text: '可检索分析 · 变更请切换受控执行' };
@@ -1352,8 +1740,14 @@ export default function Copilot() {
 
             <div className="copilot-header__actions shrink-0">
               <div className="copilot-mode-toggle hidden sm:inline-flex" role="group" aria-label="协作模式">
-                <button type="button" disabled={isClosed || handoffActive} onClick={() => setSessionMode('investigate')} className={cn('copilot-mode-toggle__btn', sessionMode === 'investigate' && 'is-active')}>研判</button>
-                <button type="button" disabled={isClosed || handoffActive} onClick={() => setSessionMode('execute')} className={cn('copilot-mode-toggle__btn', sessionMode === 'execute' && 'is-active is-execute')}>受控执行</button>
+                <button type="button" disabled={isClosed || handoffActive} onClick={() => {
+                  setSessionMode('investigate');
+                  if (currentSession) chat.persistSession({ ...currentSession, sessionMode: 'investigate', riskLevel });
+                }} className={cn('copilot-mode-toggle__btn', sessionMode === 'investigate' && 'is-active')}>研判</button>
+                <button type="button" disabled={isClosed || handoffActive} onClick={() => {
+                  setSessionMode('execute');
+                  if (currentSession) chat.persistSession({ ...currentSession, sessionMode: 'execute', riskLevel });
+                }} className={cn('copilot-mode-toggle__btn', sessionMode === 'execute' && 'is-active is-execute')}>受控执行</button>
               </div>
               <button type="button" onClick={openRebindExpertPicker} className="copilot-toolbar-btn copilot-toolbar-btn--expert hidden sm:inline-flex" title={hasBoundExpert ? '查看或改绑数字员工' : '选择数字员工（可选）'}>
                 <span className="copilot-toolbar-btn__icon relative !bg-transparent !p-0" style={{ boxShadow: 'none' }}>
@@ -1617,8 +2011,11 @@ export default function Copilot() {
             <div className="copilot-popover copilot-popover--slash absolute bottom-full left-3 right-3 mb-2 max-h-80 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-2 z-10">
               <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
                 <Sparkles className="h-3 w-3" />Slash 命令
-                <span className="text-[10px] font-mono normal-case text-[var(--text-muted)] ml-auto">{slashCmds.length} 个</span>
+                <span className="text-[10px] font-mono normal-case text-[var(--text-muted)] ml-auto">{slashFiltered.length} 个</span>
               </div>
+              {slashFiltered.length === 0 && (
+                <p className="px-3 py-3 text-[11px] text-[var(--text-muted)]">没有匹配的命令。输入 /help 查看全部。</p>
+              )}
               {Object.entries(slashGrouped).map(([cat, cmds]) =>
                 cmds.length > 0 ? (
                   <div key={cat} className="mb-1.5">
@@ -1651,14 +2048,21 @@ export default function Copilot() {
           {showMention && (
             <div className="copilot-popover copilot-popover--mention absolute bottom-full left-3 mb-2 max-h-80 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-1 z-10">
               <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
-                <AtSign className="h-3 w-3" />@ 提及对象
+                <AtSign className="h-3 w-3" />
+                {mentionPane === 'root' ? '@ 提及对象' : mentionPane === 'skill' ? '@ 选用技能' : mentionPane === 'expert' ? '@ 切换专家' : mentionPane === 'doc' ? '@ 引用文档' : '@ 提及成员'}
+                {mentionPane !== 'root' && (
+                  <button type="button" className="ml-auto text-[10px] normal-case text-[var(--brand)] hover:underline" onClick={() => { setMentionPane('root'); setMentionQuery(''); }}>
+                    返回
+                  </button>
+                )}
               </div>
-              {MENTIONS.map((m) => {
-                const Icon = m.icon;
+              {mentionPane === 'root' && MENTION_CATEGORIES.map((m) => {
+                const Icon = MENTION_ICONS[m.kind];
                 return (
                   <button
                     key={m.key}
-                    onClick={() => insertMention(m)}
+                    type="button"
+                    onClick={() => pickMentionCategory(m.kind)}
                     className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]"
                   >
                     <span className="grid h-7 w-7 place-items-center rounded-md bg-[var(--info-bg)] text-[var(--info)]">
@@ -1668,9 +2072,89 @@ export default function Copilot() {
                       <div className="text-xs font-mono font-semibold">{m.key}</div>
                       <div className="text-[10px] text-[var(--text-muted)]">{m.desc}</div>
                     </div>
+                    <ChevronRight className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                   </button>
                 );
               })}
+              {mentionPane === 'skill' && (
+                filterByQuery(mentionSkillItems, mentionQuery.replace(/^(skill|tool|workflow):?/i, '')).length === 0 ? (
+                  <p className="px-3 py-3 text-[11px] leading-5 text-[var(--text-muted)]">
+                    {hasBoundExpert ? '当前专家未装配可用技能/工具。请到「能力装配」绑定后再试。' : '请先绑定在岗数字员工，再通过 @ 选用其装配技能。'}
+                  </p>
+                ) : filterByQuery(mentionSkillItems, mentionQuery.replace(/^(skill|tool|workflow):?/i, '')).map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => applyMentionToken(`@${t.key}`, t.key)}
+                    className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]"
+                  >
+                    <span className="grid h-7 w-7 place-items-center rounded-md bg-[var(--brand-light)] text-[var(--brand)]">
+                      <Wrench className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold truncate">{t.name}</div>
+                      <div className="text-[10px] text-[var(--text-muted)] truncate">{t.desc}</div>
+                    </div>
+                    <Badge tone={t.requiresApproval ? 'warn' : 'neutral'} className="text-[9px] shrink-0">{t.kind === 'skill' ? '技能' : t.kind === 'workflow' ? '流程' : '工具'}</Badge>
+                  </button>
+                ))
+              )}
+              {mentionPane === 'expert' && (
+                filterByQuery(mentionExpertItems, mentionQuery.replace(/^expert:?/i, '')).length === 0 ? (
+                  <p className="px-3 py-3 text-[11px] text-[var(--text-muted)]">暂无在岗专家可提及</p>
+                ) : filterByQuery(mentionExpertItems, mentionQuery.replace(/^expert:?/i, '')).map((e) => (
+                  <button
+                    key={e.key}
+                    type="button"
+                    onClick={() => applyMentionToken(`@expert:${e.name}`)}
+                    className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]"
+                  >
+                    <span className="grid h-7 w-7 place-items-center rounded-md bg-[var(--info-bg)] text-[var(--info)]">
+                      <BriefcaseBusiness className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold truncate">{e.name}</div>
+                      <div className="text-[10px] text-[var(--text-muted)] truncate">{e.desc}</div>
+                    </div>
+                  </button>
+                ))
+              )}
+              {mentionPane === 'doc' && (
+                filterByQuery(mentionDocItems, mentionQuery.replace(/^doc:?/i, '')).length === 0 ? (
+                  <p className="px-3 py-3 text-[11px] text-[var(--text-muted)]">当前专家未装配知识库文档</p>
+                ) : filterByQuery(mentionDocItems, mentionQuery.replace(/^doc:?/i, '')).map((d) => (
+                  <button
+                    key={d.key}
+                    type="button"
+                    onClick={() => applyMentionToken(`@doc:${d.name}`)}
+                    className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]"
+                  >
+                    <span className="grid h-7 w-7 place-items-center rounded-md bg-[var(--info-bg)] text-[var(--info)]">
+                      <FileText className="h-3.5 w-3.5" />
+                    </span>
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold truncate">{d.name}</div>
+                      <div className="text-[10px] text-[var(--text-muted)]">{d.desc}</div>
+                    </div>
+                  </button>
+                ))
+              )}
+              {mentionPane === 'member' && filterByQuery(mentionMemberItems, mentionQuery.replace(/^member:?/i, '')).map((m) => (
+                <button
+                  key={m.key}
+                  type="button"
+                  onClick={() => applyMentionToken(`@member:${m.name}`)}
+                  className="flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]"
+                >
+                  <span className="grid h-7 w-7 place-items-center rounded-md bg-[var(--info-bg)] text-[var(--info)]">
+                    <Users className="h-3.5 w-3.5" />
+                  </span>
+                  <div className="flex-1">
+                    <div className="text-xs font-semibold">{m.name}</div>
+                    <div className="text-[10px] text-[var(--text-muted)]">{m.desc}</div>
+                  </div>
+                </button>
+              ))}
             </div>
           )}
 
@@ -1764,10 +2248,13 @@ export default function Copilot() {
               ) : availableTools.map((t) => {
                 const on = enabledTools.includes(t.key);
                 const writeLocked = Boolean(t.requiresApproval && sessionMode === 'investigate');
+                const unavailable = Boolean(t.unavailable);
                 return (
                   <button
                     key={t.key}
+                    disabled={unavailable}
                     onClick={() => {
+                      if (unavailable) return;
                       if (writeLocked) {
                         setSessionMode('execute');
                         setToolsOpen(false);
@@ -1780,18 +2267,19 @@ export default function Copilot() {
                       });
                     }}
                     role="menuitemcheckbox"
-                    aria-checked={on && !writeLocked}
-                    className={cn('flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]', on && !writeLocked && 'bg-[var(--bg-hover)]', writeLocked && 'opacity-60')}
+                    aria-checked={on && !writeLocked && !unavailable}
+                    className={cn('flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]', on && !writeLocked && !unavailable && 'bg-[var(--bg-hover)]', (writeLocked || unavailable) && 'opacity-60')}
                   >
-                    <span className={cn('grid h-5 w-5 place-items-center rounded border text-[10px]', on && !writeLocked ? 'bg-[#0f172a] text-white border-[#0f172a]' : 'border-[var(--border)] text-[var(--text-muted)]')}>
-                      {on && !writeLocked && <Check className="h-3 w-3" />}
+                    <span className={cn('grid h-5 w-5 place-items-center rounded border text-[10px]', on && !writeLocked && !unavailable ? 'bg-[#0f172a] text-white border-[#0f172a]' : 'border-[var(--border)] text-[var(--text-muted)]')}>
+                      {on && !writeLocked && !unavailable && <Check className="h-3 w-3" />}
                     </span>
                     <Plug className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-mono font-semibold">{t.name}</div>
-                      <div className="text-[10px] text-[var(--text-muted)]">{writeLocked ? '研判模式不可用 · 点击切换到受控执行' : t.desc}</div>
+                      <div className="text-[10px] text-[var(--text-muted)]">{unavailable ? '执行器未接入 · 不可启用' : writeLocked ? '研判模式不可用 · 点击切换到受控执行' : t.desc}</div>
                     </div>
-                    {t.requiresApproval && <Badge tone="warn" className="text-[9px]">需审批</Badge>}
+                    {unavailable && <Badge tone="neutral" className="text-[9px]">未接入</Badge>}
+                    {t.requiresApproval && !unavailable && <Badge tone="warn" className="text-[9px]">需审批</Badge>}
                   </button>
                 );
               })}
@@ -1805,7 +2293,7 @@ export default function Copilot() {
                 <div key={i} className="copilot-composer__attach-chip flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] pl-1.5 pr-1 py-1 text-[11px]">
                   {a.type === 'image' ? <FileText className="h-3.5 w-3.5 text-[var(--info)]" /> : <Paperclip className="h-3.5 w-3.5 text-[var(--text-muted)]" />}
                   <span className="font-mono text-[var(--text)] max-w-[160px] truncate">{a.name}</span>
-                  <span className="text-[10px] text-[var(--text-muted)] font-mono">{a.size}</span>
+                  <span className="text-[10px] text-[var(--text-muted)] font-mono">{a.uploading ? '上传中…' : (a.error ?? a.size)}</span>
                   <button
                     type="button"
                     onClick={() => removeAttachment(i)}
@@ -1832,9 +2320,9 @@ export default function Copilot() {
             isDragging && 'is-dragging',
           )}>
             {/* 自动 @ token 渲染预览（输入含 @ 时显示） */}
-            {/[@#]\w+/.test(chat.state.draftInput) && (
+            {/@[^\s]+/.test(chat.state.draftInput) && (
               <div className="copilot-composer__chips flex flex-wrap items-center gap-1 px-3 pt-2 text-[10px]">
-                {Array.from(new Set(chat.state.draftInput.match(/[@#]\w+/g) ?? [])).map((tok, i) => (
+                {Array.from(new Set(chat.state.draftInput.match(/@[^\s]+/g) ?? [])).map((tok, i) => (
                   <span key={i} className="inline-flex items-center gap-1 rounded-md bg-[var(--bg-elevated)] text-[var(--text-secondary)] px-1.5 py-0.5 font-mono">
                     <AtSign className="h-2.5 w-2.5" />{tok}
                   </span>
@@ -1878,16 +2366,21 @@ export default function Copilot() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => chat.setDraft(chat.state.draftInput + ' @')}
+                  onClick={openMentionMenu}
                   className="copilot-composer__tool grid h-7 w-7 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
-                  title="@ 提及"
+                  title="@ 提及技能 / 专家 / 文档"
                   aria-label="@ 提及"
                 >
                   <AtSign className="h-3.5 w-3.5" />
                 </button>
                 <button
                   type="button"
-                  onClick={() => chat.setDraft(chat.state.draftInput + ' /')}
+                  onClick={() => {
+                    const cur = chat.state.draftInput;
+                    const next = cur.startsWith('/') ? cur : `${cur}${cur && !/\s$/.test(cur) ? ' ' : ''}/`;
+                    onInputChange(next);
+                    inputRef.current?.focus();
+                  }}
                   className="copilot-composer__tool grid h-7 w-7 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
                   title="/ 命令"
                   aria-label="slash 命令"
@@ -2042,7 +2535,7 @@ export default function Copilot() {
                 <div className="copilot-agent-details__section-heading flex items-center gap-1.5"><Settings className="h-3.5 w-3.5 text-[var(--brand)]" />运行控制 <Badge tone="brand" className="ml-auto text-[9px]">管理员</Badge></div>
                 <Row label="当前模型" value={<span className="font-mono text-[11px]">{currentModel.label} · {currentModel.tier}</span>} />
                 <Row label="启用工具" value={<span className="font-mono text-[11px]">{enabledToolCount}/{availableTools.length}</span>} />
-                <label className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--text-muted)]">执行风险</span><select value={riskLevel} onChange={(event) => setRiskLevel(event.target.value as 'low' | 'medium' | 'high')} className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[11px]"><option value="low">低 · 仅可逆操作</option><option value="medium">中 · 需审批</option><option value="high">高 · 双重审批与回滚</option></select></label>
+                <label className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--text-muted)]">执行风险</span><select value={riskLevel} onChange={(event) => setRiskLevel(event.target.value as 'low' | 'medium' | 'high')} className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[11px]"><option value="low">低 · 仅可逆操作</option><option value="medium">中 · 需审批</option><option value="high">高 · 人工审核与回滚</option></select></label>
                 <Button size="sm" variant="secondary" className="w-full justify-center" onClick={() => setDebugOpen(true)}><Activity className="h-3.5 w-3.5" />查看调试与链路指标</Button>
               </section>
             )}
@@ -2318,7 +2811,12 @@ export default function Copilot() {
               onClick={() => {
                 if (!currentSession || sessionSignals.pendingApprovals > 0) return;
                 setIsClosed(true);
-                chat.syncSession({ ...currentSession, status: 'done', lifecycle: 'idle' });
+                chat.persistSession({
+                  ...currentSession,
+                  status: 'closed',
+                  lifecycle: 'idle',
+                  closeSummary: `结案：行动 ${sessionSignals.executions} · 证据 ${sessionSignals.evidence}`,
+                });
                 setCloseoutOpen(false);
               }}
             >
@@ -2368,6 +2866,13 @@ export default function Copilot() {
                 setHandoffOpen(false);
                 setHandoffActive(true);
                 setSessionMode('investigate');
+                if (currentSession) {
+                  chat.persistSession({
+                    ...currentSession,
+                    sessionMode: 'investigate',
+                    handoff: { active: true, ownerName: handoffOwner, at: new Date().toISOString() },
+                  });
+                }
               }}
             >
               确认交接
@@ -2391,35 +2896,41 @@ export default function Copilot() {
         open={!!showApproval}
         title={showApproval && currentSession ? (() => {
           const request = currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest;
-          const signer = request?.signers[showApproval.signerIndex];
-          return `${signer?.name ?? '待签人'} · ${request?.action ?? '受控写操作'}`;
-        })() : '写操作 · 双重审批'}
+          return `${request?.action ?? '受控写操作'} · 人工审核`;
+        })() : '写操作 · 人工审核'}
         description={showApproval && currentSession
           ? (() => {
             const request = currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest;
-            if (!request) return '请确认写操作范围与回滚预案后再签发。';
+            if (!request) return '请确认写操作范围与回滚预案后再授权。';
             return [
               request.resource ? `资源：${request.resource}` : null,
               request.reason ? `原因：${request.reason}` : null,
-              '签发身份由当前登录会话校验，不接受手工填写姓名。',
+              '需一名授权人批准；发起人不可自批。',
             ].filter(Boolean).join(' · ');
           })()
           : undefined}
         currentIdentity={currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : null}
         targetSigner={showApproval && currentSession ? currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest?.signers[showApproval.signerIndex] : undefined}
         canApprove={!!(showApproval && currentUser && currentSession && (() => {
-          const signer = currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest?.signers[showApproval.signerIndex];
+          const msg = currentSession.messages.find((message) => message.id === showApproval.messageId);
+          const request = msg?.approvalRequest;
+          if (!request || request.decision === 'approved' || request.decision === 'rejected') return false;
+          const single = (request.required ?? 2) <= 1;
+          if (single) {
+            return currentUser.role === 'admin';
+          }
+          const signer = request.signers[showApproval.signerIndex];
           const expectedRoles: Record<Signer['role'], string> = { operator: 'user', auditor: 'auditor', approver: 'admin' };
-          return signer && !signer.signed && signer.userId === currentUser.id && expectedRoles[signer.role] === currentUser.role;
+          return Boolean(signer && !signer.signed && signer.userId === currentUser.id && expectedRoles[signer.role] === currentUser.role);
         })())}
         eligibilityMessage={showApproval && currentSession ? (() => {
           const signer = currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest?.signers[showApproval.signerIndex];
           return signer ? `仅待签人 ${signer.name}（${signer.role === 'auditor' ? '审计复核' : signer.role === 'operator' ? '执行复核' : '变更审批'}）可签发。` : '当前审批席位不可用，请刷新后重试。';
         })() : '当前审批席位不可用，请刷新后重试。'}
         onClose={() => setShowApproval(null)}
-        onApprove={async () => {
+        onApprove={async (note) => {
           if (!showApproval) throw new Error('当前审批席位不可用，请刷新后重试。');
-          await chat.approve(showApproval.messageId, showApproval.signerIndex);
+          await chat.approve(showApproval.messageId, showApproval.signerIndex, note);
         }}
       />
       <DebugPanel
@@ -2498,7 +3009,7 @@ export default function Copilot() {
             >
               <div className="flex items-center justify-between mb-3">
                 <div id="feedback-drawer-title" className="text-sm font-semibold flex items-center gap-2">
-                  <ThumbsDown className="h-4 w-4 text-[var(--danger)]" />反馈 · 写回 RAG eval
+                  <ThumbsDown className="h-4 w-4 text-[var(--danger)]" />反馈 · 提交自进化候选
                 </div>
                 <button onClick={() => setFeedbackOpen(null)} className="grid h-7 w-7 place-items-center rounded hover:bg-[var(--bg-hover)]" aria-label="关闭反馈">
                   <X className="h-4 w-4" />
@@ -2623,6 +3134,74 @@ function RiskDecisionCard({ onOpenContext, messageId }: { onOpenContext: (tab: W
   return <section className="max-w-[760px] rounded-lg border border-[var(--warning)]/35 bg-[var(--warning-bg)]/25 p-3" aria-label="风险处置建议"><div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-1.5 text-xs font-semibold"><AlertTriangle className="h-3.5 w-3.5 text-[var(--warning)]" />风险处置建议</div><p className="mt-1 text-[11px] text-[var(--text-secondary)]">已识别高风险项。建议先核验受影响资产，再生成受控修复任务并发起人工复核。</p></div><Badge tone="warn" className="shrink-0 text-[10px]">需复核</Badge></div><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" variant="secondary" onClick={() => onOpenContext('evidence', messageId)}>查看受影响资产</Button><Button size="sm" onClick={() => onOpenContext('tasks', messageId)}>生成修复任务</Button><Button size="sm" variant="secondary" onClick={() => onOpenContext('approvals', messageId)}>发起人工复核</Button></div></section>;
 }
 
+function SkillArtifactDownloadCard({
+  href, filename, downloadName, title, kind,
+}: {
+  href: string;
+  filename: string;
+  downloadName: string;
+  title: string;
+  kind: 'docx' | 'file';
+}) {
+  const label = kind === 'docx' ? 'Word 文档' : '文件';
+  const saveAs = downloadName || filename;
+  const [busy, setBusy] = useState(false);
+
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch(href, { method: 'GET', credentials: 'same-origin' });
+      if (!res.ok) {
+        throw new Error(res.status === 404 ? '文件不存在或已过期' : `下载失败（${res.status}）`);
+      }
+      const blob = await res.blob();
+      // 若误拿到 JSON 错误页，避免保存成假 docx
+      const sniff = await blob.slice(0, 120).text();
+      if ((blob.type || '').includes('json') || sniff.trimStart().startsWith('{')) {
+        throw new Error('文件不存在或已过期');
+      }
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = saveAs;
+      a.rel = 'noopener';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : '文件下载失败');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <a
+      href={href}
+      download={saveAs}
+      onClick={handleDownload}
+      className="copilot-artifact-card group flex max-w-[420px] items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3.5 py-3 no-underline transition-colors hover:border-[var(--brand)]/45 hover:bg-[var(--brand-light)]/40"
+      aria-label={`下载 ${title}`}
+      aria-busy={busy}
+    >
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--brand-light)] text-[var(--brand)]">
+        <FileText className="h-5 w-5" />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[13px] font-semibold text-[var(--text)]">{title}</span>
+        <span className="mt-0.5 block truncate text-[11px] text-[var(--text-muted)]">{label} · {saveAs}</span>
+      </span>
+      <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[var(--brand)] px-2.5 py-1.5 text-[11px] font-medium text-white shadow-sm group-hover:bg-[var(--brand-hover)]">
+        <Download className="h-3.5 w-3.5" />
+        {busy ? '下载中…' : '下载'}
+      </span>
+    </a>
+  );
+}
+
 // ============ 消息气泡 ============
 function MessageBubble({
   m, expandedThinking, setExpandedThinking, expandedArgs, setExpandedArgs,
@@ -2669,8 +3248,27 @@ function MessageBubble({
   const agentDisplayName = agentName || m.agentName || (isUser ? '王昊' : isTool ? '能力调用' : '助手');
   const [traceOpen, setTraceOpen] = useState(false);
   const needsDecision = !isUser && /CVE|高危|高风险|影响资产/.test(m.content ?? '');
-  const expectedPlatformRole: Record<Signer['role'], 'user' | 'admin' | 'auditor'> = { operator: 'user', approver: 'admin', auditor: 'auditor' };
-  const canSign = (signer: Signer) => !!currentUser && signer.userId === currentUser.id && expectedPlatformRole[signer.role] === currentUser.role;
+  const artifacts = useMemo(
+    () => (isUser || isTool || !m.content ? [] : extractSkillArtifacts(m.content)),
+    [isUser, isTool, m.content],
+  );
+  const displayContent = useMemo(
+    () => (artifacts.length ? stripArtifactNoise(m.content) : m.content),
+    [artifacts.length, m.content],
+  );  const expectedPlatformRole: Record<Signer['role'], 'user' | 'admin' | 'auditor'> = { operator: 'user', approver: 'admin', auditor: 'auditor' };
+  const isSingleAuth = (m.approvalRequest?.required ?? 2) <= 1;
+  const canSign = (signer: Signer) => {
+    if (!currentUser || signer.signed) return false;
+    if (isSingleAuth) {
+      // 单人审核：管理员可授权；或席位已绑定当前用户
+      if (currentUser.role === 'admin') return true;
+      if (signer.userId && signer.userId === currentUser.id) return true;
+      return false;
+    }
+    return signer.userId === currentUser.id && expectedPlatformRole[signer.role] === currentUser.role;
+  };
+  const canSingleApprove = isSingleAuth && !!currentUser && currentUser.role === 'admin'
+    && m.approvalRequest?.decision === 'pending';
 
   return (
     <div
@@ -2824,8 +3422,17 @@ function MessageBubble({
             {isUser ? (
               <span className="whitespace-pre-wrap">{m.content}</span>
             ) : (
-              <div className="md-content">
-                <Markdown text={m.content} />
+              <div className="md-content space-y-3">
+                {artifacts.length > 0 && (
+                  <div className="flex flex-col gap-2" role="list" aria-label="可下载产物">
+                    {artifacts.map((a) => (
+                      <div key={a.href} role="listitem">
+                        <SkillArtifactDownloadCard href={a.href} filename={a.filename} downloadName={a.downloadName} title={a.title} kind={a.kind} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {displayContent ? <Markdown text={displayContent} /> : null}
                 {isStreaming && <span className="inline-block h-3.5 w-1.5 ml-0.5 align-text-bottom bg-[var(--brand)] animate-pulse rounded-sm" aria-hidden="true" />}
               </div>
             )}
@@ -2876,8 +3483,11 @@ function MessageBubble({
                   <div className="flex items-center gap-2 flex-wrap">
                     <Wrench className={cn('h-3 w-3', failed || denied ? 'text-[var(--danger)]' : 'text-[var(--brand)]')} />
                     <span className="font-mono font-semibold">{tc.name}</span>
-                    {tc.permission === 'approval-required' && (
-                      <Badge tone="warn" className="text-[9px]"><ShieldCheck className="mr-0.5 inline h-2.5 w-2.5" />需双重审批</Badge>
+                    {(tc.permission === 'approval-required' || tc.permission === 'approval_required') && (
+                      <Badge tone="warn" className="text-[9px]"><ShieldCheck className="mr-0.5 inline h-2.5 w-2.5" />需人工审核</Badge>
+                    )}
+                    {String(tc.status) === 'pending_authorization' && tc.permission !== 'approval-required' && tc.permission !== 'approval_required' && (
+                      <Badge tone="warn" className="text-[9px]"><ShieldCheck className="mr-0.5 inline h-2.5 w-2.5" />待授权</Badge>
                     )}
                     {tc.permission === 'auto' && (
                       <Badge tone="success" className="text-[9px]"><PlugZap className="mr-0.5 inline h-2.5 w-2.5" />auto</Badge>
@@ -2962,7 +3572,7 @@ function MessageBubble({
         {m.approvalRequest && (
           <div className="copilot-message__approval rounded-md border border-[var(--danger)]/30 bg-[var(--danger-bg)] p-3 max-w-md">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--danger)] mb-1 flex-wrap">
-              <ShieldCheck className="h-3.5 w-3.5" />受控变更 · 双重审批
+              <ShieldCheck className="h-3.5 w-3.5" />{isSingleAuth ? '受控变更 · 人工审核' : '受控变更 · 双重审批'}
               {m.approvalRequest.reason && <Badge tone="warn" className="text-[9px] ml-1">{m.approvalRequest.reason}</Badge>}
               {m.approvalRequest.ticketId && <span className="text-[10px] font-mono text-[var(--text-muted)]">· {m.approvalRequest.ticketId}</span>}
               <span className="ml-auto text-[10px] font-mono text-[var(--text-muted)]">
@@ -3001,20 +3611,41 @@ function MessageBubble({
             {/* 操作按钮 */}
             {m.approvalRequest.decision === 'pending' && (
               <div className="flex gap-1.5 flex-wrap">
-                {m.approvalRequest.signers.map((s, i) => (
-                  !s.signed && (
-                    <Button key={i} size="sm" variant={canSign(s) ? 'danger' : 'secondary'} disabled={!canSign(s)} title={canSign(s) ? '使用当前登录身份签发' : `仅 ${s.name} 可签发`} onClick={() => onApproveSigner(m.id, i)}>
-                      <ShieldCheck className="h-3 w-3" />{canSign(s) ? `批准（${s.name}）` : `待 ${s.name} 签发`}
+                {isSingleAuth ? (
+                  <>
+                    <Button
+                      size="sm"
+                      variant={canSingleApprove ? 'danger' : 'secondary'}
+                      disabled={!canSingleApprove}
+                      title={canSingleApprove ? '使用当前登录身份审核授权' : '需管理员或授权人审核'}
+                      onClick={() => onApprove(m.id)}
+                    >
+                      <ShieldCheck className="h-3 w-3" />审核授权
                     </Button>
-                  )
-                ))}
-                {m.approvalRequest.signers.some((s) => !s.signed && canSign(s)) && (
-                  <Button size="sm" variant="secondary" onClick={() => {
-                    const idx = m.approvalRequest!.signers.findIndex((s) => !s.signed && canSign(s));
-                    if (idx >= 0) onRequestReject(m.id, idx);
-                  }}>
-                    <X className="h-3 w-3" />拒绝
-                  </Button>
+                    {canSingleApprove && (
+                      <Button size="sm" variant="secondary" onClick={() => onRequestReject(m.id, 0)}>
+                        <X className="h-3 w-3" />拒绝
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    {m.approvalRequest.signers.map((s, i) => (
+                      !s.signed && (
+                        <Button key={i} size="sm" variant={canSign(s) ? 'danger' : 'secondary'} disabled={!canSign(s)} title={canSign(s) ? '使用当前登录身份签发' : `仅 ${s.name} 可签发`} onClick={() => onApproveSigner(m.id, i)}>
+                          <ShieldCheck className="h-3 w-3" />{canSign(s) ? `批准（${s.name}）` : `待 ${s.name} 签发`}
+                        </Button>
+                      )
+                    ))}
+                    {m.approvalRequest.signers.some((s) => !s.signed && canSign(s)) && (
+                      <Button size="sm" variant="secondary" onClick={() => {
+                        const idx = m.approvalRequest!.signers.findIndex((s) => !s.signed && canSign(s));
+                        if (idx >= 0) onRequestReject(m.id, idx);
+                      }}>
+                        <X className="h-3 w-3" />拒绝
+                      </Button>
+                    )}
+                  </>
                 )}
                 <Button
                   size="sm"
@@ -3027,7 +3658,7 @@ function MessageBubble({
             )}
             {m.approvalRequest.decision === 'approved' && (
               <Badge tone="success" className="text-[10px]">
-                <CheckCircle2 className="mr-1 inline h-3 w-3" />已通过双重审批
+                <CheckCircle2 className="mr-1 inline h-3 w-3" />{isSingleAuth ? '已人工授权' : '已通过双重审批'}
                 {m.approvalRequest.decidedAt && <span className="ml-1 font-mono">{m.approvalRequest.decidedAt.slice(11, 19)}</span>}
               </Badge>
             )}
@@ -3081,7 +3712,7 @@ function MessageBubble({
                     'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] hover:bg-[var(--bg-hover)]',
                     m.feedback?.kind === 'like' ? 'text-[var(--success)]' : 'hover:text-[var(--text)]',
                   )}
-                  title="点赞 · 写回 RAG eval"
+                  title="点赞 · 提交自进化候选"
                   aria-label="点赞"
                   aria-pressed={m.feedback?.kind === 'like'}
                   onClick={() => onFeedback(m.id, m.feedback?.kind === 'like' ? null : 'like')}
@@ -3093,7 +3724,7 @@ function MessageBubble({
                     'inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] hover:bg-[var(--bg-hover)]',
                     m.feedback?.kind === 'dislike' ? 'text-[var(--danger)]' : 'hover:text-[var(--text)]',
                   )}
-                  title="点踩 · 写回 RAG eval"
+                  title="点踩 · 提交自进化候选"
                   aria-label="点踩"
                   aria-pressed={m.feedback?.kind === 'dislike'}
                   onClick={() => onFeedback(m.id, m.feedback?.kind === 'dislike' ? null : 'dislike')}
@@ -3244,7 +3875,7 @@ function FeedbackForm({ target, onSubmit }: { target: ChatMessageEx; onSubmit: (
   return (
     <div className="space-y-3 text-xs">
       <div className="rounded-md bg-[var(--bg)] border border-[var(--border)] p-2 text-[10px] text-[var(--text-muted)]">
-        反馈将用于 RAG eval / 模型训练（仅管理员与训练管线可见）。
+        反馈将进入自进化候选队列（审核前不改生产记忆 / 知识）。
       </div>
       <div>
         <div className="text-[10px] text-[var(--text-muted)] mb-1">问题分类（多选）</div>

@@ -230,7 +230,7 @@ export interface ChatSession {
   /** 绑定的在岗数字员工（主对象） */
   digitalEmployeeId?: string;
   digitalEmployeeName?: string;
-  status: 'active' | 'done';
+  status: 'active' | 'done' | 'closed' | 'archived';
   group: SessionGroup;
   time: string;
   pinned?: boolean;
@@ -250,6 +250,14 @@ export interface ChatSession {
   modelId?: string;
   /** 启用的工具链 */
   enabledTools?: string[];
+  /** 研判 / 受控执行 */
+  sessionMode?: 'investigate' | 'execute';
+  /** 会话风险等级 */
+  riskLevel?: 'low' | 'medium' | 'high';
+  /** 人工交接 */
+  handoff?: { active?: boolean; ownerId?: string; ownerName?: string; at?: string; note?: string };
+  /** 结案摘要 */
+  closeSummary?: string;
   /** 会话所有者 */
   ownerId?: string;
   ownerName?: string;
@@ -257,7 +265,7 @@ export interface ChatSession {
   collaborators?: { userId: string; userName: string; role: 'viewer' | 'editor' }[];
   /** 会话标签 */
   tags?: string[];
-  /** 是否加密（端到端 / 仅存储加密） */
+  /** @deprecated 本期不做真·E2EE；勿再展示为已加密 */
   encrypted?: boolean;
   /** 自动摘要（归档 / 长会话） */
   summary?: string;
@@ -289,6 +297,18 @@ export interface SendMessageInput {
   modelId?: string;
   /** 运行配置：本会话启用的工具链 */
   enabledTools?: string[];
+  /** Harness 模式提示（react / plan / direct） */
+  modeHint?: string;
+  /** Reflection 开关提示 */
+  reflectHint?: string;
+  /** 研判 / 受控执行 */
+  sessionMode?: 'investigate' | 'execute';
+  /** 风险等级 */
+  riskLevel?: 'low' | 'medium' | 'high';
+  /** 已上传附件 id */
+  attachmentIds?: string[];
+  /** 客户端幂等键 */
+  clientMsgId?: string;
   /** 携带的 @ 提及 */
   mentions?: { kind: 'expert' | 'skill' | 'doc' | 'member' | 'agent'; key: string }[];
 }

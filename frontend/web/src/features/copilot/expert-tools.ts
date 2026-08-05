@@ -8,6 +8,8 @@ export type CopilotToolDef = {
   desc: string;
   kind: 'tool' | 'skill' | 'workflow';
   requiresApproval?: boolean;
+  /** 运行时执行器未接入，UI 应禁用勾选为默认执行 */
+  unavailable?: boolean;
 };
 
 export type ExpertToolSource = {
@@ -46,6 +48,17 @@ function describe(kind: CopilotToolDef['kind'], name: string): string {
   }
 }
 
+function isAllowlistedRuntime(kind: CopilotToolDef['kind'], name: string): boolean {
+  const n = name.toLowerCase();
+  if (kind === 'skill') {
+    return /docx|xlsx|pptx|excel|word|ppt/.test(n);
+  }
+  if (kind === 'tool') {
+    return n === 'knowledge.retrieve' || n === 'memory.recall' || n.includes('cmdb') || n.includes('检索');
+  }
+  return false;
+}
+
 function pushUnique(
   out: CopilotToolDef[],
   seen: Set<string>,
@@ -61,12 +74,15 @@ function pushUnique(
     seen.add(key);
     const mode = modeOf(employee, kind, name);
     if (mode === 'prohibited') continue;
+    const requiresApproval = mode === 'approval_required';
+    const unavailable = kind === 'workflow' || (kind === 'tool' && !isAllowlistedRuntime(kind, name) && !requiresApproval);
     out.push({
       key,
       name,
       kind,
-      desc: describe(kind, name),
-      requiresApproval: mode === 'approval_required',
+      desc: unavailable ? `${describe(kind, name)}（未接入）` : describe(kind, name),
+      requiresApproval,
+      unavailable,
     });
   }
 }

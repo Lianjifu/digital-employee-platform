@@ -7,10 +7,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/digital-employee-platform/backend/internal/auth"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
 func (s *Server) approveAction(r *http.Request) (any, error) {
+	return s.approveActionSingle(r)
+}
+
+func (s *Server) approveActionLegacy(r *http.Request) (any, error) {
 	id := identityFrom(r.Context())
 	if id == nil {
 		return nil, apperr.UnauthorizedErr("请先登录后再签发")
@@ -20,6 +25,10 @@ func (s *Server) approveAction(r *http.Request) (any, error) {
 		return nil, apperr.NotFoundErr(apperr.NotFound, "行动不存在")
 	}
 	body, _ := decodeMap(r)
+	return s.approveActionLegacyWithBody(r, body, actionID, s.workspaceID(r), id)
+}
+
+func (s *Server) approveActionLegacyWithBody(r *http.Request, body map[string]any, actionID, ws string, id *auth.Identity) (any, error) {
 	rawConv := strings.TrimSpace(str(body["conversationId"]))
 	if rawConv == "" {
 		return nil, apperr.BadReq(apperr.BadRequest, "缺少会话 ID")
@@ -29,7 +38,6 @@ func (s *Server) approveAction(r *http.Request) (any, error) {
 		return nil, apperr.BadReq(apperr.BadRequest, "无效的审批席位")
 	}
 
-	ws := s.workspaceID(r)
 	s.Store.Lock()
 
 	cid := s.resolveMessageBucketID(ws, rawConv)
@@ -176,13 +184,136 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 	s.Store.Lock()
 	action := s.Store.Actions[actionID]
 	if action == nil {
-		action = map[string]any{"id": actionID, "workspaceId": ws, "status": "approved"}
+		s.Store.Unlock()
+		return nil, apperr.NotFoundErr(apperr.NotFound, "行动不存在")
 	}
 	st := str(action["status"])
-	if st != "approved" && st != "executed" {
+	if st != "approved" {
 		s.Store.Unlock()
-		return nil, apperr.BadReq(apperr.BadRequest, "行动尚未完成审批")
+		return nil, apperr.BadReq(apperr.BadRequest, "行动尚未完成人工审核授权")
 	}
+	authReq, _ := action["authorizationRequest"].(map[string]any)
+	if authReq == nil {
+		// Legacy dual-sign / seed actions: mark executed and link task without fake enterprise write.
+		taskID := coalesce(str(body["taskId"]), str(action["taskId"]))
+		var task map[string]any
+		if taskID != "" {
+			for i, t := range s.Store.Tasks {
+				if str(t["id"]) != taskID {
+					continue
+				}
+				t["status"] = "completed"
+				t["lifecycleStage"] = "completed"
+				t["updatedAt"] = now
+				s.Store.Tasks[i] = t
+				task = t
+				break
+			}
+		}
+		action["status"] = "executed"
+		action["taskId"] = taskID
+		action["updatedAt"] = now
+		s.Store.Actions[actionID] = action
+		cid := str(action["conversationId"])
+		if cid != "" {
+			if msg, idx := findMessageLocked(s.Store.Messages[cid], actionID); msg != nil {
+				if ar, ok := msg["approvalRequest"].(map[string]any); ok {
+					msg["linkedTaskId"] = taskID
+					calls := asMapSlice(msg["toolCalls"])
+					code := taskID
+					if task != nil {
+						code = coalesce(str(task["code"]), taskID)
+					}
+					calls = append(calls, map[string]any{
+						"id": s.Store.ID("t"), "name": coalesce(str(ar["action"]), "controlled.execute"),
+						"args": map[string]any{"resource": ar["resource"]}, "result": "已授权执行 · 任务 " + code + " 已回链",
+						"status": "success", "durationMs": 48,
+					})
+					msg["toolCalls"] = calls
+					s.Store.Messages[cid][idx] = msg
+				}
+			}
+		}
+		taskCode := actionID
+		if task != nil {
+			taskCode = coalesce(str(task["code"]), actionID)
+		}
+		s.Store.AppendAudit(ws, id.Name, "受控执行完成", taskCode, "success", "legacy")
+		s.Store.Unlock()
+		s.Store.Persist("messages")
+		s.Store.Persist("actions")
+		s.Store.Persist("tasks")
+		out := map[string]any{}
+		for k, v := range action {
+			out[k] = v
+		}
+		if task != nil {
+			out["task"] = task
+		}
+		return out, nil
+	}
+	cid := coalesce(str(action["conversationId"]), str(body["conversationId"]))
+	sess := findSessionForStreamLocked(s.Store.Sessions, ws, cid, cid)
+	if sess == nil {
+		s.Store.Unlock()
+		return nil, apperr.BadReq(apperr.BadRequest, "未找到关联会话，无法执行")
+	}
+	if err := assertSessionWritableLocked(sess); err != nil {
+		s.Store.Unlock()
+		return nil, err
+	}
+	if normalizeSessionMode(str(sess["sessionMode"])) != sessionModeExecute {
+		s.Store.Unlock()
+		return nil, apperr.Forbidden(apperr.RoleForbidden, "仅受控执行模式可执行已授权动作")
+	}
+	toolName := coalesce(str(authReq["toolName"]), str(authReq["action"]))
+	toolKind := coalesce(str(authReq["toolKind"]), "tool")
+	args, _ := authReq["args"].(map[string]any)
+	if args == nil {
+		args = map[string]any{}
+	}
+
+	if isBlockedEnterpriseWrite(toolName) || (!isAllowlistedExecutableTool(toolName, toolKind) && toolKind != "skill") {
+		action["status"] = "approved"
+		action["executeError"] = "not_implemented"
+		action["updatedAt"] = now
+		s.Store.Actions[actionID] = action
+		s.Store.AppendAudit(ws, id.Name, "受控执行拒绝", actionID, "failed", "执行器未接入或禁止企业写工具："+toolName)
+		s.Store.Unlock()
+		s.Store.Persist("actions")
+		return nil, apperr.BadReq(apperr.BadRequest, "该动作执行器未接入或禁止直接执行："+toolName)
+	}
+	s.Store.Unlock()
+
+	input := coalesce(str(args["input"]), str(args["content"]))
+	if input == "" {
+		input = toolName
+	}
+	runCtx := toolRunContext{
+		Request: r, WorkspaceID: ws, OwnerID: id.ID, Viewer: id,
+		DigitalEmployee: str(action["digitalEmployeeId"]),
+		ConversationID:  cid, CorrelationID: str(authReq["correlationId"]),
+		UserMessage: input, SessionMode: sessionModeExecute, RiskLevel: str(authReq["riskLevel"]),
+	}
+	tool := &registeredTool{
+		Key: coalesce(str(authReq["toolKey"]), toolKind+":"+slugToolName(toolName)),
+		Name: toolName, Kind: toolKind, Mode: toolModeExecute, Enabled: true,
+	}
+	res := s.runCopilotTool(runCtx, tool, toolCallRequest{Name: toolName, Args: args})
+
+	s.Store.Lock()
+	action = s.Store.Actions[actionID]
+	if res.Status != "success" {
+		action["status"] = "approved"
+		action["executeError"] = coalesce(res.Error, res.Status)
+		action["updatedAt"] = now
+		s.Store.Actions[actionID] = action
+		s.Store.AppendAudit(ws, id.Name, "受控执行失败", actionID, "failed", coalesce(res.Error, res.Output))
+		s.Store.Unlock()
+		s.Store.Persist("actions")
+		return nil, apperr.BadReq(apperr.BadRequest, coalesce(res.Error, "执行失败"))
+	}
+
 	taskID := coalesce(str(body["taskId"]), str(action["taskId"]))
 	var task map[string]any
 	if taskID != "" {
@@ -201,33 +332,29 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 	action["status"] = "executed"
 	action["taskId"] = taskID
 	action["updatedAt"] = now
+	action["executeResult"] = res.Output
+	authReq["status"] = "executed"
+	action["authorizationRequest"] = authReq
 	s.Store.Actions[actionID] = action
 
-	cid := str(action["conversationId"])
 	if cid != "" {
 		if msg, idx := findMessageLocked(s.Store.Messages[cid], actionID); msg != nil {
-			if ar, ok := msg["approvalRequest"].(map[string]any); ok {
-				msg["linkedTaskId"] = taskID
-				calls := asMapSlice(msg["toolCalls"])
-				code := taskID
-				if task != nil {
-					code = coalesce(str(task["code"]), taskID)
-				}
-				calls = append(calls, map[string]any{
-					"id": s.Store.ID("t"), "name": coalesce(str(ar["action"]), "controlled.execute"),
-					"args": map[string]any{"resource": ar["resource"]}, "result": "OK · 任务 " + code + " 已回链",
-					"status": "success", "durationMs": 48,
-				})
-				msg["toolCalls"] = calls
-				s.Store.Messages[cid][idx] = msg
-			}
+			calls := asMapSlice(msg["toolCalls"])
+			calls = append(calls, map[string]any{
+				"id": s.Store.ID("t"), "name": toolName,
+				"args": args, "result": res.Output,
+				"status": "success", "durationMs": res.DurationMs,
+			})
+			msg["toolCalls"] = calls
+			msg["authorizationRequest"] = authReq
+			s.Store.Messages[cid][idx] = msg
 		}
 	}
 	taskCode := actionID
 	if task != nil {
 		taskCode = coalesce(str(task["code"]), actionID)
 	}
-	s.Store.AppendAudit(ws, id.Name, "受控执行完成", taskCode, "success", "")
+	s.Store.AppendAudit(ws, id.Name, "受控执行完成", taskCode, "success", toolName)
 	s.Store.Unlock()
 
 	s.Store.Persist("messages")
@@ -241,6 +368,7 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 	if task != nil {
 		out["task"] = task
 	}
+	out["result"] = res.Output
 	return out, nil
 }
 

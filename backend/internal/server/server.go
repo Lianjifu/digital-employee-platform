@@ -315,9 +315,15 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.listSessions(r)
 	case path == "/api/sessions" && method == http.MethodPost:
 		data, err = s.createSession(r)
+	case strings.HasPrefix(path, "/api/sessions/") && strings.HasSuffix(path, "/share") && method == http.MethodPost:
+		data, err = s.createSessionShare(r)
+	case strings.HasPrefix(path, "/api/sessions/") && strings.HasSuffix(path, "/share") && method == http.MethodDelete:
+		data, err = s.revokeSessionShare(r)
+	case strings.HasPrefix(path, "/api/sessions/") && method == http.MethodPatch:
+		data, err = s.patchSession(r)
 	case strings.HasPrefix(path, "/api/sessions/") && method == http.MethodDelete:
 		data, err = s.deleteSession(r)
-	case strings.HasPrefix(path, "/api/conversations/") && method == http.MethodDelete && !strings.Contains(path, "/stream") && !strings.Contains(path, "/messages") && !strings.Contains(path, "/tasks"):
+	case strings.HasPrefix(path, "/api/conversations/") && method == http.MethodDelete && !strings.Contains(path, "/stream") && !strings.Contains(path, "/messages") && !strings.Contains(path, "/tasks") && !strings.Contains(path, "/attachments"):
 		data, err = s.deleteConversation(r)
 	case path == "/api/slash-commands" && method == http.MethodGet:
 		data, err = s.listSlashCommands(r)
@@ -330,6 +336,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		return
 	case strings.HasPrefix(path, "/api/conversations/") && strings.HasSuffix(path, "/tasks") && method == http.MethodPost:
 		data, err = s.conversationCreateTask(r)
+	case strings.HasPrefix(path, "/api/conversations/") && strings.HasSuffix(path, "/attachments") && method == http.MethodPost:
+		data, err = s.uploadConversationAttachment(r)
 	case strings.HasPrefix(path, "/api/conversations/") && strings.HasSuffix(path, "/messages") && method == http.MethodGet:
 		data, err = s.listMessages(r)
 	case strings.HasPrefix(path, "/api/conversations/") && method == http.MethodGet:
@@ -338,6 +346,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.listConversations(r)
 	case path == "/api/copilot/conversations" && method == http.MethodPost:
 		data, err = s.createConversation(r)
+	case strings.HasPrefix(path, "/api/copilot/conversations/") && strings.HasSuffix(path, "/cancel") && method == http.MethodPost:
+		data, err = s.cancelCopilotTurn(r)
 	case strings.HasPrefix(path, "/api/copilot/conversations/") && strings.HasSuffix(path, "/stream") && method == http.MethodPost:
 		s.copilotStream(w, r)
 		return
@@ -345,8 +355,15 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.copilotMessageFeedback(r)
 	case strings.HasPrefix(path, "/api/actions/") && strings.HasSuffix(path, "/approve") && method == http.MethodPost:
 		data, err = s.approveAction(r)
+	case strings.HasPrefix(path, "/api/actions/") && strings.HasSuffix(path, "/reject") && method == http.MethodPost:
+		data, err = s.rejectAction(r)
 	case strings.HasPrefix(path, "/api/actions/") && strings.HasSuffix(path, "/execute") && method == http.MethodPost:
 		data, err = s.executeAction(r)
+	case strings.HasPrefix(path, "/api/share/") && method == http.MethodGet:
+		data, err = s.getSharedSession(r)
+	case strings.HasPrefix(path, "/api/attachments/") && method == http.MethodGet:
+		s.downloadAttachment(w, r)
+		return
 
 	// Workflows
 	case path == "/api/workflows" && method == http.MethodGet:
@@ -403,6 +420,9 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.listSkillAudit(r)
 	case path == "/api/skills/execute" && method == http.MethodPost:
 		data, err = s.executeSkill(r)
+	case strings.HasPrefix(path, "/api/skill-artifacts/") && (method == http.MethodGet || method == http.MethodHead):
+		s.serveSkillArtifact(w, r)
+		return
 	case strings.HasPrefix(path, "/api/skills/") && (method == http.MethodGet || method == http.MethodPost || method == http.MethodPatch):
 		data, err = s.skillByID(r)
 	case path == "/api/skill-integrations" && method == http.MethodGet:

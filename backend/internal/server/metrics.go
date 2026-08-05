@@ -13,6 +13,8 @@ var httpRequestsTotal atomic.Uint64
 var httpRequestDurationMS atomic.Uint64
 var copilotStreamTotal atomic.Uint64
 var copilotStreamErrors atomic.Uint64
+var copilotRateLimited atomic.Uint64
+var copilotSafetyBlocked atomic.Uint64
 var auditWriteFailures atomic.Uint64
 var policyDeniesTotal atomic.Uint64
 var modelProbeTotal atomic.Uint64
@@ -44,6 +46,9 @@ func IncCopilotStream(ok bool) {
 		copilotStreamErrors.Add(1)
 	}
 }
+
+func IncCopilotRateLimited()  { copilotRateLimited.Add(1) }
+func IncCopilotSafetyBlocked() { copilotSafetyBlocked.Add(1) }
 
 // IncAuditWriteFailure increments durable audit fanout failures.
 func IncAuditWriteFailure() { auditWriteFailures.Add(1) }
@@ -123,6 +128,8 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	}
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_stream_total Copilot SSE turns\n# TYPE de_copilot_stream_total counter\nde_copilot_stream_total{service=%q} %d\n", svc, copilotStreamTotal.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_stream_errors_total Copilot SSE turns that ended in error\n# TYPE de_copilot_stream_errors_total counter\nde_copilot_stream_errors_total{service=%q} %d\n", svc, copilotStreamErrors.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_copilot_rate_limited_total Copilot rate limit hits\n# TYPE de_copilot_rate_limited_total counter\nde_copilot_rate_limited_total{service=%q} %d\n", svc, copilotRateLimited.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_copilot_safety_blocked_total Copilot content-safety blocks\n# TYPE de_copilot_safety_blocked_total counter\nde_copilot_safety_blocked_total{service=%q} %d\n", svc, copilotSafetyBlocked.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_audit_write_failures_total durable audit fanout failures\n# TYPE de_audit_write_failures_total counter\nde_audit_write_failures_total{service=%q} %d\n", svc, auditWriteFailures.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_policy_denies_total policy deny on write paths\n# TYPE de_policy_denies_total counter\nde_policy_denies_total{service=%q} %d\n", svc, policyDeniesTotal.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_model_provider_probe_total model provider probes\n# TYPE de_model_provider_probe_total counter\nde_model_provider_probe_total{service=%q} %d\n", svc, modelProbeTotal.Load())

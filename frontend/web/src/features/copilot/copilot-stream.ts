@@ -63,8 +63,14 @@ export type CopilotSSEEvent = {
   summary?: string;
   evolveCandidates?: number;
   hitCount?: number;
-  messageId?: string;
   memoryHits?: number;
+  actionId?: string;
+  messageId?: string;
+  riskLevel?: string;
+  authorizationRequest?: unknown;
+  approvalRequest?: unknown;
+  moderated?: boolean;
+  reasons?: string[];
 };
 
 export function isMockChatMode(): boolean {
@@ -109,6 +115,10 @@ export type StreamTurnInput = {
   enabledTools?: string[];
   modeHint?: string;
   reflectHint?: string;
+  sessionMode?: 'investigate' | 'execute';
+  riskLevel?: 'low' | 'medium' | 'high';
+  attachmentIds?: string[];
+  clientMsgId?: string;
   signal?: AbortSignal;
   onEvent: (event: string, data: CopilotSSEEvent) => void;
 };
@@ -148,6 +158,10 @@ export async function streamCopilotTurn(input: StreamTurnInput): Promise<void> {
         enabledTools: input.enabledTools,
         modeHint: input.modeHint,
         reflectHint: input.reflectHint,
+        sessionMode: input.sessionMode,
+        riskLevel: input.riskLevel,
+        attachmentIds: input.attachmentIds,
+        clientMsgId: input.clientMsgId,
       }),
       signal: input.signal,
     },

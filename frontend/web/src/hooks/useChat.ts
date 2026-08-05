@@ -134,7 +134,7 @@ const MAX_INPUT_HISTORY = 20;
 const MAX_CHARS_DEFAULT = 4000;
 const STREAM_CHUNK_MS = 24;
 const STREAM_TICK_MS = 120;
-const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_TIMEOUT_MS = 150_000;
 const MAX_RETRY = 1;
 
 /* ============ 工具函数 ============ */
@@ -200,18 +200,49 @@ function reducer(s: State, a: Action): State {
       return { ...s, sessions: trimmed, activeId: a.session.id };
     }
     case 'merge_sessions': {
-      // 服务端历史只补充缺失记录；浏览器本地的草稿、新会话和消息绝不被覆盖。
+      // 服务端历史：补齐缺失会话，并刷新已有会话的元数据；本地已有消息优先保留，等 conversation sync 再对齐。
       let changed = false;
       const merged = { ...s.sessions };
       a.sessions.forEach((session) => {
-        if (!session.id || merged[session.id]) return;
-        merged[session.id] = session;
-        changed = true;
+        if (!session.id) return;
+        const existing = merged[session.id];
+        if (!existing) {
+          merged[session.id] = session;
+          changed = true;
+          return;
+        }
+        const keepMessages = (existing.messages?.length ?? 0) > 0
+          ? existing.messages
+          : (session.messages ?? []);
+        const next: ChatSession = {
+          ...existing,
+          ...session,
+          messages: keepMessages,
+        };
+        if (
+          next.title !== existing.title
+          || next.preview !== existing.preview
+          || next.status !== existing.status
+          || next.lifecycle !== existing.lifecycle
+          || next.conversationId !== existing.conversationId
+          || next.workspaceId !== existing.workspaceId
+          || next.sessionMode !== existing.sessionMode
+          || next.riskLevel !== existing.riskLevel
+          || next.digitalEmployeeId !== existing.digitalEmployeeId
+          || next.pinned !== existing.pinned
+          || next.lastActiveAt !== existing.lastActiveAt
+          || next.messages !== existing.messages
+        ) {
+          merged[session.id] = next;
+          changed = true;
+        }
       });
       return changed ? { ...s, sessions: merged } : s;
     }
     case 'reconcile_sessions': {
       // 服务端列表为当前工作区权威源：去掉本地仍挂着、服务端已不存在的会话，避免侧栏空、主区仍显示残留。
+      // 空 serverIds 表示「无权威清单」（权限过滤 / 空响应），不得整表清空。
+      if (a.serverIds.length === 0) return s;
       const server = new Set(a.serverIds);
       let changed = false;
       const next = { ...s.sessions };
@@ -233,7 +264,12 @@ function reducer(s: State, a: Action): State {
       const existing = s.sessions[a.session.id];
       if (!a.session.id) return s;
       // 服务端详情覆盖会话事实字段；正在输入的草稿不属于会话详情，仍保留在全局 state。
-      const next = existing ? { ...existing, ...a.session } : a.session;
+      // 勿用空消息覆盖本地已有记录（刷新后 conversation 尚未灌入或暂空时的常见误伤）。
+      const incomingMessages = a.session.messages ?? [];
+      const keepLocalMessages = Boolean(existing && (existing.messages?.length ?? 0) > 0 && incomingMessages.length === 0);
+      const next = existing
+        ? { ...existing, ...a.session, messages: keepLocalMessages ? existing.messages : incomingMessages }
+        : a.session;
       if (
         existing
         && existing.messages === next.messages
@@ -242,6 +278,7 @@ function reducer(s: State, a: Action): State {
         && existing.status === next.status
         && existing.lifecycle === next.lifecycle
         && existing.digitalEmployeeId === next.digitalEmployeeId
+        && existing.sessionMode === next.sessionMode
         && (existing.unread ?? 0) === (next.unread ?? 0)
       ) {
         return s;
@@ -293,7 +330,10 @@ function reducer(s: State, a: Action): State {
     case 'replace_msg': {
       const sess = s.sessions[a.sid];
       if (!sess) return s;
-      const messages = sess.messages.map((m) => (m.id === a.mid ? a.msg : m));
+      const idx = sess.messages.findIndex((m) => m.id === a.mid);
+      const messages = idx >= 0
+        ? sess.messages.map((m) => (m.id === a.mid ? a.msg : m))
+        : capMessages([...sess.messages, a.msg]);
       return { ...s, sessions: { ...s.sessions, [a.sid]: { ...sess, messages, lastActiveAt: Date.now() } } };
     }
     case 'del_msg': {
@@ -941,7 +981,7 @@ export function useChat(agentMeta?: { name: string }) {
       ctrl: AbortController,
       correlationIdStr: string,
       digitalEmployeeId?: string,
-      opts?: { skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string },
+      opts?: { skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string; sessionMode?: 'investigate' | 'execute'; riskLevel?: 'low' | 'medium' | 'high'; attachmentIds?: string[]; clientMsgId?: string },
     ) => {
       const agentName = opts?.agentName ?? '岗位专家';
       const modelId = opts?.modelId ?? '';
@@ -1145,6 +1185,39 @@ export function useChat(agentMeta?: { name: string }) {
           dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
           return;
         }
+        if (typ === 'authorization') {
+          const approval = (data.approvalRequest ?? data.authorizationRequest) as ChatMessageEx['approvalRequest'] | undefined;
+          const mid = (data.messageId || data.actionId || uid('act_')) as string;
+          const authMsg: ChatMessageEx = {
+            id: mid,
+            role: 'assistant',
+            content: `已创建待人工审核授权：${data.name || (data as { tool?: string }).tool || '写操作'}`,
+            approvalRequest: approval ?? {
+              action: String((data as { tool?: string }).tool || 'controlled.execute'),
+              resource: sid,
+              reason: '受控执行需人工审核授权',
+              required: 1,
+              signed: 0,
+              decision: 'pending',
+              signers: [{ userId: '', name: '授权人', role: 'approver', signed: false }],
+            },
+            correlationId: correlationIdStr,
+            status: 'succeeded',
+            createdAt: new Date().toISOString(),
+          };
+          // upsert by actionId，避免与后端已落库消息重复
+          dispatch({ type: 'replace_msg', sid, mid, msg: authMsg });
+          const step: ReasoningStep = {
+            id: uid('rs_'),
+            kind: 'analyze',
+            title: '待人工审核',
+            detail: String((data as { tool?: string }).tool || data.name || mid),
+            startedAt: new Date().toISOString(),
+          };
+          reasoningSteps.push(step);
+          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          return;
+        }
         if (typ === 'tool') {
           const hits = data.hits as {
             backend?: string;
@@ -1269,6 +1342,10 @@ export function useChat(agentMeta?: { name: string }) {
         enabledTools: opts?.enabledTools,
         modeHint: opts?.modeHint,
         reflectHint: opts?.reflectHint,
+        sessionMode: opts?.sessionMode,
+        riskLevel: opts?.riskLevel,
+        attachmentIds: opts?.attachmentIds,
+        clientMsgId: opts?.clientMsgId,
         signal: ctrl.signal,
         onEvent,
       }).catch((err: unknown) => {
@@ -1294,7 +1371,7 @@ export function useChat(agentMeta?: { name: string }) {
       ctrl: AbortController,
       corr: string,
       digitalEmployeeId?: string,
-      opts?: { replyId?: string; skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string },
+      opts?: { replyId?: string; skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string; sessionMode?: 'investigate' | 'execute'; riskLevel?: 'low' | 'medium' | 'high'; attachmentIds?: string[]; clientMsgId?: string },
     ) => {
       const replyId = opts?.replyId ?? uid('m_');
       if (isMockChatMode()) {
@@ -1309,6 +1386,10 @@ export function useChat(agentMeta?: { name: string }) {
           conversationId: opts?.conversationId,
           modeHint: opts?.modeHint,
           reflectHint: opts?.reflectHint,
+          sessionMode: opts?.sessionMode,
+          riskLevel: opts?.riskLevel,
+          attachmentIds: opts?.attachmentIds,
+          clientMsgId: opts?.clientMsgId,
         });
       }
     },
@@ -1347,7 +1428,8 @@ export function useChat(agentMeta?: { name: string }) {
       conversationId,
       modelId,
       enabledTools: opts?.enabledTools,
-      encrypted: true,
+      sessionMode: 'investigate',
+      riskLevel: 'medium',
     });
 
     if (!isMockChatMode()) {
@@ -1369,8 +1451,9 @@ export function useChat(agentMeta?: { name: string }) {
         if (created.modelId) sess.modelId = created.modelId;
         dispatch({ type: 'new_session', session: sess });
         return created.id;
-      } catch {
-        /* fall through to local session so UI stays usable */
+      } catch (err) {
+        // Do not fall back to local-only s_* sessions — they create orphan memory without /api/sessions rows.
+        throw err instanceof Error ? err : new Error('创建会话失败，请重试');
       }
     }
 
@@ -1379,11 +1462,24 @@ export function useChat(agentMeta?: { name: string }) {
     return id;
   }, [agentMeta?.name]);
 
+  const patchSessionRemote = useCallback(async (id: string, body: Record<string, unknown>) => {
+    if (!id || /^s_/.test(id) || isMockChatMode()) return;
+    try {
+      await getApiClient().request(`/api/sessions/${encodeURIComponent(id)}`, {
+        method: 'PATCH',
+        body,
+      });
+    } catch {
+      /* 本地状态已更新；服务端失败下次刷新再对齐 */
+    }
+  }, []);
+
   /** 将当前工作区的只读历史记录并入本地会话，并剔除服务端已不存在的残留。 */
   const importSessions = useCallback((sessions: ChatSession[], opts?: { workspaceId?: string; reconcile?: boolean }) => {
     const filtered = sessions.filter((session) => session.id && !deletedSessionIdsRef.current.has(session.id));
     if (filtered.length) dispatch({ type: 'merge_sessions', sessions: filtered });
-    if (opts?.reconcile && opts.workspaceId) {
+    // 仅在拿到非空权威清单时 reconcile；空数组可能是 owner 过滤 / 瞬态空响应，切勿误删本地会话记录。
+    if (opts?.reconcile && opts.workspaceId && filtered.length > 0) {
       dispatch({
         type: 'reconcile_sessions',
         workspaceId: opts.workspaceId,
@@ -1396,6 +1492,27 @@ export function useChat(agentMeta?: { name: string }) {
     if (!session.id || deletedSessionIdsRef.current.has(session.id)) return;
     dispatch({ type: 'sync_session', session });
   }, []);
+
+  /** 将本地会话变更同步到服务端（改绑专家、运行配置等）。 */
+  const persistSession = useCallback((session: ChatSession) => {
+    if (!session.id || deletedSessionIdsRef.current.has(session.id)) return;
+    dispatch({ type: 'sync_session', session });
+    void patchSessionRemote(session.id, {
+      title: session.title,
+      digitalEmployeeId: session.digitalEmployeeId ?? '',
+      modelId: session.modelId,
+      enabledTools: session.enabledTools,
+      status: session.status === 'archived' || session.lifecycle === 'archived'
+        ? 'archived'
+        : (session.status === 'closed' || session.status === 'done' ? 'closed' : (session.status || 'active')),
+      pinned: Boolean(session.pinned),
+      starred: Boolean(session.starred),
+      sessionMode: session.sessionMode,
+      riskLevel: session.riskLevel,
+      handoff: session.handoff,
+      closeSummary: session.closeSummary,
+    });
+  }, [patchSessionRemote]);
 
   const clearActive = useCallback(() => {
     dispatch({ type: 'clear_active' });
@@ -1415,18 +1532,23 @@ export function useChat(agentMeta?: { name: string }) {
   const switchSession = useCallback((id: string) => dispatch({ type: 'switch', id }), []);
   const togglePin = useCallback((id: string) => {
     const sess = state.sessions[id];
-    if (sess) dispatch({ type: 'pin', id, pinned: !sess.pinned });
-  }, [state.sessions]);
+    if (!sess) return;
+    const pinned = !sess.pinned;
+    dispatch({ type: 'pin', id, pinned });
+    void patchSessionRemote(id, { pinned });
+  }, [state.sessions, patchSessionRemote]);
   const toggleStar = useCallback((id: string) => {
     const sess = state.sessions[id];
-    if (sess) dispatch({ type: 'star', id, starred: !sess.starred });
-  }, [state.sessions]);
+    if (!sess) return;
+    const starred = !sess.starred;
+    dispatch({ type: 'star', id, starred });
+    void patchSessionRemote(id, { starred });
+  }, [state.sessions, patchSessionRemote]);
 
   const stop = useCallback(() => {
     dispatch({ type: 'stop_typing' });
     const corr = state.activeCorrelationId;
     if (corr) {
-      // 找到正在 streaming 的消息，标 cancelled
       const sid = state.activeId;
       const sess = state.sessions[sid];
       if (sess) {
@@ -1434,6 +1556,13 @@ export function useChat(agentMeta?: { name: string }) {
         if (m) dispatch({ type: 'set_msg_status', sid, mid: m.id, status: 'cancelled' });
       }
       dispatch({ type: 'set_active_correlation', id: null });
+      if (!isMockChatMode()) {
+        const conversationId = sess?.conversationId ?? sid;
+        void getApiClient().request(`/api/copilot/conversations/${encodeURIComponent(conversationId)}/cancel`, {
+          method: 'POST',
+          body: JSON.stringify({ correlationId: corr }),
+        }).catch(() => undefined);
+      }
     }
   }, [state.activeCorrelationId, state.activeId, state.sessions]);
 
@@ -1493,13 +1622,19 @@ export function useChat(agentMeta?: { name: string }) {
         enabledTools,
         conversationId: sess?.conversationId ?? state.activeId,
         agentName: replyName,
+        modeHint: opts?.modeHint,
+        reflectHint: opts?.reflectHint,
+        sessionMode: opts?.sessionMode ?? sess?.sessionMode,
+        riskLevel: opts?.riskLevel ?? sess?.riskLevel,
+        attachmentIds: opts?.attachmentIds,
+        clientMsgId: userMsg.clientMsgId,
       });
     }, isMockChatMode() ? 300 : 0);
   }, [state.activeId, state.sessions, state.typing, launchReply]);
 
   const sendMessage = send; // 兼容别名
 
-  const replaceAndSend = useCallback((mid: string, content: string, opts?: { modelId?: string; enabledTools?: string[] }) => {
+  const replaceAndSend = useCallback((mid: string, content: string, opts?: Partial<SendMessageInput> & { modelId?: string; enabledTools?: string[] }) => {
     const sess = state.sessions[state.activeId];
     const original = sess?.messages.find((message) => message.id === mid);
     const text = content.trim();
@@ -1521,6 +1656,10 @@ export function useChat(agentMeta?: { name: string }) {
         agentName: sess.digitalEmployeeId
           ? (sess.digitalEmployeeName ?? sess.agent ?? '岗位专家')
           : '助手',
+        sessionMode: opts?.sessionMode ?? sess.sessionMode,
+        riskLevel: opts?.riskLevel ?? sess.riskLevel,
+        attachmentIds: opts?.attachmentIds,
+        clientMsgId: userMsg.clientMsgId,
       });
     }, isMockChatMode() ? 200 : 0);
   }, [state.activeId, state.sessions, state.typing, launchReply]);
@@ -1582,43 +1721,79 @@ export function useChat(agentMeta?: { name: string }) {
     if (state.activeId) dispatch({ type: 'del_msg', sid: state.activeId, mid });
   }, [state.activeId]);
 
-  /** 指定签名位批准：服务端先完成身份、角色与职责分离校验，成功后才写入本地状态。 */
-  const approve = useCallback(async (mid: string, signerIndex: number) => {
+  /** 本地助手消息（Slash /help 等，不走后端流）。 */
+  const appendLocalAssistant = useCallback((content: string, opts?: { agentName?: string }) => {
+    if (!state.activeId) return;
+    const msg: ChatMessageEx = {
+      id: uid('m_'),
+      role: 'assistant',
+      content,
+      createdAt: new Date().toISOString(),
+      status: 'succeeded',
+      agentName: opts?.agentName ?? '系统',
+    };
+    dispatch({ type: 'append_msg', sid: state.activeId, msg });
+  }, [state.activeId]);
+
+  /** 清空当前会话消息（保留会话绑定与运行配置）。 */
+  const clearActiveMessages = useCallback(() => {
+    if (!state.activeId) return;
+    const sess = state.sessions[state.activeId];
+    if (!sess) return;
+    dispatch({
+      type: 'sync_session',
+      session: {
+        ...sess,
+        messages: [],
+        preview: '',
+        time: new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false }),
+      },
+    });
+  }, [state.activeId, state.sessions]);
+
+  /** 指定签名位批准：单人审核优先；遗留双签仍走 signerIndex。 */
+  const approve = useCallback(async (mid: string, signerIndex: number, decisionNote?: string) => {
     if (!state.activeId) return;
     const session = state.sessions[state.activeId];
     const message = session?.messages.find((item) => item.id === mid);
     if (!message?.approvalRequest) return;
-    const signer = message.approvalRequest.signers[signerIndex];
     const actor = useAuthStore.getState().user;
-    const expectedPlatformRole: Record<Signer['role'], 'user' | 'admin' | 'auditor'> = { operator: 'user', approver: 'admin', auditor: 'auditor' };
-    if (!actor || !signer || signer.signed) throw new Error('当前审批席位不可用，请刷新后重试。');
-    if (signer.userId !== actor.id || expectedPlatformRole[signer.role] !== actor.role) {
-      throw new Error(`仅待签人 ${signer.name}（${signer.role === 'auditor' ? '审计复核' : signer.role === 'operator' ? '执行复核' : '变更审批'}）可签发。`);
-    }
+    if (!actor) throw new Error('请先登录后再授权。');
 
     const api = getApiClient();
+    const conversationId = session.conversationId ?? state.activeId;
+    const isSingle = (message.approvalRequest.required ?? 2) <= 1
+      || Boolean((message as ChatMessageEx & { authorizationRequest?: unknown }).authorizationRequest);
+
+    // 确保服务端会话为受控执行，否则 execute 会被拒
+    if (session.sessionMode !== 'execute') {
+      await patchSessionRemote(session.id, { sessionMode: 'execute', riskLevel: session.riskLevel ?? 'medium' });
+      dispatch({ type: 'sync_session', session: { ...session, sessionMode: 'execute' } });
+    }
+
     const result = await api.post<{ signedAt: string; signatureHash: string; completed: boolean }>(`/api/actions/${mid}/approve`, {
-      signerIndex,
-      conversationId: session.conversationId ?? state.activeId,
+      signerIndex: isSingle ? 0 : signerIndex,
+      conversationId,
+      decisionNote: decisionNote ?? '',
     });
-    dispatch({ type: 'approve', sid: state.activeId, mid, signerIndex, signedAt: result.signedAt, signatureHash: result.signatureHash });
+    dispatch({ type: 'approve', sid: state.activeId, mid, signerIndex: isSingle ? 0 : signerIndex, signedAt: result.signedAt, signatureHash: result.signatureHash });
     if (result.completed) {
-      const task = await api.post<{ id: string; code: string }>(`/api/conversations/${session.conversationId ?? state.activeId}/tasks`, {
+      const task = await api.post<{ id: string; code: string }>(`/api/conversations/${conversationId}/tasks`, {
         title: `${session?.title ?? '专家协同会话'} · 待办事项`,
         priority: 'P1',
-        assignee: '王昊',
+        assignee: actor.name,
         digitalEmployeeId: session?.digitalEmployeeId,
         correlationId: message.correlationId,
       });
-      await api.post(`/api/actions/${mid}/execute`, { taskId: task.id });
+      await api.post(`/api/actions/${mid}/execute`, { taskId: task.id, conversationId });
       const request = message.approvalRequest!;
-      const signers = request.signers.map((signer, index) =>
-        index === signerIndex || signer.signed
+      const signers = (request.signers ?? []).map((signer, index) =>
+        index === (isSingle ? 0 : signerIndex) || signer.signed
           ? {
               ...signer,
               signed: true,
-              signedAt: index === signerIndex ? result.signedAt : signer.signedAt,
-              signatureHash: index === signerIndex ? result.signatureHash : signer.signatureHash,
+              signedAt: index === (isSingle ? 0 : signerIndex) ? result.signedAt : signer.signedAt,
+              signatureHash: index === (isSingle ? 0 : signerIndex) ? result.signatureHash : signer.signatureHash,
             }
           : signer,
       );
@@ -1630,8 +1805,11 @@ export function useChat(agentMeta?: { name: string }) {
           ...message,
           approvalRequest: {
             ...request,
-            signers,
-            signed: request.required,
+            signers: signers.length ? signers : [{
+              userId: actor.id, name: actor.name, role: 'approver' as const,
+              signed: true, signedAt: result.signedAt, signatureHash: result.signatureHash,
+            }],
+            signed: request.required ?? 1,
             decision: 'approved',
             decidedAt: result.signedAt,
           },
@@ -1642,7 +1820,7 @@ export function useChat(agentMeta?: { name: string }) {
               id: uid('t_'),
               name: request.action,
               args: { resource: request.resource, ticketId: request.ticketId },
-              result: `OK · 任务 ${task.code ?? task.id} 已回链`,
+              result: `已授权执行 · 任务 ${task.code ?? task.id} 已回链`,
               status: 'success',
               durationMs: 48,
               permission: 'approval-required',
@@ -1651,7 +1829,7 @@ export function useChat(agentMeta?: { name: string }) {
         },
       });
     }
-  }, [state.activeId]);
+  }, [state.activeId, state.sessions, patchSessionRemote]);
 
   /** 兼容旧 API：不再绕过服务端校验，仍只尝试首个未签席位。 */
   const approveSign = useCallback((mid: string) => {
@@ -1662,10 +1840,44 @@ export function useChat(agentMeta?: { name: string }) {
     return Promise.resolve();
   }, [approve, state.activeId, state.sessions]);
 
-  /** 拒绝 */
+  /** 拒绝：本地更新 + 服务端 reject */
   const reject = useCallback((mid: string, signerIndex: number, reason?: string) => {
-    if (state.activeId) dispatch({ type: 'reject', sid: state.activeId, mid, signerIndex, reason });
-  }, [state.activeId]);
+    if (!state.activeId) return;
+    const session = state.sessions[state.activeId];
+    dispatch({ type: 'reject', sid: state.activeId, mid, signerIndex, reason });
+    if (!isMockChatMode() && session) {
+      void getApiClient().post(`/api/actions/${mid}/reject`, {
+        conversationId: session.conversationId ?? state.activeId,
+        reason: reason ?? '已拒绝',
+      }).catch(() => undefined);
+    }
+  }, [state.activeId, state.sessions]);
+
+  /** 分享（服务端只读 token） */
+  const shareSession = useCallback(async (id: string): Promise<string | null> => {
+    const sess = state.sessions[id];
+    if (!sess) return null;
+    if (sess.shareToken) return sess.shareToken;
+    if (isMockChatMode()) {
+      const token = uid('sh_');
+      dispatch({ type: 'set_share_token', id, token });
+      return token;
+    }
+    try {
+      const res = await getApiClient().post<{ token: string }>(`/api/sessions/${encodeURIComponent(id)}/share`, {});
+      dispatch({ type: 'set_share_token', id, token: res.token });
+      return res.token;
+    } catch {
+      return null;
+    }
+  }, [state.sessions]);
+
+  const revokeShare = useCallback((id: string) => {
+    dispatch({ type: 'set_share_token', id, token: null });
+    if (!isMockChatMode()) {
+      void getApiClient().request(`/api/sessions/${encodeURIComponent(id)}/share`, { method: 'DELETE' }).catch(() => undefined);
+    }
+  }, []);
 
   /** 反馈（点赞 / 点踩 + 标签 + 备注）；同步后端自进化候选 */
   const setFeedback = useCallback((mid: string, payload: { kind: FeedbackKind; tags?: FeedbackTag[]; comment?: string; ratedBy?: string }) => {
@@ -1725,21 +1937,8 @@ export function useChat(agentMeta?: { name: string }) {
   /** 归档 / 取消归档 */
   const archiveSession = useCallback((id: string, archived: boolean) => {
     dispatch({ type: 'archive_session', id, archived });
-  }, []);
-
-  /** 分享（生成只读 token） */
-  const shareSession = useCallback((id: string): string | null => {
-    const sess = state.sessions[id];
-    if (!sess) return null;
-    if (sess.shareToken) return sess.shareToken;
-    const token = uid('sh_');
-    dispatch({ type: 'set_share_token', id, token });
-    return token;
-  }, [state.sessions]);
-
-  const revokeShare = useCallback((id: string) => {
-    dispatch({ type: 'set_share_token', id, token: null });
-  }, []);
+    void patchSessionRemote(id, { status: archived ? 'archived' : 'active' });
+  }, [patchSessionRemote]);
 
   /** 导出 */
   const exportSessionAs = useCallback((id: string, format: 'markdown' | 'json' | 'audit', options?: { includeCitations?: boolean; includeToolCalls?: boolean; includeReasoning?: boolean; includeAuditTrail?: boolean }): string | null => {
@@ -1790,6 +1989,7 @@ export function useChat(agentMeta?: { name: string }) {
     newSession,
     importSessions,
     syncSession,
+    persistSession,
     clearActive,
     delSession,
     switchSession,
@@ -1801,6 +2001,8 @@ export function useChat(agentMeta?: { name: string }) {
     stop,
     regenerate,
     delMessage,
+    appendLocalAssistant,
+    clearActiveMessages,
     approveSign,
 
     /* 企业级 */

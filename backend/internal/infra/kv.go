@@ -51,7 +51,36 @@ func (k *KVStore) UpsertMany(ctx context.Context, collection string, items []map
 	return nil
 }
 
-// ReplaceCollection deletes all rows for a collection then upserts (handles deletes/DLQ shrink).
+// Delete removes one document. workspaceID may be "" to delete any workspace row with that id.
+func (k *KVStore) Delete(ctx context.Context, collection, workspaceID, id string) error {
+	if !k.Available() || id == "" {
+		return nil
+	}
+	if workspaceID != "" {
+		_, err := k.Pool.Exec(ctx, `
+			DELETE FROM platform.kv_documents WHERE collection = $1 AND workspace_id = $2 AND id = $3
+		`, collection, workspaceID, id)
+		return err
+	}
+	_, err := k.Pool.Exec(ctx, `
+		DELETE FROM platform.kv_documents WHERE collection = $1 AND id = $2
+	`, collection, id)
+	return err
+}
+
+// DeleteMany removes documents by id (any workspace_id). Safe for multi-writer collections.
+func (k *KVStore) DeleteMany(ctx context.Context, collection string, ids []string) error {
+	if !k.Available() || len(ids) == 0 {
+		return nil
+	}
+	_, err := k.Pool.Exec(ctx, `
+		DELETE FROM platform.kv_documents WHERE collection = $1 AND id = ANY($2)
+	`, collection, ids)
+	return err
+}
+
+// ReplaceCollection deletes all rows for a collection then upserts.
+// Prefer UpsertMany + Delete for multi-process collections (sessions/messages/memory).
 func (k *KVStore) ReplaceCollection(ctx context.Context, collection string, items []map[string]any) error {
 	if !k.Available() {
 		return nil

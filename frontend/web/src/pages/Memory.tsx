@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
-  Archive, AlertTriangle, ArrowRight, BrainCircuit, CheckCircle2, Clock3, ExternalLink,
+  Archive, AlertTriangle, ArrowRight, BrainCircuit, CheckCircle2, ChevronLeft, ChevronRight, Clock3, ExternalLink,
   FileUp, History, Layers3, Search, ShieldCheck, Trash2, XCircle,
 } from 'lucide-react';
 import { Badge, Button, Input, toast } from '@de/web-ui';
@@ -12,6 +12,16 @@ import { useAuthStore } from '@/stores/authStore';
 import { useT } from '@/i18n';
 import { cn } from '@de/web-utils';
 import { defaultMemoryTab, roleCanMutate, rolePageCopy } from '@/features/role-nav/role-nav';
+import {
+  MEMORY_PAGE_SIZE_KEY,
+  MEMORY_PAGE_SIZE_OPTIONS,
+  clampMemoryPage,
+  memoryContentPreview,
+  memoryPageCount,
+  paginateItems,
+  readMemoryPageSize,
+  sortMemoryRecordsByRecency,
+} from '@/features/memory/record-list';
 
 type Tab = 'overview' | 'short_term' | 'working' | 'long_term' | 'candidates' | 'governance';
 type StatusFilter = 'active' | 'all' | MemoryStatus;
@@ -492,6 +502,40 @@ function Overview({
   );
 }
 
+function MemoryPagination({
+  page,
+  pageCount,
+  pageSize,
+  total,
+  onPrev,
+  onNext,
+}: {
+  page: number;
+  pageCount: number;
+  pageSize: number;
+  total: number;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(page * pageSize, total);
+  return (
+    <div className="memory-pagination" role="navigation" aria-label="记忆列表分页">
+      <span className="memory-pagination__meta">
+        第 {page} / {pageCount} 页 · 显示 {from}-{to} / 共 {total} 条
+      </span>
+      <div className="memory-pagination__actions">
+        <Button size="sm" variant="secondary" disabled={page <= 1} onClick={onPrev}>
+          <ChevronLeft className="h-3.5 w-3.5" />上一页
+        </Button>
+        <Button size="sm" variant="secondary" disabled={page >= pageCount} onClick={onNext}>
+          下一页<ChevronRight className="h-3.5 w-3.5" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 function RecordList({
   records,
   layer,
@@ -527,6 +571,29 @@ function RecordList({
 }) {
   const meta = LAYER[layer];
   const navigate = useNavigate();
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(() => readMemoryPageSize(typeof window !== 'undefined' ? window.localStorage : null));
+  const sorted = useMemo(() => sortMemoryRecordsByRecency(records), [records]);
+  const pageCount = memoryPageCount(sorted.length, pageSize);
+  const pageSafe = clampMemoryPage(page, pageCount);
+  const pageItems = useMemo(() => paginateItems(sorted, pageSafe, pageSize), [sorted, pageSafe, pageSize]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [query, statusFilter, employeeFilter, layer, pageSize]);
+
+  useEffect(() => {
+    if (page !== pageSafe) setPage(pageSafe);
+  }, [page, pageSafe]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(MEMORY_PAGE_SIZE_KEY, String(pageSize));
+    } catch {
+      /* ignore */
+    }
+  }, [pageSize]);
+
   return (
     <div className="memory-list">
       <div className="memory-section-head">
@@ -547,6 +614,18 @@ function RecordList({
             <option value="promoted">已晋升</option>
             <option value="all">全部状态</option>
           </select>
+          <label className="memory-select memory-select--inline">
+            <span>每页</span>
+            <select
+              value={pageSize}
+              onChange={(event) => setPageSize(Number(event.target.value))}
+              aria-label="每页条数"
+            >
+              {MEMORY_PAGE_SIZE_OPTIONS.map((size) => (
+                <option key={size} value={size}>{size} 条</option>
+              ))}
+            </select>
+          </label>
           <label className="memory-search">
             <Search className="h-3.5 w-3.5" />
             <Input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="检索标题、内容或关联 ID" className="h-9 border-0 bg-transparent text-xs shadow-none focus-visible:ring-0" />
@@ -555,58 +634,84 @@ function RecordList({
       </div>
 
       {records.length ? (
-        <div className="memory-record-list">
-          {records.map((record) => {
-            const employee = record.digitalEmployeeId ? employeeMap.get(record.digitalEmployeeId) : undefined;
-            const href = sourcePath(record);
-            return (
-              <article key={record.id} className={cn('memory-record', `is-${meta.tone}`)}>
-                <div className="memory-record__main">
-                  <button type="button" className="memory-record__body" onClick={() => onOpenDetail(record.id)}>
-                    <div className="memory-record__title">
-                      <strong>{record.title}</strong>
-                      <div className="memory-record__badges">
-                        <Badge tone={meta.tone}>{Math.round(record.confidence * 100)}% 置信</Badge>
-                        <Badge tone={record.classification === 'restricted' ? 'warn' : 'neutral'}>{CLASSIFICATION_LABEL[record.classification]}</Badge>
-                        <Badge tone={record.status === 'active' ? 'success' : record.status === 'pending_review' ? 'warn' : 'neutral'}>{STATUS_LABEL[record.status]}</Badge>
+        <>
+          <div className="memory-record-list">
+            {pageItems.map((record) => {
+              const employee = record.digitalEmployeeId ? employeeMap.get(record.digitalEmployeeId) : undefined;
+              const href = sourcePath(record);
+              const preview = memoryContentPreview(record.content);
+              return (
+                <article key={record.id} className={cn('memory-record', `is-${meta.tone}`)}>
+                  <div className="memory-record__main">
+                    <button type="button" className="memory-record__body" onClick={() => onOpenDetail(record.id)}>
+                      <div className="memory-record__title">
+                        <strong>{record.title}</strong>
+                        <div className="memory-record__badges">
+                          <Badge tone={meta.tone}>{Math.round(record.confidence * 100)}% 置信</Badge>
+                          <Badge tone={record.classification === 'restricted' ? 'warn' : 'neutral'}>{CLASSIFICATION_LABEL[record.classification]}</Badge>
+                          <Badge tone={record.status === 'active' ? 'success' : record.status === 'pending_review' ? 'warn' : 'neutral'}>{STATUS_LABEL[record.status]}</Badge>
+                        </div>
                       </div>
+                      {preview.kind === 'dialog' ? (
+                        <div className="memory-record__preview">
+                          {preview.lines.map((line) => (
+                            <p key={`${record.id}-${line.role}`}>
+                              <span className="memory-record__role">{line.role}</span>
+                              {line.text}
+                            </p>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="memory-record__snippet">{preview.text}</p>
+                      )}
+                      <span className="memory-record__more">查看全部</span>
+                    </button>
+                    <div className="memory-record__actions">
+                      {href && (
+                        <button type="button" className="memory-action" onClick={() => navigate(href)}>
+                          <ExternalLink className="h-3.5 w-3.5" />回溯
+                        </button>
+                      )}
+                      {canMutate && layer === 'long_term' && record.status === 'active' && onCandidate && (
+                        <button type="button" className="memory-action memory-action--primary" onClick={() => onCandidate(record.id)}>
+                          <FileUp className="h-3.5 w-3.5" />提炼
+                        </button>
+                      )}
+                      {canMutate && record.status === 'active' && onExpire && (
+                        <button type="button" className="memory-action" onClick={() => onExpire(record.id, record.title)}>
+                          <Clock3 className="h-3.5 w-3.5" />失效
+                        </button>
+                      )}
+                      {canMutate && onDelete && (
+                        <button type="button" className="memory-action memory-action--danger" onClick={() => onDelete(record.id, record.title)}>
+                          <Trash2 className="h-3.5 w-3.5" />删除
+                        </button>
+                      )}
                     </div>
-                    <p>{record.content}</p>
-                  </button>
-                  <div className="memory-record__actions">
-                    {href && (
-                      <button type="button" className="memory-action" onClick={() => navigate(href)}>
-                        <ExternalLink className="h-3.5 w-3.5" />来源
-                      </button>
-                    )}
-                    {canMutate && layer === 'long_term' && record.status === 'active' && onCandidate && (
-                      <button type="button" className="memory-action memory-action--primary" onClick={() => onCandidate(record.id)}>
-                        <FileUp className="h-3.5 w-3.5" />提炼
-                      </button>
-                    )}
-                    {canMutate && record.status === 'active' && onExpire && (
-                      <button type="button" className="memory-action" onClick={() => onExpire(record.id, record.title)}>
-                        <Clock3 className="h-3.5 w-3.5" />失效
-                      </button>
-                    )}
-                    {canMutate && onDelete && (
-                      <button type="button" className="memory-action memory-action--danger" onClick={() => onDelete(record.id, record.title)}>
-                        <Trash2 className="h-3.5 w-3.5" />删除
-                      </button>
-                    )}
                   </div>
-                </div>
-                <div className="memory-record__meta">
-                  <span>{employee ? `${employee.name} · ${employee.role}` : '未绑定数字员工'}</span>
-                  <span>范围 {SCOPE_LABEL[record.scope]}</span>
-                  {record.expiresAt && <span>过期 {formatFullTime(record.expiresAt)}</span>}
-                  <span className="font-mono">{SOURCE_LABEL[record.sourceType]}:{record.sourceId}</span>
-                  <span className="font-mono">{record.correlationId}</span>
-                </div>
-              </article>
-            );
-          })}
-        </div>
+                  <div className="memory-record__meta">
+                    <span>{employee ? `${employee.name} · ${employee.role}` : '未绑定数字员工'}</span>
+                    <span>范围 {SCOPE_LABEL[record.scope]}</span>
+                    <span title={formatFullTime(record.updatedAt || record.createdAt)}>{formatTime(record.updatedAt || record.createdAt)}</span>
+                    {record.expiresAt && <span title={formatFullTime(record.expiresAt)}>过期 {formatTime(record.expiresAt)}</span>}
+                    <span className="font-mono" title={`${SOURCE_LABEL[record.sourceType]}:${record.sourceId}`}>
+                      {SOURCE_LABEL[record.sourceType]}:{record.sourceId}
+                    </span>
+                    <span className="font-mono memory-record__corr" title={record.correlationId}>{record.correlationId}</span>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+          <MemoryPagination
+            page={pageSafe}
+            pageCount={pageCount}
+            pageSize={pageSize}
+            total={sorted.length}
+            onPrev={() => setPage((value) => Math.max(1, value - 1))}
+            onNext={() => setPage((value) => Math.min(pageCount, value + 1))}
+          />
+        </>
       ) : (
         <div className="memory-empty">
           <EmptyState icon={Archive} title="没有匹配的记忆" description="记录将在会话、任务或工作流的受控执行中形成；可切换状态或数字员工筛选。" />

@@ -8,6 +8,21 @@ import (
 // PersistFunc writes a named collection snapshot to durable storage.
 type PersistFunc func(ctx context.Context, collection string, items []map[string]any) error
 
+// DeleteFunc removes documents by id from durable storage (any workspace_id).
+type DeleteFunc func(ctx context.Context, collection string, ids []string) error
+
+// replaceOnPersist collections still use full replace (single-writer / shrink-heavy).
+var replaceOnPersist = map[string]bool{
+	"channel_dlq":     true,
+	"channel_audit":   true,
+	"channel_inbound": true,
+}
+
+// ShouldReplaceOnPersist reports collections that still need full-table replace (shrink-heavy).
+func ShouldReplaceOnPersist(collection string) bool {
+	return replaceOnPersist[collection]
+}
+
 // DurableCollections are hydrated/persisted via platform.kv_documents.
 var DurableCollections = []string{
 	"workspaces",
@@ -55,6 +70,40 @@ func (s *Store) SetPersistHook(fn PersistFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.persistHook = fn
+}
+
+// SetDeleteHook registers durable document deleter.
+func (s *Store) SetDeleteHook(fn DeleteFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleteHook = fn
+}
+
+// PersistDelete removes documents from durable storage asynchronously.
+func (s *Store) PersistDelete(collection string, ids ...string) {
+	if s.deleteHook == nil || len(ids) == 0 {
+		return
+	}
+	clean := make([]string, 0, len(ids))
+	seen := map[string]struct{}{}
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		clean = append(clean, id)
+	}
+	if len(clean) == 0 {
+		return
+	}
+	go func() {
+		if err := s.deleteHook(context.Background(), collection, clean); err != nil {
+			log.Printf("persist-delete %s: %v", collection, err)
+		}
+	}()
 }
 
 // PersistCollection snapshots a collection asynchronously (caller should hold Lock or own slice).
@@ -122,6 +171,14 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 				if str(c["id"]) == cid {
 					ws = str(c["workspaceId"])
 					break
+				}
+			}
+			if ws == "" {
+				for _, sess := range s.Sessions {
+					if str(sess["conversationId"]) == cid || str(sess["id"]) == cid {
+						ws = str(sess["workspaceId"])
+						break
+					}
 				}
 			}
 			out = append(out, map[string]any{
@@ -208,6 +265,29 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 func str(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+func dedupeMapsByID(items []map[string]any) []map[string]any {
+	if len(items) == 0 {
+		return items
+	}
+	byID := make(map[string]map[string]any, len(items))
+	order := make([]string, 0, len(items))
+	for _, item := range items {
+		id := str(item["id"])
+		if id == "" {
+			continue
+		}
+		if _, exists := byID[id]; !exists {
+			order = append(order, id)
+		}
+		byID[id] = item
+	}
+	out := make([]map[string]any, 0, len(order))
+	for _, id := range order {
+		out = append(out, byID[id])
+	}
+	return out
 }
 
 // PersistNow synchronously persists all durable collections (startup / tests).
@@ -345,11 +425,11 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 	case "release_approvals":
 		s.ReleaseApprovals = items
 	case "skills":
-		s.Skills = items
+		s.Skills = dedupeMapsByID(items)
 	case "skill_catalog":
 		s.SkillCatalog = items
 	case "skill_health":
-		s.SkillHealth = items
+		s.SkillHealth = dedupeMapsByID(items)
 	case "skill_integrations":
 		s.SkillIntegrations = items
 	case "skill_extra":

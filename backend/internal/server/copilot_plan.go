@@ -109,6 +109,7 @@ func (s *Server) runPlanExecuteTurn(ctx context.Context, in reactTurnInput) reac
 		Request: in.Request, WorkspaceID: in.WorkspaceID,
 		DigitalEmployee: in.DigitalEmployee, ConversationID: in.ConversationID,
 		CorrelationID: in.CorrelationID, UserMessage: in.UserMessage, Viewer: in.Viewer,
+		SessionMode: in.SessionMode, RiskLevel: in.RiskLevel,
 	}
 	if in.Viewer != nil {
 		runCtx.OwnerID = in.Viewer.ID
@@ -183,7 +184,11 @@ func (s *Server) runPlanExecuteTurn(ctx context.Context, in reactTurnInput) reac
 			tool, deny := authorizeToolCall(reg, call)
 			var res toolExecResult
 			if deny != nil {
-				res = *deny
+				if deny.Permission == "approval_required" && tool != nil && normalizeSessionMode(in.SessionMode) == sessionModeExecute {
+					res = s.queueToolAuthorization(runCtx, tool, call, coalesce(in.RiskLevel, "medium"), in.Emit)
+				} else {
+					res = *deny
+				}
 			} else {
 				res = s.runCopilotTool(runCtx, tool, call)
 			}

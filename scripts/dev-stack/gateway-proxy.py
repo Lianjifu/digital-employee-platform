@@ -5,6 +5,7 @@ import urllib.request
 
 ROUTES = [
     ("/agent", 8101), ("/api/copilot", 8101), ("/api/conversations", 8101), ("/api/sessions", 8101), ("/api/actions", 8101),
+    ("/api/share", 8101), ("/api/attachments", 8101),
     ("/api/tasks", 8101), ("/api/digital-employees", 8101), ("/api/digital-employee-", 8101),
     ("/api/agents", 8101), ("/api/slash-commands", 8101),
     ("/api/workflows", 8103), ("/api/workflow-", 8103),

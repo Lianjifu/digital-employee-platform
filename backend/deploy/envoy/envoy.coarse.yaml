@@ -21,14 +21,18 @@ static_resources:
                         - match: { prefix: "/agent" }
                           route:
                             cluster: de_collab
-                            timeout: 60s
+                            timeout: 180s
                             prefix_rewrite: "/api/copilot"
                         - match: { prefix: "/api/copilot" }
-                          route: { cluster: de_collab, timeout: 60s }
+                          route: { cluster: de_collab, timeout: 180s }
                         - match: { prefix: "/api/conversations" }
-                          route: { cluster: de_collab, timeout: 60s }
+                          route: { cluster: de_collab, timeout: 180s }
                         - match: { prefix: "/api/sessions" }
                           route: { cluster: de_collab, timeout: 30s }
+                        - match: { prefix: "/api/share" }
+                          route: { cluster: de_collab, timeout: 30s }
+                        - match: { prefix: "/api/attachments" }
+                          route: { cluster: de_collab, timeout: 60s }
                         - match: { prefix: "/api/actions" }
                           route: { cluster: de_collab, timeout: 30s }
                         - match: { prefix: "/api/tasks" }

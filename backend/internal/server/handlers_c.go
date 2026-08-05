@@ -378,11 +378,14 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	if corr == "" {
 		corr = s.Store.ID("corr")
 	}
+	clientMsgID := strings.TrimSpace(str(body["clientMsgId"]))
 	ws := s.workspaceID(r)
 	deID := coalesce(str(body["digitalEmployeeId"]), "")
 	requestedModel := coalesce(str(body["modelId"]), coalesce(str(body["model"]), ""))
 	modeHint := coalesce(str(body["modeHint"]), str(body["mode"]))
 	reflectHint := coalesce(str(body["reflectHint"]), str(body["feedback"]))
+	sessionMode := normalizeSessionMode(str(body["sessionMode"]))
+	riskLevel := normalizeRiskLevelSession(str(body["riskLevel"]))
 	var enabledTools []string
 	if arr, ok := body["enabledTools"].([]any); ok {
 		for _, t := range arr {
@@ -391,10 +394,72 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	var attachmentIDs []string
+	if arr, ok := body["attachmentIds"].([]any); ok {
+		for _, t := range arr {
+			if s := str(t); s != "" {
+				attachmentIDs = append(attachmentIDs, s)
+			}
+		}
+	}
+
+	if id == nil {
+		writeErr(w, apperr.UnauthorizedErr("请先登录"))
+		return
+	}
+	if !s.allowCopilotTurn(ws, id.ID) {
+		writeErr(w, apperr.New(apperr.RateLimited, 429, "Copilot 回合过于频繁，请稍后再试"))
+		return
+	}
+	safeIn := applyContentSafety(userMsg)
+	if safeIn.Blocked {
+		IncCopilotSafetyBlocked()
+		writeErr(w, apperr.Forbidden(apperr.AccessWriteForbidden, safeIn.Text))
+		return
+	}
+	userMsg = safeIn.Text
 
 	s.Store.RLock()
 	cid := s.resolveMessageBucketID(ws, rawID)
+	sess := findSessionForStreamLocked(s.Store.Sessions, ws, rawID, cid)
+	if sess != nil {
+		if sm := str(sess["sessionMode"]); sm != "" && str(body["sessionMode"]) == "" {
+			sessionMode = normalizeSessionMode(sm)
+		}
+		if rl := str(sess["riskLevel"]); rl != "" && str(body["riskLevel"]) == "" {
+			riskLevel = normalizeRiskLevelSession(rl)
+		}
+		if err := assertSessionWritableLocked(sess); err != nil {
+			s.Store.RUnlock()
+			writeErr(w, err)
+			return
+		}
+	}
 	s.Store.RUnlock()
+
+	if attSum := s.attachmentSummaries(attachmentIDs, cid); attSum != "" {
+		userMsg = userMsg + attSum
+	}
+
+	if clientMsgID != "" {
+		if prev := loadIdempotentReply(cid, clientMsgID); prev != nil {
+			flusher, ok := w.(http.Flusher)
+			if !ok {
+				writeErr(w, apperr.New(apperr.Unknown, 500, "流式不支持"))
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.Header().Set("x-correlation-id", corr)
+			writeSSE(w, "done", map[string]any{
+				"type": "done", "stage": "idempotent", "correlationId": corr,
+				"message": prev, "replay": true,
+			})
+			flusher.Flush()
+			IncCopilotStream(true)
+			return
+		}
+	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -451,14 +516,26 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	s.Store.Lock()
-	s.Store.Messages[cid] = append(s.Store.Messages[cid], map[string]any{
+	userRec := map[string]any{
 		"id": s.Store.ID("msg"), "role": "user", "content": userMsg,
 		"createdAt": now, "correlationId": corr,
-	})
-	s.touchSessionLocked(ws, rawID, cid, userMsg, now, modelID)
+	}
+	if clientMsgID != "" {
+		userRec["clientMsgId"] = clientMsgID
+	}
+	if len(attachmentIDs) > 0 {
+		userRec["attachmentIds"] = attachmentIDs
+	}
+	if safeIn.Redacted {
+		userRec["moderated"] = true
+		userRec["moderationReasons"] = safeIn.Reasons
+	}
+	s.Store.Messages[cid] = append(s.Store.Messages[cid], userRec)
+	s.touchSessionLocked(ws, rawID, cid, userMsg, now, modelID, deID, id.ID)
 	s.Store.Unlock()
 	s.Store.Persist("messages")
 	s.Store.Persist("sessions")
+	s.Store.Persist("conversations")
 
 	// 3a) cross-session memory (not the same as published knowledge)
 	emit("stage", "memory", map[string]any{"status": "running"})
@@ -475,9 +552,15 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		"provenance": memoryProvenanceMaps(memoryHits),
 	})
 
-	// Tool registry: capabilities ∩ enabledTools ∩ boundary
+	// Tool registry: capabilities ∩ enabledTools ∩ boundary ∩ sessionMode
 	registry := buildToolRegistry(empMap, enabledTools)
+	registry = filterRegistryBySessionMode(registry, sessionMode)
 	system := buildCopilotSystemPrompt(empMap, nil, memoryHits)
+	if sessionMode == sessionModeInvestigate {
+		system += "\n当前会话为研判模式：禁止宣称已执行写操作；需要变更时提示用户切换到受控执行并走人工审核。"
+	} else {
+		system += "\n当前会话为受控执行模式：写工具将进入人工审核，未获批准前不得声称执行成功。"
+	}
 
 	chatMessages := assembleCopilotChatMessages(historySnapshot)
 	if len(chatMessages) == 0 {
@@ -487,15 +570,21 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	// 4) Harness：Dynamic route → React / Plan-Exec / Direct → Reflection → stream
 	emit("stage", "runtime", map[string]any{
 		"status": "running", "modelId": modelID, "mode": "harness",
+		"sessionMode": sessionMode, "riskLevel": riskLevel,
 		"enabledTools": enabledToolKeys(registry), "historyTurns": len(chatMessages),
 	})
 	streamCtx, streamCancel := context.WithTimeout(r.Context(), 150*time.Second)
-	defer streamCancel()
+	registerStreamCancel(corr, streamCancel)
+	defer func() {
+		clearStreamCancel(corr)
+		streamCancel()
+	}()
 	reactOut := s.runHarnessTurn(streamCtx, reactTurnInput{
 		Request: r, WorkspaceID: ws, ModelID: modelID, System: system,
 		Messages: chatMessages, Registry: registry, UserMessage: userMsg,
 		ConversationID: cid, CorrelationID: corr, DigitalEmployee: resolvedDE,
 		Viewer: id, Emit: emit, ModeHint: modeHint, ReflectHint: reflectHint,
+		SessionMode: sessionMode, RiskLevel: riskLevel,
 	})
 	if reactOut.Err != nil {
 		fallback := ""
@@ -517,6 +606,15 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		emit("stage", "runtime", map[string]any{"status": "degraded", "modelId": modelID, "warning": reactOut.Err.Error()})
 	}
 	full := reactOut.Text
+	safeOut := applyContentSafety(full)
+	if safeOut.Blocked {
+		IncCopilotSafetyBlocked()
+		full = safeOut.Text
+		emit("stage", "safety", map[string]any{"status": "blocked", "reasons": safeOut.Reasons})
+	} else if safeOut.Redacted {
+		full = safeOut.Text
+		emit("stage", "safety", map[string]any{"status": "redacted", "reasons": safeOut.Reasons})
+	}
 	rt := reactOut.Resolved
 	resolvedModelID := coalesce(reactOut.ModelID, modelID)
 	modelID = resolvedModelID
@@ -551,7 +649,12 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 			"memoryHits": len(memoryHits), "historyTurns": len(chatMessages),
 			"reactSteps": reactOut.Steps, "mode": mode, "reflectRounds": reactOut.ReflectRounds,
 			"policyLevel": reactOut.PolicyLevel, "policyId": reactOut.PolicyID,
+			"sessionMode": sessionMode, "riskLevel": riskLevel,
 		},
+	}
+	if safeOut.Redacted || safeOut.Blocked {
+		assistantMsg["moderated"] = true
+		assistantMsg["moderationReasons"] = safeOut.Reasons
 	}
 	if prov := memoryProvenanceMaps(memoryHits); len(prov) > 0 {
 		assistantMsg["memoryProvenance"] = prov
@@ -574,8 +677,22 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	s.Store.Lock()
 	s.Store.Messages[cid] = append(s.Store.Messages[cid], assistantMsg)
 	preview := truncateRunes(full, 80)
-	s.touchSessionLocked(ws, rawID, cid, preview, time.Now().UTC().Format(time.RFC3339), modelID)
+	s.touchSessionLocked(ws, rawID, cid, preview, time.Now().UTC().Format(time.RFC3339), modelID, resolvedDE, id.ID)
 	s.Store.AppendAudit(ws, id.Name, "协作回合", cid, "success", corr)
+	if resolvedDE != "" {
+		turnOK := true
+		turnDur := 0
+		for _, tc := range toolCalls {
+			st := strings.ToLower(str(tc["status"]))
+			if st == "failed" || st == "denied" || st == "error" {
+				turnOK = false
+			}
+			if d := intFrom(tc["durationMs"]); d > turnDur {
+				turnDur = d
+			}
+		}
+		s.recordEmployeeRuntimeLocked(resolvedDE, turnDur, turnOK)
+	}
 	_, _ = s.ingestRuntimeMemoryLocked(runtimeMemoryInput{
 		WorkspaceID: ws, OwnerID: id.ID, OwnerName: id.Name, DigitalEmployeeID: resolvedDE,
 		Title: "会话上下文 · " + truncateRunes(userMsg, 40),
@@ -594,6 +711,9 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	s.Store.Unlock()
 	s.Store.Persist("messages")
 	s.Store.Persist("sessions")
+	s.Store.Persist("conversations")
+	s.Store.Persist("employees")
+	rememberIdempotentReply(cid, clientMsgID, assistantMsg)
 	go s.persistEvolve()
 
 	for _, cand := range evolveCreated {
@@ -604,7 +724,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	}
 	emit("done", "done", map[string]any{
 		"ok": true, "modelId": modelID, "mode": mode,
-		"messageId": assistantMsgID,
+		"messageId": assistantMsgID, "sessionMode": sessionMode, "riskLevel": riskLevel,
 		"memoryHits": len(memoryHits), "historyTurns": len(chatMessages),
 		"memoryProvenance": memoryProvenanceMaps(memoryHits),
 		"reactSteps": reactOut.Steps, "toolCount": len(toolCalls),
@@ -615,7 +735,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	streamOK = true
 }
 
-func (s *Server) touchSessionLocked(ws, rawID, cid, preview, now, modelID string) {
+func (s *Server) touchSessionLocked(ws, rawID, cid, preview, now, modelID, digitalEmployeeID, ownerID string) {
 	for i, sess := range s.Store.Sessions {
 		if str(sess["workspaceId"]) != ws {
 			continue
@@ -623,15 +743,121 @@ func (s *Server) touchSessionLocked(ws, rawID, cid, preview, now, modelID string
 		if str(sess["id"]) != rawID && str(sess["conversationId"]) != cid && str(sess["id"]) != cid {
 			continue
 		}
-		sess["preview"] = preview
+		sess["preview"] = truncateRunes(preview, 120)
 		sess["updatedAt"] = now
 		sess["lastMessageAt"] = now
 		if modelID != "" {
 			sess["modelId"] = modelID
 		}
+		if digitalEmployeeID != "" && str(sess["digitalEmployeeId"]) == "" {
+			sess["digitalEmployeeId"] = digitalEmployeeID
+		}
+		// Auto-title first real turn when still default.
+		if title := str(sess["title"]); title == "" || title == "新会话" {
+			if t := deriveSessionTitle(preview); t != "" {
+				sess["title"] = t
+			}
+		}
 		s.Store.Sessions[i] = sess
 		return
 	}
+	// Stream reached an orphan conversation (local s_* or missing create) — materialize session row.
+	sessID := rawID
+	if sessID == "" {
+		sessID = cid
+	}
+	if sessID == "" {
+		return
+	}
+	convID := cid
+	if convID == "" {
+		convID = sessID
+	}
+	deID := digitalEmployeeID
+	deName := "助手"
+	for _, c := range s.Store.Conversations {
+		if str(c["id"]) == convID {
+			if deID == "" {
+				deID = str(c["digitalEmployeeId"])
+			}
+			break
+		}
+	}
+	if deID != "" {
+		for _, emp := range s.Store.Employees {
+			if str(emp["id"]) == deID {
+				deName = coalesce(str(emp["role"]), coalesce(str(emp["name"]), deName))
+				break
+			}
+		}
+	}
+	title := deriveSessionTitle(preview)
+	if title == "" {
+		title = "新会话"
+	}
+	hasConv := false
+	for _, c := range s.Store.Conversations {
+		if str(c["id"]) == convID {
+			hasConv = true
+			c["workspaceId"] = coalesce(str(c["workspaceId"]), ws)
+			c["updatedAt"] = now
+			if deID != "" && str(c["digitalEmployeeId"]) == "" {
+				c["digitalEmployeeId"] = deID
+			}
+			break
+		}
+	}
+	if !hasConv {
+		s.Store.Conversations = append([]map[string]any{{
+			"id": convID, "workspaceId": ws, "title": title,
+			"digitalEmployeeId": deID, "modelId": modelID, "updatedAt": now,
+		}}, s.Store.Conversations...)
+	}
+	session := map[string]any{
+		"id": sessID, "workspaceId": ws, "ownerId": ownerID, "title": title,
+		"preview": truncateRunes(preview, 120), "agent": deName,
+		"digitalEmployeeId": deID, "digitalEmployeeName": deName,
+		"conversationId": convID, "status": "active", "modelId": modelID,
+		"createdAt": now, "updatedAt": now, "lastMessageAt": now,
+	}
+	s.Store.Sessions = append([]map[string]any{session}, s.Store.Sessions...)
+}
+
+func deriveSessionTitle(preview string) string {
+	preview = strings.TrimSpace(preview)
+	if preview == "" {
+		return ""
+	}
+	// Collapse whitespace; take first line / ~24 runes.
+	preview = strings.ReplaceAll(preview, "\n", " ")
+	runes := []rune(preview)
+	if len(runes) > 24 {
+		return string(runes[:24]) + "…"
+	}
+	return preview
+}
+
+// removeMemoryForConversationLocked drops short_term memories sourced from a conversation.
+// Returns deleted memory ids for durable PersistDelete. Caller must hold Store.Lock.
+func (s *Server) removeMemoryForConversationLocked(ws, convID string) []string {
+	if convID == "" {
+		return nil
+	}
+	kept := make([]map[string]any, 0, len(s.Store.MemoryRecords))
+	var deleted []string
+	for _, mem := range s.Store.MemoryRecords {
+		if str(mem["sourceId"]) == convID &&
+			(str(mem["workspaceId"]) == "" || str(mem["workspaceId"]) == ws) &&
+			(str(mem["layer"]) == "" || str(mem["layer"]) == "short_term") {
+			if id := str(mem["id"]); id != "" {
+				deleted = append(deleted, id)
+			}
+			continue
+		}
+		kept = append(kept, mem)
+	}
+	s.Store.MemoryRecords = kept
+	return deleted
 }
 
 func allowRuntimeStub() bool {

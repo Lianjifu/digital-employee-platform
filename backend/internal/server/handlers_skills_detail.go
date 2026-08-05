@@ -214,6 +214,7 @@ func (s *Server) skillsGovernanceIncidents(r *http.Request) (any, error) {
 	if err := requireSkillRead(identityFrom(r.Context())); err != nil {
 		return nil, err
 	}
+	s.refreshSkillGovernanceFromKV()
 	ws := s.workspaceID(r)
 	s.Store.RLock()
 	defer s.Store.RUnlock()
@@ -230,6 +231,7 @@ func (s *Server) skillsGovernanceEvents(r *http.Request) (any, error) {
 	if err := requireSkillRead(identityFrom(r.Context())); err != nil {
 		return nil, err
 	}
+	s.refreshSkillGovernanceFromKV()
 	ws := s.workspaceID(r)
 	s.Store.RLock()
 	defer s.Store.RUnlock()

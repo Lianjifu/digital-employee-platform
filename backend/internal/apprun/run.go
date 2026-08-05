@@ -81,7 +81,14 @@ func Run(opts Options) error {
 		}
 	})
 	st.SetPersistHook(func(ctx context.Context, collection string, items []map[string]any) error {
-		return kv.ReplaceCollection(ctx, collection, items)
+		// Multi-process safe default: upsert merge. Full replace only for shrink-heavy single-writer collections.
+		if store.ShouldReplaceOnPersist(collection) {
+			return kv.ReplaceCollection(ctx, collection, items)
+		}
+		return kv.UpsertMany(ctx, collection, items)
+	})
+	st.SetDeleteHook(func(ctx context.Context, collection string, ids []string) error {
+		return kv.DeleteMany(ctx, collection, ids)
 	})
 
 	hydrated := 0
@@ -105,6 +112,10 @@ func Run(opts Options) error {
 	} else if hydrated > 0 {
 		log.Printf("hydrated %d durable collections from postgres", hydrated)
 	}
+	st.EnsureDocxSkillReady()
+	// Persist so Cap/Collab governance refresh and other units see builtin docx.
+	st.Persist("skills")
+	st.Persist("employees")
 
 	srv := server.New(st)
 	srv.Mode = opts.Mode

@@ -1,5 +1,5 @@
 /**
- * 双重审批 Modal — 等保 3 写动作必须 2 人签发
+ * 单人人工审核授权 Modal（替代双重审批）
  */
 import { Modal, Button, Badge } from '@de/web-ui';
 import { ShieldCheck, UserCheck, ShieldAlert } from 'lucide-react';
@@ -13,18 +13,17 @@ interface Props {
   targetSigner?: { userId: string; name: string; role: string };
   canApprove: boolean;
   eligibilityMessage: string;
-  onApprove: () => Promise<void>;
+  onApprove: (note?: string) => Promise<void>;
   onClose: () => void;
 }
 
-const roleLabel: Record<string, string> = { operator: '执行复核', auditor: '审计复核', approver: '变更审批' };
-
-export function DualSignModal({ open, title, description, currentIdentity, targetSigner, canApprove, eligibilityMessage, onApprove, onClose }: Props) {
+export function DualSignModal({ open, title, description, currentIdentity, canApprove, eligibilityMessage, onApprove, onClose }: Props) {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState('');
 
   useEffect(() => {
-    if (open) { setSubmitting(false); setError(null); }
+    if (open) { setSubmitting(false); setError(null); setNote(''); }
   }, [open]);
 
   const confirm = async () => {
@@ -32,10 +31,10 @@ export function DualSignModal({ open, title, description, currentIdentity, targe
     setSubmitting(true);
     setError(null);
     try {
-      await onApprove();
+      await onApprove(note.trim() || undefined);
       onClose();
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '签发失败，请稍后重试。');
+      setError(reason instanceof Error ? reason.message : '授权失败，请稍后重试。');
     } finally {
       setSubmitting(false);
     }
@@ -45,7 +44,7 @@ export function DualSignModal({ open, title, description, currentIdentity, targe
     <Modal
       open={open}
       onClose={onClose}
-      title="双重审批"
+      title="人工审核授权"
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -56,14 +55,14 @@ export function DualSignModal({ open, title, description, currentIdentity, targe
             disabled={!canApprove || submitting}
             onClick={() => void confirm()}
           >
-            {submitting ? '正在校验…' : '确认签发'}
+            {submitting ? '正在校验…' : '确认授权'}
           </Button>
         </>
       }
     >
       <div className="space-y-3">
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-5 text-amber-700 dark:text-amber-300">
-          <ShieldAlert className="mr-1 inline h-3.5 w-3.5" />该操作会修改生产环境数据，需由不同职责的已授权用户完成双重审批。签发身份由当前登录会话校验，不接受手工填写姓名。
+          <ShieldAlert className="mr-1 inline h-3.5 w-3.5" />该操作需一名授权人人工审核通过后方可执行。发起人不可自批。
         </div>
         <div>
           <div className="mb-1 text-xs text-[var(--color-text-muted)]">操作</div>
@@ -77,13 +76,23 @@ export function DualSignModal({ open, title, description, currentIdentity, targe
             <div className="mt-1 text-[10px] text-[var(--text-muted)]">{currentIdentity?.role ?? '—'}</div>
           </div>
           <div>
-            <div className="mb-1 text-[10px] text-[var(--text-muted)]">待签审批席位</div>
-            <div className="flex items-center gap-1.5 font-medium"><ShieldCheck className="h-3.5 w-3.5 text-[var(--warning)]" />{targetSigner?.name ?? '—'}</div>
-            <div className="mt-1"><Badge tone="info" className="text-[9px]">{targetSigner ? (roleLabel[targetSigner.role] ?? targetSigner.role) : '—'}</Badge></div>
+            <div className="mb-1 text-[10px] text-[var(--text-muted)]">审核方式</div>
+            <div className="flex items-center gap-1.5 font-medium"><ShieldCheck className="h-3.5 w-3.5 text-[var(--warning)]" />单人授权</div>
+            <div className="mt-1"><Badge tone="info" className="text-[9px]">required = 1</Badge></div>
           </div>
         </div>
+        <label className="block text-xs">
+          <span className="text-[var(--text-muted)]">备注（可选）</span>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            className="mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 py-1.5 text-xs"
+            rows={2}
+            placeholder="授权说明"
+          />
+        </label>
         <div className={canApprove ? 'rounded-md bg-[var(--success-bg)] px-3 py-2 text-[11px] text-[var(--success)]' : 'rounded-md bg-[var(--warning-bg)] px-3 py-2 text-[11px] text-[var(--warning)]'}>
-          {canApprove ? '身份与审批席位已匹配。确认后将写入不可抵赖的审批记录。' : eligibilityMessage}
+          {canApprove ? '当前身份可审核授权。确认后将写入不可抵赖的授权记录。' : eligibilityMessage}
         </div>
         {error && <div role="alert" className="rounded-md bg-[var(--danger-bg)] px-3 py-2 text-[11px] text-[var(--danger)]">{error}</div>}
       </div>

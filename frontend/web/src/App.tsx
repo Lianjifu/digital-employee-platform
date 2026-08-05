@@ -10,6 +10,7 @@ import { useAuthStore } from './stores/authStore';
 const Login = lazy(() => import('./pages/Login'));
 const Home = lazy(() => import('./pages/Home'));
 const Copilot = lazy(() => import('./pages/Copilot'));
+const CopilotShare = lazy(() => import('./pages/CopilotShare'));
 const Tasks = lazy(() => import('./pages/Tasks'));
 const Workspaces = lazy(() => import('./pages/Workspaces'));
 const DigitalEmployees = lazy(() => import('./pages/DigitalEmployees'));
@@ -46,6 +47,7 @@ export default function App() {
       <Suspense fallback={<PageFallback />}>
         <Routes>
           <Route path="/login" element={<ErrorBoundary><Login /></ErrorBoundary>} />
+          <Route path="/copilot/share/:token" element={<ErrorBoundary><CopilotShare /></ErrorBoundary>} />
           <Route
             element={
               <ProtectedRoute>

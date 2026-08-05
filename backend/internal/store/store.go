@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -100,6 +101,7 @@ type Store struct {
 	auditHook func(map[string]any)
 	// Optional durable collection snapshot (platform.kv_documents).
 	persistHook PersistFunc
+	deleteHook  DeleteFunc
 }
 
 func New() *Store {
@@ -275,7 +277,7 @@ func (s *Store) seed() {
 			"description": "入职办理、假期政策与人事制度问答", "owner": "郑人", "ownerId": "u2", "escalationOwner": "人事负责人", "serviceObject": "在职与入职员工",
 			"version": "1.0.0", "environment": "production", "lifecycle": "active", "risk": "low",
 			"responsibilities": []string{"入职办理", "假期政策解答", "人事制度问答"}, "prohibitedActions": []string{"不得承诺未审批编制", "不得泄露员工隐私"},
-			"capabilities": map[string]any{"model": "gpt-4o", "knowledge": []string{"人事制度库"}, "skills": []string{"政策问答"}, "tools": []string{"HRIS"}, "workflows": []string{"人事服务协同流"}, "channels": []string{"Web"}},
+			"capabilities": map[string]any{"model": "gpt-4o", "knowledge": []string{"人事制度库"}, "skills": []string{"政策问答", "docx"}, "tools": []string{"HRIS"}, "workflows": []string{"人事服务协同流"}, "channels": []string{"Web"}},
 			"memoryPolicy": map[string]any{"shortTermHours": 8, "workingDays": 14, "longTermCadence": "weekly", "knowledgePromotion": "approval_required"},
 			"runtime": map[string]any{"calls24h": 48, "successRate": 0.99, "p95Ms": 380, "costToday": 3.2, "handoffs24h": 1, "anomalies": 0},
 			"evaluation": map[string]any{"status": "passed", "score": 95.0, "lastRunAt": "2026-07-21T00:00:00Z"},
@@ -441,6 +443,13 @@ func (s *Store) seed() {
 			"lifecycleStatus": "enabled", "status": "installed", "version": "1.0.0",
 			"riskLevel": "low", "rating": 4.4, "installCount": 180, "cacheable": true, "source": "market",
 			"environment": "production", "classification": "internal", "lastVerifiedAt": "今天",
+		},
+		{
+			"id": "sk-docx", "workspaceId": "w1", "ownerId": "u1", "owner": "平台管理员", "team": "文档能力组",
+			"name": "docx", "kind": "skill", "description": "根据文本内容生成 Word（.docx）文档并返回下载链接",
+			"lifecycleStatus": "enabled", "status": "installed", "runtime": "docx-local", "version": "1.0.0",
+			"riskLevel": "low", "rating": 4.8, "installCount": 96, "cacheable": true, "source": "builtin",
+			"environment": "production", "classification": "internal", "lastVerifiedAt": "刚刚",
 		},
 	}
 	s.SkillCatalog = []map[string]any{
@@ -726,5 +735,109 @@ func (s *Store) seed() {
 	}
 	s.WebhooksConfig = []map[string]any{
 		{"id": "wh-1", "url": "https://example.com/hooks/de", "events": []string{"task.completed"}, "enabled": true},
+	}
+}
+
+// EnsureDocxSkillReady installs the builtin docx skill and binds it to HR employee when missing
+// (covers already-hydrated Postgres workspaces that predate the seed).
+func (s *Store) EnsureDocxSkillReady() {
+	s.Lock()
+	defer s.Unlock()
+	hasDocx := false
+	for _, sk := range s.Skills {
+		if str(sk["id"]) == "sk-docx" || strings.EqualFold(str(sk["name"]), "docx") {
+			hasDocx = true
+			sk["lifecycleStatus"] = "enabled"
+			sk["status"] = "installed"
+			break
+		}
+	}
+	if !hasDocx {
+		s.Skills = append([]map[string]any{{
+			"id": "sk-docx", "workspaceId": "w1", "ownerId": "u1", "owner": "平台管理员", "team": "文档能力组",
+			"name": "docx", "kind": "skill", "description": "根据文本内容生成 Word（.docx）文档并返回下载链接",
+			"lifecycleStatus": "enabled", "status": "installed", "runtime": "docx-local", "version": "1.0.0",
+			"riskLevel": "low", "rating": 4.8, "installCount": 96, "cacheable": true, "source": "builtin",
+			"environment": "production", "classification": "internal", "lastVerifiedAt": "刚刚",
+		}}, s.Skills...)
+	}
+	for _, emp := range s.Employees {
+		// Seed id de-hr, or live HR role (e.g. de-5「听风」).
+		isHR := str(emp["id"]) == "de-hr" ||
+			strings.Contains(str(emp["role"]), "人事") ||
+			str(emp["name"]) == "听风"
+		if !isHR {
+			continue
+		}
+		caps, _ := emp["capabilities"].(map[string]any)
+		if caps == nil {
+			caps = map[string]any{}
+			emp["capabilities"] = caps
+		}
+		skills := anyStringSlice(caps["skills"])
+		found := false
+		for _, name := range skills {
+			if strings.EqualFold(name, "docx") {
+				found = true
+				break
+			}
+		}
+		if !found {
+			caps["skills"] = append(skills, "docx")
+		}
+		bp, _ := emp["boundaryPolicy"].(map[string]any)
+		if bp == nil {
+			bp = map[string]any{}
+			emp["boundaryPolicy"] = bp
+		}
+		modes := anyMapSlice(bp["capabilityModes"])
+		hasMode := false
+		for _, m := range modes {
+			if str(m["capabilityType"]) == "skill" && strings.EqualFold(str(m["capabilityName"]), "docx") {
+				hasMode = true
+				m["mode"] = "execute"
+				break
+			}
+		}
+		if !hasMode {
+			modes = append(modes, map[string]any{
+				"capabilityType": "skill", "capabilityName": "docx", "mode": "execute",
+			})
+			bp["capabilityModes"] = modes
+		}
+	}
+}
+
+func anyStringSlice(v any) []string {
+	switch t := v.(type) {
+	case []string:
+		return append([]string{}, t...)
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, x := range t {
+			if s := str(x); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func anyMapSlice(v any) []map[string]any {
+	switch t := v.(type) {
+	case []map[string]any:
+		return append([]map[string]any{}, t...)
+	case []any:
+		out := make([]map[string]any, 0, len(t))
+		for _, x := range t {
+			if m, ok := x.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	default:
+		return nil
 	}
 }

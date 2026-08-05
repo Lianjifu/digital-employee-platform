@@ -3136,13 +3136,13 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       JSON.stringify(employee.memoryPolicy) !== JSON.stringify(body.memoryPolicy) ? '记忆策略' : null,
       ['name', 'role', 'department', 'description', 'owner', 'escalationOwner', 'serviceObject', 'risk', 'environment'].some((key) => (employee as any)[key] !== (body.profile as any)[key]) ? '岗位档案' : null,
     ].filter(Boolean) as string[];
-    const requiresApproval = body.scope !== 'capability'
-      && (employee.lifecycle === 'active' || body.profile.environment === 'production' || body.profile.risk === 'high');
+    // 岗位授权契约与能力装配均直接生效（历史 pending 版本仍可走 approve）。
+    const requiresApproval = false;
     const revisions = mockDigitalEmployeeConfigurationVersions.filter((item) => item.employeeId === employee.id).length + 1;
-    const executionElevated = policy.capabilityModes.some((item) => item.mode === 'execute');
-    const version: DigitalEmployeeConfigurationVersion = { id: mockId('digital_employee_config'), employeeId: employee.id, version: `配置 v${revisions}`, status: requiresApproval ? 'pending_approval' : 'current', changeSummary: requiresApproval ? `${executionElevated ? '包含可执行授权；' : ''}生产、在岗或高风险配置变更，等待审批后生效` : (body.scope === 'capability' ? '更新能力装配' : '更新岗位授权契约'), changedFields: changedFields.length ? changedFields : ['职责与边界'], updatedBy: identity.name, updatedById: identity.id, updatedAt: new Date().toISOString() };
-    if (requiresApproval) { mockDigitalEmployeeConfigurationDrafts.set(version.id, body); workspaceAudit(currentWorkspaceId, '提交员工受控配置变更', `${employee.role} · ${employee.name} · ${version.version}`); }
-    else { mockDigitalEmployeeConfigurationVersions.filter((item) => item.employeeId === employee.id && item.status === 'current').forEach((item) => { item.status = 'superseded'; }); applyDigitalEmployeeConfiguration(employee, body); workspaceAudit(currentWorkspaceId, '更新员工配置', `${employee.role} · ${employee.name} · ${version.version}`); }
+    const version: DigitalEmployeeConfigurationVersion = { id: mockId('digital_employee_config'), employeeId: employee.id, version: `配置 v${revisions}`, status: 'current', changeSummary: body.scope === 'capability' ? '更新能力装配' : '更新岗位授权契约', changedFields: changedFields.length ? changedFields : ['职责与边界'], updatedBy: identity.name, updatedById: identity.id, updatedAt: new Date().toISOString() };
+    mockDigitalEmployeeConfigurationVersions.filter((item) => item.employeeId === employee.id && item.status === 'current').forEach((item) => { item.status = 'superseded'; });
+    applyDigitalEmployeeConfiguration(employee, body);
+    workspaceAudit(currentWorkspaceId, '更新员工配置', `${employee.role} · ${employee.name} · ${version.version}`);
     mockDigitalEmployeeConfigurationVersions.unshift(version); return { ...version, requiresApproval };
   }
   const digitalEmployeeRoute = path.match(/^\/api\/digital-employees\/([^/]+)(?:\/(capabilities|boundary|memory-policy|evaluate|release|lifecycle|runtime|evidence)(?:\/(withdraw|reject))?)?$/);
@@ -5454,6 +5454,17 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     };
     mockSessions.unshift(session as unknown as (typeof mockSessions)[number]);
     return session;
+  }
+  const sessionPatch = path.match(/^\/api\/sessions\/([^/]+)$/);
+  if (sessionPatch && method === 'PATCH') {
+    const sessionId = sessionPatch[1];
+    const index = mockSessions.findIndex((item) => item.id === sessionId && item.workspaceId === currentWorkspaceId);
+    if (index < 0) throw new Error('E_NOT_FOUND: 会话不存在');
+    const body = (opts.body ?? {}) as Record<string, unknown>;
+    const current = mockSessions[index] as Record<string, unknown>;
+    const next = { ...current, ...body, updatedAt: new Date().toISOString() };
+    mockSessions[index] = next as (typeof mockSessions)[number];
+    return next;
   }
   const sessionDelete = path.match(/^\/api\/sessions\/([^/]+)$/);
   if (sessionDelete && method === 'DELETE') {

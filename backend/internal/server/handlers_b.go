@@ -21,7 +21,7 @@ func (s *Server) listEmployees(r *http.Request) (any, error) {
 	var out = make([]map[string]any, 0)
 	for _, e := range s.Store.Employees {
 		if str(e["workspaceId"]) == ws {
-			out = append(out, e)
+			out = append(out, s.employeeWithRuntimeLocked(e))
 		}
 	}
 	return out, nil
@@ -54,7 +54,7 @@ func (s *Server) getEmployee(r *http.Request) (any, error) {
 			if err := s.requireWorkspaceAccess(id, str(e["workspaceId"])); err != nil {
 				return nil, err
 			}
-			return e, nil
+			return s.employeeWithRuntimeLocked(e), nil
 		}
 	}
 	return nil, apperr.NotFoundErr(apperr.DigitalEmployeeNotFound, "数字员工不存在")

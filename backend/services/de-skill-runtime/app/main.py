@@ -3,11 +3,13 @@ from __future__ import annotations
 
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.docx_gen import artifact_dir, build_docx_artifact, is_docx_request
 from app.sandbox import (
     FORBIDDEN_ENV,
     control_plane_probe,
@@ -17,8 +19,6 @@ from app.sandbox import (
     strip_forbidden_env,
     verify_run_token,
 )
-
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     strip_forbidden_env()
@@ -71,6 +71,13 @@ async def execute(request: Request) -> JSONResponse:
             },
         )
     skill_id = data.get("skillId") or claims.get("skillId")
+    if is_docx_request(data, str(skill_id) if skill_id is not None else None):
+        payload = build_docx_artifact(data, str(skill_id) if skill_id is not None else None)
+        payload["workspaceId"] = claims.get("workspaceId")
+        payload["correlationId"] = data.get("correlationId")
+        payload["isolation"] = probe
+        return JSONResponse(status_code=200, content=payload)
+
     command = str(data.get("command") or "").strip()
     package_path = str(data.get("packagePath") or "").strip()
     scripts = data.get("scripts") or []
@@ -110,6 +117,24 @@ async def execute(request: Request) -> JSONResponse:
             "isolation": probe,
         },
     )
+
+
+@app.get("/v1/artifacts/{name}")
+def get_artifact(name: str):
+    from fastapi.responses import FileResponse
+
+    safe = Path(name).name
+    if safe != name or ".." in name or "/" in name or "\\" in name:
+        return JSONResponse(status_code=400, content={"error": "invalid artifact name"})
+    path = artifact_dir() / safe
+    if not path.is_file():
+        return JSONResponse(status_code=404, content={"error": "artifact not found"})
+    media = (
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        if safe.lower().endswith(".docx")
+        else "application/octet-stream"
+    )
+    return FileResponse(path, media_type=media, filename=safe)
 
 
 @app.exception_handler(404)
