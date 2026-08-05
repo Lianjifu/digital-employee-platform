@@ -19,7 +19,7 @@
 |------|------|----------|
 | **de-gateway** | 8089 | Envoy 粗粒度路由 |
 | **de-sys** | 8100 | platform · policy · audit · ops |
-| **de-collab** | 8101 | collab · employee |
+| **de-collab** | 8101 | collab · employee · 会话治理 / 审批 / 附件 / 分享 |
 | **de-cap** | 8102 | model · knowledge · memory · skill · channel |
 | **de-workflow** | 8103 | workflow HTTP + Temporal Worker |
 | de-agent-runtime / de-rag / de-skill-runtime | 8091–8093 | FastAPI |
@@ -42,6 +42,7 @@ digital-employee-platform/
 │   ├── internal/            # apprun · server(ServiceMode) · store …
 │   ├── runtimes/            # 测试辅助（向量 / RunToken 单测）
 │   └── deploy/              # compose · envoy.coarse.yaml · topology-split
+├── scripts/dev-stack/       # 本机 LaunchAgent 粗粒度联调栈
 └── docs/
 ```
 
@@ -59,6 +60,8 @@ make compose-up-coarse   # PG/Redis + 四 Go 进程 + FastAPI + gateway:8089
 
 健康检查：`GET http://127.0.0.1:8089/healthz`  
 详情：[`backend/README.md`](backend/README.md) · [`backend/deploy/topology-split.md`](backend/deploy/topology-split.md)
+
+本机常驻联调（可选）：LaunchAgent `com.digital-employee.dev-stack` → [`scripts/dev-stack/run-stack.sh`](scripts/dev-stack/run-stack.sh)（collab `8101`、cap `8102`、gateway `8089`、vite `5173`）。
 
 预发：
 
@@ -87,6 +90,12 @@ VITE_API_BASE=
 
 演示登录（密码任意非空）：`admin@` / `audit@` / 其他。
 
+| 邮箱前缀 | 角色 | 说明 |
+|---------|------|------|
+| `admin@` | admin | 可见工作区全部会话 |
+| `audit@` | auditor | 治理 / 审计视角 |
+| 其他 | user | 仅本人 `ownerId` 会话 |
+
 ## 常用命令
 
 ```bash
@@ -99,20 +108,28 @@ cd ../backend && make test && make test-python && make smoke
 | 区域 | 说明 |
 |---|---|
 | 控制台 | 运营、协作、任务、员工、工作流、模型/知识/技能/记忆/渠道、治理 |
+| 专家协作 | 研判 / 受控执行、岗位专家改绑、会话结案与人工交接（持久化）、GFM 表格可读渲染 |
+| 会话治理 | `sessionMode` / `riskLevel` / handoff / closed；结案后拒绝写入；工具按模式过滤 |
+| 人工审核 | **单人人工审核**（发起人不可自批）；待审 → SSE `authorization` → 批准执行 |
+| 附件 / 分享 | `/api/attachments` 上传下载（登录 + 工作区校验）；`/api/share` 与只读页 `/copilot/share/:token` |
+| 会话历史 | `/api/sessions` 权威列表；刷新后合并服务端会话，避免空列表误清本地记录 |
+| 七架构运行时 | Harness（Direct / ReAct / Plan-Exec）+ 反射 + 记忆溯源 + 自进化候选 |
+| 技能产物 | 技能调用可产出可下载制品（含 docx 等） |
 | 粗粒度切流 | ServiceMode + gateway；policy evaluate / 审计在 de-sys |
 | 飞书渠道 | App ID/Secret→Vault；verify=tenant_access_token+bot/v3/info；Webhook `/api/channel/feishu/events/{id}` |
 | 钉钉渠道 | Client ID/Secret；verify=oauth2/accessToken；默认 Stream；可选 HTTP Webhook |
 | 企微渠道 | 自建应用 CorpId/Secret/AgentId + 回调加解密；或智能机器人 WebSocket |
 | 个人微信 | ilink Token；verify=getUpdates；出站需 context_token；长轮询侧车 |
 | 执行面 | FastAPI Runtime / RAG / Skill（隔离网） |
-| 观测 | `/metrics`（`service` label）+ Prometheus/Grafana |
+| 观测 | `/metrics`（`service` label）+ Prometheus/Grafana；Copilot 流式超时网关约 180s |
 
 ## 当前边界
 
-- 数据多为控制面内存 + PG 快照（`kv_documents`）。
+- 数据多为控制面内存 + PG 快照（`kv_documents`）；消息按 `conversationId` 分桶持久化。
 - 六边形目录骨架已就位；handler 仍集中在 `internal/server`（物理迁包后续）。
 - `.github/workflows/` 不入库。
 - LangGraph 全图、真 runsc、SPIRE SDS 仍属后续。
+- 企业写操作部分路径仍返回 `not_implemented`；白名单技能可真执行。
 
 ## 验证提交
 

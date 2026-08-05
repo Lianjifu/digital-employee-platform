@@ -6,7 +6,7 @@
 |----------|------|------|
 | **de-gateway** | 8089 | Envoy |
 | **de-sys** | 8100 | platform · policy · audit · ops |
-| **de-collab** | 8101 | collab · employee |
+| **de-collab** | 8101 | collab · employee · 会话治理 / 单人审核 / 附件 / 分享 |
 | **de-cap** | 8102 | model · knowledge · memory · skill · channel |
 | **de-workflow** | 8103 | workflow HTTP + Temporal Worker |
 | FastAPI 执行面 | 8091–8093 | agent-runtime / rag / skill-runtime |
@@ -74,6 +74,18 @@ make test && make test-python && make smoke
 ```
 
 网络：[`deploy/networks.md`](deploy/networks.md) · 拓扑：[`deploy/topology-split.md`](deploy/topology-split.md)
+
+## 专家协作（de-collab）要点
+
+| 能力 | 路由 / 行为 |
+|------|-------------|
+| 会话 CRUD | `GET/POST/PATCH/DELETE /api/sessions`；非 admin 仅见本人 `ownerId` |
+| 对话详情 | `GET /api/conversations/:id`（消息桶按 `conversationId`） |
+| 流式回合 | `POST …/stream`；研判模式过滤写工具；结案/交接中拒绝写入 |
+| 单人审核 | `POST /api/actions/:id/approve`（发起人不可自批）→ `execute` |
+| 附件 | `POST/GET /api/attachments`（登录 + 工作区归属校验） |
+| 分享 | `POST /api/share`；公开只读 `GET /api/share/:token` |
+| 限流 / 安全 | 回合频控、内容安全、`clientMsgId` 幂等；网关 Copilot 超时约 180s |
 
 ## 关键环境变量
 
