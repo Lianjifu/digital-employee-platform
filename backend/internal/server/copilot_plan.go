@@ -181,17 +181,7 @@ func (s *Server) runPlanExecuteTurn(ctx context.Context, in reactTurnInput) reac
 			tcID := fmt.Sprintf("tc_plan_%s", st.ID)
 			in.Emit("tool", "plan", map[string]any{"name": toolName, "status": "running", "args": call.Args, "id": tcID})
 
-			tool, deny := authorizeToolCall(reg, call)
-			var res toolExecResult
-			if deny != nil {
-				if deny.Permission == "approval_required" && tool != nil && normalizeSessionMode(in.SessionMode) == sessionModeExecute {
-					res = s.queueToolAuthorization(runCtx, tool, call, coalesce(in.RiskLevel, "medium"), in.Emit)
-				} else {
-					res = *deny
-				}
-			} else {
-				res = s.runCopilotTool(runCtx, tool, call)
-			}
+			tool, res := s.dispatchAuthorizedTool(runCtx, reg, call, in.SessionMode, in.RiskLevel, in.Emit)
 			display := toolName
 			if tool != nil {
 				display = tool.Name

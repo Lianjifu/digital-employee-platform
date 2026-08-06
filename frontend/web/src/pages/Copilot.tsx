@@ -54,7 +54,7 @@ import { useT } from '@/i18n';
 import { Markdown } from '@/components/Markdown';
 import { deriveWorkbenchSummary, type WorkbenchContextTab } from '@/features/copilot/workbench';
 import { buildExpertSuggestions, type ExpertSuggestionIcon } from '@/features/copilot/expert-suggestions';
-import { buildExpertTools, defaultEnabledToolKeys } from '@/features/copilot/expert-tools';
+import { approvalToolKeys, buildExpertTools, defaultEnabledToolKeys, isWriteExecutionIntent, toolsForExecuteMode } from '@/features/copilot/expert-tools';
 import {
   MENTION_CATEGORIES,
   filterByQuery,
@@ -1176,23 +1176,16 @@ export default function Copilot() {
     }
     // 无数字员工也可直接对话（通用助手 + 已选模型）；选专家为增强能力，非硬门槛
     const draft = chat.state.draftInput.trim();
-    const writeHint = sessionMode === 'investigate'
-      && /\/(exec|kubectl|write|apply|config)|CONFIG SET|kubectl\s+(apply|delete|exec)/i.test(draft);
+    const writeHint = sessionMode === 'investigate' && isWriteExecutionIntent(draft);
     const baseTools = enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools);
-    const tools = mergeMentionedTools(baseTools, chat.state.draftInput, availableTools.map((t) => t.key));
+    let tools = mergeMentionedTools(baseTools, chat.state.draftInput, availableTools.map((t) => t.key));
     const needsExecute = writeHint
       || (tools.some((key) => availableTools.find((t) => t.key === key)?.requiresApproval) && sessionMode === 'investigate');
     const mode: 'investigate' | 'execute' = needsExecute ? 'execute' : sessionMode;
     const risk = riskLevel;
-    if (mode !== sessionMode) {
-      void chat.setCollaborationMode(mode, { riskLevel: risk }).catch((err) => {
-        toast.error(err instanceof Error ? err.message : '无法切换到受控执行');
-      });
+    if (mode === 'execute') {
+      tools = toolsForExecuteMode(tools, availableTools);
     }
-    if (tools.length !== enabledTools.length || tools.some((k, i) => k !== enabledTools[i])) {
-      setEnabledTools(tools);
-    }
-    persistRunConfig(sendModelId, tools);
     const attachmentIds = attachments.map((a) => a.id).filter((id): id is string => Boolean(id));
     if (attachments.some((a) => a.uploading)) {
       toast.error('附件仍在上传，请稍候再发送');
@@ -1202,34 +1195,59 @@ export default function Copilot() {
       toast.error('存在上传失败的附件，请移除后重试');
       return;
     }
-    if (chat.activeSession) {
-      chat.persistSession({
-        ...chat.activeSession,
-        modelId: sendModelId,
-        enabledTools: tools,
-        sessionMode: mode,
+
+    const dispatchSend = () => {
+      if (tools.length !== enabledTools.length || tools.some((k, i) => k !== enabledTools[i])) {
+        setEnabledTools(tools);
+      }
+      // 仅补丁元数据，勿在 send 前用带 messages 的整表 sync
+      persistRunConfig(sendModelId, tools);
+      if (editingMessageId) {
+        chat.replaceAndSend(editingMessageId, chat.state.draftInput, {
+          modelId: sendModelId, enabledTools: tools, sessionMode: mode, riskLevel: risk, attachmentIds,
+        });
+        setEditingMessageId(null);
+      } else {
+        chat.send(chat.state.draftInput, {
+          modelId: sendModelId,
+          enabledTools: tools,
+          sessionMode: mode,
+          riskLevel: risk,
+          attachmentIds: attachmentIds.length ? attachmentIds : undefined,
+        });
+      }
+      setAttachments([]);
+      setShowSlash(false);
+      setShowMention(false);
+      setMentionPane('root');
+      setMentionQuery('');
+    };
+
+    if (mode !== sessionMode) {
+      void chat.setCollaborationMode(mode, {
         riskLevel: risk,
-      });
+        enableApprovalTools: mode === 'execute' ? approvalToolKeys(availableTools) : undefined,
+      })
+        .then(() => {
+          void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+          dispatchSend();
+        })
+        .catch((err) => {
+          toast.error(err instanceof Error ? err.message : '无法切换到受控执行');
+        });
+      return;
     }
-    if (editingMessageId) {
-      chat.replaceAndSend(editingMessageId, chat.state.draftInput, {
-        modelId: sendModelId, enabledTools: tools, sessionMode: mode, riskLevel: risk, attachmentIds,
-      });
-      setEditingMessageId(null);
-    } else {
-      chat.send(chat.state.draftInput, {
-        modelId: sendModelId,
-        enabledTools: tools,
-        sessionMode: mode,
-        riskLevel: risk,
-        attachmentIds: attachmentIds.length ? attachmentIds : undefined,
-      });
+    if (mode === 'execute') {
+      const approvalKeys = approvalToolKeys(availableTools);
+      const missing = approvalKeys.filter((k) => !tools.includes(k));
+      if (missing.length) {
+        void chat.setCollaborationMode('execute', {
+          riskLevel: risk,
+          enableApprovalTools: approvalKeys,
+        }).catch(() => undefined);
+      }
     }
-    setAttachments([]);
-    setShowSlash(false);
-    setShowMention(false);
-    setMentionPane('root');
-    setMentionQuery('');
+    dispatchSend();
   };
 
   const insertSlash = (c: string) => {
@@ -1273,7 +1291,10 @@ export default function Copilot() {
       });
       const tool = availableTools.find((t) => t.key === toolKey);
       if (tool?.requiresApproval && sessionMode === 'investigate') {
-        void chat.setCollaborationMode('execute', { riskLevel }).catch((err) => {
+        void chat.setCollaborationMode('execute', {
+          riskLevel,
+          enableApprovalTools: approvalToolKeys(availableTools),
+        }).catch((err) => {
           toast.error(err instanceof Error ? err.message : '无法切换到受控执行');
         });
       }
@@ -1808,8 +1829,17 @@ export default function Copilot() {
                   disabled={isClosed || handoffActive}
                   title={isClosed ? '会话已结案' : handoffActive ? '人工交接中' : '切换到受控执行'}
                   onClick={() => {
-                    void chat.setCollaborationMode('execute', { riskLevel })
-                      .then(() => { void queryClient.invalidateQueries({ queryKey: ['sessions'] }); })
+                    void chat.setCollaborationMode('execute', {
+                      riskLevel,
+                      enableApprovalTools: approvalToolKeys(availableTools),
+                    })
+                      .then(() => {
+                        setEnabledTools((prev) => toolsForExecuteMode(
+                          prev.length ? prev : defaultEnabledToolKeys(availableTools),
+                          availableTools,
+                        ));
+                        void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+                      })
                       .catch((err) => toast.error(err instanceof Error ? err.message : '模式切换失败'));
                   }}
                   className={cn('copilot-mode-toggle__btn', sessionMode === 'execute' && 'is-active is-execute')}
@@ -2324,8 +2354,17 @@ export default function Copilot() {
                     onClick={() => {
                       if (unavailable) return;
                       if (writeLocked) {
-                        void chat.setCollaborationMode('execute', { riskLevel })
-                          .then(() => { void queryClient.invalidateQueries({ queryKey: ['sessions'] }); })
+                        void chat.setCollaborationMode('execute', {
+                          riskLevel,
+                          enableApprovalTools: approvalToolKeys(availableTools),
+                        })
+                          .then(() => {
+                            setEnabledTools((prev) => toolsForExecuteMode(
+                              prev.length ? prev : defaultEnabledToolKeys(availableTools),
+                              availableTools,
+                            ));
+                            void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+                          })
                           .catch((err) => toast.error(err instanceof Error ? err.message : '无法切换到受控执行'));
                         setToolsOpen(false);
                         return;

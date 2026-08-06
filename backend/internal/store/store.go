@@ -759,6 +759,7 @@ func (s *Store) EnsureDocxSkillReady() {
 			"lifecycleStatus": "enabled", "status": "installed", "runtime": "docx-local", "version": "1.0.0",
 			"riskLevel": "low", "rating": 4.8, "installCount": 96, "cacheable": true, "source": "builtin",
 			"environment": "production", "classification": "internal", "lastVerifiedAt": "刚刚",
+			"producesArtifacts": true, "readOnly": false, "entrypoints": []string{"__builtin_generate_docx"},
 		}}, s.Skills...)
 	}
 	for _, emp := range s.Employees {

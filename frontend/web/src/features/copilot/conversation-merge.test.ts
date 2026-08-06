@@ -71,4 +71,16 @@ describe('conversation-merge', () => {
     const merged = mergeConversationMessages(local, server);
     expect(merged.map((m) => m.content)).toEqual(['old', 'new']);
   });
+
+  it('skips when local last stamp is newer at equal length', () => {
+    const local = [
+      msg({ id: 'u1', role: 'user', content: 'hi', createdAt: '2026-08-06T05:00:00.000Z' }),
+      msg({ id: 'u2', role: 'user', content: 'new', createdAt: '2026-08-06T05:01:00.000Z' }),
+    ];
+    const server = [
+      msg({ id: 'u1', role: 'user', content: 'hi', createdAt: '2026-08-06T05:00:00.000Z' }),
+      msg({ id: 'a1', role: 'assistant', content: 'old reply', createdAt: '2026-08-06T05:00:30.000Z' }),
+    ];
+    expect(shouldSkipConversationHydrate({ localMessages: local, serverMessages: server })).toBe('skip_local_ahead');
+  });
 });

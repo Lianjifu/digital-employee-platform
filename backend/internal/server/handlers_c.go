@@ -557,9 +557,9 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	registry = filterRegistryBySessionMode(registry, sessionMode)
 	system := buildCopilotSystemPrompt(empMap, nil, memoryHits)
 	if sessionMode == sessionModeInvestigate {
-		system += "\n当前会话为研判模式：禁止宣称已执行写操作；需要变更时提示用户切换到受控执行并走人工审核。"
+		system += "\n当前会话为研判模式：禁止宣称已执行写操作；技能仅可 action=open/artifacts；需要变更时提示用户切换到受控执行。"
 	} else {
-		system += "\n当前会话为受控执行模式：写工具将进入人工审核，未获批准前不得声称执行成功。"
+		system += "\n当前会话为受控执行模式：写类 skill.run/write 将进入人工审核队列；仅当工具观察为 pending_authorization 时可告知已进入审核；未获批准前不得声称执行成功或已生成文件。needs_instruction 表示尚未真正执行脚本。"
 	}
 
 	chatMessages := assembleCopilotChatMessages(historySnapshot)

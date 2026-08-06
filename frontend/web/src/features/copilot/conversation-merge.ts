@@ -41,6 +41,12 @@ export function shouldSkipConversationHydrate(opts: {
   if (opts.localMessages.some(isStreaming)) return 'skip_streaming';
   if (opts.serverMessages.length === 0 && opts.localMessages.length > 0) return 'skip_empty_server';
   if (opts.localMessages.length > opts.serverMessages.length) return 'skip_local_ahead';
+  // 条数相同但本地末条更新更晚：乐观用户气泡尚未落库，禁止整表回滚
+  if (opts.localMessages.length > 0 && opts.localMessages.length === opts.serverMessages.length) {
+    const localMax = Math.max(0, ...opts.localMessages.map(stamp));
+    const serverMax = Math.max(0, ...opts.serverMessages.map(stamp));
+    if (localMax > serverMax) return 'skip_local_ahead';
+  }
   return null;
 }
 

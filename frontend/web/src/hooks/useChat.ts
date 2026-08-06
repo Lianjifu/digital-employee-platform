@@ -1243,7 +1243,9 @@ export function useChat(agentMeta?: { name: string }) {
           const status: ToolCall['status'] =
             statusRaw === 'denied' || statusRaw === 'failed' || statusRaw === 'running' || statusRaw === 'success'
               ? statusRaw
-              : statusRaw === 'ok' ? 'success' : 'failed';
+              : statusRaw === 'ok' ? 'success'
+                : statusRaw === 'pending_authorization' || statusRaw === 'needs_instruction' ? 'denied'
+                  : 'failed';
           const args = {
             ...(typeof data.args === 'object' && data.args ? data.args : {}),
             ...(hits?.backend ? { backend: hits.backend } : {}),
@@ -1506,10 +1508,36 @@ export function useChat(agentMeta?: { name: string }) {
     dispatch({ type: 'sync_session', session, preserveGovernance: opts?.preserveGovernance });
   }, []);
 
+  /** 仅更新会话元数据，绝不带 messages，避免乐观用户气泡被陈旧快照冲掉。 */
+  const patchSessionLocal = useCallback((sid: string, patch: Partial<ChatSession>) => {
+    if (!sid || deletedSessionIdsRef.current.has(sid)) return;
+    const { messages: _omit, ...safe } = patch as Partial<ChatSession> & { messages?: ChatMessageEx[] };
+    void _omit;
+    dispatch({ type: 'update_session', sid, patch: safe });
+  }, []);
+
   /** 将本地会话变更同步到服务端（改绑专家、运行配置等）。默认吞掉网络错误；需要回滚时用 throwOnError。 */
   const persistSession = useCallback(async (session: ChatSession, opts?: { throwOnError?: boolean }) => {
     if (!session.id || deletedSessionIdsRef.current.has(session.id)) return;
-    dispatch({ type: 'sync_session', session });
+    // 关键：用 update_session 打补丁，禁止 sync 整表 messages
+    patchSessionLocal(session.id, {
+      title: session.title,
+      digitalEmployeeId: session.digitalEmployeeId,
+      digitalEmployeeName: session.digitalEmployeeName,
+      agent: session.agent,
+      modelId: session.modelId,
+      enabledTools: session.enabledTools,
+      status: session.status,
+      lifecycle: session.lifecycle,
+      pinned: session.pinned,
+      starred: session.starred,
+      sessionMode: session.sessionMode,
+      riskLevel: session.riskLevel,
+      handoff: session.handoff,
+      closeSummary: session.closeSummary,
+      preview: session.preview,
+      workspaceId: session.workspaceId,
+    });
     if (/^s_/.test(session.id) || isMockChatMode()) return;
     try {
       await getApiClient().request(`/api/sessions/${encodeURIComponent(session.id)}`, {
@@ -1533,12 +1561,12 @@ export function useChat(agentMeta?: { name: string }) {
     } catch (err) {
       if (opts?.throwOnError) throw err;
     }
-  }, []);
+  }, [patchSessionLocal]);
 
   /** 研判 / 受控执行：乐观更新 + PATCH；失败回滚。 */
   const setCollaborationMode = useCallback(async (
     mode: 'investigate' | 'execute',
-    opts?: { riskLevel?: 'low' | 'medium' | 'high' },
+    opts?: { riskLevel?: 'low' | 'medium' | 'high'; enableApprovalTools?: string[] },
   ) => {
     const sid = state.activeId;
     if (!sid) return;
@@ -1552,19 +1580,23 @@ export function useChat(agentMeta?: { name: string }) {
     }
     const prevMode = session.sessionMode === 'execute' ? 'execute' : 'investigate';
     const prevRisk = session.riskLevel;
+    const prevTools = session.enabledTools;
     const riskLevel = opts?.riskLevel ?? session.riskLevel ?? 'medium';
-    const next = { ...session, sessionMode: mode, riskLevel };
-    dispatch({ type: 'sync_session', session: next });
+    const enabledTools = mode === 'execute' && opts?.enableApprovalTools?.length
+      ? Array.from(new Set([...(session.enabledTools ?? []), ...opts.enableApprovalTools]))
+      : session.enabledTools;
+    patchSessionLocal(sid, { sessionMode: mode, riskLevel, enabledTools });
     try {
-      await persistSession(next, { throwOnError: true });
-    } catch (err) {
-      dispatch({
-        type: 'sync_session',
-        session: { ...session, sessionMode: prevMode, riskLevel: prevRisk },
+      if (/^s_/.test(sid) || isMockChatMode()) return;
+      await getApiClient().request(`/api/sessions/${encodeURIComponent(sid)}`, {
+        method: 'PATCH',
+        body: { sessionMode: mode, riskLevel, enabledTools },
       });
+    } catch (err) {
+      patchSessionLocal(sid, { sessionMode: prevMode, riskLevel: prevRisk, enabledTools: prevTools });
       throw err instanceof Error ? err : new Error('模式切换失败，请重试');
     }
-  }, [state.activeId, state.sessions, persistSession]);
+  }, [state.activeId, state.sessions, patchSessionLocal]);
 
   const clearActive = useCallback(() => {
     dispatch({ type: 'clear_active' });
@@ -1657,16 +1689,14 @@ export function useChat(agentMeta?: { name: string }) {
       : '助手';
     const modelId = opts?.modelId ?? opts?.model ?? sess?.modelId;
     const enabledTools = opts?.enabledTools ?? sess?.enabledTools;
-    // 若调用方带了运行配置，写回会话，保证重新生成/刷新一致
-    if (sess && (opts?.modelId || opts?.enabledTools)) {
-      dispatch({
-        type: 'sync_session',
-        session: {
-          ...sess,
-          modelId: modelId ?? sess.modelId,
-          enabledTools: enabledTools ?? sess.enabledTools,
-        },
-      });
+    // 仅打元数据补丁，禁止 sync 整表（否则会用 append 前的 stale messages 冲掉刚插入的用户气泡）
+    if (sess && (opts?.modelId || opts?.enabledTools || opts?.sessionMode || opts?.riskLevel)) {
+      const patch: Partial<ChatSession> = {};
+      if (opts?.modelId || opts?.model) patch.modelId = modelId ?? sess.modelId;
+      if (opts?.enabledTools) patch.enabledTools = enabledTools ?? sess.enabledTools;
+      if (opts?.sessionMode) patch.sessionMode = opts.sessionMode;
+      if (opts?.riskLevel) patch.riskLevel = opts.riskLevel;
+      dispatch({ type: 'update_session', sid: state.activeId, patch });
     }
     setTimeout(() => {
       launchReply(state.activeId, text, ctrl, corr, deId, {
@@ -1820,7 +1850,7 @@ export function useChat(agentMeta?: { name: string }) {
     // 确保服务端会话为受控执行，否则 execute 会被拒
     if (session.sessionMode !== 'execute') {
       await patchSessionRemote(session.id, { sessionMode: 'execute', riskLevel: session.riskLevel ?? 'medium' });
-      dispatch({ type: 'sync_session', session: { ...session, sessionMode: 'execute' } });
+      dispatch({ type: 'update_session', sid: state.activeId, patch: { sessionMode: 'execute' } });
     }
 
     const result = await api.post<{ signedAt: string; signatureHash: string; completed: boolean }>(`/api/actions/${mid}/approve`, {
@@ -1837,7 +1867,13 @@ export function useChat(agentMeta?: { name: string }) {
         digitalEmployeeId: session?.digitalEmployeeId,
         correlationId: message.correlationId,
       });
-      await api.post(`/api/actions/${mid}/execute`, { taskId: task.id, conversationId });
+      let executeResult = '';
+      try {
+        const executed = await api.post<{ executeResult?: string; status?: string }>(`/api/actions/${mid}/execute`, { taskId: task.id, conversationId });
+        executeResult = typeof executed?.executeResult === 'string' ? executed.executeResult : '';
+      } catch (err) {
+        executeResult = err instanceof Error ? `执行失败：${err.message}` : '执行失败';
+      }
       const request = message.approvalRequest!;
       const signers = (request.signers ?? []).map((signer, index) =>
         index === (isSingle ? 0 : signerIndex) || signer.signed
@@ -1849,12 +1885,16 @@ export function useChat(agentMeta?: { name: string }) {
             }
           : signer,
       );
+      const execOk = !executeResult.startsWith('执行失败');
       dispatch({
         type: 'replace_msg',
         sid: state.activeId,
         mid,
         msg: {
           ...message,
+          content: executeResult
+            ? `${message.content}\n\n—— 授权后执行结果 ——\n${executeResult}`
+            : message.content,
           approvalRequest: {
             ...request,
             signers: signers.length ? signers : [{
@@ -1872,8 +1912,8 @@ export function useChat(agentMeta?: { name: string }) {
               id: uid('t_'),
               name: request.action,
               args: { resource: request.resource, ticketId: request.ticketId },
-              result: `已授权执行 · 任务 ${task.code ?? task.id} 已回链`,
-              status: 'success',
+              result: executeResult || `已授权执行 · 任务 ${task.code ?? task.id} 已回链`,
+              status: execOk ? 'success' : 'failed',
               durationMs: 48,
               permission: 'approval-required',
             },
@@ -2042,6 +2082,7 @@ export function useChat(agentMeta?: { name: string }) {
     importSessions,
     syncSession,
     persistSession,
+    patchSessionLocal,
     setCollaborationMode,
     clearActive,
     delSession,

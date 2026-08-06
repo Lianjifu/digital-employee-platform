@@ -14,8 +14,11 @@ from base64 import urlsafe_b64decode
 from pathlib import Path
 
 FORBIDDEN_ENV = ("DE_DATABASE_URL", "DE_REDIS_URL", "DATABASE_URL", "POSTGRES_", "REDIS_URL")
+# Allow packaged scripts/ and harness workspace .copilot-ws/ (LLM-written runners).
 _SCRIPT_RE = re.compile(
-    r"^(?:(?:python3?|node|bash|sh)\s+)?(?:\./)?(scripts/[A-Za-z0-9._/-]+\.(?:py|sh|js|mjs|ts))(?:\s+(.*))?$",
+    r"^(?:(?:python3?|node|bash|sh)\s+)?(?:\./)?"
+    r"((?:scripts|\.copilot-ws)/[A-Za-z0-9._/-]+\.(?:py|sh|js|mjs|ts))"
+    r"(?:\s+(.*))?$",
     re.I,
 )
 
@@ -101,11 +104,15 @@ def run_package_script(
         preview = ""
         if md.is_file():
             preview = md.read_text(encoding="utf-8", errors="replace")[:800]
-        return True, (
+        script_list = ",".join(scripts) if scripts else "(none)"
+        # L1: never report success for "package loaded" — caller must open then run scripts/*
+        return False, (
             f"package={root}\n"
-            f"scripts={','.join(scripts) if scripts else '(none)'}\n"
+            f"scripts={script_list}\n"
             f"command={command}\n"
-            f"status=loaded\n"
+            f"status=needs_instruction\n"
+            f"hint=command must match scripts/... or .copilot-ws/... ; "
+            f"use action=open to read SKILL.md, then action=run with an allowed script\n"
             f"--- SKILL.md preview ---\n{preview}"
         ), 12
     rel = m.group(1).replace("\\", "/")
@@ -126,6 +133,7 @@ def run_package_script(
         cmd.extend(args_tail.split())
     env = {k: v for k, v in os.environ.items() if not any(k == p or k.startswith(p) for p in FORBIDDEN_ENV)}
     env["DE_SKILL_PACKAGE_ROOT"] = str(root)
+    env["DE_SKILL_WORK_DIR"] = str(root)
     started = time.time()
     try:
         proc = subprocess.run(

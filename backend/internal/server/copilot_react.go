@@ -11,7 +11,7 @@ import (
 	"github.com/digital-employee-platform/backend/internal/modelprov"
 )
 
-const reactMaxSteps = 5
+const reactMaxSteps = 7
 
 type reactEmitFunc func(typ, stage string, extra map[string]any)
 
@@ -163,18 +163,7 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 			"name": call.Name, "status": "running", "args": call.Args, "id": tcID,
 		})
 
-		tool, deny := authorizeToolCall(reg, call)
-		var res toolExecResult
-		if deny != nil {
-			if deny.Permission == "approval_required" && tool != nil && normalizeSessionMode(in.SessionMode) == sessionModeExecute {
-				res = s.queueToolAuthorization(runCtx, tool, call, coalesce(in.RiskLevel, "medium"), in.Emit)
-			} else {
-				res = *deny
-				res.DurationMs = 0
-			}
-		} else {
-			res = s.runCopilotTool(runCtx, tool, call)
-		}
+		tool, res := s.dispatchAuthorizedTool(runCtx, reg, call, in.SessionMode, in.RiskLevel, in.Emit)
 
 		displayName := call.Name
 		if tool != nil {

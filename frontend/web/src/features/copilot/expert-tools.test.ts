@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { buildExpertTools, defaultEnabledToolKeys } from './expert-tools';
+import {
+  approvalToolKeys,
+  buildExpertTools,
+  defaultEnabledToolKeys,
+  isWriteExecutionIntent,
+  toolsForExecuteMode,
+} from './expert-tools';
 
 describe('buildExpertTools', () => {
   it('always includes platform builtins and employee assembly', () => {
@@ -56,5 +62,31 @@ describe('buildExpertTools', () => {
       'builtin:knowledge.retrieve',
       'builtin:memory.recall',
     ]);
+  });
+
+  it('toolsForExecuteMode includes approval and office document skills', () => {
+    const available = buildExpertTools({
+      capabilities: {
+        tools: [],
+        skills: ['pptx', '政策问答'],
+        workflows: [],
+      },
+      boundaryPolicy: {
+        capabilityModes: [
+          { capabilityType: 'skill', capabilityName: 'pptx', mode: 'approval_required' },
+        ],
+      },
+    });
+    const base = defaultEnabledToolKeys(available);
+    expect(base.some((k) => k.includes('pptx'))).toBe(false);
+    const forExec = toolsForExecuteMode(base, available);
+    expect(forExec.some((k) => k.includes('pptx'))).toBe(true);
+    expect(approvalToolKeys(available).some((k) => k.includes('pptx'))).toBe(true);
+  });
+
+  it('detects document / PPT write intents', () => {
+    expect(isWriteExecutionIntent('请直接生成PPT')).toBe(true);
+    expect(isWriteExecutionIntent('帮我做一份演示文稿')).toBe(true);
+    expect(isWriteExecutionIntent('当前进度如何')).toBe(false);
   });
 });

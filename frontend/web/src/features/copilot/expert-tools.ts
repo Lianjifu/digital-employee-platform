@@ -119,3 +119,29 @@ export function defaultEnabledToolKeys(tools: CopilotToolDef[]): string[] {
   // 默认启用只读/推荐类；需审批的默认关闭
   return tools.filter((t) => !t.requiresApproval).map((t) => t.key);
 }
+
+/** 办公文档类技能（即使边界未标 approval_required，受控执行回合也应纳入）。 */
+export function isOfficeDocumentTool(tool: CopilotToolDef): boolean {
+  return /docx|xlsx|pptx|excel|word|ppt/i.test(tool.name) || /docx|xlsx|pptx|excel|word|ppt/i.test(tool.key);
+}
+
+/** 受控执行下应纳入本回合的工具键（只读基线 + 审批/写技能）。 */
+export function toolsForExecuteMode(base: string[], available: CopilotToolDef[]): string[] {
+  const extras = available
+    .filter((t) => !t.unavailable && (t.requiresApproval || isOfficeDocumentTool(t)))
+    .map((t) => t.key);
+  return Array.from(new Set([...base, ...extras]));
+}
+
+/** 用户意图是否要求写操作 / 文档产出（研判下应升到受控执行）。 */
+export function isWriteExecutionIntent(text: string): boolean {
+  return /\/(exec|kubectl|write|apply|config)|CONFIG SET|kubectl\s+(apply|delete|exec)/i.test(text)
+    || /(生成|制作|导出|写一份|做一份).{0,12}(PPT|pptx|幻灯片|演示文稿|文档|报告|docx|xlsx|表格)/i.test(text)
+    || /\b(pptx?|docx?|xlsx?)\b/i.test(text);
+}
+
+export function approvalToolKeys(available: CopilotToolDef[]): string[] {
+  return available
+    .filter((t) => !t.unavailable && (t.requiresApproval || isOfficeDocumentTool(t)))
+    .map((t) => t.key);
+}

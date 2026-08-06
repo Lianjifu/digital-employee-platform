@@ -57,6 +57,18 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 		"packageSha256": meta.SHA256, "packageSizeBytes": meta.SizeBytes,
 		"packageFileName": fileName,
 	}
+	if len(meta.Entrypoints) > 0 {
+		item["entrypoints"] = meta.Entrypoints
+	} else if len(meta.Scripts) > 0 {
+		item["entrypoints"] = meta.Scripts
+	}
+	if meta.ReadOnly != nil {
+		item["readOnly"] = *meta.ReadOnly
+	}
+	if meta.ProducesArtifacts != nil {
+		item["producesArtifacts"] = *meta.ProducesArtifacts
+	}
+	enrichSkillMetadata(item)
 
 	s.Store.Lock()
 	// replace same-name package skill in workspace
@@ -166,6 +178,9 @@ func (s *Server) skillPackageInfo(r *http.Request, id *auth.Identity, ws, skillI
 		"skillMdPath": sk["skillMdPath"],
 		"hasScripts": boolFrom(sk["hasScripts"]),
 		"scripts": sk["scripts"],
+		"entrypoints": sk["entrypoints"],
+		"readOnly": boolFrom(sk["readOnly"]),
+		"producesArtifacts": boolFrom(sk["producesArtifacts"]),
 		"packageFiles": sk["packageFiles"],
 		"packageSha256": sk["packageSha256"],
 		"packageSizeBytes": sk["packageSizeBytes"],
@@ -199,6 +214,9 @@ func skillPackagePayload(sk map[string]any) map[string]any {
 		"hasScripts": boolFrom(sk["hasScripts"]),
 		"name": str(sk["name"]),
 		"version": str(sk["version"]),
+		"entrypoints": decodeStringSlice(sk["entrypoints"]),
+		"readOnly": boolFrom(sk["readOnly"]),
+		"producesArtifacts": boolFrom(sk["producesArtifacts"]),
 	}
 }
 

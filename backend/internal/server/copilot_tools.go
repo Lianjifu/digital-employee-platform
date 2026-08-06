@@ -230,6 +230,12 @@ func toolRegistryPrompt(reg []registeredTool) string {
 	b.WriteString("你可以使用下列工具（ReAct）。需要工具时，先只输出一个工具调用块，不要夹杂最终答案：\n")
 	b.WriteString("<<<TOOL>>>\n{\"name\":\"工具名\",\"args\":{...}}\n<<<END>>>\n")
 	b.WriteString("收到工具观察结果后，再决定是否继续调用或给出最终中文回答。最终回答不要包含 <<<TOOL>>> 标记。\n")
+	b.WriteString("【Skill Harness】对 kind=skill 的能力：\n")
+	b.WriteString("1) 首次先 action=open 阅读 SKILL.md 与 scripts 列表；\n")
+	b.WriteString("2) 需要写生成器时 action=write path=.copilot-ws/... content=...；\n")
+	b.WriteString("3) 执行必须 action=run 且 command 匹配 scripts/... 或 .copilot-ws/...；\n")
+	b.WriteString("4) 勿把自然语言当 command；观察 status=needs_instruction 表示尚未真正执行；\n")
+	b.WriteString("5) 仅当观察为 pending_authorization 时告知用户「已进入人工审核」；禁止在 success/needs_instruction 时声称已提交审核或已生成文件。\n")
 	b.WriteString("可用工具：\n")
 	for _, t := range enabled {
 		b.WriteString("- ")
@@ -238,14 +244,13 @@ func toolRegistryPrompt(reg []registeredTool) string {
 		b.WriteString(t.Key)
 		b.WriteString("）：")
 		b.WriteString(t.Description)
-		if t.RequiresApproval {
+		if t.Kind == "skill" {
+			b.WriteString("；Skill 原语：open|write|run|artifacts")
+			if t.RequiresApproval {
+				b.WriteString(" [run/write 需审批]")
+			}
+		} else if t.RequiresApproval {
 			b.WriteString(" [需审批，不可直接执行]")
-		}
-		if isDocxSkillName(t.Name) || isDocxSkillName(t.Key) {
-			b.WriteString("；调用示例：{\"name\":\"")
-			b.WriteString(t.Name)
-			b.WriteString("\",\"args\":{\"title\":\"招聘岗位模板\",\"content\":\"一、基本信息\\n岗位名称：…\\n\\n二、岗位职责\\n1. …\\n\\n三、任职资格\\n1. …\\n\\n四、其他说明\\n…\"}}")
-			b.WriteString("。title 用简短中文文档名（勿带 skill_docx / .docx）；content 按「一、二、三、」分节，条目用 1. 或 - 。")
 		}
 		b.WriteString("\n")
 	}
@@ -410,165 +415,6 @@ func (s *Server) findWorkspaceSkill(ws, skillID, toolName string) map[string]any
 		}
 	}
 	return nil
-}
-
-func (s *Server) runSkillTool(ctx toolRunContext, t *registeredTool, call toolCallRequest, started time.Time) toolExecResult {
-	ws := ctx.WorkspaceID
-	skillID := coalesce(str(call.Args["skillId"]), "")
-	input := coalesce(str(call.Args["input"]), coalesce(str(call.Args["command"]), coalesce(str(call.Args["content"]), ctx.UserMessage)))
-	title := coalesce(str(call.Args["title"]), coalesce(str(call.Args["filename"]), t.Name))
-	if isDocxSkillName(t.Name) || isDocxSkillName(t.Key) {
-		title = normalizeDocxTitle(title)
-		if title == "生成文档" || title == t.Name || strings.EqualFold(title, "docx") {
-			if hint := inferDocxTitleFromMessage(ctx.UserMessage); hint != "" {
-				title = hint
-			} else {
-				title = "生成文档"
-			}
-		}
-	}
-
-	actor := "助手"
-	if ctx.Viewer != nil && ctx.Viewer.Name != "" {
-		actor = ctx.Viewer.Name
-	}
-
-	sk := s.findWorkspaceSkill(ws, skillID, t.Name)
-	if sk == nil && isDocxSkillName(t.Name) {
-		s.Store.EnsureDocxSkillReady()
-		sk = s.findWorkspaceSkill(ws, skillID, t.Name)
-		if sk == nil {
-			sk = s.findWorkspaceSkill("w1", "sk-docx", "docx")
-		}
-	}
-
-	track := func(skill map[string]any, ms int, ok bool, source string) {
-		if skill == nil {
-			return
-		}
-		// Governance overview filters by current workspace; record against caller's ws.
-		s.recordSkillInvocation(ws, skill, ms, ok, actor, source)
-		if ctx.DigitalEmployee != "" {
-			s.recordEmployeeRuntime(ctx.DigitalEmployee, ms, ok)
-		}
-	}
-
-	if sk == nil {
-		if !isDocxSkillName(t.Name) {
-			return toolExecResult{
-				Status: "failed", DurationMs: int(time.Since(started).Milliseconds()),
-				Error:  "技能不存在：" + t.Name,
-				Output: "未找到工作区内技能「" + t.Name + "」",
-			}
-		}
-		filename, download, err := generateDocxArtifactLocal(title, input)
-		ms := int(time.Since(started).Milliseconds())
-		if err != nil {
-			return toolExecResult{Status: "failed", DurationMs: ms, Error: err.Error(), Output: "docx 生成失败：" + err.Error()}
-		}
-		return toolExecResult{
-			Status: "success", DurationMs: ms, SandboxID: "docx-local",
-			Output: formatDocxToolOutput(title, filename, download, false),
-		}
-	}
-
-	skillID = str(sk["id"])
-	body := map[string]any{
-		"skillId": skillID, "input": input, "command": input,
-		"correlationId": ctx.CorrelationID,
-	}
-	if isDocxSkillName(t.Name) || isDocxSkillName(str(sk["name"])) {
-		body["action"] = "generate_docx"
-		body["skillName"] = "docx"
-		body["title"] = title
-		body["content"] = input
-		body["timeoutSec"] = 60
-	}
-	id := ctx.Viewer
-	if id == nil {
-		return toolExecResult{Status: "denied", Permission: "auth", Error: "缺少身份", Output: "拒绝执行技能"}
-	}
-
-	s.Store.Lock()
-	_, sk2 := s.findSkillLocked(ws, skillID)
-	if sk2 == nil && str(sk["workspaceId"]) != "" {
-		// Allow recording against ensured builtin when workspace mismatch (e.g. seed w1).
-		_, sk2 = s.findSkillLocked(str(sk["workspaceId"]), skillID)
-	}
-	if sk2 == nil {
-		s.Store.Unlock()
-		return toolExecResult{Status: "failed", Error: "技能不存在", Output: "技能不存在", DurationMs: int(time.Since(started).Milliseconds())}
-	}
-	sk = sk2
-	dec := s.evaluateSkillSandboxPolicyLocked(ws, skillID, input)
-	govPolicy := s.ensureSkillGovernanceLocked(skillID)
-	pkgPayload := skillPackagePayload(sk2)
-	if dec.Blocked {
-		s.recordSkillInvocationLocked(ws, sk2, int(time.Since(started).Milliseconds()), false, actor, "Copilot · 策略拦截")
-		s.Store.Unlock()
-		s.Store.Persist("skill_health")
-		s.Store.Persist("skill_extra")
-		return toolExecResult{
-			Status: "denied", Permission: "policy", Error: dec.Reason,
-			Output: "策略拦截：" + dec.Reason, DurationMs: int(time.Since(started).Milliseconds()),
-		}
-	}
-	s.Store.Unlock()
-
-	token := auth.MintRunToken(skillID, ws, id.ID, 5*time.Minute)
-	body["runToken"] = token
-	body["denyControlPlane"] = true
-	body["allowedEgress"] = govPolicy["allowedEgress"]
-	if pkgPayload != nil {
-		for k, v := range pkgPayload {
-			body[k] = v
-		}
-	}
-	result, runtimeErr := s.callSkillRuntime(body)
-	ms := int(time.Since(started).Milliseconds())
-	if runtimeErr != nil {
-		if isDocxSkillName(t.Name) || isDocxSkillName(str(sk["name"])) {
-			filename, download, err := generateDocxArtifactLocal(title, input)
-			if err == nil {
-				track(sk, ms, true, "Copilot · docx 本地回退")
-				return toolExecResult{
-					Status: "success", DurationMs: ms, SandboxID: "docx-local-fallback",
-					Output: formatDocxToolOutput(title, filename, download, true),
-				}
-			}
-			track(sk, ms, false, "Copilot · docx 失败")
-			return toolExecResult{
-				Status: "failed", DurationMs: ms,
-				Error:  fmt.Sprintf("连接本地文档服务（%s）失败：%v；本地回退也失败：%v", envOr("DE_SKILL_RUNTIME_URL", "http://127.0.0.1:8093"), runtimeErr, err),
-				Output: "skill:docx 调用失败：" + runtimeErr.Error(),
-			}
-		}
-		track(sk, ms, false, "Copilot · 运行时失败")
-		return toolExecResult{
-			Status: "failed", DurationMs: ms, Error: runtimeErr.Error(),
-			Output: "技能运行时不可用：" + runtimeErr.Error(), SandboxID: "skill-runtime",
-		}
-	}
-	out := coalesce(str(result["stdout"]), coalesce(str(result["preview"]), fmt.Sprintf("%v", result)))
-	if (isDocxSkillName(t.Name) || isDocxSkillName(str(sk["name"]))) && str(result["downloadPath"]) != "" {
-		storage := coalesce(str(result["filename"]), strings.TrimPrefix(str(result["downloadPath"]), "/api/skill-artifacts/"))
-		displayTitle := coalesce(str(result["title"]), title)
-		out = formatDocxToolOutput(displayTitle, storage, str(result["downloadPath"]), false)
-	} else if dl := str(result["downloadPath"]); dl != "" && !strings.Contains(out, dl) {
-		out = strings.TrimSpace(out + "\n下载链接：" + dl)
-	}
-	status := "success"
-	if ok, isBool := result["ok"].(bool); isBool && !ok {
-		status = "failed"
-	}
-	if d := intFrom(result["durationMs"]); d > 0 {
-		ms = d
-	}
-	track(sk, ms, status == "success", "Copilot · 技能调用")
-	return toolExecResult{
-		Status: status, DurationMs: ms, Output: truncateRunes(out, 2000),
-		SandboxID: "skill-runtime:" + skillID,
-	}
 }
 
 func enabledToolKeys(reg []registeredTool) []string {

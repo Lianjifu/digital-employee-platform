@@ -28,20 +28,23 @@ var (
 )
 
 type skillPackageManifest struct {
-	Name        string
-	Description string
-	Version     string
-	License     string
-	RiskLevel   string
-	Tags        []string
-	Markdown    string
-	RootDir     string
-	SkillMDRel  string
-	Files       []string
-	Scripts     []string
-	HasScripts  bool
-	SHA256      string
-	SizeBytes   int
+	Name              string
+	Description       string
+	Version           string
+	License           string
+	RiskLevel         string
+	Tags              []string
+	Entrypoints       []string
+	ReadOnly          *bool
+	ProducesArtifacts *bool
+	Markdown          string
+	RootDir           string
+	SkillMDRel        string
+	Files             []string
+	Scripts           []string
+	HasScripts        bool
+	SHA256            string
+	SizeBytes         int
 }
 
 func skillPackageAllowedExt(name string) bool {
@@ -350,6 +353,19 @@ func parseSkillFrontmatter(raw string) (meta skillPackageManifest, body string, 
 					meta.Tags = append(meta.Tags, part)
 				}
 			}
+		case "entrypoints", "entrypoint":
+			for _, part := range strings.Split(val, ",") {
+				part = strings.TrimSpace(strings.Trim(part, `"'[]`))
+				if part != "" {
+					meta.Entrypoints = append(meta.Entrypoints, part)
+				}
+			}
+		case "readonly", "read_only":
+			v := strings.EqualFold(val, "true") || val == "1" || strings.EqualFold(val, "yes")
+			meta.ReadOnly = &v
+		case "producesartifacts", "produces_artifacts", "artifacts":
+			v := strings.EqualFold(val, "true") || val == "1" || strings.EqualFold(val, "yes")
+			meta.ProducesArtifacts = &v
 		}
 	}
 	return meta, body, nil

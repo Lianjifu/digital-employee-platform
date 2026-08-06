@@ -92,22 +92,39 @@ async def execute(request: Request) -> JSONResponse:
         "denyControlPlane=true",
     ]
     exec_ok = True
+    exec_status = "noop"
     if package_path:
         exec_ok, pkg_out, duration_ms = run_package_script(package_path, scripts, command, timeout_sec)
         stdout_lines.append(pkg_out)
+        if "status=needs_instruction" in pkg_out:
+            exec_status = "needs_instruction"
+            exec_ok = False
+        elif exec_ok:
+            exec_status = "executed"
+        else:
+            exec_status = "failed"
     elif command:
         stdout_lines.append(f"command={command}")
-        stdout_lines.append("status=accepted")
+        stdout_lines.append("status=needs_instruction")
+        stdout_lines.append("hint=packagePath required to execute scripts")
+        exec_ok = False
+        exec_status = "needs_instruction"
     else:
         stdout_lines.append("status=noop")
+        exec_status = "noop"
     return JSONResponse(
         status_code=200,
         content={
             "ok": exec_ok,
+            "status": exec_status,
             "runtime": sandbox_mode(),
             "skillId": skill_id,
             "stdout": "\n".join(stdout_lines),
-            "error": None if exec_ok else "skill script failed",
+            "error": None if exec_ok else (
+                "needs_instruction: provide action=run with scripts/... command"
+                if exec_status == "needs_instruction"
+                else "skill script failed"
+            ),
             "durationMs": duration_ms,
             "runTokenAccepted": True,
             "denyControlPlane": True,
