@@ -108,11 +108,11 @@ cd ../backend && make test && make test-python && make smoke
 | 区域 | 说明 |
 |---|---|
 | 控制台 | 运营、协作、任务、员工、工作流、模型/知识/技能/记忆/渠道、治理 |
-| 专家协作 | 研判 / 受控执行、岗位专家改绑、会话结案与人工交接（持久化）、GFM 表格可读渲染 |
+| 专家协作 | 研判 / 受控执行（`setCollaborationMode` 乐观更新 + PATCH，失败回滚）、岗位专家改绑、结案与交接；发送乐观追加与 SSE 流式；GFM 表格可读渲染 |
 | 会话治理 | `sessionMode` / `riskLevel` / handoff / closed；结案后拒绝写入；工具按模式过滤 |
 | 人工审核 | **单人人工审核**（发起人不可自批）；待审 → SSE `authorization` → 批准执行 |
 | 附件 / 分享 | `/api/attachments` 上传下载（登录 + 工作区校验）；`/api/share` 与只读页 `/copilot/share/:token` |
-| 会话历史 | `/api/sessions` 权威列表；刷新后合并服务端会话，避免空列表误清本地记录 |
+| 会话历史 | `/api/sessions` 权威列表；在线回合本地消息权威（typing/streaming/本地超前时跳过陈旧 conversation 回写）；空闲后 `mergeConversationMessages` 对齐服务端终态 |
 | 七架构运行时 | Harness（Direct / ReAct / Plan-Exec）+ 反射 + 记忆溯源 + 自进化候选 |
 | 技能产物 | 技能调用可产出可下载制品（含 docx 等） |
 | 粗粒度切流 | ServiceMode + gateway；policy evaluate / 审计在 de-sys |
@@ -126,6 +126,7 @@ cd ../backend && make test && make test-python && make smoke
 ## 当前边界
 
 - 数据多为控制面内存 + PG 快照（`kv_documents`）；消息按 `conversationId` 分桶持久化。
+- 专家协作在线回合：**本地消息时间线权威**；治理字段（mode/risk/handoff）以 Session PATCH 为准，消息 hydrate 不得覆盖。
 - 六边形目录骨架已就位；handler 仍集中在 `internal/server`（物理迁包后续）。
 - `.github/workflows/` 不入库。
 - LangGraph 全图、真 runsc、SPIRE SDS 仍属后续。

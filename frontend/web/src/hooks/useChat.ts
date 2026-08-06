@@ -89,7 +89,7 @@ type Action =
   | { type: 'new_session'; session: ChatSession }
   | { type: 'merge_sessions'; sessions: ChatSession[] }
   | { type: 'reconcile_sessions'; workspaceId: string; serverIds: string[] }
-  | { type: 'sync_session'; session: ChatSession }
+  | { type: 'sync_session'; session: ChatSession; preserveGovernance?: boolean }
   | { type: 'del_session'; id: string }
   | { type: 'clear_active' }
   | { type: 'switch'; id: string }
@@ -267,9 +267,21 @@ function reducer(s: State, a: Action): State {
       // 勿用空消息覆盖本地已有记录（刷新后 conversation 尚未灌入或暂空时的常见误伤）。
       const incomingMessages = a.session.messages ?? [];
       const keepLocalMessages = Boolean(existing && (existing.messages?.length ?? 0) > 0 && incomingMessages.length === 0);
-      const next = existing
+      const merged = existing
         ? { ...existing, ...a.session, messages: keepLocalMessages ? existing.messages : incomingMessages }
         : a.session;
+      // 消息 hydrate 不得冲掉本地已切换的研判/受控执行等治理字段
+      const next = existing && a.preserveGovernance
+        ? {
+            ...merged,
+            sessionMode: existing.sessionMode,
+            riskLevel: existing.riskLevel,
+            handoff: existing.handoff,
+            closeSummary: existing.closeSummary,
+            status: existing.status,
+            lifecycle: existing.lifecycle,
+          }
+        : merged;
       if (
         existing
         && existing.messages === next.messages
@@ -279,6 +291,7 @@ function reducer(s: State, a: Action): State {
         && existing.lifecycle === next.lifecycle
         && existing.digitalEmployeeId === next.digitalEmployeeId
         && existing.sessionMode === next.sessionMode
+        && existing.riskLevel === next.riskLevel
         && (existing.unread ?? 0) === (next.unread ?? 0)
       ) {
         return s;
@@ -1488,31 +1501,70 @@ export function useChat(agentMeta?: { name: string }) {
     }
   }, []);
 
-  const syncSession = useCallback((session: ChatSession) => {
+  const syncSession = useCallback((session: ChatSession, opts?: { preserveGovernance?: boolean }) => {
     if (!session.id || deletedSessionIdsRef.current.has(session.id)) return;
-    dispatch({ type: 'sync_session', session });
+    dispatch({ type: 'sync_session', session, preserveGovernance: opts?.preserveGovernance });
   }, []);
 
-  /** 将本地会话变更同步到服务端（改绑专家、运行配置等）。 */
-  const persistSession = useCallback((session: ChatSession) => {
+  /** 将本地会话变更同步到服务端（改绑专家、运行配置等）。默认吞掉网络错误；需要回滚时用 throwOnError。 */
+  const persistSession = useCallback(async (session: ChatSession, opts?: { throwOnError?: boolean }) => {
     if (!session.id || deletedSessionIdsRef.current.has(session.id)) return;
     dispatch({ type: 'sync_session', session });
-    void patchSessionRemote(session.id, {
-      title: session.title,
-      digitalEmployeeId: session.digitalEmployeeId ?? '',
-      modelId: session.modelId,
-      enabledTools: session.enabledTools,
-      status: session.status === 'archived' || session.lifecycle === 'archived'
-        ? 'archived'
-        : (session.status === 'closed' || session.status === 'done' ? 'closed' : (session.status || 'active')),
-      pinned: Boolean(session.pinned),
-      starred: Boolean(session.starred),
-      sessionMode: session.sessionMode,
-      riskLevel: session.riskLevel,
-      handoff: session.handoff,
-      closeSummary: session.closeSummary,
-    });
-  }, [patchSessionRemote]);
+    if (/^s_/.test(session.id) || isMockChatMode()) return;
+    try {
+      await getApiClient().request(`/api/sessions/${encodeURIComponent(session.id)}`, {
+        method: 'PATCH',
+        body: {
+          title: session.title,
+          digitalEmployeeId: session.digitalEmployeeId ?? '',
+          modelId: session.modelId,
+          enabledTools: session.enabledTools,
+          status: session.status === 'archived' || session.lifecycle === 'archived'
+            ? 'archived'
+            : (session.status === 'closed' || session.status === 'done' ? 'closed' : (session.status || 'active')),
+          pinned: Boolean(session.pinned),
+          starred: Boolean(session.starred),
+          sessionMode: session.sessionMode,
+          riskLevel: session.riskLevel,
+          handoff: session.handoff,
+          closeSummary: session.closeSummary,
+        },
+      });
+    } catch (err) {
+      if (opts?.throwOnError) throw err;
+    }
+  }, []);
+
+  /** 研判 / 受控执行：乐观更新 + PATCH；失败回滚。 */
+  const setCollaborationMode = useCallback(async (
+    mode: 'investigate' | 'execute',
+    opts?: { riskLevel?: 'low' | 'medium' | 'high' },
+  ) => {
+    const sid = state.activeId;
+    if (!sid) return;
+    const session = state.sessions[sid];
+    if (!session) return;
+    if (session.status === 'closed' || session.status === 'done' || session.status === 'archived') {
+      throw new Error('会话已结案，无法切换模式');
+    }
+    if (session.handoff?.active) {
+      throw new Error('人工交接中，无法切换模式');
+    }
+    const prevMode = session.sessionMode === 'execute' ? 'execute' : 'investigate';
+    const prevRisk = session.riskLevel;
+    const riskLevel = opts?.riskLevel ?? session.riskLevel ?? 'medium';
+    const next = { ...session, sessionMode: mode, riskLevel };
+    dispatch({ type: 'sync_session', session: next });
+    try {
+      await persistSession(next, { throwOnError: true });
+    } catch (err) {
+      dispatch({
+        type: 'sync_session',
+        session: { ...session, sessionMode: prevMode, riskLevel: prevRisk },
+      });
+      throw err instanceof Error ? err : new Error('模式切换失败，请重试');
+    }
+  }, [state.activeId, state.sessions, persistSession]);
 
   const clearActive = useCallback(() => {
     dispatch({ type: 'clear_active' });
@@ -1990,6 +2042,7 @@ export function useChat(agentMeta?: { name: string }) {
     importSessions,
     syncSession,
     persistSession,
+    setCollaborationMode,
     clearActive,
     delSession,
     switchSession,

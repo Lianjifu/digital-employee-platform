@@ -82,6 +82,7 @@ make test && make test-python && make smoke
 | 会话 CRUD | `GET/POST/PATCH/DELETE /api/sessions`；非 admin 仅见本人 `ownerId` |
 | 对话详情 | `GET /api/conversations/:id`（消息桶按 `conversationId`） |
 | 流式回合 | `POST …/stream`；研判模式过滤写工具；结案/交接中拒绝写入 |
+| 模式切换 | `PATCH /api/sessions/:id` 写 `sessionMode`；前端乐观更新，失败回滚 |
 | 单人审核 | `POST /api/actions/:id/approve`（发起人不可自批）→ `execute` |
 | 附件 | `POST/GET /api/attachments`（登录 + 工作区归属校验） |
 | 分享 | `POST /api/share`；公开只读 `GET /api/share/:token` |

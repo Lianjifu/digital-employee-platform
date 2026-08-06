@@ -73,6 +73,7 @@ import {
 } from '@/features/copilot/slash-commands';
 import { extractSkillArtifacts, stripArtifactNoise } from '@/features/copilot/artifact-links';
 import { sortSessionsByRecency } from '@/features/copilot/session-sort';
+import { resolveHydratedMessages } from '@/features/copilot/conversation-merge';
 import { getApiClient } from '@de/web-api';
 import { deriveExpertContextOverview } from '@/features/copilot/expert-context';
 import { sessionHistoryPresentation } from '@/features/copilot/layout';
@@ -304,7 +305,7 @@ export default function Copilot() {
   // 右栏由消息上下文驱动：没有可追溯信息时保持隐藏，避免空面板占用工作区。
   const [contextSelection, setContextSelection] = useState<ContextSelection>({ open: false, scope: 'session', tab: 'overview', pinned: false });
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  const [sessionMode, setSessionMode] = useState<'investigate' | 'execute'>('investigate');
+  // sessionMode 以会话对象为唯一数据源，避免与 hydrate/sync 双写打架
   const [riskLevel, setRiskLevel] = useState<'low' | 'medium' | 'high'>('medium');
   const [closeoutOpen, setCloseoutOpen] = useState(false);
   const [handoffOpen, setHandoffOpen] = useState(false);
@@ -459,6 +460,8 @@ export default function Copilot() {
   const chat = useChat({ name: '岗位专家' });
   const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
   const activeSession = chat.activeSession;
+  const sessionMode: 'investigate' | 'execute' = activeSession?.sessionMode === 'execute' ? 'execute' : 'investigate';
+  const typingWasRef = useRef(false);
 
   // 切会话时恢复会话级模型 / 工具配置
   useEffect(() => {
@@ -485,7 +488,8 @@ export default function Copilot() {
     ['conversation', conversationFetchId],
     `/api/conversations/${conversationFetchId ?? '__none__'}`,
     undefined,
-    { enabled: canFetchConversation, retry: false, staleTime: 30_000 },
+    // 在线会话不使用长 stale：回合结束后需尽快对齐终态；hydrate 门禁防止冲掉流式
+    { enabled: canFetchConversation, retry: false, staleTime: 0 },
   );
 
   const activeEmployeeId = activeSession?.digitalEmployeeId ?? employeeIdFromQuery ?? undefined;
@@ -616,12 +620,38 @@ export default function Copilot() {
       ?? sessionHistory.find((item) => item.conversationId === activeConversation.id);
     if (!summary) return;
     if (!sessionInWorkspace(summary, currentWorkspaceId)) return;
-    const serverMessages = (activeConversation.messages ?? []) as ChatMessageEx[];
-    // 服务端暂无消息时不要把本地已渲染的回合冲掉（刷新竞态 / 空桶误持久化）
+
     const localMessages = chat.state.sessions[chat.state.activeId]?.messages ?? [];
-    if (serverMessages.length === 0 && localMessages.length > 0) return;
-    chat.syncSession({ ...toChatSession(summary), messages: serverMessages });
-  }, [activeConversation, conversationMissing, chat.state.activeId, chat.state.sessions, chat.syncSession, conversationFetchId, sessionHistory, currentWorkspaceId]);
+    const serverMessages = (activeConversation.messages ?? []) as ChatMessageEx[];
+    const resolved = resolveHydratedMessages({
+      typing: chat.state.typing,
+      localMessages,
+      serverMessages,
+    });
+    if (!resolved.applied) return;
+
+    // 仅灌入消息时间线；治理字段（mode/risk/handoff）保留本地，避免摘要缓存打回
+    chat.syncSession(
+      {
+        ...toChatSession(summary),
+        messages: resolved.messages,
+        preview: summary.preview || toChatSession(summary).preview,
+      },
+      { preserveGovernance: true },
+    );
+    // 故意不依赖 sessions：本地追加/流式不得反复触发陈旧 conversation 回写
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- localMessages/typing 经门禁读取，不以 sessions 为 deps
+  }, [activeConversation, conversationMissing, chat.state.activeId, chat.state.typing, chat.syncSession, conversationFetchId, sessionHistory, currentWorkspaceId]);
+
+  // 回合结束：刷新 conversation / sessions 缓存，空闲时安全 merge 终态
+  useEffect(() => {
+    const wasTyping = typingWasRef.current;
+    typingWasRef.current = chat.state.typing;
+    if (!wasTyping || chat.state.typing) return;
+    if (!conversationFetchId || /^s_/.test(conversationFetchId)) return;
+    void queryClient.invalidateQueries({ queryKey: ['conversation', conversationFetchId] });
+    void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+  }, [chat.state.typing, conversationFetchId, queryClient]);
 
   // 深链：URL → state（仅当路由会话在当前工作区有效时）
   useEffect(() => {
@@ -1154,7 +1184,11 @@ export default function Copilot() {
       || (tools.some((key) => availableTools.find((t) => t.key === key)?.requiresApproval) && sessionMode === 'investigate');
     const mode: 'investigate' | 'execute' = needsExecute ? 'execute' : sessionMode;
     const risk = riskLevel;
-    if (mode !== sessionMode) setSessionMode(mode);
+    if (mode !== sessionMode) {
+      void chat.setCollaborationMode(mode, { riskLevel: risk }).catch((err) => {
+        toast.error(err instanceof Error ? err.message : '无法切换到受控执行');
+      });
+    }
     if (tools.length !== enabledTools.length || tools.some((k, i) => k !== enabledTools[i])) {
       setEnabledTools(tools);
     }
@@ -1239,7 +1273,9 @@ export default function Copilot() {
       });
       const tool = availableTools.find((t) => t.key === toolKey);
       if (tool?.requiresApproval && sessionMode === 'investigate') {
-        setSessionMode('execute');
+        void chat.setCollaborationMode('execute', { riskLevel }).catch((err) => {
+          toast.error(err instanceof Error ? err.message : '无法切换到受控执行');
+        });
       }
       persistRunConfig(sendModelId, (() => {
         const base = enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools);
@@ -1349,7 +1385,7 @@ export default function Copilot() {
 
   useEffect(() => {
     if (!currentSession) return;
-    setSessionMode(currentSession.sessionMode === 'execute' ? 'execute' : 'investigate');
+    // 仅在切换会话时灌入 risk/handoff/closed；mode 直接读 session，避免回写环
     setRiskLevel(currentSession.riskLevel === 'high' || currentSession.riskLevel === 'low' ? currentSession.riskLevel : 'medium');
     const h = currentSession.handoff;
     setHandoffActive(Boolean(h?.active));
@@ -1361,7 +1397,21 @@ export default function Copilot() {
       || currentSession.lifecycle === 'archived'
       || currentSession.lifecycle === 'deleted',
     );
-  }, [currentSession?.id, currentSession?.sessionMode, currentSession?.riskLevel, currentSession?.handoff?.active, currentSession?.status, currentSession?.lifecycle]);
+  }, [currentSession?.id]);
+
+  // 同会话内服务端治理字段变化时对齐（例如他端 PATCH），不重置本地正在编辑的 risk 选择器草稿以外的派生
+  useEffect(() => {
+    if (!currentSession) return;
+    const h = currentSession.handoff;
+    setHandoffActive(Boolean(h?.active));
+    setIsClosed(
+      currentSession.status === 'closed'
+      || currentSession.status === 'done'
+      || currentSession.status === 'archived'
+      || currentSession.lifecycle === 'archived'
+      || currentSession.lifecycle === 'deleted',
+    );
+  }, [currentSession?.handoff?.active, currentSession?.status, currentSession?.lifecycle]);
 
   const sessionUsage = useMemo(() => {
     const messages = currentSession?.messages ?? [];
@@ -1740,14 +1790,32 @@ export default function Copilot() {
 
             <div className="copilot-header__actions shrink-0">
               <div className="copilot-mode-toggle hidden sm:inline-flex" role="group" aria-label="协作模式">
-                <button type="button" disabled={isClosed || handoffActive} onClick={() => {
-                  setSessionMode('investigate');
-                  if (currentSession) chat.persistSession({ ...currentSession, sessionMode: 'investigate', riskLevel });
-                }} className={cn('copilot-mode-toggle__btn', sessionMode === 'investigate' && 'is-active')}>研判</button>
-                <button type="button" disabled={isClosed || handoffActive} onClick={() => {
-                  setSessionMode('execute');
-                  if (currentSession) chat.persistSession({ ...currentSession, sessionMode: 'execute', riskLevel });
-                }} className={cn('copilot-mode-toggle__btn', sessionMode === 'execute' && 'is-active is-execute')}>受控执行</button>
+                <button
+                  type="button"
+                  disabled={isClosed || handoffActive}
+                  title={isClosed ? '会话已结案' : handoffActive ? '人工交接中' : '切换到研判模式'}
+                  onClick={() => {
+                    void chat.setCollaborationMode('investigate', { riskLevel })
+                      .then(() => { void queryClient.invalidateQueries({ queryKey: ['sessions'] }); })
+                      .catch((err) => toast.error(err instanceof Error ? err.message : '模式切换失败'));
+                  }}
+                  className={cn('copilot-mode-toggle__btn', sessionMode === 'investigate' && 'is-active')}
+                >
+                  研判
+                </button>
+                <button
+                  type="button"
+                  disabled={isClosed || handoffActive}
+                  title={isClosed ? '会话已结案' : handoffActive ? '人工交接中' : '切换到受控执行'}
+                  onClick={() => {
+                    void chat.setCollaborationMode('execute', { riskLevel })
+                      .then(() => { void queryClient.invalidateQueries({ queryKey: ['sessions'] }); })
+                      .catch((err) => toast.error(err instanceof Error ? err.message : '模式切换失败'));
+                  }}
+                  className={cn('copilot-mode-toggle__btn', sessionMode === 'execute' && 'is-active is-execute')}
+                >
+                  受控执行
+                </button>
               </div>
               <button type="button" onClick={openRebindExpertPicker} className="copilot-toolbar-btn copilot-toolbar-btn--expert hidden sm:inline-flex" title={hasBoundExpert ? '查看或改绑数字员工' : '选择数字员工（可选）'}>
                 <span className="copilot-toolbar-btn__icon relative !bg-transparent !p-0" style={{ boxShadow: 'none' }}>
@@ -2256,7 +2324,9 @@ export default function Copilot() {
                     onClick={() => {
                       if (unavailable) return;
                       if (writeLocked) {
-                        setSessionMode('execute');
+                        void chat.setCollaborationMode('execute', { riskLevel })
+                          .then(() => { void queryClient.invalidateQueries({ queryKey: ['sessions'] }); })
+                          .catch((err) => toast.error(err instanceof Error ? err.message : '无法切换到受控执行'));
                         setToolsOpen(false);
                         return;
                       }
@@ -2535,7 +2605,13 @@ export default function Copilot() {
                 <div className="copilot-agent-details__section-heading flex items-center gap-1.5"><Settings className="h-3.5 w-3.5 text-[var(--brand)]" />运行控制 <Badge tone="brand" className="ml-auto text-[9px]">管理员</Badge></div>
                 <Row label="当前模型" value={<span className="font-mono text-[11px]">{currentModel.label} · {currentModel.tier}</span>} />
                 <Row label="启用工具" value={<span className="font-mono text-[11px]">{enabledToolCount}/{availableTools.length}</span>} />
-                <label className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--text-muted)]">执行风险</span><select value={riskLevel} onChange={(event) => setRiskLevel(event.target.value as 'low' | 'medium' | 'high')} className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[11px]"><option value="low">低 · 仅可逆操作</option><option value="medium">中 · 需审批</option><option value="high">高 · 人工审核与回滚</option></select></label>
+                <label className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--text-muted)]">执行风险</span><select value={riskLevel} onChange={(event) => {
+                  const next = event.target.value as 'low' | 'medium' | 'high';
+                  setRiskLevel(next);
+                  if (currentSession) {
+                    void chat.persistSession({ ...currentSession, sessionMode, riskLevel: next });
+                  }
+                }} className="rounded border border-[var(--border)] bg-[var(--bg)] px-2 py-1 text-[11px]"><option value="low">低 · 仅可逆操作</option><option value="medium">中 · 需审批</option><option value="high">高 · 人工审核与回滚</option></select></label>
                 <Button size="sm" variant="secondary" className="w-full justify-center" onClick={() => setDebugOpen(true)}><Activity className="h-3.5 w-3.5" />查看调试与链路指标</Button>
               </section>
             )}
@@ -2865,9 +2941,8 @@ export default function Copilot() {
               onClick={() => {
                 setHandoffOpen(false);
                 setHandoffActive(true);
-                setSessionMode('investigate');
                 if (currentSession) {
-                  chat.persistSession({
+                  void chat.persistSession({
                     ...currentSession,
                     sessionMode: 'investigate',
                     handoff: { active: true, ownerName: handoffOwner, at: new Date().toISOString() },
