@@ -3,7 +3,7 @@ import { AlertCircle, ClipboardList, Gavel, History, MessagesSquare, Pause, Play
 import type { ControlledTask, TaskAuditEvent, TaskLifecycleStage } from '@de/web-types';
 import { Badge, Input } from '@de/web-ui';
 import { useApiMutation, useApiQuery } from '@/services/query';
-import { conversationHref, employeeLabel, getPrimaryAction, getStageMeta, nextStepLabel, riskLabel, sourceLabel, dispatchKindLabel, assistStatusLabel } from './task-ui';
+import { conversationHref, employeeLabel, getPrimaryAction, getStageMeta, nextStepLabel, riskLabel, sourceLabel, dispatchKindLabel, assistStatusLabel, normalizeControlledTask } from './task-ui';
 import { roleCanMutate } from '@/features/role-nav/role-nav';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -31,36 +31,45 @@ export function TaskLifecycleDrawer({ task: summary, onPendingChange }: Props) {
   const [confirming, setConfirming] = useState<'approve' | 'reject' | 'takeover' | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [retryAction, setRetryAction] = useState<(() => void) | null>(null);
-  const { data: task = summary, error: taskError, refetch: refetchTask } = useApiQuery<ControlledTask>(['controlled-task', summary.id], `/api/tasks/${summary.id}`, undefined, { refetchInterval: 5_000 });
-  const { data: audit = task.auditEvents, error: auditError, refetch: refetchAudit } = useApiQuery<TaskAuditEvent[]>(['controlled-task-audit', summary.id], `/api/tasks/${summary.id}/audit`, undefined, { refetchInterval: 5_000 });
-  const mutationOptions = { onError: (error: unknown) => setActionError(error instanceof Error ? error.message : '操作失败，请重试。') };
-  const transition = useApiMutation<ControlledTask, { id: string; stage: TaskLifecycleStage; actor: string }>(({ id }) => `/api/tasks/${id}/transition`, mutationOptions);
-  const approve = useApiMutation<ControlledTask, { id: string; actor: string; approved: boolean; reason: string }>(({ id }) => `/api/tasks/${id}/approve`, mutationOptions);
-  const takeover = useApiMutation<ControlledTask, { id: string; actor: string; reason: string }>(({ id }) => `/api/tasks/${id}/takeover`, mutationOptions);
-  const retry = useApiMutation<ControlledTask, { id: string; actor: string; reason: string }>(({ id }) => `/api/tasks/${id}/retry`, mutationOptions);
+  const { data: remoteTask, error: taskError, refetch: refetchTask } = useApiQuery<ControlledTask>(['controlled-task', summary.id], `/api/tasks/${summary.id}`, undefined, { refetchInterval: 5_000 });
+  const task = useMemo(() => normalizeControlledTask(remoteTask ?? summary), [remoteTask, summary]);
+  const { data: auditRaw, error: auditError, refetch: refetchAudit } = useApiQuery<TaskAuditEvent[]>(['controlled-task-audit', summary.id], `/api/tasks/${summary.id}/audit`, undefined, { refetchInterval: 5_000 });
+  const audit = auditRaw ?? task.auditEvents ?? [];
+  const mutationOptions = {
+    onError: (error: unknown) => {
+      const msg = error instanceof Error ? error.message : '操作失败，请重试。';
+      setActionError(msg.includes('版本冲突') || msg.includes('E_TASK_VERSION') ? '任务已被他人更新，请刷新后重试。' : msg);
+      void refetchTask();
+    },
+  };
+  const transition = useApiMutation<ControlledTask, { id: string; stage: TaskLifecycleStage; actor: string; version?: number }>(({ id }) => `/api/tasks/${id}/transition`, mutationOptions);
+  const approve = useApiMutation<ControlledTask, { id: string; actor: string; approved: boolean; reason: string; version?: number }>(({ id }) => `/api/tasks/${id}/approve`, mutationOptions);
+  const takeover = useApiMutation<ControlledTask, { id: string; actor: string; reason: string; version?: number }>(({ id }) => `/api/tasks/${id}/takeover`, mutationOptions);
+  const retry = useApiMutation<ControlledTask, { id: string; actor: string; reason: string; version?: number }>(({ id }) => `/api/tasks/${id}/retry`, mutationOptions);
   const pending = transition.isPending || approve.isPending || takeover.isPending || retry.isPending;
 
   useEffect(() => onPendingChange(pending), [onPendingChange, pending]);
   useEffect(() => () => onPendingChange(false), [onPendingChange]);
 
   const primary = getPrimaryAction(task.lifecycleStage, task.sla.risk);
+  const withVersion = <T extends Record<string, unknown>>(payload: T) => ({ ...payload, version: task.version });
   const requestRetry = (reason: string) => {
-    const request = () => retry.mutate({ id: task.id, actor, reason });
+    const request = () => retry.mutate(withVersion({ id: task.id, actor, reason }));
     setRetryAction(() => request);
     request();
   };
   const requestTransition = (stage: TaskLifecycleStage) => {
-    const request = () => transition.mutate({ id: task.id, stage, actor });
+    const request = () => transition.mutate(withVersion({ id: task.id, stage, actor }));
     setRetryAction(() => request);
     request();
   };
   const requestApproval = (approved: boolean, actionReason: string) => {
-    const request = () => approve.mutate({ id: task.id, actor, approved, reason: actionReason });
+    const request = () => approve.mutate(withVersion({ id: task.id, actor, approved, reason: actionReason }));
     setRetryAction(() => request);
     request();
   };
   const requestTakeover = (actionReason: string) => {
-    const request = () => takeover.mutate({ id: task.id, actor, reason: actionReason });
+    const request = () => takeover.mutate(withVersion({ id: task.id, actor, reason: actionReason }));
     setRetryAction(() => request);
     request();
   };
@@ -155,10 +164,10 @@ function Overview({ task }: { task: ControlledTask }) {
       ['协办状态', assistStatusLabel(task.assistStatus)] as [string, string],
     ] : []),
     ...(task.collaboratorNames?.length ? [['协办专家', task.collaboratorNames.join('、')] as [string, string]] : []),
-    ['关联会话', task.links.conversationId ?? '无'],
-    ['进度', `${task.progress.done}/${task.progress.total}`],
-    ['SLA', task.sla.remainingMin === undefined ? '未设 SLA' : task.sla.remainingMin < 0 ? `已超时 ${Math.abs(task.sla.remainingMin)} 分钟` : `剩余 ${task.sla.remainingMin} 分钟`],
-    ['风险', riskLabel(task.sla.risk)],
+    ['关联会话', task.links?.conversationId ?? '无'],
+    ['进度', `${task.progress?.done ?? 0}/${task.progress?.total ?? 1}`],
+    ['SLA', task.sla?.remainingMin === undefined ? '未设 SLA' : task.sla.remainingMin < 0 ? `已超时 ${Math.abs(task.sla.remainingMin)} 分钟` : `剩余 ${task.sla.remainingMin} 分钟`],
+    ['风险', riskLabel(task.sla?.risk ?? 'none')],
   ];
   return <section className="task-drawer-section">
     <div className="task-drawer-summary"><p>{task.description ?? '未提供任务描述。'}</p></div>
@@ -170,31 +179,31 @@ function Execution({ task }: { task: ControlledTask }) {
   return <section className="task-drawer-section">
     <h3><ClipboardList size={15} />执行状态</h3>
     <PropList rows={[
-      ['运行 ID', task.execution.runId ?? '尚未启动'],
+      ['运行 ID', task.execution?.runId ?? '尚未启动'],
       ['当前步骤', nextStepLabel(task)],
-      ['重试次数', String(task.execution.retryCount)],
-      ['状态', task.execution.paused ? '已暂停' : '执行可继续'],
+      ['重试次数', String(task.execution?.retryCount ?? 0)],
+      ['状态', task.execution?.paused ? '已暂停' : '执行可继续'],
     ]} />
-    {task.execution.error && <div className="task-execution-error"><AlertCircle size={16} /><span><strong>执行错误</strong>{task.execution.error}</span></div>}
+    {task.execution?.error && <div className="task-execution-error"><AlertCircle size={16} /><span><strong>执行错误</strong>{task.execution.error}</span></div>}
   </section>;
 }
 
 function Governance({ task, pending, canManage, canMutate, onApprove, onReject, onTakeover, onRetry }: { task: ControlledTask; pending: boolean; canManage: boolean; canMutate: boolean; onApprove: () => void; onReject: () => void; onTakeover: () => void; onRetry: () => void }) {
-  const approval = task.governance.approvalStatus === 'pending' ? '待双重审批' : task.governance.approvalStatus === 'approved' ? '已批准' : task.governance.approvalStatus === 'rejected' ? '已拒绝' : '无需审批';
+  const approval = task.governance?.approvalStatus === 'pending' ? '待双重审批' : task.governance?.approvalStatus === 'approved' ? '已批准' : task.governance?.approvalStatus === 'rejected' ? '已拒绝' : '无需审批';
   return <section className="task-drawer-section">
     <h3><Gavel size={15} />治理控制</h3>
     <p className="task-governance-hint">高风险写操作以会话双重审批为准；此处为任务域放行与专家接管。</p>
     <PropList rows={[
-      ['双重审批', `${approval}${task.governance.approvalRequired ? '（必需）' : ''}`],
-      ['策略', task.governance.policyBlocked ? '策略拦截' : '策略允许'],
-      ['专家接管', task.governance.takeoverBy ? `${task.governance.takeoverBy}：${task.governance.takeoverReason ?? '未说明'}` : '未接管'],
+      ['双重审批', `${approval}${task.governance?.approvalRequired ? '（必需）' : ''}`],
+      ['策略', task.governance?.policyBlocked ? '策略拦截' : '策略允许'],
+      ['专家接管', task.governance?.takeoverBy ? `${task.governance.takeoverBy}：${task.governance.takeoverReason ?? '未说明'}` : '未接管'],
     ]} />
     {!canMutate ? <p className="task-governance-muted">审计角色只读核查治理状态，不执行放行、接管或重试。</p> : canManage ? <>
-      {task.governance.approvalStatus === 'pending' && <div className="task-governance-actions">
+      {task.governance?.approvalStatus === 'pending' && <div className="task-governance-actions">
         <button type="button" className="task-saas-btn task-saas-btn--primary" disabled={pending} onClick={onApprove}><ShieldCheck size={15} />{task.dispatchKind === 'assist' ? '接受协办' : '确认放行'}</button>
         <button type="button" className="task-saas-btn" disabled={pending} onClick={onReject}>{task.dispatchKind === 'assist' ? '拒绝协办' : '拒绝'}</button>
       </div>}
-      {task.sla.risk === 'failed' && <div className="task-governance-actions">
+      {(task.sla?.risk === 'failed' || task.lifecycleStage === 'risk') && <div className="task-governance-actions">
         <button type="button" className="task-saas-btn" disabled={pending} onClick={onTakeover}><UserRound size={15} />专家接管</button>
         <button type="button" className="task-saas-btn task-saas-btn--primary" disabled={pending} onClick={onRetry}><RotateCcw size={15} />重试协同</button>
       </div>}

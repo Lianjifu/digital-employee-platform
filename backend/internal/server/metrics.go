@@ -23,6 +23,28 @@ var modelProbeLatencyMS atomic.Uint64
 var modelVaultErrors atomic.Uint64
 var modelPolicyPublishTotal atomic.Uint64
 var modelBudgetDenies atomic.Uint64
+var taskCreatedTotal atomic.Uint64
+var taskTransitionTotal atomic.Uint64
+var taskApproveTotal atomic.Uint64
+var taskApproveRejectTotal atomic.Uint64
+var taskTakeoverTotal atomic.Uint64
+var taskRetryTotal atomic.Uint64
+var taskPersistFailTotal atomic.Uint64
+var taskVersionConflictTotal atomic.Uint64
+
+func IncTaskCreated()            { taskCreatedTotal.Add(1) }
+func IncTaskTransition()         { taskTransitionTotal.Add(1) }
+func IncTaskApprove(approved bool) {
+	if approved {
+		taskApproveTotal.Add(1)
+	} else {
+		taskApproveRejectTotal.Add(1)
+	}
+}
+func IncTaskTakeover()           { taskTakeoverTotal.Add(1) }
+func IncTaskRetry()              { taskRetryTotal.Add(1) }
+func IncTaskPersistFail()        { taskPersistFailTotal.Add(1) }
+func IncTaskVersionConflict()    { taskVersionConflictTotal.Add(1) }
 
 // IncModelProbe records a provider connectivity probe.
 func IncModelProbe(ok bool, latencyMS int64) {
@@ -49,6 +71,26 @@ func IncCopilotStream(ok bool) {
 
 func IncCopilotRateLimited()  { copilotRateLimited.Add(1) }
 func IncCopilotSafetyBlocked() { copilotSafetyBlocked.Add(1) }
+
+// countPendingAuthorizationsLocked returns Actions still awaiting human approval.
+// Caller must hold Store.RLock or Lock.
+func (s *Server) countPendingAuthorizationsLocked() int {
+	n := 0
+	for _, a := range s.Store.Actions {
+		if a == nil {
+			continue
+		}
+		st := str(a["status"])
+		if st == "pending" {
+			n++
+			continue
+		}
+		if ar, _ := a["authorizationRequest"].(map[string]any); ar != nil && str(ar["status"]) == "pending" {
+			n++
+		}
+	}
+	return n
+}
 
 // IncAuditWriteFailure increments durable audit fanout failures.
 func IncAuditWriteFailure() { auditWriteFailures.Add(1) }
@@ -91,6 +133,7 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	usage := len(s.Store.UsageMeters)
 	dlq := len(s.Store.ChannelDLQ)
 	tasks := len(s.Store.Tasks)
+	pendingAuth := s.countPendingAuthorizationsLocked()
 	s.Store.RUnlock()
 
 	var ms runtime.MemStats
@@ -130,6 +173,7 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_stream_errors_total Copilot SSE turns that ended in error\n# TYPE de_copilot_stream_errors_total counter\nde_copilot_stream_errors_total{service=%q} %d\n", svc, copilotStreamErrors.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_rate_limited_total Copilot rate limit hits\n# TYPE de_copilot_rate_limited_total counter\nde_copilot_rate_limited_total{service=%q} %d\n", svc, copilotRateLimited.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_safety_blocked_total Copilot content-safety blocks\n# TYPE de_copilot_safety_blocked_total counter\nde_copilot_safety_blocked_total{service=%q} %d\n", svc, copilotSafetyBlocked.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_copilot_authorizations_pending Copilot single-approver requests awaiting decision\n# TYPE de_copilot_authorizations_pending gauge\nde_copilot_authorizations_pending{service=%q} %d\n", svc, pendingAuth)
 	_, _ = fmt.Fprintf(w, "# HELP de_audit_write_failures_total durable audit fanout failures\n# TYPE de_audit_write_failures_total counter\nde_audit_write_failures_total{service=%q} %d\n", svc, auditWriteFailures.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_policy_denies_total policy deny on write paths\n# TYPE de_policy_denies_total counter\nde_policy_denies_total{service=%q} %d\n", svc, policyDeniesTotal.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_model_provider_probe_total model provider probes\n# TYPE de_model_provider_probe_total counter\nde_model_provider_probe_total{service=%q} %d\n", svc, modelProbeTotal.Load())
@@ -138,4 +182,12 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP de_model_vault_errors_total vault errors on model credential paths\n# TYPE de_model_vault_errors_total counter\nde_model_vault_errors_total{service=%q} %d\n", svc, modelVaultErrors.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_model_policy_publish_total routing policy publishes\n# TYPE de_model_policy_publish_total counter\nde_model_policy_publish_total{service=%q} %d\n", svc, modelPolicyPublishTotal.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_model_budget_denies_total model budget hard denies\n# TYPE de_model_budget_denies_total counter\nde_model_budget_denies_total{service=%q} %d\n", svc, modelBudgetDenies.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_task_created_total tasks created\n# TYPE de_task_created_total counter\nde_task_created_total{service=%q} %d\n", svc, taskCreatedTotal.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_task_transition_total task lifecycle transitions\n# TYPE de_task_transition_total counter\nde_task_transition_total{service=%q} %d\n", svc, taskTransitionTotal.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_task_approve_total task approvals\n# TYPE de_task_approve_total counter\nde_task_approve_total{service=%q} %d\n", svc, taskApproveTotal.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_task_approve_reject_total task approval rejects\n# TYPE de_task_approve_reject_total counter\nde_task_approve_reject_total{service=%q} %d\n", svc, taskApproveRejectTotal.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_task_takeover_total task takeovers\n# TYPE de_task_takeover_total counter\nde_task_takeover_total{service=%q} %d\n", svc, taskTakeoverTotal.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_task_retry_total task retries\n# TYPE de_task_retry_total counter\nde_task_retry_total{service=%q} %d\n", svc, taskRetryTotal.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_task_version_conflict_total optimistic lock conflicts\n# TYPE de_task_version_conflict_total counter\nde_task_version_conflict_total{service=%q} %d\n", svc, taskVersionConflictTotal.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_task_persist_fail_total task persist failures\n# TYPE de_task_persist_fail_total counter\nde_task_persist_fail_total{service=%q} %d\n", svc, taskPersistFailTotal.Load())
 }

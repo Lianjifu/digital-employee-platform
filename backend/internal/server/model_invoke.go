@@ -299,13 +299,24 @@ func (s *Server) streamResolvedChat(ctx context.Context, rt resolvedTurn, messag
 // streamLocalCandidates tries provider candidates, then DE_LLM_*, then embedded chat.
 func (s *Server) streamLocalCandidates(ctx context.Context, ws, modelID string, messages []modelprov.ChatMessage, system string, onDelta func(text, resolvedModelID string) error) (string, resolvedTurn, error) {
 	var lastErr error
-	for _, rt := range s.listResolvedTurns(ctx, ws, modelID) {
+	candidates := s.listResolvedTurns(ctx, ws, modelID)
+	for i, rt := range candidates {
 		if system != "" {
 			rt.Request.System = system
 		}
-		// Cap multi-candidate: fail fast per endpoint so dead Azure does not block embedded fallback.
-		attemptCtx, cancel := context.WithTimeout(ctx, candidateAttemptTimeout())
-		rt.Request.Timeout = candidateAttemptTimeout()
+		// Cap multi-candidate: per-endpoint budget so dead providers fail over;
+		// primary (i==0) uses full candidate timeout, standbys may use a shorter budget.
+		budget := candidateAttemptTimeout()
+		if i > 0 {
+			budget = candidateStandbyTimeout()
+		}
+		budget = clampAttemptToParent(ctx, budget)
+		if budget < 2*time.Second {
+			lastErr = fmt.Errorf("context deadline exceeded")
+			break
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, budget)
+		rt.Request.Timeout = budget
 		text, streamErr := s.streamResolvedChat(attemptCtx, rt, messages, func(t string) error {
 			return onDelta(t, rt.ModelID)
 		})
@@ -319,13 +330,104 @@ func (s *Server) streamLocalCandidates(ctx context.Context, ws, modelID string, 
 }
 
 func candidateAttemptTimeout() time.Duration {
-	sec := 8
+	// Default 45s: DeepSeek / Azure cold path often exceeds the old 8s fail-fast budget
+	// during tool-heavy Copilot turns (pptx skill, multi-step ReAct).
+	sec := 45
 	if v := strings.TrimSpace(os.Getenv("DE_MODEL_CANDIDATE_TIMEOUT")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			sec = n
 		}
 	}
+	if sec < 5 {
+		sec = 5
+	}
+	if sec > 180 {
+		sec = 180
+	}
 	return time.Duration(sec) * time.Second
+}
+
+func candidateStandbyTimeout() time.Duration {
+	sec := 20
+	if v := strings.TrimSpace(os.Getenv("DE_MODEL_STANDBY_TIMEOUT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			sec = n
+		}
+	}
+	primary := candidateAttemptTimeout()
+	d := time.Duration(sec) * time.Second
+	if d > primary {
+		return primary
+	}
+	if d < 5*time.Second {
+		return 5 * time.Second
+	}
+	return d
+}
+
+func clampAttemptToParent(ctx context.Context, budget time.Duration) time.Duration {
+	if dl, ok := ctx.Deadline(); ok {
+		remain := time.Until(dl)
+		if remain <= 0 {
+			return 0
+		}
+		// Leave a small cushion for fallback / SSE flush.
+		remain -= 500 * time.Millisecond
+		if remain < budget {
+			return remain
+		}
+	}
+	return budget
+}
+
+// copilotStreamTimeout is the overall Copilot harness SSE budget (multi-step ReAct + tools).
+func copilotStreamTimeout() time.Duration {
+	sec := 300
+	if v := strings.TrimSpace(os.Getenv("DE_COPILOT_STREAM_TIMEOUT")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			sec = n
+		}
+	}
+	if sec < 60 {
+		sec = 60
+	}
+	if sec > 900 {
+		sec = 900
+	}
+	return time.Duration(sec) * time.Second
+}
+
+// formatModelInvokeUserMessage turns provider/transport errors into actionable Chinese copy.
+// Avoids the misleading "无可用模型：context deadline exceeded" for timeout cases.
+func formatModelInvokeUserMessage(err error) string {
+	if err == nil {
+		return "模型调用失败"
+	}
+	msg := strings.TrimSpace(err.Error())
+	if msg == "" {
+		return "模型调用失败"
+	}
+	if strings.HasPrefix(msg, "模型调用超时") || strings.HasPrefix(msg, "模型调用失败") || strings.HasPrefix(msg, "无可用模型端点") {
+		return msg
+	}
+	low := strings.ToLower(msg)
+	switch {
+	case strings.Contains(low, "deadline exceeded"),
+		strings.Contains(low, "context canceled"),
+		strings.Contains(low, "client.timeout exceeded"),
+		strings.Contains(low, "i/o timeout"),
+		(strings.Contains(low, "timeout") && !strings.Contains(low, "timed out waiting for lock")):
+		return "模型调用超时：供应商在限定时间内未返回。请到「模型中心」探测连通性与密钥，或将 DE_MODEL_CANDIDATE_TIMEOUT 调至 45–60 后重启 de-cap/de-collab。"
+	case strings.Contains(low, "no model endpoint"),
+		strings.Contains(low, "empty model"),
+		strings.Contains(low, "model not found"),
+		strings.Contains(msg, "未配置"):
+		return "无可用模型端点：" + msg
+	case strings.Contains(low, "401"), strings.Contains(low, "unauthorized"), strings.Contains(low, "invalid api key"):
+		return "模型鉴权失败：" + msg + "。请检查模型中心凭证。"
+	default:
+		return "模型调用失败：" + msg
+	}
 }
 
 func (s *Server) streamLLMForCopilot(ctx context.Context, r *http.Request, ws, modelID string, messages []modelprov.ChatMessage, system string, onDelta func(text, resolvedModelID string) error) (reply string, resolved resolvedTurn, err error) {
@@ -385,7 +487,7 @@ func (s *Server) streamEnvFallback(ctx context.Context, messages []modelprov.Cha
 	if prior == nil {
 		prior = fmt.Errorf("no model endpoint available")
 	}
-	return "", resolvedTurn{}, prior
+	return "", resolvedTurn{}, fmt.Errorf("%s", formatModelInvokeUserMessage(prior))
 }
 
 func isCapUnreachable(err error) bool {
@@ -538,7 +640,7 @@ func (s *Server) modelInvokeStream(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 150*time.Second)
 	defer cancel()
 
 	var full strings.Builder
@@ -553,7 +655,7 @@ func (s *Server) modelInvokeStream(w http.ResponseWriter, r *http.Request) {
 		return nil
 	})
 	if streamErr != nil {
-		emit("error", map[string]any{"message": "无可用模型：" + streamErr.Error(), "partial": full.String()})
+		emit("error", map[string]any{"message": formatModelInvokeUserMessage(streamErr), "partial": full.String()})
 		return
 	}
 	emit("meta", map[string]any{
@@ -579,11 +681,11 @@ func (s *Server) modelInvoke(r *http.Request) (any, error) {
 		messages = []modelprov.ChatMessage{{Role: "user", Content: content}}
 	}
 	system := strings.TrimSpace(str(body["system"]))
-	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 150*time.Second)
 	defer cancel()
 	text, rt, err := s.streamLocalCandidates(ctx, ws, modelID, messages, system, func(string, string) error { return nil })
 	if err != nil {
-		return nil, apperr.BadReq(apperr.ModelUnavailable, "无可用模型："+err.Error())
+		return nil, apperr.BadReq(apperr.ModelUnavailable, formatModelInvokeUserMessage(err))
 	}
 	return map[string]any{
 		"output": text, "modelId": rt.ModelID, "modelName": rt.ModelName,

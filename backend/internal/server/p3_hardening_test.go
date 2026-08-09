@@ -70,6 +70,7 @@ func TestMetricsExposeCopilotAndAuditCounters(t *testing.T) {
 	for _, needle := range []string{
 		"de_copilot_stream_total",
 		"de_copilot_stream_errors_total",
+		"de_copilot_authorizations_pending",
 		"de_audit_write_failures_total",
 		"de_policy_denies_total",
 	} {

@@ -4,7 +4,7 @@
  *  1. 消息状态机（queued / streaming / succeeded / failed / cancelled / expired / moderated）
  *  2. 多会话管理（增/删/置顶/星标/归档/分享/TTL）
  *  3. 流式响应（chunk 级 + AbortController + 超时）
- *  4. 双重审批（operator + auditor 角色 + 时间戳 + hash）
+ *  4. 单人人工审核授权（发起人不可自批；白名单执行闸）
  *  5. Reasoning steps 折叠（plan / search / analyze / tool_call / reflect / finalize）
  *  6. RAG 引用（chunkId / rerankScore / evalLabel + Drawer）
  *  7. Tool call（permission / sandboxId / traceId + 失败重试）
@@ -40,7 +40,7 @@ import {
   BriefcaseBusiness,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
-import { DualSignModal } from '@/components/DualSignModal';
+import { AuthorizationModal } from '@/components/AuthorizationModal';
 import { DigitalEmployeeAvatar } from '@/components/DigitalEmployeeAvatar';
 import { compareDigitalEmployees, employeePrimaryLabel, employeeSecondaryLabel, isDepartmentHead } from '@/lib/digital-employees';
 import { Modal } from '@/components/shared';
@@ -989,6 +989,9 @@ export default function Copilot() {
               title: action.title,
               priority: 'P2',
               digitalEmployeeId: sess.digitalEmployeeId,
+              conversationId,
+              links: { conversationId },
+              source: 'conversation',
             },
           );
           chat.setDraft('');
@@ -1952,6 +1955,14 @@ export default function Copilot() {
                       expandedApproval={expandedApproval}
                       setExpandedApproval={setExpandedApproval}
                       onApprove={(mid) => setShowApproval({ messageId: mid, signerIndex: 0 })}
+                      onContinueRun={async (mid) => {
+                        try {
+                          await chat.continueSkillTurn(mid);
+                          toast.success('已继续执行 run');
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : '续跑失败');
+                        }
+                      }}
                       onCitation={(citation) => openCitation(citation, m.id)}
                       onRetry={(name) => chat.regenerate(m.id, { modelId: sendModelId, enabledTools: enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools) })}
                       onCopy={copyMessage}
@@ -3006,7 +3017,7 @@ export default function Copilot() {
         </div>
       </Modal>
 
-      <DualSignModal
+      <AuthorizationModal
         open={!!showApproval}
         title={showApproval && currentSession ? (() => {
           const request = currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest;
@@ -3019,26 +3030,45 @@ export default function Copilot() {
             return [
               request.resource ? `资源：${request.resource}` : null,
               request.reason ? `原因：${request.reason}` : null,
-              '需一名授权人批准；发起人不可自批。',
+              '由登录用户人工审核确认智能体发起的写操作。',
             ].filter(Boolean).join(' · ');
           })()
           : undefined}
+        planSummary={showApproval && currentSession
+          ? currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest?.planSummary
+            ?? currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest?.skillTurn?.summary
+          : undefined}
+        skillTurn={showApproval && currentSession
+          ? currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest?.skillTurn
+          : undefined}
         currentIdentity={currentUser ? { id: currentUser.id, name: currentUser.name, role: currentUser.role } : null}
-        targetSigner={showApproval && currentSession ? currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest?.signers[showApproval.signerIndex] : undefined}
         canApprove={!!(showApproval && currentUser && currentSession && (() => {
           const msg = currentSession.messages.find((message) => message.id === showApproval.messageId);
           const request = msg?.approvalRequest;
           if (!request || request.decision === 'approved' || request.decision === 'rejected') return false;
           const single = (request.required ?? 2) <= 1;
           if (single) {
-            return currentUser.role === 'admin';
+            if (currentUser.role === 'admin') return true;
+            const candidates = request.approverCandidateIds ?? [];
+            if (candidates.includes(currentUser.id)) return true;
+            const hint = request.approverRoleHint;
+            if (hint && currentUser.name.includes(hint)) return true;
+            const signer = request.signers?.[0];
+            if (signer?.userId && signer.userId === currentUser.id) return true;
+            return false;
           }
           const signer = request.signers[showApproval.signerIndex];
           const expectedRoles: Record<Signer['role'], string> = { operator: 'user', auditor: 'auditor', approver: 'admin' };
           return Boolean(signer && !signer.signed && signer.userId === currentUser.id && expectedRoles[signer.role] === currentUser.role);
         })())}
         eligibilityMessage={showApproval && currentSession ? (() => {
-          const signer = currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest?.signers[showApproval.signerIndex];
+          const request = currentSession.messages.find((message) => message.id === showApproval.messageId)?.approvalRequest;
+          if ((request?.required ?? 2) <= 1) {
+            const names = request?.approverCandidateNames?.filter(Boolean) ?? [];
+            if (names.length) return `仅授权候选人（${names.join('、')}）或管理员可审核。`;
+            return '仅管理员或 escalationOwner 对应用户可审核授权。';
+          }
+          const signer = request?.signers[showApproval.signerIndex];
           return signer ? `仅待签人 ${signer.name}（${signer.role === 'auditor' ? '审计复核' : signer.role === 'operator' ? '执行复核' : '变更审批'}）可签发。` : '当前审批席位不可用，请刷新后重试。';
         })() : '当前审批席位不可用，请刷新后重试。'}
         onClose={() => setShowApproval(null)}
@@ -3320,7 +3350,7 @@ function SkillArtifactDownloadCard({
 function MessageBubble({
   m, expandedThinking, setExpandedThinking, expandedArgs, setExpandedArgs,
   expandedReasoning, setExpandedReasoning, expandedApproval, setExpandedApproval,
-  onApprove, onCitation, onRetry, onCopy, onRegenerate, onDelete, onRetryMessage, onFeedback,
+  onApprove, onContinueRun, onCitation, onRetry, onCopy, onRegenerate, onDelete, onRetryMessage, onFeedback,
   onApproveSigner, onRequestReject, onEdit,
   hoverMsgId, setHoverMsgId, copiedId, agentName, expertRole, expert, onOpenContext, selectedContextMessageId, messageRef, currentUser,
 }: {
@@ -3334,6 +3364,7 @@ function MessageBubble({
   expandedApproval: Record<string, boolean>;
   setExpandedApproval: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   onApprove: (msgId: string) => void;
+  onContinueRun?: (msgId: string) => void | Promise<void>;
   onCitation: (c: any, messageId?: string) => void;
   onRetry: (name: string) => void;
   onCopy: (m: ChatMessageEx) => void;
@@ -3381,9 +3412,12 @@ function MessageBubble({
     }
     return signer.userId === currentUser.id && expectedPlatformRole[signer.role] === currentUser.role;
   };
-  const canSingleApprove = isSingleAuth && !!currentUser && currentUser.role === 'admin'
-    && m.approvalRequest?.decision === 'pending';
-
+  const canSingleApprove = isSingleAuth && !!currentUser && m.approvalRequest?.decision === 'pending' && (
+    currentUser.role === 'admin'
+    || (m.approvalRequest.approverCandidateIds ?? []).includes(currentUser.id)
+    || (!!m.approvalRequest.approverRoleHint && currentUser.name.includes(m.approvalRequest.approverRoleHint))
+    || (!!m.approvalRequest.signers?.[0]?.userId && m.approvalRequest.signers[0].userId === currentUser.id)
+  );
   return (
     <div
       ref={messageRef}
@@ -3686,7 +3720,7 @@ function MessageBubble({
         {m.approvalRequest && (
           <div className="copilot-message__approval rounded-md border border-[var(--danger)]/30 bg-[var(--danger-bg)] p-3 max-w-md">
             <div className="flex items-center gap-1.5 text-xs font-semibold text-[var(--danger)] mb-1 flex-wrap">
-              <ShieldCheck className="h-3.5 w-3.5" />{isSingleAuth ? '受控变更 · 人工审核' : '受控变更 · 双重审批'}
+              <ShieldCheck className="h-3.5 w-3.5" />{isSingleAuth ? '受控变更 · 人工审核' : '受控变更 · 待审核'}
               {m.approvalRequest.reason && <Badge tone="warn" className="text-[9px] ml-1">{m.approvalRequest.reason}</Badge>}
               {m.approvalRequest.ticketId && <span className="text-[10px] font-mono text-[var(--text-muted)]">· {m.approvalRequest.ticketId}</span>}
               <span className="ml-auto text-[10px] font-mono text-[var(--text-muted)]">
@@ -3694,6 +3728,22 @@ function MessageBubble({
               </span>
             </div>
             <div className="text-[11px] text-[var(--text)] mb-2 font-mono break-all">{m.approvalRequest.action}</div>
+            {(m.approvalRequest.planSummary || m.approvalRequest.skillTurn?.summary) && (
+              <div className="mb-2 rounded border border-[var(--border)] bg-[var(--bg)]/60 px-2 py-1.5 text-[10px] text-[var(--text-secondary)]">
+                <span className="text-[var(--text-muted)]">Skill Turn：</span>
+                {m.approvalRequest.planSummary ?? m.approvalRequest.skillTurn?.summary}
+                {m.approvalRequest.skillTurn?.steps && m.approvalRequest.skillTurn.steps.length > 0 && (
+                  <ol className="mt-1 list-inside list-decimal space-y-0.5">
+                    {m.approvalRequest.skillTurn.steps.map((step, i) => (
+                      <li key={step.id ?? i}>
+                        {step.title ?? step.action ?? `步骤 ${i + 1}`}
+                        {step.status ? ` · ${step.status}` : ''}
+                      </li>
+                    ))}
+                  </ol>
+                )}
+              </div>
+            )}
             {m.approvalRequest.resource && (
               <div className="text-[10px] text-[var(--text-muted)] mb-2">资源：<span className="font-mono">{m.approvalRequest.resource}</span></div>
             )}
@@ -3771,10 +3821,22 @@ function MessageBubble({
               </div>
             )}
             {m.approvalRequest.decision === 'approved' && (
-              <Badge tone="success" className="text-[10px]">
-                <CheckCircle2 className="mr-1 inline h-3 w-3" />{isSingleAuth ? '已人工授权' : '已通过双重审批'}
-                {m.approvalRequest.decidedAt && <span className="ml-1 font-mono">{m.approvalRequest.decidedAt.slice(11, 19)}</span>}
-              </Badge>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge tone="success" className="text-[10px]">
+                  <CheckCircle2 className="mr-1 inline h-3 w-3" />{isSingleAuth ? '已人工授权' : '已审核通过'}
+                  {m.approvalRequest.decidedAt && <span className="ml-1 font-mono">{m.approvalRequest.decidedAt.slice(11, 19)}</span>}
+                </Badge>
+                {(m.canContinueRun || m.nextRunCommand) && onContinueRun && (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    title={m.nextRunCommand ? `继续执行 ${m.nextRunCommand}` : '继续执行 run'}
+                    onClick={() => void onContinueRun(m.id)}
+                  >
+                    继续执行 run
+                  </Button>
+                )}
+              </div>
             )}
             {m.approvalRequest.decision === 'rejected' && (
               <Badge tone="error" className="text-[10px]">

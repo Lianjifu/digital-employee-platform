@@ -56,7 +56,30 @@
 | `POST /api/skills/catalog/sync` Registry 同步 + 签名/漏洞门禁 | OK |
 | `POST /api/skills/execute` 无假成功 fallback | OK |
 
-## 仍属后续
+## 任务中心（ControlledTask）字段级 — P0–P3 已对齐
+
+| FE / Mock | 状态 |
+|-----------|------|
+| `GET/POST /api/tasks` | OK（create 接受派工字段；list 工作区+user 可见范围） |
+| `GET /api/tasks/:id` | OK（ensureTaskShape 补齐 links/auditEvents/version） |
+| `GET /api/tasks/:id/audit` | OK（返回任务内 auditEvents，非占位） |
+| `POST …/transition` | OK（lifecycle FSM + 审批/风险门禁） |
+| `POST …/approve` | OK（`approved` bool；协办 accept/reject） |
+| `POST …/takeover` / `retry` | OK（takeoverBy；仅 risk 可 retry） |
+| `POST /api/conversations/:id/tasks` | OK（写入 `links.conversationId` + Persist） |
+| `PATCH /api/tasks/:id` | OK（title/assignee/priority/tags + version） |
+| Persist(`tasks`) | OK（全部写路径） |
+| list `?stage&risk&assignee&q&priority&agent&approval&source&blocked&archived&limit&offset&paged` | OK |
+| version 乐观锁 | OK（body.version 可选校验 → 409 E_TASK_VERSION） |
+| 观测 `de_task_*` | OK（created/transition/approve/reject/takeover/retry/version_conflict） |
+
+仍属后续（非阻塞内测）：
+- 服务端强制分页默认（当前无 limit 仍返回全量数组以兼容 Home）
+- FE 双请求（facets + filtered list）可合并为一次聚合响应
+
+---
+
+## 仍属后续（其他域）
 
 - Agents 遗留运行时写路径（import/live calls/evaluations）——会话/任务记忆写入已接线 (`IngestRuntimeMemory`)
 - Digital employee 配置边界的完整 Mock 校验规则

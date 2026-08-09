@@ -62,10 +62,9 @@ func (s *Server) approveActionLegacyWithBody(r *http.Request, body map[string]an
 	if ar == nil {
 		// 兼容历史水合消息：无审批席位时注入默认双签策略（执行复核已签、变更审批待签）
 		ar = map[string]any{
-			"action": "controlled.execute", "resource": cid, "reason": "受控执行双重审批",
-			"required": 2, "signed": 1, "decision": "pending",
+			"action": "controlled.execute", "resource": cid, "reason": "受控执行人工审核",
+			"required": 1, "signed": 0, "decision": "pending",
 			"signers": []map[string]any{
-				{"userId": "u2", "name": "王昊", "role": "operator", "signed": true, "signedAt": time.Now().UTC().Format(time.RFC3339), "signatureHash": "sig_seed_op"},
 				{"userId": "u1", "name": "平台管理员", "role": "approver", "signed": false},
 			},
 		}
@@ -149,9 +148,9 @@ func (s *Server) approveActionLegacyWithBody(r *http.Request, body map[string]an
 	action["status"] = status
 	action["updatedAt"] = signedAt
 	s.Store.Actions[actionID] = action
-	auditLabel := "双重审批签发"
+	auditLabel := "人工审核签发"
 	if completed {
-		auditLabel = "双重审批通过"
+		auditLabel = "人工审核通过"
 	}
 	s.Store.AppendAudit(ws, id.Name, auditLabel, actionID, "success", "")
 	s.Store.Unlock()
@@ -187,10 +186,13 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 		s.Store.Unlock()
 		return nil, apperr.NotFoundErr(apperr.NotFound, "行动不存在")
 	}
+	continueRun := boolFrom(body["continueRun"])
 	st := str(action["status"])
 	if st != "approved" {
-		s.Store.Unlock()
-		return nil, apperr.BadReq(apperr.BadRequest, "行动尚未完成人工审核授权")
+		if !(continueRun && (st == "executed" || st == "approved") && (str(action["nextRunCommand"]) != "" || skillTurnHasPending(mapFrom(action["authorizationRequest"], "skillTurn")))) {
+			s.Store.Unlock()
+			return nil, apperr.BadReq(apperr.BadRequest, "行动尚未完成人工审核授权")
+		}
 	}
 	authReq, _ := action["authorizationRequest"].(map[string]any)
 	if authReq == nil {
@@ -205,6 +207,8 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 				t["status"] = "completed"
 				t["lifecycleStage"] = "completed"
 				t["updatedAt"] = now
+				ensureTaskShape(t)
+				appendTaskAuditLocked(t, id.Name, "受控执行完成", "关联动作已执行", "success")
 				s.Store.Tasks[i] = t
 				task = t
 				break
@@ -272,6 +276,19 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 	if args == nil {
 		args = map[string]any{}
 	}
+	plan, _ := authReq["skillTurn"].(map[string]any)
+	if plan == nil && toolKind == "skill" {
+		plan = buildSkillTurnPlan(&registeredTool{Name: toolName, Kind: toolKind, Key: str(authReq["toolKey"])}, toolCallRequest{Name: toolName, Args: args})
+		if plan != nil {
+			authReq["skillTurn"] = plan
+		}
+	}
+	if continueRun {
+		if cmd := coalesce(str(body["command"]), str(action["nextRunCommand"])); cmd != "" {
+			ensureSkillTurnHasRunStep(plan, cmd)
+			authReq["skillTurn"] = plan
+		}
+	}
 
 	if isBlockedEnterpriseWrite(toolName) || (!isAllowlistedExecutableTool(toolName, toolKind) && toolKind != "skill") {
 		action["status"] = "approved"
@@ -283,35 +300,166 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 		s.Store.Persist("actions")
 		return nil, apperr.BadReq(apperr.BadRequest, "该动作执行器未接入或禁止直接执行："+toolName)
 	}
+	deID := str(action["digitalEmployeeId"])
+	corr := str(authReq["correlationId"])
+	risk := str(authReq["riskLevel"])
+	toolKey := coalesce(str(authReq["toolKey"]), toolKind+":"+slugToolName(toolName))
 	s.Store.Unlock()
 
-	input := coalesce(str(args["input"]), str(args["content"]))
-	if input == "" {
-		input = toolName
-	}
 	runCtx := toolRunContext{
 		Request: r, WorkspaceID: ws, OwnerID: id.ID, Viewer: id,
-		DigitalEmployee: str(action["digitalEmployeeId"]),
-		ConversationID:  cid, CorrelationID: str(authReq["correlationId"]),
-		UserMessage: input, SessionMode: sessionModeExecute, RiskLevel: str(authReq["riskLevel"]),
+		DigitalEmployee: deID, ConversationID: cid, CorrelationID: corr,
+		UserMessage: coalesce(str(args["input"]), coalesce(str(args["content"]), toolName)),
+		SessionMode: sessionModeExecute, RiskLevel: risk,
 	}
 	tool := &registeredTool{
-		Key: coalesce(str(authReq["toolKey"]), toolKind+":"+slugToolName(toolName)),
-		Name: toolName, Kind: toolKind, Mode: toolModeExecute, Enabled: true,
+		Key: toolKey, Name: toolName, Kind: toolKind, Mode: toolModeExecute, Enabled: true,
 	}
-	res := s.runCopilotTool(runCtx, tool, toolCallRequest{Name: toolName, Args: args})
+
+	var combined strings.Builder
+	var lastRes toolExecResult
+	var nextRun string
+	executedSteps := 0
+
+	runOne := func(stepArgs map[string]any, stepID string) toolExecResult {
+		res := s.runCopilotTool(runCtx, tool, toolCallRequest{Name: toolName, Args: stepArgs})
+		if plan != nil {
+			stStatus := "success"
+			if res.Status != "success" {
+				stStatus = res.Status
+			}
+			markSkillTurnStep(plan, stepID, stStatus, res.Output)
+		}
+		return res
+	}
+
+	if plan != nil && len(skillTurnSteps(plan)) > 0 {
+		for {
+			step := nextPendingSkillTurnStep(plan)
+			if step == nil {
+				break
+			}
+			stepArgs, _ := step["args"].(map[string]any)
+			if stepArgs == nil {
+				stepArgs = args
+			}
+			stepID := coalesce(str(step["id"]), str(step["action"]))
+			lastRes = runOne(stepArgs, stepID)
+			executedSteps++
+			if combined.Len() > 0 {
+				combined.WriteString("\n\n")
+			}
+			combined.WriteString(fmt.Sprintf("—— 步骤 %s ——\n%s", coalesce(str(step["title"]), stepID), lastRes.Output))
+			if lastRes.Status != "success" {
+				break
+			}
+			// P0: write 成功后根据输出补齐/续跑 run
+			if str(step["action"]) == skillActionWrite {
+				if cmd := parseNextRunCommand(lastRes.Output); cmd != "" {
+					ensureSkillTurnHasRunStep(plan, cmd)
+					nextRun = cmd
+				}
+			}
+		}
+		if nextRun == "" {
+			nextRun = str(action["nextRunCommand"])
+			for _, st := range skillTurnSteps(plan) {
+				if str(st["action"]) == skillActionRun && (str(st["status"]) == "pending" || str(st["status"]) == "") {
+					a, _ := st["args"].(map[string]any)
+					nextRun = coalesce(str(a["command"]), nextRun)
+				}
+			}
+		}
+	} else {
+		lastRes = s.runCopilotTool(runCtx, tool, toolCallRequest{Name: toolName, Args: args})
+		executedSteps = 1
+		combined.WriteString(lastRes.Output)
+		if lastRes.Status == "success" {
+			if cmd := parseNextRunCommand(lastRes.Output); cmd != "" {
+				nextRun = cmd
+				// P0 auto-continue single-step write → run
+				runArgs := map[string]any{"action": skillActionRun, "command": cmd}
+				runRes := s.runCopilotTool(runCtx, tool, toolCallRequest{Name: toolName, Args: runArgs})
+				executedSteps++
+				combined.WriteString("\n\n—— 自动续跑 run ——\n")
+				combined.WriteString(runRes.Output)
+				lastRes = runRes
+				if runRes.Status == "success" {
+					nextRun = ""
+				}
+			}
+		}
+	}
 
 	s.Store.Lock()
 	action = s.Store.Actions[actionID]
-	if res.Status != "success" {
+	authReq, _ = action["authorizationRequest"].(map[string]any)
+	if authReq == nil {
+		authReq = map[string]any{}
+	}
+	if plan != nil {
+		authReq["skillTurn"] = plan
+	}
+	output := strings.TrimSpace(combined.String())
+	if output == "" {
+		output = lastRes.Output
+	}
+	if plan != nil {
+		progress := formatSkillTurnProgress(plan)
+		if progress != "" {
+			output = progress + "\n\n" + output
+		}
+	}
+
+	if lastRes.Status != "success" {
+		// 若 write 已成功但 run 失败，保留 nextRun 供 P2「继续执行 run」
+		if nextRun == "" {
+			nextRun = parseNextRunCommand(output)
+		}
 		action["status"] = "approved"
-		action["executeError"] = coalesce(res.Error, res.Status)
+		action["executeError"] = coalesce(lastRes.Error, lastRes.Status)
+		action["executeResult"] = output
+		action["nextRunCommand"] = nextRun
 		action["updatedAt"] = now
+		authReq["status"] = "approved"
+		if plan != nil {
+			authReq["skillTurn"] = plan
+		}
+		action["authorizationRequest"] = authReq
+		if cid != "" {
+			if msg, idx := findMessageLocked(s.Store.Messages[cid], actionID); msg != nil {
+				msg["content"] = coalesce(str(msg["content"]), "") + "\n\n—— 授权后执行结果 ——\n" + output
+				if nextRun != "" {
+					msg["content"] = str(msg["content"]) + "\n\n待续跑：action=run command=" + nextRun + "（可点「继续执行 run」）"
+				}
+				if ar, ok := msg["approvalRequest"].(map[string]any); ok {
+					ar["skillTurn"] = plan
+					if plan != nil {
+						ar["planSummary"] = str(plan["summary"])
+					}
+					msg["approvalRequest"] = ar
+				}
+				s.Store.Messages[cid][idx] = msg
+			}
+		}
 		s.Store.Actions[actionID] = action
-		s.Store.AppendAudit(ws, id.Name, "受控执行失败", actionID, "failed", coalesce(res.Error, res.Output))
+		s.Store.AppendAudit(ws, id.Name, "受控执行失败", actionID, "failed", coalesce(lastRes.Error, lastRes.Output))
 		s.Store.Unlock()
 		s.Store.Persist("actions")
-		return nil, apperr.BadReq(apperr.BadRequest, coalesce(res.Error, "执行失败"))
+		s.Store.Persist("messages")
+		if executedSteps > 0 && nextRun != "" {
+			out := map[string]any{}
+			for k, v := range action {
+				out[k] = v
+			}
+			out["executeResult"] = output
+			out["skillTurn"] = plan
+			out["nextRunCommand"] = nextRun
+			out["canContinueRun"] = true
+			out["partial"] = true
+			return out, nil
+		}
+		return nil, apperr.BadReq(apperr.BadRequest, coalesce(lastRes.Error, "执行失败"))
 	}
 
 	taskID := coalesce(str(body["taskId"]), str(action["taskId"]))
@@ -324,16 +472,29 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 			t["status"] = "completed"
 			t["lifecycleStage"] = "completed"
 			t["updatedAt"] = now
+			ensureTaskShape(t)
+			appendTaskAuditLocked(t, id.Name, "受控执行完成", "关联动作已执行", "success")
 			s.Store.Tasks[i] = t
 			task = t
 			break
 		}
 	}
-	action["status"] = "executed"
+
+	pending := plan != nil && skillTurnHasPending(plan)
+	if pending {
+		action["status"] = "approved"
+		authReq["status"] = "approved"
+		action["nextRunCommand"] = nextRun
+	} else {
+		action["status"] = "executed"
+		authReq["status"] = "executed"
+		action["nextRunCommand"] = ""
+		nextRun = ""
+	}
 	action["taskId"] = taskID
 	action["updatedAt"] = now
-	action["executeResult"] = res.Output
-	authReq["status"] = "executed"
+	action["executeResult"] = output
+	action["executedSteps"] = executedSteps
 	action["authorizationRequest"] = authReq
 	s.Store.Actions[actionID] = action
 
@@ -342,11 +503,23 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 			calls := asMapSlice(msg["toolCalls"])
 			calls = append(calls, map[string]any{
 				"id": s.Store.ID("t"), "name": toolName,
-				"args": args, "result": res.Output,
-				"status": "success", "durationMs": res.DurationMs,
+				"args": args, "result": truncateRunes(output, 1200),
+				"status": "success", "durationMs": lastRes.DurationMs,
 			})
 			msg["toolCalls"] = calls
 			msg["authorizationRequest"] = authReq
+			if ar, ok := msg["approvalRequest"].(map[string]any); ok {
+				ar["skillTurn"] = plan
+				if plan != nil {
+					ar["planSummary"] = str(plan["summary"])
+				}
+				ar["decision"] = "approved"
+				msg["approvalRequest"] = ar
+			}
+			msg["content"] = coalesce(str(msg["content"]), "") + "\n\n—— 授权后执行结果 ——\n" + output
+			if nextRun != "" {
+				msg["content"] = str(msg["content"]) + "\n\n待续跑：action=run command=" + nextRun + "（可点「继续执行 run」）"
+			}
 			s.Store.Messages[cid][idx] = msg
 		}
 	}
@@ -368,8 +541,21 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 	if task != nil {
 		out["task"] = task
 	}
-	out["result"] = res.Output
+	out["result"] = output
+	out["executeResult"] = output
+	out["skillTurn"] = plan
+	out["nextRunCommand"] = nextRun
+	out["canContinueRun"] = nextRun != "" || pending
 	return out, nil
+}
+
+func mapFrom(v any, key string) map[string]any {
+	m, _ := v.(map[string]any)
+	if m == nil {
+		return nil
+	}
+	out, _ := m[key].(map[string]any)
+	return out
 }
 
 func (s *Server) conversationInWorkspaceLocked(ws, cid, raw string) bool {

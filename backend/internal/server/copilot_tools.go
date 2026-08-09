@@ -254,7 +254,7 @@ func toolRegistryPrompt(reg []registeredTool) string {
 		}
 		b.WriteString("\n")
 	}
-	b.WriteString("常见：查制度/文档用 knowledge.retrieve；回忆用户偏好用 memory.recall。\n")
+	b.WriteString("常见：查制度/文档用 knowledge.retrieve；回忆用户偏好用 memory.recall；查资产/CI 用名称含 CMDB 的只读工具。\n")
 	return b.String()
 }
 
@@ -359,6 +359,9 @@ func (s *Server) runCopilotTool(ctx toolRunContext, t *registeredTool, call tool
 		res.Output = strings.TrimSpace(b.String())
 		return res
 
+	case isCMDBTool(t.Name) || isCMDBTool(t.Key):
+		return s.runCMDBLookup(ctx, t, call, started)
+
 	case t.Kind == "skill":
 		return s.runSkillTool(ctx, t, call, started)
 
@@ -373,9 +376,10 @@ func (s *Server) runCopilotTool(ctx toolRunContext, t *registeredTool, call tool
 	case t.Kind == "tool":
 		// Display-name enterprise tools without a concrete executor: honest failure, not fake success.
 		return toolExecResult{
-			Status: "failed", DurationMs: int(time.Since(started).Milliseconds()),
-			Error:  "工具执行器未接入：" + t.Name,
-			Output: "工具「" + t.Name + "」已装配但运行时执行器尚未接入（Phase 1 仅支持 knowledge.retrieve / memory.recall / skill）。",
+			Status: "unavailable", DurationMs: int(time.Since(started).Milliseconds()),
+			Permission: "unavailable",
+			Error:       "工具执行器未接入：" + t.Name,
+			Output:      "工具「" + t.Name + "」已装配但运行时执行器尚未接入（当前支持 knowledge.retrieve / memory.recall / CMDB 只读 / skill）。",
 		}
 
 	default:

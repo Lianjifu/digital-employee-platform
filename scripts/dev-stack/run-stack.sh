@@ -18,7 +18,8 @@ export DE_POLICY_URL='http://127.0.0.1:8100'
 export DE_CAP_URL='http://127.0.0.1:8102'
 unset DE_LLM_BASE_URL DE_LLM_API_KEY DE_LLM_MODEL 2>/dev/null || true
 export DE_EMBEDDED_CHAT=0
-export DE_MODEL_CANDIDATE_TIMEOUT=30
+export DE_MODEL_CANDIDATE_TIMEOUT=45
+export DE_COPILOT_STREAM_TIMEOUT=300
 
 listening() { /usr/sbin/lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 
@@ -49,8 +50,8 @@ start_vite() {
 echo "$(date '+%F %T') keeper boot pid=$$" >>"$LOGDIR/keeper.log"
 while true; do
   start_one 8100 de-sys "$BACKEND/bin/de-sys"
-  start_one 8101 de-collab env DE_POLICY_URL=http://127.0.0.1:8100 DE_CAP_URL=http://127.0.0.1:8102 DE_EMBEDDED_CHAT=0 DE_MODEL_CANDIDATE_TIMEOUT=30 "$BACKEND/bin/de-collab"
-  start_one 8102 de-cap env DE_POLICY_URL=http://127.0.0.1:8100 DE_PUBLIC_BASE_URL=http://127.0.0.1:8089 DE_EMBEDDED_CHAT=0 DE_MODEL_CANDIDATE_TIMEOUT=30 "$BACKEND/bin/de-cap"
+  start_one 8101 de-collab env DE_POLICY_URL=http://127.0.0.1:8100 DE_CAP_URL=http://127.0.0.1:8102 DE_EMBEDDED_CHAT=0 DE_MODEL_CANDIDATE_TIMEOUT=45 DE_COPILOT_STREAM_TIMEOUT=300 "$BACKEND/bin/de-collab"
+  start_one 8102 de-cap env DE_POLICY_URL=http://127.0.0.1:8100 DE_PUBLIC_BASE_URL=http://127.0.0.1:8089 DE_EMBEDDED_CHAT=0 DE_MODEL_CANDIDATE_TIMEOUT=45 DE_COPILOT_STREAM_TIMEOUT=300 "$BACKEND/bin/de-cap"
   start_one 8103 de-workflow env DE_WORKFLOW_WORKER=0 "$BACKEND/bin/de-workflow"
   start_one 8091 de-agent python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8091 --app-dir "$BACKEND/services/de-agent-runtime"
   start_one 8093 de-skill env DE_SKILL_REQUIRE_ISOLATION=0 DE_SKILL_ARTIFACT_DIR=/tmp/de-stack/artifacts DE_BIND_HOST=127.0.0.1 DE_BIND_PORT=8093 python3 "$BACKEND/runtimes/de_skill_runtime/main.py"

@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -214,19 +215,53 @@ func (s *Server) listTasks(r *http.Request) (any, error) {
 	if err := s.requireWorkspaceAccess(id, ws); err != nil {
 		return nil, err
 	}
+	q := r.URL.Query()
+	filters := map[string]string{
+		"stage":    q.Get("stage"),
+		"risk":     q.Get("risk"),
+		"assignee": q.Get("assignee"),
+		"q":        coalesce(q.Get("q"), q.Get("search")),
+		"approval": q.Get("approval"),
+		"source":   q.Get("source"),
+		"priority": q.Get("priority"),
+		"agent":    q.Get("agent"),
+		"archived": q.Get("archived"),
+		"blocked":  q.Get("blocked"),
+	}
+	limit := 0
+	offset := 0
+	if v := q.Get("limit"); v != "" {
+		limit, _ = strconv.Atoi(v)
+	}
+	if v := q.Get("offset"); v != "" {
+		offset, _ = strconv.Atoi(v)
+	}
+	paged := q.Get("paged") == "1" || q.Get("paged") == "true" || limit > 0
+
 	s.Store.RLock()
 	defer s.Store.RUnlock()
-	var out = make([]map[string]any, 0)
+	var scoped = make([]map[string]any, 0)
 	for _, t := range s.Store.Tasks {
 		if str(t["workspaceId"]) != ws {
 			continue
 		}
-		if id.Role == "user" && str(t["ownerId"]) != id.ID && !auth.Has(id, "task.read") {
+		ensureTaskShape(t)
+		if id.Role == "user" && !taskVisibleToUser(t, id) {
 			continue
 		}
-		out = append(out, t)
+		scoped = append(scoped, t)
 	}
-	return out, nil
+	filtered := filterTasksQuery(scoped, filters)
+	if !paged {
+		return filtered, nil
+	}
+	items, total := paginateTasks(filtered, limit, offset)
+	return map[string]any{
+		"items":  items,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	}, nil
 }
 
 func (s *Server) createTask(r *http.Request) (any, error) {

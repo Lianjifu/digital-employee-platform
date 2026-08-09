@@ -34,8 +34,9 @@ describe('task center copy', () => {
   });
 
   it('builds conversation deep link from employee id', () => {
-    expect(conversationHref({ links: { conversationId: 's1' }, digitalEmployeeId: 'de-sre' })).toBe('/copilot?employeeId=de-sre');
+    expect(conversationHref({ links: { conversationId: 's1' }, digitalEmployeeId: 'de-sre' })).toBe('/copilot?session=s1&employeeId=de-sre');
     expect(conversationHref({ links: {}, digitalEmployeeId: 'de-sre' })).toBeNull();
     expect(conversationHref({ links: {}, digitalEmployeeId: undefined })).toBeNull();
+    expect(conversationHref({ digitalEmployeeId: 'de-sre' })).toBeNull();
   });
 });

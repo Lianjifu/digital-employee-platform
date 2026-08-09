@@ -481,7 +481,6 @@ function SummaryView({ session, agentMeta, perfMetrics, allToolCalls, allCites, 
             <div className="flex justify-between"><span className="text-[var(--text-muted)]">createdAt</span><span className="text-[var(--text)]">{new Date(session.createdAt).toLocaleString()}</span></div>
             <div className="flex justify-between"><span className="text-[var(--text-muted)]">owner</span><span className="text-[var(--text)]">{session.ownerName ?? '—'}</span></div>
             <div className="flex justify-between"><span className="text-[var(--text-muted)]">workspace</span><span className="text-[var(--text)]">{session.workspaceId ?? '—'}</span></div>
-            <div className="flex justify-between"><span className="text-[var(--text-muted)]">encrypted</span><span className="text-[var(--text)]">{session.encrypted ? 'true' : 'false'}</span></div>
             <div className="flex justify-between"><span className="text-[var(--text-muted)]">shareToken</span><span className="text-[var(--text)]">{session.shareToken ?? '—'}</span></div>
           </div>
         </div>
@@ -835,7 +834,6 @@ function AuditView({ session, messages, events }: { session: ChatSession | undef
             <div>sessionId: {session.id}</div>
             <div>workspace: {session.workspaceId ?? 'w1'}</div>
             <div>owner: {session.ownerName ?? 'u1'}</div>
-            <div>encrypted: {session.encrypted ? 'true' : 'false'}</div>
             <div className="col-span-2">createdAt: {new Date(session.createdAt).toISOString()}</div>
           </div>
         </div>

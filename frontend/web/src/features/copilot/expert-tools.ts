@@ -54,7 +54,7 @@ function isAllowlistedRuntime(kind: CopilotToolDef['kind'], name: string): boole
     return /docx|xlsx|pptx|excel|word|ppt/.test(n);
   }
   if (kind === 'tool') {
-    return n === 'knowledge.retrieve' || n === 'memory.recall' || n.includes('cmdb') || n.includes('检索');
+    return n === 'knowledge.retrieve' || n === 'memory.recall' || n.includes('cmdb') || n.includes('检索') || n.includes('知识库');
   }
   return false;
 }
@@ -116,8 +116,8 @@ export function buildExpertTools(employee?: ExpertToolSource | null): CopilotToo
 }
 
 export function defaultEnabledToolKeys(tools: CopilotToolDef[]): string[] {
-  // 默认启用只读/推荐类；需审批的默认关闭
-  return tools.filter((t) => !t.requiresApproval).map((t) => t.key);
+  // 默认启用只读/已接入类；需审批与未接入项默认关闭
+  return tools.filter((t) => !t.requiresApproval && !t.unavailable).map((t) => t.key);
 }
 
 /** 办公文档类技能（即使边界未标 approval_required，受控执行回合也应纳入）。 */

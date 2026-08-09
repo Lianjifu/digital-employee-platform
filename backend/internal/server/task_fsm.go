@@ -4,7 +4,8 @@ import (
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
-// allowed task lifecycle edges (status → next statuses)
+// Legacy status-edge table retained for compatibility helpers.
+// Prefer assertLifecycleTransition / applyLifecycleTransition for new paths.
 var taskTransitions = map[string][]string{
 	"pending":     {"in_progress", "review", "archived"},
 	"in_progress": {"review", "completed", "pending"},

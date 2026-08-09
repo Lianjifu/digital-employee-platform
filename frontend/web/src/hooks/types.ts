@@ -101,11 +101,26 @@ export interface Signer {
   signatureHash?: string;
 }
 
+export interface SkillTurnStep {
+  id?: string;
+  action?: string;
+  title?: string;
+  status?: string;
+  args?: Record<string, unknown>;
+  output?: string;
+}
+
+export interface SkillTurnPlan {
+  version?: number;
+  summary?: string;
+  steps?: SkillTurnStep[];
+}
+
 export interface ApprovalRequest {
   action: string;
   /** 写操作对应的命令/资源标识 */
   resource?: string;
-  /** 至少需要的签名人数 */
+  /** 至少需要的签名人数（生产路径固定为 1） */
   required: number;
   /** 已完成签名人数（兼容旧字段名） */
   signed: number;
@@ -118,6 +133,14 @@ export interface ApprovalRequest {
   /** 该审批在审计日志中的 hash */
   policyHash?: string;
   decidedAt?: string;
+  /** Skill Turn 多步计划（write → run） */
+  skillTurn?: SkillTurnPlan;
+  planSummary?: string;
+  /** 单人审核：escalationOwner / 角色提示 */
+  approverRoleHint?: string;
+  /** 解析后的授权候选人 userId */
+  approverCandidateIds?: string[];
+  approverCandidateNames?: string[];
 }
 
 export interface MessageFeedback {
@@ -171,6 +194,9 @@ export interface ChatMessageEx {
   attachment?: { name: string; size: string; type: 'file' | 'image' };
   thinking?: string;
   approvalRequest?: ApprovalRequest;
+  /** 批准后仍待续跑的 skill.run command */
+  nextRunCommand?: string;
+  canContinueRun?: boolean;
   createdAt: string;
 
   /* 新增字段（企业级） */
@@ -265,8 +291,6 @@ export interface ChatSession {
   collaborators?: { userId: string; userName: string; role: 'viewer' | 'editor' }[];
   /** 会话标签 */
   tags?: string[];
-  /** @deprecated 本期不做真·E2EE；勿再展示为已加密 */
-  encrypted?: boolean;
   /** 自动摘要（归档 / 长会话） */
   summary?: string;
   /** 归档时间 */

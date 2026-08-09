@@ -143,12 +143,13 @@ func now() string { return time.Now().UTC().Format(time.RFC3339) }
 func controlledTask(id, ws, code, title, priority, status, stage, ownerID, deID, source string) map[string]any {
 	return map[string]any{
 		"id": id, "workspaceId": ws, "code": code, "title": title, "priority": priority,
-		"status": status, "lifecycleStage": stage, "ownerId": ownerID, "digitalEmployeeId": deID,
-		"digitalEmployeeName": "数字员工", "assignee": ownerID, "source": source,
+		"status": status, "lifecycleStage": stage, "ownerId": ownerID, "ownerName": ownerID,
+		"digitalEmployeeId": deID, "digitalEmployeeName": "数字员工", "assignee": ownerID, "source": source,
 		"progress": map[string]any{"done": 1, "total": 3}, "tags": []string{},
 		"sla": map[string]any{"remainingMin": 45, "risk": "none", "escalated": false},
 		"execution": map[string]any{"retryCount": 0, "paused": false, "currentStep": "执行中"},
 		"governance": map[string]any{"approvalRequired": false, "approvalStatus": "not_required"},
+		"links": map[string]any{}, "auditEvents": []map[string]any{}, "version": 1,
 		"createdAt": "2026-07-22T01:00:00Z", "updatedAt": "2026-07-22T08:00:00Z",
 		"environment": "sandbox", "classification": "internal", "createdBy": ownerID,
 	}
@@ -185,8 +186,9 @@ func (s *Store) seed() {
 		{"id": "sw2", "workspaceId": "w2", "workspaceName": "ACME 预发", "switchedAt": "2026-07-21T10:00:00Z", "actor": "业务构建者"},
 	}
 	s.Members["w1"] = []map[string]any{
-		{"id": "m1", "workspaceId": "w1", "name": "平台管理员", "email": "admin@acme.com", "role": "admin", "mfa": true, "lastActive": "刚刚"},
-		{"id": "m2", "workspaceId": "w1", "name": "业务构建者", "email": "user@acme.com", "role": "builder", "mfa": true, "lastActive": "5 分钟前"},
+		{"id": "m1", "userId": "u1", "workspaceId": "w1", "name": "平台管理员", "email": "admin@acme.com", "role": "admin", "title": "平台管理员", "mfa": true, "lastActive": "刚刚"},
+		{"id": "m2", "userId": "u2", "workspaceId": "w1", "name": "业务构建者", "email": "user@acme.com", "role": "builder", "title": "运营负责人", "mfa": true, "lastActive": "5 分钟前"},
+		{"id": "m3", "userId": "u3", "workspaceId": "w1", "name": "合规审计员", "email": "audit@acme.com", "role": "auditor", "title": "合规审计", "mfa": true, "lastActive": "1 小时前"},
 	}
 	s.Quotas["w1"] = map[string]any{
 		"workspaceId": "w1",

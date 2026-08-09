@@ -82,6 +82,12 @@ interface State {
   schemaVersion: number;
 }
 
+function parseNextRunCommandFromContent(content?: string): string {
+  if (!content) return '';
+  const m = content.match(/action=run\s+command=(\S+)/);
+  return m?.[1] ?? '';
+}
+
 type Action =
   /* 兼容 */
   | { type: 'set_draft'; value: string }
@@ -1199,13 +1205,30 @@ export function useChat(agentMeta?: { name: string }) {
           return;
         }
         if (typ === 'authorization') {
-          const approval = (data.approvalRequest ?? data.authorizationRequest) as ChatMessageEx['approvalRequest'] | undefined;
+          const approvalRaw = (data.approvalRequest ?? data.authorizationRequest) as (ChatMessageEx['approvalRequest'] & {
+            approverRoleHint?: string;
+            approverCandidateIds?: string[];
+            approverCandidateNames?: string[];
+          }) | undefined;
           const mid = (data.messageId || data.actionId || uid('act_')) as string;
           const authMsg: ChatMessageEx = {
             id: mid,
             role: 'assistant',
             content: `已创建待人工审核授权：${data.name || (data as { tool?: string }).tool || '写操作'}`,
-            approvalRequest: approval ?? {
+            approvalRequest: approvalRaw ? {
+              action: String(approvalRaw.action || (data as { tool?: string }).tool || 'controlled.execute'),
+              resource: approvalRaw.resource ?? sid,
+              reason: approvalRaw.reason,
+              required: Number(approvalRaw.required ?? 1) || 1,
+              signed: Number(approvalRaw.signed ?? 0) || 0,
+              decision: approvalRaw.decision ?? 'pending',
+              signers: approvalRaw.signers ?? [{ userId: '', name: '授权人', role: 'approver', signed: false }],
+              skillTurn: approvalRaw.skillTurn,
+              planSummary: approvalRaw.planSummary,
+              approverRoleHint: approvalRaw.approverRoleHint,
+              approverCandidateIds: approvalRaw.approverCandidateIds,
+              approverCandidateNames: approvalRaw.approverCandidateNames,
+            } : {
               action: String((data as { tool?: string }).tool || 'controlled.execute'),
               resource: sid,
               reason: '受控执行需人工审核授权',
@@ -1866,11 +1889,26 @@ export function useChat(agentMeta?: { name: string }) {
         assignee: actor.name,
         digitalEmployeeId: session?.digitalEmployeeId,
         correlationId: message.correlationId,
+        conversationId,
+        links: { conversationId },
+        source: 'conversation',
       });
       let executeResult = '';
+      let nextRunCommand = '';
+      let canContinueRun = false;
+      let skillTurn = message.approvalRequest?.skillTurn;
       try {
-        const executed = await api.post<{ executeResult?: string; status?: string }>(`/api/actions/${mid}/execute`, { taskId: task.id, conversationId });
+        const executed = await api.post<{
+          executeResult?: string;
+          status?: string;
+          nextRunCommand?: string;
+          canContinueRun?: boolean;
+          skillTurn?: NonNullable<ChatMessageEx['approvalRequest']>['skillTurn'];
+        }>(`/api/actions/${mid}/execute`, { taskId: task.id, conversationId });
         executeResult = typeof executed?.executeResult === 'string' ? executed.executeResult : '';
+        nextRunCommand = typeof executed?.nextRunCommand === 'string' ? executed.nextRunCommand : '';
+        canContinueRun = Boolean(executed?.canContinueRun || nextRunCommand);
+        if (executed?.skillTurn) skillTurn = executed.skillTurn;
       } catch (err) {
         executeResult = err instanceof Error ? `执行失败：${err.message}` : '执行失败';
       }
@@ -1893,10 +1931,14 @@ export function useChat(agentMeta?: { name: string }) {
         msg: {
           ...message,
           content: executeResult
-            ? `${message.content}\n\n—— 授权后执行结果 ——\n${executeResult}`
+            ? `${message.content}\n\n—— 授权后执行结果 ——\n${executeResult}${
+              canContinueRun && nextRunCommand ? `\n\n待续跑：action=run command=${nextRunCommand}` : ''
+            }`
             : message.content,
           approvalRequest: {
             ...request,
+            skillTurn: skillTurn ?? request.skillTurn,
+            planSummary: skillTurn?.summary ?? request.planSummary,
             signers: signers.length ? signers : [{
               userId: actor.id, name: actor.name, role: 'approver' as const,
               signed: true, signedAt: result.signedAt, signatureHash: result.signatureHash,
@@ -1906,6 +1948,8 @@ export function useChat(agentMeta?: { name: string }) {
             decidedAt: result.signedAt,
           },
           linkedTaskId: task.id,
+          nextRunCommand: canContinueRun ? nextRunCommand : undefined,
+          canContinueRun: canContinueRun || undefined,
           toolCalls: [
             ...(message.toolCalls ?? []),
             {
@@ -1922,6 +1966,63 @@ export function useChat(agentMeta?: { name: string }) {
       });
     }
   }, [state.activeId, state.sessions, patchSessionRemote]);
+
+  /** P2：批准后若仍有待续跑 run，手动继续 Skill Turn */
+  const continueSkillTurn = useCallback(async (mid: string) => {
+    if (!state.activeId) return;
+    const session = state.sessions[state.activeId];
+    const message = session?.messages.find((item) => item.id === mid);
+    if (!message) return;
+    const conversationId = session.conversationId ?? state.activeId;
+    const cmd = message.nextRunCommand || parseNextRunCommandFromContent(message.content);
+    if (!cmd && !message.canContinueRun) {
+      throw new Error('没有可续跑的 run 步骤');
+    }
+    const executed = await getApiClient().post<{
+      executeResult?: string;
+      nextRunCommand?: string;
+      canContinueRun?: boolean;
+      skillTurn?: NonNullable<ChatMessageEx['approvalRequest']>['skillTurn'];
+    }>(`/api/actions/${mid}/execute`, {
+      conversationId,
+      continueRun: true,
+      command: cmd || undefined,
+    });
+    const executeResult = typeof executed?.executeResult === 'string' ? executed.executeResult : '';
+    const nextRunCommand = typeof executed?.nextRunCommand === 'string' ? executed.nextRunCommand : '';
+    const canContinueRun = Boolean(executed?.canContinueRun || nextRunCommand);
+    dispatch({
+      type: 'replace_msg',
+      sid: state.activeId,
+      mid,
+      msg: {
+        ...message,
+        content: executeResult
+          ? `${message.content}\n\n—— 继续执行 run ——\n${executeResult}`
+          : message.content,
+        approvalRequest: message.approvalRequest
+          ? {
+              ...message.approvalRequest,
+              skillTurn: executed?.skillTurn ?? message.approvalRequest.skillTurn,
+              planSummary: executed?.skillTurn?.summary ?? message.approvalRequest.planSummary,
+            }
+          : message.approvalRequest,
+        nextRunCommand: canContinueRun ? nextRunCommand : undefined,
+        canContinueRun: canContinueRun || undefined,
+        toolCalls: [
+          ...(message.toolCalls ?? []),
+          {
+            id: uid('t_'),
+            name: 'skill.run',
+            args: { command: cmd },
+            result: executeResult || '续跑完成',
+            status: executeResult.startsWith('执行失败') ? 'failed' : 'success',
+            durationMs: 48,
+          },
+        ],
+      },
+    });
+  }, [state.activeId, state.sessions]);
 
   /** 兼容旧 API：不再绕过服务端校验，仍只尝试首个未签席位。 */
   const approveSign = useCallback((mid: string) => {
@@ -2101,6 +2202,7 @@ export function useChat(agentMeta?: { name: string }) {
 
     /* 企业级 */
     approve,
+    continueSkillTurn,
     reject,
     setFeedback,
     retryMessage,

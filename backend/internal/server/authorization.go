@@ -13,6 +13,7 @@ import (
 )
 
 // createPendingAuthorizationLocked builds a single-approver authorization request.
+// Copilot 写操作由智能体发起、登录用户人工审核：requester 记数字员工，不把会话用户当作发起人。
 // Caller must hold Store.Lock. Returns actionID and the authorizationRequest map.
 func (s *Server) createPendingAuthorizationLocked(
 	ws, cid, deID string,
@@ -23,36 +24,59 @@ func (s *Server) createPendingAuthorizationLocked(
 	corr string,
 ) (actionID string, authReq map[string]any) {
 	actionID = s.Store.ID("act")
-	requesterID, requesterName := "", "未知"
+	requesterID, requesterName, requesterKind := "", "未知", "user"
+	triggeredByID, triggeredByName := "", ""
 	if viewer != nil {
-		requesterID = viewer.ID
-		requesterName = viewer.Name
+		triggeredByID = viewer.ID
+		triggeredByName = viewer.Name
 	}
 	approverHint := "admin"
-	for _, emp := range s.Store.Employees {
-		if str(emp["id"]) == deID {
+	if deID != "" {
+		requesterKind = "agent"
+		requesterID = deID
+		requesterName = "数字员工"
+		for _, emp := range s.Store.Employees {
+			if str(emp["id"]) != deID {
+				continue
+			}
+			requesterName = coalesce(str(emp["name"]), coalesce(str(emp["role"]), "数字员工"))
 			if eo := strings.TrimSpace(str(emp["escalationOwner"])); eo != "" {
 				approverHint = eo
 			}
 			break
 		}
+	} else if viewer != nil {
+		// 无绑定专家时仍由会话用户触发；自批规则仅对此类人类发起人生效
+		requesterID = viewer.ID
+		requesterName = viewer.Name
+		requesterKind = "user"
 	}
+	candidateIDs, candidateNames := s.resolveApproverCandidatesLocked(ws, approverHint)
 	now := time.Now().UTC().Format(time.RFC3339)
 	authReq = map[string]any{
-		"action":           coalesce(tool.Name, call.Name),
-		"resource":         cid,
-		"reason":           "受控执行需人工审核授权：" + coalesce(tool.Name, call.Name),
-		"riskLevel":        normalizeRiskLevelSession(riskLevel),
-		"status":           "pending",
-		"requesterId":      requesterID,
-		"requesterName":    requesterName,
-		"approverRoleHint": approverHint,
-		"toolKey":          tool.Key,
-		"toolKind":         tool.Kind,
-		"toolName":         tool.Name,
-		"args":             call.Args,
-		"correlationId":    corr,
-		"createdAt":        now,
+		"action":                 coalesce(tool.Name, call.Name),
+		"resource":               cid,
+		"reason":                 "智能体受控执行需人工审核授权：" + coalesce(tool.Name, call.Name),
+		"riskLevel":              normalizeRiskLevelSession(riskLevel),
+		"status":                 "pending",
+		"requesterId":            requesterID,
+		"requesterName":          requesterName,
+		"requesterKind":          requesterKind,
+		"triggeredByUserId":      triggeredByID,
+		"triggeredByUserName":    triggeredByName,
+		"approverRoleHint":       approverHint,
+		"approverCandidateIds":   candidateIDs,
+		"approverCandidateNames": candidateNames,
+		"toolKey":                tool.Key,
+		"toolKind":               tool.Kind,
+		"toolName":               tool.Name,
+		"args":                   call.Args,
+		"correlationId":          corr,
+		"createdAt":              now,
+	}
+	if plan := buildSkillTurnPlan(tool, call); plan != nil {
+		authReq["skillTurn"] = plan
+		authReq["reason"] = "智能体 Skill Turn 需人工审核：" + coalesce(str(plan["summary"]), coalesce(tool.Name, call.Name))
 	}
 	s.Store.Actions[actionID] = map[string]any{
 		"id": actionID, "conversationId": cid, "workspaceId": ws,
@@ -66,21 +90,114 @@ func (s *Server) canApproveActionLocked(id *auth.Identity, authReq map[string]an
 	if id == nil {
 		return false, "请先登录"
 	}
-	if str(authReq["requesterId"]) != "" && str(authReq["requesterId"]) == id.ID {
-		return false, "发起人不可审核授权自己的请求"
+	// 智能体发起的待审单：登录用户即为人工审核人，不适用「发起人自批」
+	if str(authReq["requesterKind"]) != "agent" {
+		if str(authReq["requesterId"]) != "" && str(authReq["requesterId"]) == id.ID {
+			return false, "发起人不可审核授权自己的请求"
+		}
 	}
 	if id.Role == "admin" {
 		return true, ""
 	}
+	for _, cand := range stringSlice(authReq["approverCandidateIds"]) {
+		if cand != "" && cand == id.ID {
+			return true, ""
+		}
+	}
 	hint := str(authReq["approverRoleHint"])
-	if hint != "" && (strings.Contains(id.Name, hint) || id.Name == hint) {
+	if hint != "" && (strings.EqualFold(id.Name, hint) || strings.Contains(id.Name, hint)) {
 		return true, ""
+	}
+	for _, name := range stringSlice(authReq["approverCandidateNames"]) {
+		if name != "" && (strings.EqualFold(id.Name, name) || strings.Contains(id.Name, name)) {
+			return true, ""
+		}
 	}
 	if auth.Has(id, "action.approve") || auth.Has(id, "agent.write") {
 		return true, ""
 	}
 	_ = ws
-	return false, "当前身份无权审核授权（需管理员、接管人或审批权限）"
+	return false, "当前身份无权审核授权（需管理员、escalationOwner 对应用户或审批权限）"
+}
+
+// resolveApproverCandidatesLocked maps escalationOwner / role hint to workspace members.
+// Order: exact name → name contains hint → workspace admins when hint is admin/empty.
+func (s *Server) resolveApproverCandidatesLocked(ws, hint string) (ids []string, names []string) {
+	hint = strings.TrimSpace(hint)
+	seen := map[string]struct{}{}
+	add := func(uid, name string) {
+		uid = strings.TrimSpace(uid)
+		name = strings.TrimSpace(name)
+		if uid == "" {
+			return
+		}
+		if _, ok := seen[uid]; ok {
+			return
+		}
+		seen[uid] = struct{}{}
+		ids = append(ids, uid)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	members := s.Store.Members[ws]
+	matchHint := func(m map[string]any) bool {
+		name := str(m["name"])
+		role := strings.ToLower(str(m["role"]))
+		if hint == "" || strings.EqualFold(hint, "admin") {
+			return role == "admin"
+		}
+		if strings.EqualFold(name, hint) {
+			return true
+		}
+		if strings.Contains(name, hint) || strings.Contains(hint, name) {
+			return true
+		}
+		// hint may be a role title like「运营负责人」stored on the member.
+		if title := str(m["title"]); title != "" && (strings.EqualFold(title, hint) || strings.Contains(title, hint)) {
+			return true
+		}
+		return false
+	}
+	for _, m := range members {
+		if !matchHint(m) {
+			continue
+		}
+		uid := coalesce(str(m["userId"]), "")
+		if uid == "" {
+			// Dev seed: map known emails to identity IDs.
+			switch strings.ToLower(str(m["email"])) {
+			case "admin@acme.com":
+				uid = "u1"
+			case "user@acme.com":
+				uid = "u2"
+			case "audit@acme.com":
+				uid = "u3"
+			default:
+				uid = str(m["id"])
+			}
+		}
+		add(uid, str(m["name"]))
+	}
+	// Fallback: if hint named a person but no member matched, still allow admins.
+	if len(ids) == 0 && hint != "" && !strings.EqualFold(hint, "admin") {
+		for _, m := range members {
+			if strings.ToLower(str(m["role"])) != "admin" {
+				continue
+			}
+			uid := coalesce(str(m["userId"]), "")
+			if uid == "" {
+				switch strings.ToLower(str(m["email"])) {
+				case "admin@acme.com":
+					uid = "u1"
+				default:
+					uid = str(m["id"])
+				}
+			}
+			add(uid, str(m["name"]))
+		}
+	}
+	return ids, names
 }
 
 func authorizationSignature(actionID, userID string) string {

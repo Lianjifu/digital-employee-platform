@@ -202,7 +202,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.listTasksAligned(r)
 	case path == "/api/tasks" && method == http.MethodPost:
 		data, err = s.createTaskAligned(r)
-	case strings.HasPrefix(path, "/api/tasks/") && (method == http.MethodGet || method == http.MethodPost):
+	case strings.HasPrefix(path, "/api/tasks/") && (method == http.MethodGet || method == http.MethodPost || method == http.MethodPatch):
 		data, err = s.taskRoute(r)
 	case path == "/api/agents" && method == http.MethodGet:
 		data, err = s.legacyAgentsProxy(r)

@@ -31,29 +31,23 @@ func (s *Server) createTaskAligned(r *http.Request) (any, error) {
 	if !auth.Has(id, "task.write") {
 		return nil, apperr.Forbidden(apperr.RoleForbidden, "无权创建任务")
 	}
+	if err := s.requireWorkspaceAccess(id, ws); err != nil {
+		return nil, err
+	}
 	body, _ := decodeMap(r)
 	title := strings.TrimSpace(str(body["title"]))
 	if title == "" {
 		return nil, apperr.BadReq(apperr.BadRequest, "任务标题必填")
 	}
-	item := map[string]any{
-		"id": s.Store.ID("task"), "workspaceId": ws, "code": "T-" + s.Store.ID("code"),
-		"title": title, "priority": coalesce(str(body["priority"]), "P2"),
-		"status": "pending", "lifecycleStage": "pending", "ownerId": id.ID,
-		"digitalEmployeeId": body["digitalEmployeeId"], "source": coalesce(str(body["source"]), "manual"),
-		"progress": map[string]any{"done": 0, "total": 1}, "tags": []string{},
-		"sla": map[string]any{"remainingMin": 120, "risk": "none", "escalated": false},
-		"execution": map[string]any{"retryCount": 0, "paused": false},
-		"governance": map[string]any{"approvalRequired": false, "approvalStatus": "not_required"},
-		"environment": coalesce(str(body["environment"]), "sandbox"),
-		"classification": coalesce(str(body["classification"]), "internal"),
-		"createdBy": id.ID, "createdAt": time.Now().UTC().Format(time.RFC3339),
-		"updatedAt": time.Now().UTC().Format(time.RFC3339),
-	}
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	item := buildControlledTask(s.Store.ID, ws, body, id)
+	item["code"] = nextTaskCode(s.Store.Tasks)
+	appendTaskAuditLocked(item, id.Name, "创建任务", title, "success")
 	s.Store.Tasks = append([]map[string]any{item}, s.Store.Tasks...)
-	s.Store.AppendAudit(ws, id.Name, "创建任务", title, "success", "")
+	s.Store.AppendAudit(ws, id.Name, "创建任务", title, "success", coalesce(str(body["dispatchKind"]), str(body["source"])))
+	s.Store.Unlock()
+	s.Store.Persist("tasks")
+	IncTaskCreated()
 	return item, nil
 }
 
@@ -84,95 +78,123 @@ func (s *Server) taskRoute(r *http.Request) (any, error) {
 	if err := s.requireWorkspaceAccess(id, str(task["workspaceId"])); err != nil {
 		return nil, err
 	}
+	ensureTaskShape(task)
 	if action == "" && r.Method == http.MethodGet {
 		return task, nil
 	}
-	if action == "audit" && r.Method == http.MethodGet {
-		return []map[string]any{{"id": "ta-1", "at": time.Now().UTC().Format(time.RFC3339), "actor": id.Name, "action": "查看审计", "tone": "info"}}, nil
-	}
-	body, _ := decodeMap(r)
-	switch action {
-	case "transition":
-		if id.Role == "user" && str(task["ownerId"]) != id.ID {
-			return nil, apperr.Forbidden(apperr.TaskOwnerScope, "只能流转自己负责的任务")
-		}
-		stage := coalesce(str(body["stage"]), coalesce(str(body["status"]), "pending"))
-		nextStatus := mapStageToStatus(stage)
-		if err := assertTaskTransition(str(task["status"]), nextStatus); err != nil {
+	if action == "" && r.Method == http.MethodPatch {
+		body, _ := decodeMap(r)
+		if err := checkTaskVersion(task, body); err != nil {
 			return nil, err
 		}
-		task["lifecycleStage"] = stage
-		task["status"] = nextStatus
-		task["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
-		s.Store.AppendAudit(str(task["workspaceId"]), id.Name, "任务流转", str(task["title"])+":"+stage, "success", "")
-		if nextStatus == "completed" || nextStatus == "review" {
-			s.writeTaskWorkingMemoryLocked(task, id, nextStatus)
+		if !auth.Has(id, "task.write") {
+			return nil, apperr.Forbidden(apperr.RoleForbidden, "无权更新任务")
 		}
+		if id.Role == "user" && !taskVisibleToUser(task, id) {
+			return nil, apperr.Forbidden(apperr.TaskOwnerScope, "只能更新自己相关的任务")
+		}
+		for _, key := range []string{"title", "description", "assignee", "priority", "tags"} {
+			if body[key] != nil {
+				task[key] = body[key]
+			}
+		}
+		appendTaskAuditLocked(task, id.Name, "更新任务", "字段更新", "info")
+		s.Store.AppendAudit(str(task["workspaceId"]), id.Name, "更新任务", str(task["title"]), "success", "")
+		go s.Store.Persist("tasks")
+		return task, nil
+	}
+	if action == "audit" && r.Method == http.MethodGet {
+		evs := taskAuditEvents(task)
+		out := make([]map[string]any, len(evs))
+		copy(out, evs)
+		return out, nil
+	}
+	body, _ := decodeMap(r)
+	if err := checkTaskVersion(task, body); err != nil {
+		return nil, err
+	}
+	switch action {
+	case "transition":
+		if id.Role == "user" && !taskVisibleToUser(task, id) {
+			return nil, apperr.Forbidden(apperr.TaskOwnerScope, "只能流转自己相关的任务")
+		}
+		stage := coalesce(str(body["stage"]), coalesce(str(body["status"]), "pending"))
+		if err := applyLifecycleTransition(task, stage, id); err != nil {
+			return nil, err
+		}
+		s.Store.AppendAudit(str(task["workspaceId"]), id.Name, "任务流转", str(task["title"])+":"+str(task["lifecycleStage"]), "success", "")
+		if str(task["status"]) == "completed" || str(task["status"]) == "review" {
+			s.writeTaskWorkingMemoryLocked(task, id, str(task["status"]))
+		}
+		go s.Store.Persist("tasks")
+		IncTaskTransition()
 		return task, nil
 	case "approve":
 		if id.Role != "admin" {
 			return nil, apperr.Forbidden(apperr.AdminRequired, "审批任务仅限管理员")
 		}
-		if err := s.evaluateWrite(r, "task", "approve", policy.Input{
+		if err := s.evaluateWriteLocked(r, "task", "approve", policy.Input{
 			SubmitterID: str(task["ownerId"]), ApproverID: id.ID,
 		}); err != nil {
 			return nil, err
 		}
-		gov, _ := task["governance"].(map[string]any)
-		if gov == nil {
-			gov = map[string]any{}
-			task["governance"] = gov
+		approved := true
+		if body["approved"] != nil {
+			approved = boolFrom(body["approved"])
 		}
-		gov["approvalStatus"] = "approved"
-		gov["approvalRequired"] = false
-		task["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
-		s.Store.AppendAudit(str(task["workspaceId"]), id.Name, "任务审批", str(task["title"]), "success", "")
+		applyTaskApprove(task, approved, coalesce(str(body["reason"]), str(body["actor"])), id)
+		s.Store.AppendAudit(str(task["workspaceId"]), id.Name, "任务审批", str(task["title"]), "success", coalesce(str(body["reason"]), ""))
+		go s.Store.Persist("tasks")
+		IncTaskApprove(approved)
 		return task, nil
-	case "takeover", "retry":
+	case "takeover":
 		if id.Role != "admin" {
 			return nil, apperr.Forbidden(apperr.AdminRequired, "操作仅限管理员")
 		}
-		if err := assertTaskTransition(str(task["status"]), "in_progress"); err != nil && str(task["status"]) != "in_progress" {
-			// retry/takeover may force resume from review/pending
-			if str(task["status"]) != "review" && str(task["status"]) != "pending" && str(task["status"]) != "in_progress" {
-				return nil, err
-			}
+		applyTaskTakeover(task, coalesce(str(body["reason"]), "人工接管"), id)
+		s.Store.AppendAudit(str(task["workspaceId"]), id.Name, "任务:takeover", str(task["title"]), "success", str(body["reason"]))
+		go s.Store.Persist("tasks")
+		IncTaskTakeover()
+		return task, nil
+	case "retry":
+		if id.Role != "admin" {
+			return nil, apperr.Forbidden(apperr.AdminRequired, "操作仅限管理员")
 		}
-		task["lifecycleStage"] = "running"
-		task["status"] = "in_progress"
-		if ex, ok := task["execution"].(map[string]any); ok {
-			if action == "retry" {
-				ex["retryCount"] = toInt(ex["retryCount"]) + 1
-			}
-			ex["paused"] = false
+		if err := applyTaskRetry(task, coalesce(str(body["reason"]), "重试"), id); err != nil {
+			return nil, err
 		}
-		task["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
-		s.Store.AppendAudit(str(task["workspaceId"]), id.Name, "任务:"+action, str(task["title"]), "success", "")
+		s.Store.AppendAudit(str(task["workspaceId"]), id.Name, "任务:retry", str(task["title"]), "success", str(body["reason"]))
+		go s.Store.Persist("tasks")
+		IncTaskRetry()
 		return task, nil
 	default:
 		// legacy start/review/complete…
-		return s.taskTransitionLocked(task, action, body, id)
+		res, err := s.taskTransitionLocked(task, action, body, id)
+		if err == nil {
+			go s.Store.Persist("tasks")
+		}
+		return res, err
 	}
 }
 
 func (s *Server) taskTransitionLocked(task map[string]any, action string, body map[string]any, id *auth.Identity) (any, error) {
 	next := map[string]string{"start": "in_progress", "review": "review", "complete": "completed", "archive": "archived", "reopen": "pending"}[action]
-	if next == "" {
-		if st := str(body["status"]); st != "" {
-			next = st
-		} else {
-			return nil, apperr.BadReq(apperr.BadRequest, "未知任务流转")
-		}
+	stage := ""
+	if next != "" {
+		stage = mapStatusToStage(next)
+	} else if st := str(body["status"]); st != "" {
+		stage = mapStatusToStage(st)
+	} else if ls := str(body["stage"]); ls != "" {
+		stage = ls
+	} else {
+		return nil, apperr.BadReq(apperr.BadRequest, "未知任务流转")
 	}
-	if err := assertTaskTransition(str(task["status"]), next); err != nil {
+	if err := applyLifecycleTransition(task, stage, id); err != nil {
 		return nil, err
 	}
-	task["status"] = next
-	task["lifecycleStage"] = mapStatusToStage(next)
-	task["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
 	s.Store.AppendAudit(str(task["workspaceId"]), id.Name, "任务流转:"+action, str(task["title"]), "success", "")
-	if next == "completed" || next == "review" {
-		s.writeTaskWorkingMemoryLocked(task, id, next)
+	if str(task["status"]) == "completed" || str(task["status"]) == "review" {
+		s.writeTaskWorkingMemoryLocked(task, id, str(task["status"]))
 	}
 	return task, nil
 }
@@ -221,32 +243,21 @@ func toFloat(v any) float64 {
 }
 
 func mapStageToStatus(stage string) string {
-	switch stage {
-	case "running":
-		return "in_progress"
-	case "human_action", "risk":
-		return "review"
-	case "completed":
-		return "completed"
-	case "archived":
-		return "archived"
-	default:
-		return "pending"
-	}
+	return statusForLifecycle(stage)
 }
 
 func mapStatusToStage(status string) string {
 	switch status {
 	case "in_progress":
-		return "running"
+		return stageRunning
 	case "review":
-		return "human_action"
+		return stageHumanAction
 	case "completed":
-		return "completed"
+		return stageCompleted
 	case "archived":
-		return "archived"
+		return stageArchived
 	default:
-		return "pending"
+		return stagePending
 	}
 }
 
@@ -1036,22 +1047,36 @@ func (s *Server) conversationStream(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) conversationCreateTask(r *http.Request) (any, error) {
 	body, _ := decodeMap(r)
-	body["source"] = "conversation"
-	body["title"] = coalesce(str(body["title"]), "协作派生任务")
-	// reuse create via synthetic request body already decoded — call createTaskAligned with hijack
 	id := identityFrom(r.Context())
 	ws := s.workspaceID(r)
-	item := map[string]any{
-		"id": s.Store.ID("task"), "workspaceId": ws, "code": "T-" + s.Store.ID("code"),
-		"title": str(body["title"]), "priority": "P2", "status": "pending", "lifecycleStage": "pending",
-		"ownerId": id.ID, "source": "conversation", "progress": map[string]any{"done": 0, "total": 1},
-		"tags": []string{}, "sla": map[string]any{"remainingMin": 120, "risk": "none", "escalated": false},
-		"execution": map[string]any{"retryCount": 0, "paused": false},
-		"governance": map[string]any{"approvalRequired": false, "approvalStatus": "not_required"},
-		"createdAt": time.Now().UTC().Format(time.RFC3339), "updatedAt": time.Now().UTC().Format(time.RFC3339),
+	if !auth.Has(id, "task.write") {
+		return nil, apperr.Forbidden(apperr.RoleForbidden, "无权创建任务")
+	}
+	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
+	// api/conversations/:id/tasks
+	conversationID := ""
+	if len(parts) >= 3 {
+		conversationID = parts[2]
+	}
+	body["source"] = "conversation"
+	body["title"] = coalesce(str(body["title"]), "协作派生任务")
+	if conversationID != "" {
+		body["conversationId"] = conversationID
+		links, _ := body["links"].(map[string]any)
+		if links == nil {
+			links = map[string]any{}
+		}
+		links["conversationId"] = conversationID
+		body["links"] = links
 	}
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	item := buildControlledTask(s.Store.ID, ws, body, id)
+	item["code"] = nextTaskCode(s.Store.Tasks)
+	appendTaskAuditLocked(item, id.Name, "创建任务", "会话派生 · "+str(item["title"]), "success")
 	s.Store.Tasks = append([]map[string]any{item}, s.Store.Tasks...)
+	s.Store.AppendAudit(ws, id.Name, "会话派生任务", str(item["title"]), "success", conversationID)
+	s.Store.Unlock()
+	s.Store.Persist("tasks")
+	IncTaskCreated()
 	return item, nil
 }

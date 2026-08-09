@@ -573,7 +573,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		"sessionMode": sessionMode, "riskLevel": riskLevel,
 		"enabledTools": enabledToolKeys(registry), "historyTurns": len(chatMessages),
 	})
-	streamCtx, streamCancel := context.WithTimeout(r.Context(), 150*time.Second)
+	streamCtx, streamCancel := context.WithTimeout(r.Context(), copilotStreamTimeout())
 	registerStreamCancel(corr, streamCancel)
 	defer func() {
 		clearStreamCancel(corr)
@@ -595,7 +595,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if fallback == "" {
-			emit("error", "runtime", map[string]any{"message": "模型调用失败：" + reactOut.Err.Error()})
+			emit("error", "runtime", map[string]any{"message": formatModelInvokeUserMessage(reactOut.Err)})
 			return
 		}
 		reactOut.Text = fallback

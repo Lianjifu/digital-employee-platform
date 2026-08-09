@@ -23,18 +23,41 @@ func (s *Server) queueToolAuthorization(ctx toolRunContext, tool *registeredTool
 		tool, call, ctx.Viewer, risk, ctx.CorrelationID,
 	)
 	now := time.Now().UTC().Format(time.RFC3339)
+	plan, _ := authReq["skillTurn"].(map[string]any)
+	planSummary := ""
+	if plan != nil {
+		planSummary = str(plan["summary"])
+	}
+	candIDs := stringSlice(authReq["approverCandidateIds"])
+	candNames := stringSlice(authReq["approverCandidateNames"])
+	signerUID, signerName := "", "管理员/授权人"
+	if len(candIDs) > 0 {
+		signerUID = candIDs[0]
+	}
+	if len(candNames) > 0 {
+		signerName = candNames[0]
+	}
 	approvalMirror := map[string]any{
 		"action": authReq["action"], "resource": ctx.ConversationID,
 		"reason": authReq["reason"], "riskLevel": authReq["riskLevel"],
 		"required": 1, "signed": 0, "decision": "pending",
+		"skillTurn": authReq["skillTurn"],
+		"planSummary": planSummary,
+		"approverRoleHint": authReq["approverRoleHint"],
+		"approverCandidateIds": candIDs,
+		"approverCandidateNames": candNames,
 		"signers": []map[string]any{{
-			"userId": "", "name": "管理员/授权人",
+			"userId": signerUID, "name": signerName,
 			"role": "approver", "signed": false,
 		}},
 	}
+	content := "智能体已申请执行「" + tool.Name + "」，等待登录用户人工审核授权后方可执行。"
+	if planSummary != "" {
+		content = "智能体已申请 Skill Turn（" + planSummary + "），等待登录用户人工审核；批准后将按计划执行至产物。"
+	}
 	msg := map[string]any{
 		"id": actionID, "role": "assistant",
-		"content": "已创建待人工审核授权：" + tool.Name + "。需一名授权人批准后方可执行。",
+		"content": content,
 		"actionId": actionID, "authorizationRequest": authReq, "approvalRequest": approvalMirror,
 		"createdAt": now, "correlationId": ctx.CorrelationID,
 		"toolCalls": []map[string]any{{
@@ -69,7 +92,7 @@ func isAllowlistedExecutableTool(name, kind string) bool {
 		return isDocxSkillName(n) || strings.Contains(n, "xlsx") || strings.Contains(n, "pptx") ||
 			strings.Contains(n, "excel") || strings.Contains(n, "word") || strings.Contains(n, "ppt")
 	}
-	if n == "knowledge.retrieve" || n == "memory.recall" {
+	if n == "knowledge.retrieve" || n == "memory.recall" || isCMDBTool(n) {
 		return true
 	}
 	return false

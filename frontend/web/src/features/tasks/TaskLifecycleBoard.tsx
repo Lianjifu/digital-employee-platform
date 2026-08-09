@@ -4,17 +4,17 @@ import { Badge } from '@de/web-ui';
 import { STAGES, employeeLabel, getStageMeta, isRiskTask, nextStepLabel, riskLabel, sourceLabel } from './task-ui';
 
 const priorityTone = { P0: 'error', P1: 'warn', P2: 'info', P3: 'neutral' } as const;
-const riskTone = (task: ControlledTask) => task.lifecycleStage === 'risk' || isRiskTask(task.sla) ? 'error' : 'neutral';
-const slaText = (task: ControlledTask) => task.sla.remainingMin === undefined ? '未设 SLA' : task.sla.remainingMin < 0 ? `超时 ${Math.abs(task.sla.remainingMin)} 分钟` : `${task.sla.remainingMin} 分钟内`;
+const riskTone = (task: ControlledTask) => task.lifecycleStage === 'risk' || isRiskTask(task.sla ?? { risk: 'none' }) ? 'error' : 'neutral';
+const slaText = (task: ControlledTask) => task.sla?.remainingMin === undefined ? '未设 SLA' : task.sla.remainingMin < 0 ? `超时 ${Math.abs(task.sla.remainingMin)} 分钟` : `${task.sla.remainingMin} 分钟内`;
 
 function TaskCard({ task, onOpen, disabled }: { task: ControlledTask; onOpen: (task: ControlledTask) => void; disabled: boolean }) {
-  const risk = task.lifecycleStage === 'risk' || isRiskTask(task.sla);
+  const risk = task.lifecycleStage === 'risk' || isRiskTask(task.sla ?? { risk: 'none' });
   return <article className="task-lifecycle-card" draggable={!disabled} aria-busy={disabled || undefined} onDragStart={(event) => { if (disabled) event.preventDefault(); else event.dataTransfer.setData('text/task-id', task.id); }} onClick={() => { if (!disabled) onOpen(task); }}>
     <div className="task-card-top"><Badge tone={priorityTone[task.priority]}>{task.priority}</Badge><span className={risk ? 'task-sla risk' : 'task-sla'}>{risk && <AlertTriangle size={13} />}{slaText(task)}</span></div>
     <h3>{task.title}</h3><p>{getStageMeta(task.lifecycleStage).label} · {nextStepLabel(task)}</p>
     <footer><span><UserRound size={13} />{task.assignee ?? '未分派'}</span><span>{employeeLabel(task)}</span></footer>
-    <div className="task-card-meta"><span>{sourceLabel(task.source)}</span>{task.links.conversationId && <span className="task-card-session"><MessagesSquare size={12} />会话关联</span>}</div>
-    {(risk || task.lifecycleStage === 'human_action' || task.dispatchKind) && <div className="task-card-flag">{task.dispatchKind === 'assist' && task.assistStatus === 'pending' ? '待协办确认' : task.dispatchKind === 'assign' ? '本部门派工' : task.lifecycleStage === 'human_action' ? (task.governance.approvalStatus === 'pending' ? '待双重审批' : '需要专家确认') : riskLabel(task.sla.risk)}</div>}
+    <div className="task-card-meta"><span>{sourceLabel(task.source)}</span>{task.links?.conversationId && <span className="task-card-session"><MessagesSquare size={12} />会话关联</span>}</div>
+    {(risk || task.lifecycleStage === 'human_action' || task.dispatchKind) && <div className="task-card-flag">{task.dispatchKind === 'assist' && task.assistStatus === 'pending' ? '待协办确认' : task.dispatchKind === 'assign' ? '本部门派工' : task.lifecycleStage === 'human_action' ? (task.governance?.approvalStatus === 'pending' ? '待双重审批' : '需要专家确认') : riskLabel(task.sla?.risk ?? 'none')}</div>}
     <button className="task-card-open" type="button" disabled={disabled} onClick={(event) => { event.stopPropagation(); if (!disabled) onOpen(task); }}>打开详情 <ArrowRight size={14} /></button>
   </article>;
 }

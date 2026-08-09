@@ -30,7 +30,15 @@ describe('buildExpertTools', () => {
       '人事服务协同流',
     ]);
     expect(tools.some((t) => /hr-policy|kubectl|offer-approve/i.test(t.name) || /hr-policy|offer-approve/.test(t.key))).toBe(false);
-    expect(defaultEnabledToolKeys(tools)).toHaveLength(7);
+    // 未接入工具/流程默认不勾选；builtins + 知识库 + 已装配技能
+    expect(defaultEnabledToolKeys(tools)).toEqual([
+      'builtin:knowledge.retrieve',
+      'builtin:memory.recall',
+      'tool:知识库',
+      'skill:政策问答',
+    ]);
+    expect(tools.find((t) => t.name === 'HRIS')?.unavailable).toBe(true);
+    expect(tools.find((t) => t.name === '人事服务协同流')?.unavailable).toBe(true);
   });
 
   it('marks approval_required from boundaryPolicy and skips prohibited', () => {

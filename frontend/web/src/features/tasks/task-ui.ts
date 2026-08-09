@@ -54,7 +54,7 @@ export function assistStatusLabel(status?: ControlledTask['assistStatus']) {
 
 /** 卡片/列表下一步文案：已完成不得再显示「等待下一步」 */
 export function nextStepLabel(task: Pick<ControlledTask, 'lifecycleStage' | 'execution'>) {
-  if (task.execution.currentStep) return task.execution.currentStep;
+  if (task.execution?.currentStep) return task.execution.currentStep;
   if (task.lifecycleStage === 'completed' || task.lifecycleStage === 'archived') return '可归档';
   if (task.lifecycleStage === 'pending') return '待开始';
   if (task.lifecycleStage === 'human_action') return '待专家确认';
@@ -67,10 +67,66 @@ export function employeeLabel(task: Pick<ControlledTask, 'digitalEmployeeName' |
   return task.digitalEmployeeName ?? task.digitalEmployeeId ?? '未指定';
 }
 
-export function conversationHref(task: Pick<ControlledTask, 'links' | 'digitalEmployeeId'>) {
-  if (!task.links.conversationId) return null;
+/** 真实 API 可能缺 links/governance 等字段；统一补默认避免运行时崩溃 */
+export function normalizeControlledTask(raw: Partial<ControlledTask> & Pick<ControlledTask, 'id' | 'title'>): ControlledTask {
+  const sla = raw.sla ?? { risk: 'none' as const, escalated: false };
+  return {
+    id: raw.id,
+    code: raw.code ?? raw.id,
+    title: raw.title,
+    description: raw.description,
+    priority: raw.priority ?? 'P2',
+    status: raw.status ?? 'pending',
+    assignee: raw.assignee,
+    digitalEmployeeId: raw.digitalEmployeeId,
+    digitalEmployeeName: raw.digitalEmployeeName,
+    agentId: raw.agentId,
+    progress: raw.progress ?? { done: 0, total: 1 },
+    tags: raw.tags ?? [],
+    createdAt: raw.createdAt ?? new Date().toISOString(),
+    updatedAt: raw.updatedAt ?? new Date().toISOString(),
+    lifecycleStage: raw.lifecycleStage ?? 'pending',
+    source: raw.source ?? 'manual',
+    sla: { remainingMin: sla.remainingMin, dueAt: sla.dueAt, risk: sla.risk ?? 'none', escalated: Boolean(sla.escalated) },
+    execution: {
+      runId: raw.execution?.runId,
+      currentStep: raw.execution?.currentStep,
+      retryCount: raw.execution?.retryCount ?? 0,
+      error: raw.execution?.error,
+      paused: Boolean(raw.execution?.paused),
+    },
+    governance: {
+      approvalRequired: Boolean(raw.governance?.approvalRequired),
+      approvalStatus: raw.governance?.approvalStatus ?? 'not_required',
+      takeoverBy: raw.governance?.takeoverBy,
+      takeoverReason: raw.governance?.takeoverReason,
+      policyBlocked: raw.governance?.policyBlocked,
+    },
+    links: {
+      conversationId: raw.links?.conversationId,
+      alertCode: raw.links?.alertCode,
+      workflowId: raw.links?.workflowId,
+      assetName: raw.links?.assetName,
+      blockedBy: raw.links?.blockedBy,
+    },
+    auditEvents: raw.auditEvents ?? [],
+    version: raw.version ?? 0,
+    dispatchKind: raw.dispatchKind,
+    coordinatorId: raw.coordinatorId,
+    coordinatorName: raw.coordinatorName,
+    collaboratorIds: raw.collaboratorIds,
+    collaboratorNames: raw.collaboratorNames,
+    assistStatus: raw.assistStatus,
+    relatedTaskCode: raw.relatedTaskCode,
+    slaRemainingMin: raw.slaRemainingMin,
+  };
+}
+
+export function conversationHref(task: Pick<ControlledTask, 'links' | 'digitalEmployeeId'> | { links?: ControlledTask['links']; digitalEmployeeId?: string }) {
+  const conversationId = task.links?.conversationId;
+  if (!conversationId) return null;
   const params = new URLSearchParams();
+  params.set('session', conversationId);
   if (task.digitalEmployeeId) params.set('employeeId', task.digitalEmployeeId);
-  const query = params.toString();
-  return query ? `/copilot?${query}` : '/copilot';
+  return `/copilot?${params.toString()}`;
 }
