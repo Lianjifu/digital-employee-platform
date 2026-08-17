@@ -108,6 +108,8 @@ cd ../backend && make test && make test-python && make smoke
 | 区域 | 说明 |
 |---|---|
 | 控制台 | 运营、协作、任务、员工、工作流、模型/知识/技能/记忆/渠道、治理 |
+| 运营总览 | SaaS 运营台：KPI / 需关注 / 投入产出 / 工作记录；`GET /api/home/extra`、`/api/home/kpis`、`/api/operations/overview` 为 **live-aggregate**（员工·任务·会话同源） |
+| 首页计量诚实性 | 成本仅在 `costMonth.source=usage-meters` 时展示；无计量显示 `—`；告警由复核/SLA/P0 **任务**衍生，不用 HomeAlerts / Billing 演示种子 |
 | 专家协作 | 研判 / 受控执行（`setCollaborationMode` 乐观更新 + PATCH，失败回滚）、岗位专家改绑、结案与交接；发送乐观追加与 SSE 流式；GFM 表格可读渲染 |
 | 会话治理 | `sessionMode` / `riskLevel` / handoff / closed；结案后拒绝写入；工具按模式过滤 |
 | 人工审核 | **单人人工审核**（发起人不可自批）；待审 → SSE `authorization` → 批准执行 |
@@ -116,6 +118,7 @@ cd ../backend && make test && make test-python && make smoke
 | 七架构运行时 | Harness（Direct / ReAct / Plan-Exec）+ 反射 + 记忆溯源 + 自进化候选 |
 | 技能产物 | 技能调用可产出可下载制品（含 docx 等） |
 | 粗粒度切流 | ServiceMode + gateway；policy evaluate / 审计在 de-sys |
+| 审计 / 持续验证 | 审计中心与零信任页与控制台壳层对齐；授权与临时授权可读处置 |
 | 飞书渠道 | App ID/Secret→Vault；verify=tenant_access_token+bot/v3/info；Webhook `/api/channel/feishu/events/{id}` |
 | 钉钉渠道 | Client ID/Secret；verify=oauth2/accessToken；默认 Stream；可选 HTTP Webhook |
 | 企微渠道 | 自建应用 CorpId/Secret/AgentId + 回调加解密；或智能机器人 WebSocket |
@@ -127,6 +130,9 @@ cd ../backend && make test && make test-python && make smoke
 
 - 数据多为控制面内存 + PG 快照（`kv_documents`）；消息按 `conversationId` 分桶持久化。
 - 专家协作在线回合：**本地消息时间线权威**；治理字段（mode/risk/handoff）以 Session PATCH 为准，消息 hydrate 不得覆盖。
+- **能力五中心**（模型 / 知识 / 技能 / 记忆 / 渠道）主隔离为 **工作区**（`workspaceId`）；记忆有 `scope=user|team|workspace|agent` 标签，技能商店有 `visibilityScope`，**尚未**统一「个人配置 vs 组织配置」产品面。
+- 运营总览空工作区会显示真实 0 / `—`；有种子任务的工作区「需关注」来自任务状态，不是演示告警文案。
+- 本机联调改 Go 后需 `go build -o backend/bin/de-*` 再重启栈（LaunchAgent 读 `backend/bin`，勿只编到 `/tmp`）。
 - 六边形目录骨架已就位；handler 仍集中在 `internal/server`（物理迁包后续）。
 - `.github/workflows/` 不入库。
 - LangGraph 全图、真 runsc、SPIRE SDS 仍属后续。
