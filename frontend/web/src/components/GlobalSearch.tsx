@@ -54,7 +54,7 @@ export function GlobalSearch() {
     if (!q.trim()) {
       return [
         ...tasks.slice(0, 3).map((t) => ({ type: 'task' as const, id: t.id, title: t.title, subtitle: t.code, to: '/tasks', meta: t.assignee })),
-        ...orderedEmployees.slice(0, 3).map((employee) => ({ type: 'employee' as const, id: employee.id, title: employee.role || employee.name, subtitle: `${employee.department} · ${employee.name}`, to: '/partners', meta: `v${employee.version}` })),
+        ...orderedEmployees.slice(0, 3).map((employee) => ({ type: 'employee' as const, id: employee.id, title: employee.role || employee.name, subtitle: `${employee.department} · ${employee.name}`, to: `/partners?employeeId=${employee.id}`, meta: `v${employee.version}` })),
         ...docs.slice(0, 3).map((d) => ({ type: 'doc' as const, id: d.id, title: d.title, subtitle: d.source, to: '/knowledge', meta: `${d.chunks} chunks` })),
       ];
     }
@@ -67,7 +67,7 @@ export function GlobalSearch() {
     });
     orderedEmployees.forEach((employee) => {
       if ([employee.name, employee.role, employee.department, employee.description].join(' ').toLowerCase().includes(ql)) {
-        out.push({ type: 'employee', id: employee.id, title: employee.role || employee.name, subtitle: `${employee.department} · ${employee.name}`, to: '/partners', meta: `v${employee.version}` });
+        out.push({ type: 'employee', id: employee.id, title: employee.role || employee.name, subtitle: `${employee.department} · ${employee.name}`, to: `/partners?employeeId=${employee.id}`, meta: `v${employee.version}` });
       }
     });
     docs.forEach((d) => {

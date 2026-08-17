@@ -139,8 +139,12 @@ export default function DigitalEmployees() {
   const createEmployee = useApiMutation<DigitalEmployee, Partial<DigitalEmployee>>('/api/digital-employees', { onSuccess: (employee) => { setCreateOpen(false); setSelectedId(employee.id); } });
 
   useEffect(() => {
-    const employeeId = searchParams.get('employeeId');
+    const employeeId = searchParams.get('employeeId') ?? searchParams.get('id');
     if (employeeId) setSelectedId(employeeId);
+    const tabParam = searchParams.get('tab');
+    if (tabParam && (['catalog', 'roleSetup', 'capabilities', 'release', 'operations'] as const).includes(tabParam as ModuleTab)) {
+      setTab(tabParam as ModuleTab);
+    }
   }, [searchParams]);
 
   const selected = employees.find((employee) => employee.id === selectedId) ?? null;

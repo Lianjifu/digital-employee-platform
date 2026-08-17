@@ -411,7 +411,7 @@ export default function Home() {
                   </div>
                   <div className="home-spotlight__cta">
                     {featured.lifecycle === 'active' && <Badge tone="success" className="text-[10px]">在岗</Badge>}
-                    <Button size="sm" variant="secondary" onClick={() => navigate(`/partners?id=${featured.id}`)}>
+                    <Button size="sm" variant="secondary" onClick={() => navigate(`/partners?employeeId=${featured.id}`)}>
                       档案 <ArrowRight className="h-3.5 w-3.5" />
                     </Button>
                     {!isAuditor && (
@@ -445,7 +445,7 @@ export default function Home() {
                           type="button"
                           className={cn('home-spotlight__avatar', emp.id === featured.id && 'is-active')}
                           title={employeePrimaryLabel(emp)}
-                          onClick={() => navigate(`/partners?id=${emp.id}`)}
+                          onClick={() => navigate(`/partners?employeeId=${emp.id}`)}
                         >
                           <DigitalEmployeeAvatar employee={emp} size={28} rounded="full" />
                         </button>
