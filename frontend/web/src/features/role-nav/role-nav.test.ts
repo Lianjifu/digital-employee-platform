@@ -20,12 +20,12 @@ function zhLen(key: string, dict: Record<string, string>) {
 describe('role-nav IA', () => {
   it('exposes distinct sidebars for user, admin, and auditor', () => {
     expect(getRoleNavGroups('user').flatMap((g) => g.items.map((i) => i.to))).toEqual([
-      '/home', '/copilot', '/tasks', '/agents', '/workflows', '/knowledge', '/skills',
+      '/home', '/copilot', '/tasks', '/partners', '/workflows', '/knowledge', '/skills',
     ]);
     expect(getRoleNavGroups('admin').flatMap((g) => g.items.map((i) => i.to))).toContain('/memory');
     expect(getRoleNavGroups('admin').flatMap((g) => g.items.map((i) => i.to))).toContain('/models');
     expect(getRoleNavGroups('auditor').flatMap((g) => g.items.map((i) => i.to))).toEqual([
-      '/home', '/audit-center', '/zero-trust', '/tasks', '/copilot', '/agents', '/workflows', '/knowledge', '/skills', '/memory', '/models',
+      '/home', '/audit-center', '/zero-trust', '/tasks', '/copilot', '/partners', '/workflows', '/knowledge', '/skills', '/memory', '/models',
     ]);
     expect(getRoleNavGroups('user').flatMap((g) => g.items.map((i) => i.to))).not.toContain('/memory');
   });
@@ -37,8 +37,8 @@ describe('role-nav IA', () => {
       'nav.tasks': '任务中心',
       'nav.tasks.user': '我的待办',
       'nav.tasks.auditor': '任务核查',
-      'nav.agents': '数字员工',
-      'nav.agents.auditor': '员工档案',
+      'nav.agents': '工作伙伴',
+      'nav.agents.auditor': '伙伴档案',
       'nav.workflows': '工作流程',
       'nav.workflows.auditor': '流程版本',
       'nav.knowledge': '知识中心',
@@ -68,7 +68,8 @@ describe('role-nav IA', () => {
     expect(navLabelKeyForPath('/tasks', 'auditor')).toBe('nav.tasks.auditor');
     expect(rolePageCopy('tasks', 'user').title).toBe('我的待办');
     expect(rolePageCopy('tasks', 'auditor').title).toBe('任务核查');
-    expect(rolePageCopy('agents', 'auditor').title).toBe('员工档案');
+    expect(rolePageCopy('agents', 'auditor').title).toBe('伙伴档案');
+    expect(rolePageCopy('agents', 'admin').title).toBe('工作伙伴');
     expect(rolePageCopy('workflows', 'auditor').title).toBe('流程版本');
     expect(rolePageCopy('copilot', 'auditor').title).toBe('协作记录');
     expect(rolePageCopy('models', 'auditor').title).toBe('模型审计');

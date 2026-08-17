@@ -24,7 +24,7 @@ function domainOf(row: AuditRow): Exclude<DomainFilter, 'all'> {
   const blob = `${row.action} ${row.target}`;
   if (/工作流|流程|发布技能|workflow/i.test(blob)) return 'workflow';
   if (/任务|审批|交接|授权|结案/.test(blob)) return 'task';
-  if (/数字员工|员工|上岗|评测|岗位/.test(blob)) return 'employee';
+  if (/数字工作伙伴|员工|上岗|评测|岗位/.test(blob)) return 'employee';
   return 'task';
 }
 
@@ -85,7 +85,7 @@ export default function AuditCenter({ embedded = false }: { embedded?: boolean }
 
   const domainChips: Array<[DomainFilter, string, typeof FileSearch]> = [
     ['all', '全部', FileSearch],
-    ['employee', '数字员工', Bot],
+    ['employee', '工作伙伴', Bot],
     ['task', '任务协作', ListChecks],
     ['workflow', '工作流程', Workflow],
   ];

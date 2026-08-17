@@ -355,7 +355,7 @@ func scoreMemoryText(text string, tokens []string, layer string) float64 {
 func buildCopilotSystemPrompt(emp map[string]any, ragHits any, memoryHits []memoryHit) string {
 	var b strings.Builder
 	if emp != nil && emp["skipped"] != true && emp["active"] != false {
-		name := coalesce(str(emp["name"]), "数字员工")
+		name := coalesce(str(emp["name"]), "工作伙伴")
 		role := coalesce(str(emp["role"]), str(emp["title"]))
 		dept := str(emp["department"])
 		b.WriteString("你是「")
@@ -388,7 +388,7 @@ func buildCopilotSystemPrompt(emp map[string]any, ragHits any, memoryHits []memo
 		b.WriteString("请用中文简洁、可执行地回答，严格遵守岗位边界；涉及审批、写操作或敏感数据时提示人工接管。\n")
 		b.WriteString("若用户使用「刚才/上面/之前」等指代，请结合对话历史与跨会话记忆作答，不要假装遗忘。\n")
 	} else {
-		b.WriteString("你是企业数字员工平台的协作助手。请用中文简洁、可执行地回答。\n")
+		b.WriteString("你是企业数字工作伙伴平台的协作助手。请用中文简洁、可执行地回答。\n")
 		b.WriteString("若用户使用「刚才/上面/之前」等指代，请结合对话历史与跨会话记忆作答。\n")
 	}
 	if len(memoryHits) > 0 {

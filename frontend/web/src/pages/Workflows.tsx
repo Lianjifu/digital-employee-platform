@@ -105,7 +105,7 @@ const NODE_ICONS: Record<WorkflowNodeKind, any> = {
 const NODE_LABELS: Record<WorkflowNodeKind, string> = {
   trigger: 'Webhook 触发', schedule: '定时调度', event: '告警事件',
   retrieve: '知识检索', transform: '数据转换',
-  decision: '数字员工研判', condition: '条件判断', approval: '人工审批', policy: '风险策略',
+  decision: '工作伙伴研判', condition: '条件判断', approval: '人工审批', policy: '风险策略',
   branch: '条件分支', parallel: '并行编排',
   execute: '执行受控动作', http: 'HTTP / API', mcp: 'MCP 工具', task: '创建任务',
   retry: '重试策略', compensate: '补偿回滚', audit: '审计留痕', notify: '结果通知',
@@ -121,7 +121,7 @@ const NODE_COLORS: Record<WorkflowNodeKind, string> = {
 const NODE_DESCS: Record<WorkflowNodeKind, string> = {
   trigger: '接收外部系统 Webhook 请求', schedule: '按 Cron 或日历规则发起流程', event: '订阅监控告警或消息事件',
   retrieve: '查询知识库、运行手册与历史证据', transform: '映射、清洗并标准化上下文数据',
-  decision: '由数字员工分析上下文并生成处置决策', condition: '基于表达式判断后续路径', approval: '按审批人、超时与签名规则复核', policy: '校验风险等级、权限和变更策略',
+  decision: '由数字工作伙伴分析上下文并生成处置决策', condition: '基于表达式判断后续路径', approval: '按审批人、超时与签名规则复核', policy: '校验风险等级、权限和变更策略',
   branch: '按条件选择唯一处置路径', parallel: '并发执行多个独立步骤并汇聚',
   execute: '调用已纳管 Skill 完成受控处置动作', http: '调用企业内部或第三方 API', mcp: '调用受控 MCP 工具', task: '创建人工处置任务并回传结果',
   retry: '按退避策略自动重试可恢复失败', compensate: '执行补偿动作或回滚变更', audit: '写入可追溯的审计证据', notify: '通过飞书、企微、短信等通知结果',
@@ -131,9 +131,9 @@ type NodeLibraryCategory = 'trigger' | 'context' | 'decision' | 'action' | 'gove
 type NodeRisk = 'standard' | 'review' | 'sensitive';
 
 const NODE_LIBRARY_GROUPS: Array<{ id: NodeLibraryCategory; label: string; desc: string; kinds: WorkflowNodeKind[] }> = [
-  { id: 'trigger', label: '触发与输入', desc: '定义数字员工何时开始工作', kinds: ['trigger', 'schedule', 'event'] },
+  { id: 'trigger', label: '触发与输入', desc: '定义数字工作伙伴何时开始工作', kinds: ['trigger', 'schedule', 'event'] },
   { id: 'context', label: '上下文与数据', desc: '补齐处置所需的证据与变量', kinds: ['retrieve', 'transform'] },
-  { id: 'decision', label: '智能决策', desc: '由规则或数字员工研判决定处置路径', kinds: ['decision', 'condition', 'branch', 'parallel'] },
+  { id: 'decision', label: '智能决策', desc: '由规则或工作伙伴研判决定处置路径', kinds: ['decision', 'condition', 'branch', 'parallel'] },
   { id: 'action', label: '执行与协同', desc: '调用受控能力或派发人工工作', kinds: ['execute', 'http', 'mcp', 'task'] },
   { id: 'governance', label: '人工与治理', desc: '在关键动作前实施权限和审批控制', kinds: ['policy', 'approval', 'audit'] },
   { id: 'reliability', label: '可靠性与收尾', desc: '处理失败、补偿并通知相关人员', kinds: ['retry', 'compensate', 'notify'] },
@@ -168,7 +168,7 @@ const EMPTY_EDGES: Edge[] = [];
 const SAMPLE_NODES: Node[] = [
   { id: 'n1', type: 'custom', position: { x: 60, y: 80 }, data: { kind: 'trigger', label: 'Webhook 触发' } },
   { id: 'n2', type: 'custom', position: { x: 280, y: 80 }, data: { kind: 'retrieve', label: '知识检索' } },
-  { id: 'n3', type: 'custom', position: { x: 500, y: 80 }, data: { kind: 'decision', label: '数字员工研判' } },
+  { id: 'n3', type: 'custom', position: { x: 500, y: 80 }, data: { kind: 'decision', label: '工作伙伴研判' } },
   { id: 'n4', type: 'custom', position: { x: 720, y: 80 }, data: { kind: 'approval', label: '双重审批' } },
   { id: 'n5', type: 'custom', position: { x: 940, y: 40 }, data: { kind: 'branch', label: '分支：成功路径' } },
   { id: 'n6', type: 'custom', position: { x: 940, y: 160 }, data: { kind: 'branch', label: '分支：回滚路径' } },
@@ -267,7 +267,7 @@ const NODE_DEBUG: Record<string, { input: string; output: string; log: string[] 
   n3: {
     input: '{ "context": [...], "tools": ["skill_redis_tune", "mcp_k8s"] }',
     output: '{ "decision": "WRITE", "action": "CONFIG SET", "confidence": 0.92 }',
-    log: ['[14:28:00] 进入数字员工研判节点', '[14:28:01] 工具调用：skill_redis_tune.predict()', '[14:28:01] 决策：WRITE（置信度 0.92）'],
+    log: ['[14:28:00] 进入工作伙伴研判节点', '[14:28:01] 工具调用：skill_redis_tune.predict()', '[14:28:01] 决策：WRITE（置信度 0.92）'],
   },
   n4: {
     input: '{ "action": "CONFIG SET", "target": "prod-redis-01", "params": { "maxmemory": "16GB", "policy": "volatile-lru" } }',
@@ -773,7 +773,7 @@ export default function Workflows() {
   const [aiGenerateOpen, setAiGenerateOpen] = useState(false);
   const [generationStep, setGenerationStep] = useState<'input' | 'preview'>('input');
   const [generationResult, setGenerationResult] = useState<GenerationResult | null>(null);
-  const [generationPrompt, setGenerationPrompt] = useState('当生产 Redis 触发 OOM 告警时，由数字员工研判处置路径，经双重审批后执行受控恢复，写入审计并通知值班负责人');
+  const [generationPrompt, setGenerationPrompt] = useState('当生产 Redis 触发 OOM 告警时，由工作伙伴研判处置路径，经双重审批后执行受控恢复，写入审计并通知值班负责人');
   const [generationConstraints, setGenerationConstraints] = useState<GenerationVars['constraints']>({ riskLevel: 'L2', requireApproval: true, requireAudit: true, requireRollback: true });
   const [generationModel, setGenerationModel] = useState('企业默认模型');
   const { data: generationHistoryData } = useApiQuery<GenerationResult[]>(['workflow-generations'], '/api/workflows/generations');
@@ -945,7 +945,7 @@ export default function Workflows() {
     },
   );
   const [skillName, setSkillName] = useState('生产故障处置流程技能');
-  const [skillDesc, setSkillDesc] = useState('由工作流程发布的标准作业能力，可供数字员工在能力装配中引用。');
+  const [skillDesc, setSkillDesc] = useState('由工作流程发布的标准作业能力，可供数字工作伙伴在能力装配中引用。');
   const [skillSourceVersion, setSkillSourceVersion] = useState('v4');
   const [skillRiskLevel, setSkillRiskLevel] = useState<WorkflowSkill['riskLevel']>('mid');
   useEffect(() => {
@@ -1328,7 +1328,7 @@ export default function Workflows() {
     setTab('canvas');
     setSidePanel('properties');
     setAiGenerateOpen(false);
-    showToast(`已创建隔离草稿 ${applied.revisionId}，专家复核后可发布为流程技能供数字员工装配`, 'success');
+    showToast(`已创建隔离草稿 ${applied.revisionId}，专家复核后可发布为流程技能供数字工作伙伴装配`, 'success');
   }, [activeVersion, applyGenerationApi, canWrite, edges, generationResult, nodes, pushHistory, showToast, versions]);
   const discardGeneration = useCallback(() => {
     if (generationResult) discardGenerationApi.mutate({ id: generationResult.id });
@@ -1740,7 +1740,7 @@ export default function Workflows() {
                 <div className="wf-publish__eyebrow"><Sparkles className="h-3.5 w-3.5" />流程能力沉淀</div>
                 <h2 className="wf-publish__title">发布为流程技能</h2>
                 <p className="wf-publish__lead">
-                  将已通过运行前校验的流程版本写入技能中心，供数字员工在能力装配中引用。
+                  将已通过运行前校验的流程版本写入技能中心，供数字工作伙伴在能力装配中引用。
                   「调用需审批」指执行时双重审批，与本页发布门禁不同。
                 </p>
               </div>
@@ -1993,7 +1993,7 @@ export default function Workflows() {
                 </div>
                 <div className="wf-boundary__card">
                   <strong>发布技能</strong>
-                  <span>把流程沉淀为数字员工可装配能力，不替代版本发布。</span>
+                  <span>把流程沉淀为数字工作伙伴可装配能力，不替代版本发布。</span>
                   <Button size="sm" variant="ghost" onClick={() => setTab('publishSkill')}>去发布技能</Button>
                 </div>
               </div>
@@ -2329,13 +2329,13 @@ export default function Workflows() {
 }
 
 const AI_PROMPT_EXAMPLES = [
-  { label: 'Redis OOM 受控恢复', prompt: '当生产 Redis 触发 OOM 告警时，由数字员工研判处置路径，经双重审批后执行受控恢复，写入审计并通知值班负责人' },
-  { label: '证书到期巡检', prompt: '每周巡检即将过期的 TLS 证书，数字员工研判优先级后创建处置工单，经双重审批后通知值班并写入审计' },
-  { label: '高危变更复核', prompt: '当变更窗口外出现高危配置变更时，数字员工研判影响面，阻断自动执行，通知专家复核并保留审计留痕' },
+  { label: 'Redis OOM 受控恢复', prompt: '当生产 Redis 触发 OOM 告警时，由工作伙伴研判处置路径，经双重审批后执行受控恢复，写入审计并通知值班负责人' },
+  { label: '证书到期巡检', prompt: '每周巡检即将过期的 TLS 证书，工作伙伴研判优先级后创建处置工单，经双重审批后通知值班并写入审计' },
+  { label: '高危变更复核', prompt: '当变更窗口外出现高危配置变更时，工作伙伴研判影响面，阻断自动执行，通知专家复核并保留审计留痕' },
 ] as const;
 
 function dependencyTypeLabel(type: GenerationResult['dependencies'][number]['type']) {
-  if (type === 'agent') return '数字员工';
+  if (type === 'agent') return '数字工作伙伴';
   if (type === 'mcp') return 'MCP';
   return '工具';
 }
@@ -2386,7 +2386,7 @@ function WorkflowAIGeneratorDrawer({
         <div className="space-y-5">
           <div>
             <label className="mb-1.5 block text-xs font-semibold text-[var(--text)]">业务目标</label>
-            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} placeholder="例如：当生产 Redis 触发 OOM 告警时，由数字员工研判处置路径，经双重审批后执行受控恢复，写入审计并通知值班" className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2.5 text-sm leading-6 text-[var(--text)] outline-none transition-[border-color,box-shadow] duration-200 focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]" />
+            <textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} rows={5} placeholder="例如：当生产 Redis 触发 OOM 告警时，由工作伙伴研判处置路径，经双重审批后执行受控恢复，写入审计并通知值班" className="w-full resize-y rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-3 py-2.5 text-sm leading-6 text-[var(--text)] outline-none transition-[border-color,box-shadow] duration-200 focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]" />
             <div className="mt-1 flex justify-between text-[10px] text-[var(--text-muted)]"><span>描述触发、研判、双重审批、受控动作、审计与通知</span><span>{prompt.length}/1000</span></div>
             <div className="mt-2.5 flex flex-wrap gap-1.5">
               {AI_PROMPT_EXAMPLES.map((example) => (
@@ -2444,10 +2444,10 @@ function WorkflowAIGeneratorDrawer({
             </div>
           </div>
           <div className="grid gap-2 sm:grid-cols-3">{([['structure', '结构校验'], ['dependencies', '依赖检查'], ['risk', '风险扫描']] as const).map(([key, label]) => <div key={key} className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-[11px] text-[var(--text-muted)]">{label}</div><div className={cn('mt-1 text-xs font-semibold', result.checks[key] === 'passed' ? 'text-[var(--success)]' : 'text-[var(--warning)]')}>{result.checks[key] === 'passed' ? '通过' : '需要专家复核'}</div></div>)}</div>
-          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="mb-3 text-xs font-semibold text-[var(--text)]">工具、MCP 与数字员工依赖</div><div className="space-y-2">{result.dependencies.map((dep) => <div key={`${dep.type}-${dep.name}`} className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--text-secondary)]">{dep.name}<span className="ml-2 text-[10px] text-[var(--text-muted)]">{dependencyTypeLabel(dep.type)}</span></span><Badge tone={dep.status === 'available' ? 'success' : 'warn'} className="text-[10px]">{dep.status === 'available' ? '可用' : '缺失权限'}</Badge></div>)}</div></div>
+          <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="mb-3 text-xs font-semibold text-[var(--text)]">工具、MCP 与数字工作伙伴依赖</div><div className="space-y-2">{result.dependencies.map((dep) => <div key={`${dep.type}-${dep.name}`} className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--text-secondary)]">{dep.name}<span className="ml-2 text-[10px] text-[var(--text-muted)]">{dependencyTypeLabel(dep.type)}</span></span><Badge tone={dep.status === 'available' ? 'success' : 'warn'} className="text-[10px]">{dep.status === 'available' ? '可用' : '缺失权限'}</Badge></div>)}</div></div>
           {result.risks.length > 0 && <div className="rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] p-4"><div className="mb-2 flex items-center gap-2 text-xs font-semibold text-[var(--warning)]"><AlertTriangle className="h-3.5 w-3.5" />风险与权限提示</div>{result.risks.map((risk) => <div key={risk.node} className="text-xs leading-5 text-[var(--text-secondary)]">{risk.level} · {risk.text}</div>)}</div>}
           {result.warnings.length > 0 && <div><div className="mb-2 text-xs font-semibold text-[var(--text)]">专家复核建议</div><ul className="space-y-1 text-xs leading-5 text-[var(--text-muted)]">{result.warnings.map((warning) => <li key={warning}>• {warning}</li>)}</ul></div>}
-          <div className="flex items-center gap-2 rounded-md bg-[var(--info-bg)] px-3 py-2 text-[11px] text-[var(--info)]"><ShieldCheck className="h-3.5 w-3.5 shrink-0" />应用隔离草稿 → 专家配置与校验 → 发布流程技能 → 数字员工能力装配。</div>
+          <div className="flex items-center gap-2 rounded-md bg-[var(--info-bg)] px-3 py-2 text-[11px] text-[var(--info)]"><ShieldCheck className="h-3.5 w-3.5 shrink-0" />应用隔离草稿 → 专家配置与校验 → 发布流程技能 → 数字工作伙伴能力装配。</div>
         </div>
       ) : null}
     </Drawer>
@@ -2602,7 +2602,7 @@ function CanvasView(props: {
     <div className="flex h-full min-h-0 min-w-0 flex-col">
       {actionToolbar}
       <div className="shrink-0 border-b border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-[11px] leading-5 text-[var(--text-muted)] md:px-5">
-        本页用于编排受控处置流程草稿。版本治理请点「当前版本」进入抽屉 / 版本中心；完成后请到「发布技能」发布为流程技能，供数字员工能力装配；本页不直接发起专家协作上岗。
+        本页用于编排受控处置流程草稿。版本治理请点「当前版本」进入抽屉 / 版本中心；完成后请到「发布技能」发布为流程技能，供数字工作伙伴能力装配；本页不直接发起专家协作上岗。
         {structureIssues.filter((item) => item.severity === 'failed').length > 0 && (
           <span className="ml-2 text-[var(--warning)]">结构门禁：{structureIssues.filter((item) => item.severity === 'failed').map((item) => item.message).join('；')}</span>
         )}
@@ -3356,7 +3356,7 @@ function TemplatesView({
             <Sparkles className="h-4 w-4 text-[var(--brand)]" />工作流模版库
           </h2>
           <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">
-            {filteredTemplates.length} 套受治理处置流程资产 · 创建隔离草稿后经校验发布为流程技能，供数字员工能力装配与专家协同引用。模板本身不可直接上岗调用。
+            {filteredTemplates.length} 套受治理处置流程资产 · 创建隔离草稿后经校验发布为流程技能，供数字工作伙伴能力装配与专家协同引用。模板本身不可直接上岗调用。
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
@@ -3654,7 +3654,7 @@ function TemplatePreviewModalInner({
               </div>
               <div className={cn('rounded-xl border p-4', template.risk === 'L3' ? 'border-[var(--warning)]/30 bg-[var(--warning-bg)]' : 'border-[var(--info)]/25 bg-[var(--info-bg)]')}>
                 <div className={cn('flex items-center gap-2 text-xs font-semibold', template.risk === 'L3' ? 'text-[var(--warning)]' : 'text-[var(--info)]')}><ShieldCheck className="h-4 w-4" />{template.risk} 治理门禁</div>
-                <p className="mt-2 text-[11px] leading-5 text-[var(--text-secondary)]">创建隔离草稿后进入编排；外部执行前需完成依赖授权、双重审批、审计留痕与补偿校验。未发布流程技能不可被数字员工调用。</p>
+                <p className="mt-2 text-[11px] leading-5 text-[var(--text-secondary)]">创建隔离草稿后进入编排；外部执行前需完成依赖授权、双重审批、审计留痕与补偿校验。未发布流程技能不可被数字工作伙伴调用。</p>
               </div>
             </section>
 

@@ -8,7 +8,7 @@ describe('OnboardingGuide copy', () => {
       '运营总览',
       '专家协作',
       '任务中心',
-      '数字员工',
+      '工作伙伴',
       '工作流程',
       '模型服务',
       '知识中心',
@@ -21,10 +21,11 @@ describe('OnboardingGuide copy', () => {
 
   it('exposes role-specific four-character nav previews', () => {
     expect(PREVIEW_NAV_BY_ROLE.user.flatMap((g) => [...g.items])).toEqual([
-      '运营总览', '专家协作', '我的待办', '数字员工', '工作流程', '知识检索', '技能清单',
+      '运营总览', '专家协作', '我的待办', '工作伙伴', '工作流程', '知识检索', '技能清单',
     ]);
     expect(PREVIEW_NAV_BY_ROLE.auditor.flatMap((g) => [...g.items])).toContain('审计中心');
     expect(PREVIEW_NAV_BY_ROLE.auditor.flatMap((g) => [...g.items])).toContain('任务核查');
+    expect(PREVIEW_NAV_BY_ROLE.auditor.flatMap((g) => [...g.items])).toContain('伙伴档案');
     for (const role of ['user', 'admin', 'auditor'] as const) {
       for (const item of PREVIEW_NAV_BY_ROLE[role].flatMap((g) => g.items)) {
         expect([...item].length).toBe(4);
@@ -45,7 +46,7 @@ describe('OnboardingGuide copy', () => {
   it('journey cards follow 能力 → 编排上岗 → 受控运营', () => {
     expect(JOURNEY_CARDS.map((c) => c.title)).toEqual(['能力接入', '编排上岗', '受控运营']);
     expect(JOURNEY_CARDS[0].description).toMatch(/记忆|消息渠道/);
-    expect(JOURNEY_CARDS[1].description).toMatch(/数字员工|工作流程/);
+    expect(JOURNEY_CARDS[1].description).toMatch(/数字工作伙伴|工作流程/);
     expect(JOURNEY_CARDS[2].description).toMatch(/持续验证|审计/);
   });
 });

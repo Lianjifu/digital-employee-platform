@@ -120,7 +120,7 @@ func pickSpecialists(cands []map[string]any, userMsg string, max int) []speciali
 }
 
 func specialistSystemPrompt(emp map[string]any) string {
-	name := coalesce(str(emp["name"]), "数字员工")
+	name := coalesce(str(emp["name"]), "工作伙伴")
 	role := coalesce(str(emp["role"]), str(emp["title"]))
 	dept := str(emp["department"])
 	var b strings.Builder

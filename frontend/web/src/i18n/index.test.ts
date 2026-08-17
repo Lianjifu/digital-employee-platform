@@ -50,6 +50,12 @@ describe('enterprise navigation translations', () => {
     expect(DICTS['zh-CN']['module.settings.tabs.usage']).toBe('套餐用量');
     expect(DICTS['zh-CN']['nav.workflows']).toBe('工作流程');
     expect(DICTS['zh-CN']['nav.zeroTrust']).toBe('持续验证');
+    expect(DICTS['zh-CN']['nav.agents']).toBe('工作伙伴');
+    expect(DICTS['zh-CN']['nav.agents.auditor']).toBe('伙伴档案');
+    expect([...DICTS['zh-CN']['nav.agents']].length).toBe(4);
+    expect([...DICTS['zh-CN']['nav.agents.auditor']].length).toBe(4);
+    expect(DICTS['zh-CN']['app.title']).toBe('数字工作伙伴平台');
+    expect(DICTS['en-US']['nav.agents']).toBe('Partners');
     expect(DICTS['zh-CN']['module.agents.tabs.market']).not.toContain('工厂');
   });
 

@@ -19,7 +19,7 @@ type OnboardingGuideProps = {
 export const PREVIEW_NAV_GROUPS = [
   { label: null, items: ['运营总览'] },
   { label: '协作', items: ['专家协作', '任务中心'] },
-  { label: '编排', items: ['数字员工', '工作流程'] },
+  { label: '编排', items: ['工作伙伴', '工作流程'] },
   { label: '能力', items: ['模型服务', '知识中心', '技能中心', '记忆中心', '消息渠道'] },
 ] as const;
 
@@ -28,13 +28,13 @@ export const PREVIEW_NAV_BY_ROLE: Record<AppRole, ReadonlyArray<{ label: string 
   user: [
     { label: null, items: ['运营总览'] },
     { label: '协作', items: ['专家协作', '我的待办'] },
-    { label: '编排', items: ['数字员工', '工作流程'] },
+    { label: '编排', items: ['工作伙伴', '工作流程'] },
     { label: '能力', items: ['知识检索', '技能清单'] },
   ],
   auditor: [
     { label: null, items: ['运营总览'] },
     { label: '审计', items: ['审计中心', '持续验证'] },
-    { label: '核查', items: ['任务核查', '协作记录', '员工档案', '流程版本', '知识引用', '技能权限', '记忆策略', '模型审计'] },
+    { label: '核查', items: ['任务核查', '协作记录', '伙伴档案', '流程版本', '知识引用', '技能权限', '记忆策略', '模型审计'] },
   ],
 };
 
@@ -47,7 +47,7 @@ export const VALUE_CARDS = [
   {
     icon: Bot,
     title: '能力资产统一',
-    description: '模型、知识、技能、记忆与消息渠道统一接入，供数字员工复用编排。',
+    description: '模型、知识、技能、记忆与消息渠道统一接入，供数字工作伙伴复用编排。',
   },
   {
     icon: ClipboardCheck,
@@ -65,7 +65,7 @@ export const JOURNEY_CARDS = [
   {
     number: '02',
     title: '编排上岗',
-    description: '组合数字员工与工作流程，完成试运行、评测与双重审批后上岗。',
+    description: '组合数字工作伙伴与工作流程，完成试运行、评测与双重审批后上岗。',
   },
   {
     number: '03',
@@ -82,10 +82,10 @@ const ROLE_WELCOME: Record<AppRole, { title: string; body: string; journeyTitle:
     journeyBody: '发起协作 → 处理待办 → 引用知识与技能，全程可追溯。',
   },
   admin: {
-    title: '让数字员工在受控边界内协同工作',
+    title: '让数字工作伙伴在受控边界内协同工作',
     body: '从能力接入、编排上岗到受控运营，统一身份权限、记忆渠道与审计证据。',
-    journeyTitle: '建立数字员工执行闭环',
-    journeyBody: '沿「能力 → 编排 → 运营」完成企业级数字员工启用。',
+    journeyTitle: '建立数字工作伙伴执行闭环',
+    journeyBody: '沿「能力 → 编排 → 运营」完成企业级数字工作伙伴启用。',
   },
   auditor: {
     title: '以审计与核查为中心',
@@ -134,9 +134,9 @@ export function OnboardingGuide({ open, onClose, role }: OnboardingGuideProps) {
             <div className="pr-7 sm:pr-9">
               <div className="flex items-center gap-1.5 text-[10px] font-semibold text-[var(--brand)] sm:gap-2 sm:text-xs">
                 <Sparkles className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                数字员工平台
+                数字工作伙伴平台
               </div>
-              <p className="mt-3 text-xs font-medium text-[var(--text-secondary)] sm:mt-4 sm:text-sm">欢迎进入数字员工平台</p>
+              <p className="mt-3 text-xs font-medium text-[var(--text-secondary)] sm:mt-4 sm:text-sm">欢迎进入数字工作伙伴平台</p>
               <h1 id="onboarding-title" className="mt-1.5 max-w-md text-base font-semibold leading-snug text-[var(--brand)] sm:text-[26px] sm:leading-tight">
                 {welcome.title}
               </h1>
@@ -231,7 +231,7 @@ function PlatformPreview({
   navGroups: ReadonlyArray<{ label: string | null; items: readonly string[] }>;
 }) {
   const flat = navGroups.flatMap((g) => [...g.items]);
-  const active = page === 1 ? (flat.find((i) => /知识|技能|模型|审计/.test(i)) ?? flat[0]) : (flat.find((i) => /数字员工|任务|员工/.test(i)) ?? flat[1] ?? flat[0]);
+  const active = page === 1 ? (flat.find((i) => /知识|技能|模型|审计/.test(i)) ?? flat[0]) : (flat.find((i) => /工作伙伴|任务|伙伴/.test(i)) ?? flat[1] ?? flat[0]);
   return (
     <div className="relative hidden self-stretch overflow-hidden bg-[color-mix(in_srgb,var(--brand)_8%,#f8fafc)] p-3 sm:block sm:p-5 lg:p-7">
       <div className="flex h-full min-h-0 overflow-hidden rounded-2xl border border-white/90 bg-white/85 shadow-[0_16px_36px_rgba(79,70,229,0.10)]">

@@ -59,7 +59,7 @@ const SCOPE_LABEL: Record<MemoryRecord['scope'], string> = {
   user: '个人',
   team: '团队',
   workspace: '工作区',
-  agent: '数字员工',
+  agent: '数字工作伙伴',
 };
 
 const SOURCE_LABEL: Record<MemoryRecord['sourceType'], string> = {
@@ -313,7 +313,7 @@ export default function Memory() {
         open={Boolean(detail)}
         onClose={() => setDetailId(null)}
         title={detail?.title ?? '记忆详情'}
-        description="查看来源链路、密级、过期与数字员工归属；运行记忆不等于权威知识。"
+        description="查看来源链路、密级、过期与数字工作伙伴归属；运行记忆不等于权威知识。"
         size="lg"
       >
         {detail && (
@@ -390,9 +390,9 @@ function Overview({
           value={employeeFilter}
           onChange={(event) => onEmployeeFilter(event.target.value)}
           className="memory-select"
-          aria-label="按数字员工筛选"
+          aria-label="按数字工作伙伴筛选"
         >
-          <option value="all">全部数字员工</option>
+          <option value="all">全部数字工作伙伴</option>
           {employees.map((employee) => (
             <option key={employee.id} value={employee.id}>{employee.name} · {employee.role}</option>
           ))}
@@ -409,7 +409,7 @@ function Overview({
               转知识 {selectedEmployee.memoryPolicy.knowledgePromotion === 'approval_required' ? '需审核' : '关闭'}
             </span>
           </div>
-          <Link to={`/agents?employeeId=${selectedEmployee.id}`} className="memory-text-link">
+          <Link to={`/partners?employeeId=${selectedEmployee.id}`} className="memory-text-link">
             打开岗位契约 <ExternalLink className="h-3 w-3" />
           </Link>
         </div>
@@ -443,7 +443,7 @@ function Overview({
         <section className="memory-panel">
           <div className="memory-panel__head">
             <h3><ShieldCheck className="h-4 w-4 text-[var(--brand)]" />当前工作区策略</h3>
-            <p>默认 TTL、审批与容量边界，适用于本工作区全部数字员工。</p>
+            <p>默认 TTL、审批与容量边界，适用于本工作区全部数字工作伙伴。</p>
           </div>
           <div className="memory-policy-grid">
             <div className="memory-policy-stat">
@@ -599,11 +599,11 @@ function RecordList({
       <div className="memory-section-head">
         <div>
           <h2>{meta.label}记忆 · {records.length} 条</h2>
-          <p>按工作区隔离；默认仅展示生效中记录，可按数字员工与状态筛选。</p>
+          <p>按工作区隔离；默认仅展示生效中记录，可按数字工作伙伴与状态筛选。</p>
         </div>
         <div className="memory-toolbar">
-          <select value={employeeFilter} onChange={(event) => onEmployeeFilter(event.target.value)} className="memory-select" aria-label="数字员工">
-            <option value="all">全部数字员工</option>
+          <select value={employeeFilter} onChange={(event) => onEmployeeFilter(event.target.value)} className="memory-select" aria-label="数字工作伙伴">
+            <option value="all">全部数字工作伙伴</option>
             {employees.map((employee) => <option key={employee.id} value={employee.id}>{employee.name}</option>)}
           </select>
           <select value={statusFilter} onChange={(event) => onStatusFilter(event.target.value as StatusFilter)} className="memory-select" aria-label="状态">
@@ -690,7 +690,7 @@ function RecordList({
                     </div>
                   </div>
                   <div className="memory-record__meta">
-                    <span>{employee ? `${employee.name} · ${employee.role}` : '未绑定数字员工'}</span>
+                    <span>{employee ? `${employee.name} · ${employee.role}` : '未绑定数字工作伙伴'}</span>
                     <span>范围 {SCOPE_LABEL[record.scope]}</span>
                     <span title={formatFullTime(record.updatedAt || record.createdAt)}>{formatTime(record.updatedAt || record.createdAt)}</span>
                     {record.expiresAt && <span title={formatFullTime(record.expiresAt)}>过期 {formatTime(record.expiresAt)}</span>}
@@ -714,7 +714,7 @@ function RecordList({
         </>
       ) : (
         <div className="memory-empty">
-          <EmptyState icon={Archive} title="没有匹配的记忆" description="记录将在会话、任务或工作流的受控执行中形成；可切换状态或数字员工筛选。" />
+          <EmptyState icon={Archive} title="没有匹配的记忆" description="记录将在会话、任务或工作流的受控执行中形成；可切换状态或数字工作伙伴筛选。" />
         </div>
       )}
     </div>
@@ -750,7 +750,7 @@ function MemoryDetail({
       </div>
       <p className="memory-detail__content">{record.content}</p>
       <dl className="memory-detail__grid">
-        <Row label="数字员工" value={employee ? `${employee.name} · ${employee.role}` : '未绑定'} />
+        <Row label="数字工作伙伴" value={employee ? `${employee.name} · ${employee.role}` : '未绑定'} />
         <Row label="作用域" value={SCOPE_LABEL[record.scope]} />
         <Row label="来源类型" value={SOURCE_LABEL[record.sourceType]} />
         <Row label="来源 ID" value={record.sourceId} />
@@ -760,7 +760,7 @@ function MemoryDetail({
         <Row label="更新时间" value={formatFullTime(record.updatedAt)} />
       </dl>
       <div className="flex flex-wrap gap-2">
-        {employee && <Button size="sm" variant="secondary" onClick={() => navigate(`/agents?employeeId=${employee.id}`)}>查看岗位契约</Button>}
+        {employee && <Button size="sm" variant="secondary" onClick={() => navigate(`/partners?employeeId=${employee.id}`)}>查看岗位契约</Button>}
         {href && <Button size="sm" variant="secondary" onClick={() => navigate(href)}>打开来源</Button>}
         {canMutate && record.layer === 'long_term' && record.status === 'active' && (
           <Button size="sm" onClick={onCandidate}><FileUp className="h-3 w-3" />提炼为知识候选</Button>

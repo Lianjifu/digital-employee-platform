@@ -1,9 +1,9 @@
 /**
- * P5 智能体控制台 — 企业级数字员工平台
+ * P5 执行内核控制台 — 企业级数字工作伙伴平台
  *
- * 3 大模块（智能体 / 评测 / 监控）+ 左侧筛选 + 右侧可折叠详情
+ * 3 大模块（执行内核 / 评测 / 监控）+ 左侧筛选 + 右侧可折叠详情
  *
- * 智能体模块：5 卡 KPI + Agent 卡片网格（能力栈/版本/认证/SLA/实时流量） + 详情 5 tab
+ * 执行内核模块：5 卡 KPI + Agent 卡片网格（能力栈/版本/认证/SLA/实时流量） + 详情 5 tab
  * 评测模块：A/B 测试 + 多模型对比 + 准确率/召回率/用户评分
  * 监控模块：实时流量 / 错误率 / 延迟 / Token / 满意度 + 异常告警
  *
@@ -117,7 +117,7 @@ function parseOpenClawPackage(raw: string) {
   const mcp = Array.isArray(parsed.mcpServers) ? parsed.mcpServers.map((server: any) => typeof server === 'string' ? server : server.name).filter(Boolean) : Object.keys(parsed.mcp ?? {});
   const permissions = Array.isArray(parsed.permissions) ? parsed.permissions : Object.keys(parsed.permissions ?? {});
   const risks = permissions.filter((permission: string) => /shell|exec|write|network|filesystem|admin/i.test(permission));
-  return { name: parsed.name ?? parsed.agent?.name ?? 'OpenClaw 导入智能体', description: parsed.description ?? parsed.agent?.description ?? '', version: parsed.version ?? '0.1.0', model: parsed.model ?? parsed.agent?.model ?? '待映射', tools, mcp, permissions, risks };
+  return { name: parsed.name ?? parsed.agent?.name ?? 'OpenClaw 导入执行内核', description: parsed.description ?? parsed.agent?.description ?? '', version: parsed.version ?? '0.1.0', model: parsed.model ?? parsed.agent?.model ?? '待映射', tools, mcp, permissions, risks };
 }
 
 const INITIAL_EVALUATIONS: EvalRow[] = [
@@ -195,9 +195,9 @@ const MAIN_TABS = [
 type MainTab = typeof MAIN_TABS[number]['key'];
 
 const MAIN_TAB_META: Record<MainTab, { description: string; action?: string }> = {
-  agents: { description: '管理已纳管智能体的状态、配置与运行入口', action: '新建智能体' },
-  store: { description: '发现并纳管经过评估的企业智能体资产', action: '导入智能体' },
-  evaluate: { description: '通过评测任务和质量门禁判断智能体是否达标', action: '启动评测' },
+  agents: { description: '管理已纳管执行内核的状态、配置与运行入口', action: '新建执行内核' },
+  store: { description: '发现并纳管经过评估的执行内核资产', action: '导入执行内核' },
+  evaluate: { description: '通过评测任务和质量门禁判断执行内核是否达标', action: '启动评测' },
   monitor: { description: '持续跟踪生产健康、风险告警与调用审计' },
 };
 
@@ -329,7 +329,7 @@ export default function Agents() {
             <div className="min-w-0">
               <h1 className="text-sm font-semibold flex items-center gap-2">
                 <Bot className="h-4 w-4 text-[var(--brand)]" />
-                智能体
+                执行内核
               </h1>
               <div className="mt-1 text-xs text-[var(--text-muted)]">
                 {MAIN_TAB_META[mainTab].description}
@@ -357,7 +357,7 @@ export default function Agents() {
             <div className="mb-3 flex items-center justify-between gap-3">
               <div>
                 <h2 className="text-sm font-semibold text-[var(--text)]">生命周期摘要</h2>
-                <p className="mt-0.5 text-xs text-[var(--text-muted)]">快速了解智能体资产的纳管状态与生命周期待办</p>
+                <p className="mt-0.5 text-xs text-[var(--text-muted)]">快速了解执行内核资产的纳管状态与生命周期待办</p>
               </div>
               <span className="hidden text-[11px] text-[var(--text-muted)] sm:inline">实时更新</span>
             </div>
@@ -379,7 +379,7 @@ export default function Agents() {
                 <input
                   value={searchQ}
                   onChange={(e) => setSearchQ(e.target.value)}
-                  placeholder="搜索智能体名称、能力或描述"
+                  placeholder="搜索执行内核名称、能力或描述"
                   className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--surface-1)] pl-8 pr-3 text-[13px] outline-none focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]"
                 />
               </div>
@@ -417,7 +417,7 @@ export default function Agents() {
         {/* 批量操作栏（选中时）— 简化版 */}
         {mainTab === 'agents' && (
           <div className="border-b border-[var(--border)] bg-[var(--surface-1)] px-5 py-2 flex items-center gap-2 text-[11px] text-[var(--text-muted)]">
-            <span className="font-semibold text-[var(--text)]">{filtered.length} 个智能体</span>
+            <span className="font-semibold text-[var(--text)]">{filtered.length} 个执行内核</span>
             <span>当前资产范围</span>
           </div>
         )}
@@ -489,7 +489,7 @@ export default function Agents() {
         open={newEvalOpen}
         onClose={() => setNewEvalOpen(false)}
         onSubmit={(form) => {
-          createEvaluationApi.mutate({ name: form.name, agentId: activeId ?? 'a1', agentName: active?.name ?? '待分配智能体', version: active?.version ?? '1.0.0', totalCases: form.totalCases, dataset: form.dataset, judgeModel: form.judgeModel, status: 'baseline' });
+          createEvaluationApi.mutate({ name: form.name, agentId: activeId ?? 'a1', agentName: active?.name ?? '待分配执行内核', version: active?.version ?? '1.0.0', totalCases: form.totalCases, dataset: form.dataset, judgeModel: form.judgeModel, status: 'baseline' });
         }}
       />
 
@@ -587,8 +587,8 @@ function AgentGridView({ agents, onSelect, activeId, agentSubTab }: {
         </div>
       ))}
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4 text-xs text-[var(--text-muted)]">
-        <span>显示第 {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, agents.length)} 个，共 {agents.length} 个智能体</span>
-        <nav className="flex items-center gap-1" aria-label="智能体分页">
+        <span>显示第 {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, agents.length)} 个，共 {agents.length} 个执行内核</span>
+        <nav className="flex items-center gap-1" aria-label="执行内核分页">
           <button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="grid h-8 w-8 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="上一页"><ChevronLeft className="h-3.5 w-3.5" /></button>
           {Array.from({ length: pageCount }, (_, index) => index + 1).map((item) => <button key={item} type="button" onClick={() => setPage(item)} aria-current={item === currentPage ? 'page' : undefined} className={cn('grid h-8 min-w-8 place-items-center rounded-md px-2 font-medium transition-colors', item === currentPage ? 'bg-[var(--brand)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}>{item}</button>)}
           <button type="button" disabled={currentPage === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} className="grid h-8 w-8 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="下一页"><ChevronRight className="h-3.5 w-3.5" /></button>
@@ -616,8 +616,8 @@ function AgentMarketView({ agents, imports, onReview, onSelect, activeId }: { ag
       <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-5 shadow-[0_2px_10px_rgba(15,23,42,0.04)]">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="max-w-2xl">
-            <div className="flex items-center gap-2 text-base font-semibold text-[var(--text)]"><Download className="h-4 w-4 text-[var(--brand)]" />企业智能体市场</div>
-            <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">浏览已完成基础安全检查和能力说明的智能体。安装前可查看版本、依赖、风险等级与服务指标。</p>
+            <div className="flex items-center gap-2 text-base font-semibold text-[var(--text)]"><Download className="h-4 w-4 text-[var(--brand)]" />执行内核目录</div>
+            <p className="mt-1.5 text-sm leading-relaxed text-[var(--text-secondary)]">浏览已完成基础安全检查和能力说明的执行内核。安装前可查看版本、依赖、风险等级与服务指标。</p>
           </div>
           <div className="grid grid-cols-2 gap-2 text-center">
             <div className="rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-4 py-2.5"><div className="text-lg font-mono font-semibold text-[var(--brand)]">{approved}</div><div className="text-[11px] text-[var(--text-muted)]">可纳管</div></div>
@@ -627,7 +627,7 @@ function AgentMarketView({ agents, imports, onReview, onSelect, activeId }: { ag
         <div className="mt-4 flex flex-wrap gap-2 text-xs text-[var(--text-secondary)]"><span className="rounded-md bg-[var(--surface-1)] px-2.5 py-1.5">✓ 版本可追溯</span><span className="rounded-md bg-[var(--surface-1)] px-2.5 py-1.5">✓ 风险等级已标注</span><span className="rounded-md bg-[var(--surface-1)] px-2.5 py-1.5">✓ 安装后纳入治理</span></div>
       </div>
       <div className="flex flex-wrap items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3">
-        <div className="relative min-w-[220px] flex-1"><Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索市场智能体" className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] pl-8 pr-3 text-sm outline-none focus:border-[var(--brand)]" /></div>
+        <div className="relative min-w-[220px] flex-1"><Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" /><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索市场执行内核" className="h-9 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] pl-8 pr-3 text-sm outline-none focus:border-[var(--brand)]" /></div>
         <div className="flex items-center gap-1.5 text-xs"><span className="font-semibold text-[var(--text-secondary)]">来源</span>{['全部来源', '官方资产', '灰度资产'].map((source) => <button key={source} onClick={() => setSourceFilter(source)} className={cn('rounded-md border px-2.5 py-1.5', sourceFilter === source ? 'border-[var(--brand)] bg-[var(--brand)] text-white' : 'border-[var(--border)] text-[var(--text-muted)] hover:border-[var(--text-muted)]')}>{source}</button>)}</div>
         <span className="text-xs text-[var(--text-muted)]">{visibleAgents.length} 个可引入资产</span>
       </div>
@@ -639,11 +639,11 @@ function AgentMarketView({ agents, imports, onReview, onSelect, activeId }: { ag
 
 function ImportReviewView({ imports, onReview }: { imports: AgentImportRecord[]; onReview: (id: string, action: 'approve' | 'reject') => void }) {
   const pending = imports.filter((item) => item.status === 'pending_review');
-  return <div className="space-y-3"><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="text-sm font-semibold">导入审核</div><p className="mt-1 text-xs text-[var(--text-muted)]">审核来源可信度、依赖映射和风险项后，才能进入安装流程。</p></div>{pending.length === 0 ? <EmptyState icon={ShieldCheck} title="暂无待审核智能体" description="新的导入资产会出现在这里" /> : pending.map((item) => <div key={item.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-sm font-semibold">{item.agentName}</div><div className="mt-1 text-xs text-[var(--text-muted)]">{item.source} · {new Date(item.submittedAt).toLocaleString('zh-CN')}</div></div><Badge tone="warn" className="text-[10px]">待审核</Badge></div><div className="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-4"><div><span className="text-[var(--text-muted)]">工具映射</span><div className="mt-1 font-semibold">{item.mapping?.tools?.length ?? 0} 项</div></div><div><span className="text-[var(--text-muted)]">MCP 映射</span><div className="mt-1 font-semibold">{item.mapping?.mcp?.length ?? 0} 项</div></div><div><span className="text-[var(--text-muted)]">风险项</span><div className="mt-1 font-semibold text-[var(--warning)]">{item.risks?.length ?? 0} 项</div></div><div><span className="text-[var(--text-muted)]">提交人</span><div className="mt-1 font-semibold">{item.submittedBy}</div></div></div><div className="mt-3 flex justify-end gap-2"><Button size="sm" variant="secondary" onClick={() => onReview(item.id, 'reject')}>驳回</Button><Button size="sm" onClick={() => onReview(item.id, 'approve')}><CheckCircle2 className="h-3.5 w-3.5" />通过审核</Button></div></div>)}</div>;
+  return <div className="space-y-3"><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="text-sm font-semibold">导入审核</div><p className="mt-1 text-xs text-[var(--text-muted)]">审核来源可信度、依赖映射和风险项后，才能进入安装流程。</p></div>{pending.length === 0 ? <EmptyState icon={ShieldCheck} title="暂无待审核执行内核" description="新的导入资产会出现在这里" /> : pending.map((item) => <div key={item.id} className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-sm font-semibold">{item.agentName}</div><div className="mt-1 text-xs text-[var(--text-muted)]">{item.source} · {new Date(item.submittedAt).toLocaleString('zh-CN')}</div></div><Badge tone="warn" className="text-[10px]">待审核</Badge></div><div className="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-4"><div><span className="text-[var(--text-muted)]">工具映射</span><div className="mt-1 font-semibold">{item.mapping?.tools?.length ?? 0} 项</div></div><div><span className="text-[var(--text-muted)]">MCP 映射</span><div className="mt-1 font-semibold">{item.mapping?.mcp?.length ?? 0} 项</div></div><div><span className="text-[var(--text-muted)]">风险项</span><div className="mt-1 font-semibold text-[var(--warning)]">{item.risks?.length ?? 0} 项</div></div><div><span className="text-[var(--text-muted)]">提交人</span><div className="mt-1 font-semibold">{item.submittedBy}</div></div></div><div className="mt-3 flex justify-end gap-2"><Button size="sm" variant="secondary" onClick={() => onReview(item.id, 'reject')}>驳回</Button><Button size="sm" onClick={() => onReview(item.id, 'approve')}><CheckCircle2 className="h-3.5 w-3.5" />通过审核</Button></div></div>)}</div>;
 }
 
 function ImportAuditView({ imports }: { imports: AgentImportRecord[] }) {
-  return <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] overflow-hidden"><div className="border-b border-[var(--border)] px-4 py-3"><div className="text-sm font-semibold">导入审计记录</div><div className="mt-1 text-xs text-[var(--text-muted)]">记录来源、提交、审核和纳管动作</div></div>{imports.length === 0 ? <div className="p-8"><EmptyState icon={FileText} title="暂无导入记录" description="导入智能体后会自动生成审计记录" /></div> : <table className="w-full text-xs"><thead className="bg-[var(--bg-elevated)] text-[10px] text-[var(--text-muted)]"><tr><th className="p-3 text-left">智能体</th><th className="p-3 text-left">来源</th><th className="p-3 text-left">提交人</th><th className="p-3 text-left">时间</th><th className="p-3 text-left">状态</th></tr></thead><tbody>{imports.map((item) => <tr key={item.id} className="border-t border-[var(--border)]"><td className="p-3 font-medium">{item.agentName}</td><td className="p-3 text-[var(--text-muted)]">{item.source}</td><td className="p-3">{item.submittedBy}</td><td className="p-3 font-mono text-[var(--text-muted)]">{new Date(item.submittedAt).toLocaleString('zh-CN')}</td><td className="p-3"><Badge tone={item.status === 'approved' ? 'success' : item.status === 'rejected' ? 'error' : 'warn'} className="text-[10px]">{item.status === 'approved' ? '已通过' : item.status === 'rejected' ? '已驳回' : '待审核'}</Badge></td></tr>)}</tbody></table>}</div>;
+  return <div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] overflow-hidden"><div className="border-b border-[var(--border)] px-4 py-3"><div className="text-sm font-semibold">导入审计记录</div><div className="mt-1 text-xs text-[var(--text-muted)]">记录来源、提交、审核和纳管动作</div></div>{imports.length === 0 ? <div className="p-8"><EmptyState icon={FileText} title="暂无导入记录" description="导入执行内核后会自动生成审计记录" /></div> : <table className="w-full text-xs"><thead className="bg-[var(--bg-elevated)] text-[10px] text-[var(--text-muted)]"><tr><th className="p-3 text-left">执行内核</th><th className="p-3 text-left">来源</th><th className="p-3 text-left">提交人</th><th className="p-3 text-left">时间</th><th className="p-3 text-left">状态</th></tr></thead><tbody>{imports.map((item) => <tr key={item.id} className="border-t border-[var(--border)]"><td className="p-3 font-medium">{item.agentName}</td><td className="p-3 text-[var(--text-muted)]">{item.source}</td><td className="p-3">{item.submittedBy}</td><td className="p-3 font-mono text-[var(--text-muted)]">{new Date(item.submittedAt).toLocaleString('zh-CN')}</td><td className="p-3"><Badge tone={item.status === 'approved' ? 'success' : item.status === 'rejected' ? 'error' : 'warn'} className="text-[10px]">{item.status === 'approved' ? '已通过' : item.status === 'rejected' ? '已驳回' : '待审核'}</Badge></td></tr>)}</tbody></table>}</div>;
 }
 
 function AgentCard({ agent, active, onClick, market = false }: { agent: AgentFull; active: boolean; onClick: () => void; market?: boolean }) {
@@ -741,7 +741,7 @@ function EvaluateView({ agents, active, compare, evaluations }: { agents: AgentF
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 text-[15px] font-semibold"><ShieldCheck className="h-4 w-4 text-[var(--brand)]" />质量门禁</div>
-            <p className="mt-1 text-[13px] text-[var(--text-muted)]">统一校验准确率、延迟、风险策略与评测结论，判断智能体是否达标</p>
+            <p className="mt-1 text-[13px] text-[var(--text-muted)]">统一校验准确率、延迟、风险策略与评测结论，判断执行内核是否达标</p>
           </div>
           <Badge tone="warn" className="text-[10px]">{pendingReview} 个批次待复核</Badge>
         </div>
@@ -774,7 +774,7 @@ function EvaluateView({ agents, active, compare, evaluations }: { agents: AgentF
         <div className="overflow-x-auto px-3 pb-3"><table className="w-full min-w-[920px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] text-[13px]">
           <thead className="bg-[var(--bg-elevated)] text-[11px] tracking-wide text-[var(--text-muted)]">
             <tr>
-              <th className="text-left p-2">智能体 / 评测批次</th>
+              <th className="text-left p-2">执行内核 / 评测批次</th>
               <th className="text-left p-2">版本</th>
               <th className="text-right p-2">准确率</th>
               <th className="text-right p-2">召回率</th>
@@ -837,7 +837,7 @@ function EvaluateView({ agents, active, compare, evaluations }: { agents: AgentF
       <ModalX open={!!selectedEvaluation} onClose={() => setSelectedEvaluation(null)} title="评测报告" size="md" footer={<Button onClick={() => setSelectedEvaluation(null)}>关闭</Button>}>
         {selectedEvaluation && <div className="space-y-4"><div className="flex items-start justify-between rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4"><div><div className="text-[15px] font-semibold">{selectedEvaluation.agentName}</div><div className="mt-1 text-xs text-[var(--text-muted)]">{selectedEvaluation.name} · v{selectedEvaluation.version}</div></div><Badge tone={selectedEvaluation.status === 'champion' ? 'success' : 'warn'} className="text-[10px]">{selectedEvaluation.status === 'champion' ? '质量领先' : '待复核'}</Badge></div><div className="grid grid-cols-2 gap-3"><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">准确率</div><div className="mt-1 text-xl font-mono font-semibold text-[var(--success)]">{selectedEvaluation.accuracy}%</div></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">召回率</div><div className="mt-1 text-xl font-mono font-semibold">{selectedEvaluation.recall}%</div></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">P95 延迟</div><div className="mt-1 text-xl font-mono font-semibold">{selectedEvaluation.p95Ms}ms</div></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">测试用例</div><div className="mt-1 text-xl font-mono font-semibold">{selectedEvaluation.totalCases}</div></div></div><div className="rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5 text-xs text-[var(--text-muted)]">数据集：{selectedEvaluation.dataset} · 评测模型：{selectedEvaluation.judgeModel} · 完成时间：{selectedEvaluation.passedAt}</div></div>}
       </ModalX>
-      <ModalX open={!!qualityAction} onClose={() => setQualityAction(null)} title={qualityAction === 'review' ? '提交质量复核' : '生成发布申请材料'} size="sm" footer={<><Button variant="ghost" onClick={() => setQualityAction(null)}>取消</Button><Button onClick={() => { setQualityAction(null); setReleaseNotice(qualityAction === 'review' ? '质量复核已提交，等待审核人处理' : '发布申请材料已生成，请在我的智能体详情中提交'); }}>确认</Button></>}>
+      <ModalX open={!!qualityAction} onClose={() => setQualityAction(null)} title={qualityAction === 'review' ? '提交质量复核' : '生成发布申请材料'} size="sm" footer={<><Button variant="ghost" onClick={() => setQualityAction(null)}>取消</Button><Button onClick={() => { setQualityAction(null); setReleaseNotice(qualityAction === 'review' ? '质量复核已提交，等待审核人处理' : '发布申请材料已生成，请在我的执行内核详情中提交'); }}>确认</Button></>}>
         <div className="space-y-3 text-sm"><div className="rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4"><div className="font-medium">{qualityAction === 'review' ? '确认提交当前质量门禁结果？' : '确认生成发布申请材料？'}</div><div className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">{qualityAction === 'review' ? '提交后将由审核人复核风险策略、评测结论和审批记录。' : '材料将包含最新评测报告、版本信息和风险检查结果。'}</div></div></div>
       </ModalX>
     </div>
@@ -887,12 +887,12 @@ function MonitorView({ agents, alerts, liveCalls }: { agents: AgentFull[]; alert
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="flex items-center gap-2 text-sm font-semibold"><ShieldCheck className="h-4 w-4 text-[var(--brand)]" />治理健康度</div>
-            <p className="mt-1 text-xs text-[var(--text-muted)]">面向生产运营的智能体运行状态与治理待办</p>
+            <p className="mt-1 text-xs text-[var(--text-muted)]">面向生产运营的执行内核运行状态与治理待办</p>
           </div>
           <Badge tone={openAlerts > 0 ? 'warn' : 'success'} className="text-[10px]">{openAlerts > 0 ? '需要关注' : '运行正常'}</Badge>
         </div>
         <div className="mt-4 grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <div className="min-h-[108px] rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4 transition-colors hover:border-[var(--success)]/40"><div className="flex items-center justify-between"><div className="text-[13px] font-medium text-[var(--text-secondary)]">生产中智能体</div><Activity className="h-4 w-4 text-[var(--success)]" /></div><div className="mt-2 text-2xl font-mono font-semibold text-[var(--success)]">{activeAgents}<span className="ml-1 text-xs font-normal text-[var(--text-muted)]">个</span></div><div className="mt-1 text-[11px] text-[var(--text-muted)]">当前处于可调用状态</div></div>
+          <div className="min-h-[108px] rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4 transition-colors hover:border-[var(--success)]/40"><div className="flex items-center justify-between"><div className="text-[13px] font-medium text-[var(--text-secondary)]">生产中执行内核</div><Activity className="h-4 w-4 text-[var(--success)]" /></div><div className="mt-2 text-2xl font-mono font-semibold text-[var(--success)]">{activeAgents}<span className="ml-1 text-xs font-normal text-[var(--text-muted)]">个</span></div><div className="mt-1 text-[11px] text-[var(--text-muted)]">当前处于可调用状态</div></div>
           <div className="min-h-[108px] rounded-xl border border-[var(--warning)]/25 bg-[var(--warning-bg)]/30 p-4 transition-colors hover:border-[var(--warning)]/45"><div className="flex items-center justify-between"><div className="text-[13px] font-medium text-[var(--text-secondary)]">未确认告警</div><AlertTriangle className="h-4 w-4 text-[var(--warning)]" /></div><div className="mt-2 text-2xl font-mono font-semibold text-[var(--warning)]">{openAlerts}<span className="ml-1 text-xs font-normal text-[var(--text-muted)]">项</span></div><div className="mt-1 text-[11px] text-[var(--text-muted)]">需要运营人员关注</div></div>
           <div className="min-h-[108px] rounded-xl border border-[var(--danger)]/25 bg-[var(--danger-bg)]/30 p-4 transition-colors hover:border-[var(--danger)]/45"><div className="flex items-center justify-between"><div className="text-[13px] font-medium text-[var(--text-secondary)]">异常调用</div><AlertOctagon className="h-4 w-4 text-[var(--danger)]" /></div><div className="mt-2 text-2xl font-mono font-semibold text-[var(--danger)]">{failedCalls}<span className="ml-1 text-xs font-normal text-[var(--text-muted)]">次</span></div><div className="mt-1 text-[11px] text-[var(--text-muted)]">失败或超时调用</div></div>
           <div className="min-h-[108px] rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4 transition-colors hover:border-[var(--text-muted)]"><div className="flex items-center justify-between"><div className="text-[13px] font-medium text-[var(--text-secondary)]">策略覆盖率</div><ShieldCheck className="h-4 w-4 text-[var(--brand)]" /></div><div className="mt-2 text-2xl font-mono font-semibold text-[var(--brand)]">96<span className="ml-1 text-xs font-normal text-[var(--text-muted)]">%</span></div><div className="mt-1 text-[11px] text-[var(--text-muted)]">已纳入治理策略</div></div>
@@ -969,7 +969,7 @@ function MonitorView({ agents, alerts, liveCalls }: { agents: AgentFull[]; alert
         </div>
         <div className="overflow-x-auto px-3 pb-3">
           <table className="w-full min-w-[620px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] text-xs">
-            <thead className="bg-[var(--bg-elevated)] text-[11px] text-[var(--text-muted)]"><tr><th className="p-3 text-left font-medium">智能体</th><th className="p-3 text-left font-medium">时间</th><th className="p-3 text-left font-medium">来源</th><th className="p-3 text-right font-medium">延迟</th><th className="p-3 text-left font-medium">结果</th><th className="p-3 text-right font-medium">追溯</th></tr></thead>
+            <thead className="bg-[var(--bg-elevated)] text-[11px] text-[var(--text-muted)]"><tr><th className="p-3 text-left font-medium">执行内核</th><th className="p-3 text-left font-medium">时间</th><th className="p-3 text-left font-medium">来源</th><th className="p-3 text-right font-medium">延迟</th><th className="p-3 text-left font-medium">结果</th><th className="p-3 text-right font-medium">追溯</th></tr></thead>
             <tbody>{visibleAudit.length ? visibleAudit.map((call) => <tr key={call.id} className="border-t border-[var(--border)] transition-colors hover:bg-[var(--bg-hover)]"><td className="p-3"><div className="font-medium">{call.agent}</div><div className="mt-0.5 text-[11px] text-[var(--text-muted)]">{call.id}</div></td><td className="p-3 font-mono text-[var(--text-muted)]">{call.ts}</td><td className="p-3 text-[var(--text-secondary)]"><span className="rounded bg-[var(--bg-elevated)] px-1.5 py-1 text-[11px]">{call.channel.toUpperCase()}</span></td><td className="p-3 text-right font-mono">{call.latencyMs ? `${call.latencyMs}ms` : '—'}</td><td className="p-3"><Badge tone={call.status === 'ok' ? 'success' : 'error'} className="text-[10px]">{call.status === 'ok' ? '成功' : call.status === 'timeout' ? '超时' : '失败'}</Badge></td><td className="p-3 text-right"><button onClick={() => setSelectedCall(call)} className="rounded-md px-2 py-1 text-xs text-[var(--brand)] hover:bg-[var(--brand-light)]">查看详情</button></td></tr>) : <tr><td colSpan={6} className="p-8 text-center text-xs text-[var(--text-muted)]">暂无符合条件的调用记录</td></tr>}</tbody>
           </table>
         </div>
@@ -982,10 +982,10 @@ function MonitorView({ agents, alerts, liveCalls }: { agents: AgentFull[]; alert
         </div>
       </div>
       <ModalX open={!!selectedAlert} onClose={() => setSelectedAlert(null)} title="告警详情" size="sm" footer={<Button onClick={() => setSelectedAlert(null)}>关闭</Button>}>
-        {selectedAlert && <div className="space-y-3 text-sm"><div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3"><div className="font-medium">{selectedAlert.title}</div><div className="mt-1 text-xs text-[var(--text-muted)]">{selectedAlert.agent} · {selectedAlert.ts}</div></div><div className="grid grid-cols-2 gap-2 text-xs"><div><span className="text-[var(--text-muted)]">告警类型</span><div className="mt-1 font-medium">{selectedAlert.type}</div></div><div><span className="text-[var(--text-muted)]">处理状态</span><div className="mt-1 font-medium">{selectedAlert.acknowledged ? '已确认' : '待处理'}</div></div></div><p className="text-xs leading-relaxed text-[var(--text-secondary)]">建议检查对应智能体的运行指标和最近调用审计，并在确认影响范围后进行处置。</p></div>}
+        {selectedAlert && <div className="space-y-3 text-sm"><div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3"><div className="font-medium">{selectedAlert.title}</div><div className="mt-1 text-xs text-[var(--text-muted)]">{selectedAlert.agent} · {selectedAlert.ts}</div></div><div className="grid grid-cols-2 gap-2 text-xs"><div><span className="text-[var(--text-muted)]">告警类型</span><div className="mt-1 font-medium">{selectedAlert.type}</div></div><div><span className="text-[var(--text-muted)]">处理状态</span><div className="mt-1 font-medium">{selectedAlert.acknowledged ? '已确认' : '待处理'}</div></div></div><p className="text-xs leading-relaxed text-[var(--text-secondary)]">建议检查对应执行内核的运行指标和最近调用审计，并在确认影响范围后进行处置。</p></div>}
       </ModalX>
       <ModalX open={!!selectedCall} onClose={() => setSelectedCall(null)} title="调用审计详情" size="sm" footer={<Button onClick={() => setSelectedCall(null)}>关闭</Button>}>
-        {selectedCall && <div className="space-y-4 text-sm"><div className="flex items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--surface-1)] text-[var(--brand)]"><Activity className="h-5 w-5" /></div><div className="min-w-0 flex-1"><div className="text-[15px] font-semibold">{selectedCall.agent}</div><div className="mt-1 font-mono text-xs text-[var(--text-muted)]">{selectedCall.id} · {selectedCall.ts}</div></div><Badge tone={selectedCall.status === 'ok' ? 'success' : 'error'} className="text-[10px]">{selectedCall.status === 'ok' ? '成功' : selectedCall.status === 'timeout' ? '超时' : '失败'}</Badge></div><div className="grid grid-cols-2 gap-3"><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">调用延迟</div><div className="mt-1 text-lg font-mono font-semibold">{selectedCall.latencyMs ? `${selectedCall.latencyMs}ms` : '—'}</div></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">Token 消耗</div><div className="mt-1 text-lg font-mono font-semibold">{selectedCall.tokens.toLocaleString()}</div></div></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="mb-2 text-xs font-semibold text-[var(--text)]">调用上下文</div><div className="divide-y divide-[var(--border)]"><Row size="comfortable" label="调用来源" value={selectedCall.channel.toUpperCase()} /><Row size="comfortable" label="执行时间" value={selectedCall.ts} /><Row size="comfortable" label="结果状态" value={selectedCall.status === 'ok' ? '成功' : selectedCall.status === 'timeout' ? '超时' : '失败'} /><Row size="comfortable" label="审计标识" value={<span className="font-mono text-xs">{selectedCall.id}</span>} /></div></div><div className="rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5 text-xs leading-relaxed text-[var(--text-muted)]">该记录已纳入生产调用审计，可结合智能体、任务和告警记录进行问题追溯。</div></div>}
+        {selectedCall && <div className="space-y-4 text-sm"><div className="flex items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] p-4"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--surface-1)] text-[var(--brand)]"><Activity className="h-5 w-5" /></div><div className="min-w-0 flex-1"><div className="text-[15px] font-semibold">{selectedCall.agent}</div><div className="mt-1 font-mono text-xs text-[var(--text-muted)]">{selectedCall.id} · {selectedCall.ts}</div></div><Badge tone={selectedCall.status === 'ok' ? 'success' : 'error'} className="text-[10px]">{selectedCall.status === 'ok' ? '成功' : selectedCall.status === 'timeout' ? '超时' : '失败'}</Badge></div><div className="grid grid-cols-2 gap-3"><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">调用延迟</div><div className="mt-1 text-lg font-mono font-semibold">{selectedCall.latencyMs ? `${selectedCall.latencyMs}ms` : '—'}</div></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3"><div className="text-xs text-[var(--text-muted)]">Token 消耗</div><div className="mt-1 text-lg font-mono font-semibold">{selectedCall.tokens.toLocaleString()}</div></div></div><div className="rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-4"><div className="mb-2 text-xs font-semibold text-[var(--text)]">调用上下文</div><div className="divide-y divide-[var(--border)]"><Row size="comfortable" label="调用来源" value={selectedCall.channel.toUpperCase()} /><Row size="comfortable" label="执行时间" value={selectedCall.ts} /><Row size="comfortable" label="结果状态" value={selectedCall.status === 'ok' ? '成功' : selectedCall.status === 'timeout' ? '超时' : '失败'} /><Row size="comfortable" label="审计标识" value={<span className="font-mono text-xs">{selectedCall.id}</span>} /></div></div><div className="rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5 text-xs leading-relaxed text-[var(--text-muted)]">该记录已纳入生产调用审计，可结合执行内核、任务和告警记录进行问题追溯。</div></div>}
       </ModalX>
       <ModalX open={!!selectedPolicy} onClose={() => setSelectedPolicy(null)} title="治理策略详情" size="sm" footer={<Button onClick={() => setSelectedPolicy(null)}>关闭</Button>}>
         {selectedPolicy && <div className="space-y-3 text-sm"><div className="flex items-center gap-2"><ShieldCheck className={cn('h-5 w-5', selectedPolicy.tone === 'success' ? 'text-[var(--success)]' : 'text-[var(--warning)]')} /><span className="font-semibold">{selectedPolicy.name}</span><Badge tone={selectedPolicy.tone} className="text-[10px]">{selectedPolicy.status}</Badge></div><p className="text-xs leading-relaxed text-[var(--text-secondary)]">{selectedPolicy.desc}</p><div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-xs text-[var(--text-muted)]">策略命中记录、适用工作区和负责人将在接入策略中心后展示。</div></div>}
@@ -1215,7 +1215,7 @@ function ToolsTab({ agent, onToolCfg }: { agent: AgentFull; onToolCfg: (key: str
         <div className="flex items-start justify-between gap-3">
           <div>
             <div className="text-sm font-semibold text-[var(--text)] flex items-center gap-1.5"><Boxes className="h-3.5 w-3.5 text-[var(--brand)]" />已引用能力</div>
-            <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">工作区安装不等于可用。仅在此处绑定并固定版本的 Skill、MCP、Tool 才会进入该智能体的调用范围。</p>
+            <p className="mt-1 text-xs leading-relaxed text-[var(--text-muted)]">工作区安装不等于可用。仅在此处绑定并固定版本的 Skill、MCP、Tool 才会进入该执行内核的调用范围。</p>
           </div>
           <Badge tone="brand" className="shrink-0 text-[10px]">{bindings.length} 项</Badge>
         </div>
@@ -1376,11 +1376,11 @@ function ImportAgentModal({ open, onClose, onSubmit, loading }: { open: boolean;
   const [parseError, setParseError] = useState('');
   const [mapping, setMapping] = useState<{ tools: string[]; mcp: string[] }>({ tools: [], mcp: [] });
   const [risks, setRisks] = useState<string[]>([]);
-  const submit = () => { if (!name.trim()) return; onSubmit({ name: name.trim(), category, risk, description: description || '待补充智能体职责说明', source: `${source}${reference ? ` · ${reference}` : ''}`, tools: mapping.tools, mapping, risks }); };
+  const submit = () => { if (!name.trim()) return; onSubmit({ name: name.trim(), category, risk, description: description || '待补充执行内核职责说明', source: `${source}${reference ? ` · ${reference}` : ''}`, tools: mapping.tools, mapping, risks }); };
   const close = () => { setStep(1); onClose(); };
   const handlePackage = async (file?: File) => { if (!file) return; try { const parsed = parseOpenClawPackage(await file.text()); setName(parsed.name); setDescription(parsed.description); setReference(file.name); setMapping({ tools: parsed.tools, mcp: parsed.mcp }); setRisks(parsed.risks); setParseError(''); } catch { setParseError('无法解析配置包，请上传合法 JSON 格式的 OpenClaw 配置文件'); } };
   return (
-    <ModalX open={open} onClose={close} title="导入智能体" size="md" footer={<><Button variant="ghost" onClick={close}>取消</Button>{step === 1 ? <Button disabled={!name.trim() || !reference.trim()} onClick={() => setStep(2)}>检查配置<ChevronRight className="h-3.5 w-3.5" /></Button> : <Button loading={loading} onClick={submit}><ShieldCheck className="h-3.5 w-3.5" />提交审核</Button>}</>}>
+    <ModalX open={open} onClose={close} title="导入执行内核" size="md" footer={<><Button variant="ghost" onClick={close}>取消</Button>{step === 1 ? <Button disabled={!name.trim() || !reference.trim()} onClick={() => setStep(2)}>检查配置<ChevronRight className="h-3.5 w-3.5" /></Button> : <Button loading={loading} onClick={submit}><ShieldCheck className="h-3.5 w-3.5" />提交审核</Button>}</>}>
       <div className="space-y-4">
         <div className="flex items-center gap-2 text-[11px] text-[var(--text-muted)]"><span className={cn('rounded-full px-2 py-1', step === 1 ? 'bg-[var(--brand)] text-white' : 'bg-[var(--bg-elevated)]')}>1 基本信息</span><span className="h-px flex-1 bg-[var(--border)]" /><span className={cn('rounded-full px-2 py-1', step === 2 ? 'bg-[var(--brand)] text-white' : 'bg-[var(--bg-elevated)]')}>2 兼容性检查</span></div>
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] p-3 text-xs text-[var(--text-secondary)]">导入后将进入“待审核”状态，完成依赖检查和评测后才能安装到生产环境。</div>
@@ -1390,11 +1390,11 @@ function ImportAgentModal({ open, onClose, onSubmit, loading }: { open: boolean;
         </FormField>
         {(source === '本地配置包' || source === 'OpenClaw 配置包') && <FormField label="配置包文件 *"><input type="file" accept=".json,.jsonl,.yaml,.yml" onChange={(e) => handlePackage(e.target.files?.[0])} className="block w-full rounded-md border border-dashed border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-xs text-[var(--text-muted)]" />{parseError && <div className="mt-1 text-xs text-[var(--danger)]">{parseError}</div>}<div className="mt-1 text-[11px] text-[var(--text-muted)]">当前支持 JSON 配置解析；YAML 文件需先转换为 JSON。</div></FormField>}
         <FormField label={source === '本地配置包' ? '配置包名称 *' : '仓库或注册中心地址 *'}>
-          <input value={source === '本地配置包' ? name : reference} onChange={(e) => source === '本地配置包' ? setName(e.target.value) : setReference(e.target.value)} placeholder={source === '本地配置包' ? '例如：故障自愈智能体' : '输入受信任的企业来源地址'} className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 text-sm outline-none focus:border-[var(--brand)]" />
+          <input value={source === '本地配置包' ? name : reference} onChange={(e) => source === '本地配置包' ? setName(e.target.value) : setReference(e.target.value)} placeholder={source === '本地配置包' ? '例如：故障自愈执行内核' : '输入受信任的企业来源地址'} className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 text-sm outline-none focus:border-[var(--brand)]" />
         </FormField>
-        {source !== '本地配置包' && <FormField label="智能体名称 *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="输入智能体名称" className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 text-sm outline-none focus:border-[var(--brand)]" /></FormField>}
+        {source !== '本地配置包' && <FormField label="执行内核名称 *"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="输入执行内核名称" className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 text-sm outline-none focus:border-[var(--brand)]" /></FormField>}
         <div className="grid grid-cols-2 gap-3"><FormField label="业务领域"><select value={category} onChange={(e) => setCategory(e.target.value)} className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-sm"><option>AIOps</option><option>SecOps</option><option>DevOps</option><option>DataOps</option></select></FormField><FormField label="风险等级"><select value={risk} onChange={(e) => setRisk(e.target.value)} className="h-9 w-full rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-sm"><option>L0</option><option>L1</option><option>L2</option><option>L3</option></select></FormField></div>
-        <FormField label="职责说明"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="说明智能体解决的问题和适用范围" className="w-full resize-none rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm" /></FormField>
+        <FormField label="职责说明"><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="说明执行内核解决的问题和适用范围" className="w-full resize-none rounded-md border border-[var(--border)] bg-[var(--bg)] px-3 py-2 text-sm" /></FormField>
       </>}
       </div>
     </ModalX>
@@ -1754,7 +1754,7 @@ function PromptTestBody({ agent }: { agent?: AgentFull }) {
 
 function PromptPreviewBody({ agent }: { agent?: AgentFull }) {
   if (!agent) return <div className="text-sm text-[var(--text-muted)]">请先选择 Agent</div>;
-  const content = agent.promptTemplate ?? '你是一个企业数字员工 Agent，职责是 {{role}}。\n\n# 上下文\n{{context}}\n\n# 任务\n{{query}}\n\n# 输出要求\n1. 引用 Runbook 章节\n2. 给出可执行步骤\n3. 风险点标注';
+  const content = agent.promptTemplate ?? '你是一个企业数字工作伙伴执行内核，职责是 {{role}}。\n\n# 上下文\n{{context}}\n\n# 任务\n{{query}}\n\n# 输出要求\n1. 引用 Runbook 章节\n2. 给出可执行步骤\n3. 风险点标注';
   const rendered = content.replace(/\{\{(\w+)\}\}/g, (_, k) => `[${k}]`);
   return (
     <div className="space-y-3">

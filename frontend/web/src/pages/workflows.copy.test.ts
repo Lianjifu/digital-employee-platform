@@ -41,7 +41,7 @@ describe('workflows orchestration copy', () => {
       mockSource.indexOf('// 工作流控制台运行态'),
     );
     expect(workflowSlice).toContain('cache-oom 受控恢复');
-    expect(workflowSlice).toContain('数字员工研判');
+    expect(workflowSlice).toContain('工作伙伴研判');
     expect(workflowSlice).toContain('双重审批');
     expect(workflowSlice).toContain('审计留痕');
     expect(workflowSlice).not.toMatch(/双签|故障自愈|Agent\s*决策|SignedLog/);
@@ -50,7 +50,7 @@ describe('workflows orchestration copy', () => {
 
 describe('workflow template library gates', () => {
   it('states digital-employee consumption positioning on the template page', () => {
-    expect(workflowsSource).toContain('供数字员工能力装配与专家协同引用');
+    expect(workflowsSource).toContain('供数字工作伙伴能力装配与专家协同引用');
     expect(workflowsSource).toContain('创建隔离草稿');
     expect(workflowsSource).toContain('研判分析');
   });
@@ -95,8 +95,8 @@ describe('workflow AI assisted drafting', () => {
     expect(mockSource).toContain('knowledge.retrieve_runbook');
     expect(mockSource).toContain('mockOrchestrationTemplateCandidates');
     expect(orchestrationSource).toContain('画布预览仅用于示例编排');
-    expect(orchestrationSource).toContain('供数字员工装配');
-    expect(orchestrationSource).toContain('由数字员工研判处置路径，经双重审批后执行受控恢复');
+    expect(orchestrationSource).toContain('供数字工作伙伴装配');
+    expect(orchestrationSource).toContain('由工作伙伴研判处置路径，经双重审批后执行受控恢复');
     expect(orchestrationSource).not.toContain('当 Redis 触发 OOM 告警时自动处理');
   });
 
@@ -105,9 +105,9 @@ describe('workflow AI assisted drafting', () => {
       mockSource.indexOf('export const mockWorkflowGenerations'),
       mockSource.indexOf('// ============ P7 知识扩展数据'),
     );
-    expect(generationSlice).toContain('数字员工研判处置路径');
+    expect(generationSlice).toContain('工作伙伴研判处置路径');
     expect(generationSlice).toContain('执行受控恢复');
-    expect(generationSlice).toContain('受控恢复数字员工');
+    expect(generationSlice).toContain('受控恢复工作伙伴');
     expect(generationSlice).toContain('mockOrchestrationSessions');
     expect(generationSlice).toContain('invokeOrchestrationModel');
     expect(mockSource).toContain('编排会话沉淀');
@@ -117,7 +117,7 @@ describe('workflow AI assisted drafting', () => {
 
 describe('workflow canvas orchestration', () => {
   it('states digital-employee skill publish path on canvas', () => {
-    expect(workflowsSource).toContain('供数字员工能力装配');
+    expect(workflowsSource).toContain('供数字工作伙伴能力装配');
     expect(workflowsSource).toContain('本页不直接发起专家协作上岗');
     expect(workflowsSource).toContain('执行受控恢复');
     expect(workflowsSource).toContain('执行受控动作');

@@ -101,7 +101,7 @@ func (s *Server) resolveActiveEmployee(r *http.Request, deID string) (any, error
 		active := life == "active" || life == "published"
 		reason := ""
 		if !active {
-			reason = "数字员工未上岗: " + life
+			reason = "数字工作伙伴未上岗: " + life
 		}
 		return map[string]any{
 			"id": e["id"], "name": e["name"], "role": e["role"], "department": e["department"],
@@ -111,7 +111,7 @@ func (s *Server) resolveActiveEmployee(r *http.Request, deID string) (any, error
 			"lifecycle": life, "active": active, "reason": reason,
 		}, nil
 	}
-	return map[string]any{"id": deID, "active": false, "reason": "未找到数字员工"}, nil
+	return map[string]any{"id": deID, "active": false, "reason": "未找到数字工作伙伴"}, nil
 }
 
 func (s *Server) retrievePublished(r *http.Request, body map[string]any, corr string) (any, error) {

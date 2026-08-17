@@ -1,5 +1,5 @@
 /**
- * Copilot「运行配置 · 工具链」：仅展示当前数字员工已装配的工具/技能，
+ * Copilot「运行配置 · 工具链」：仅展示当前数字工作伙伴已装配的工具/技能，
  * 不按岗位臆造未装配项。
  */
 export type CopilotToolDef = {
@@ -88,7 +88,7 @@ function pushUnique(
 }
 
 /**
- * 从数字员工能力装配构建本会话工具链。
+ * 从数字工作伙伴能力装配构建本会话工具链。
  * 未绑定专家或未装配任何工具/技能时仍返回平台内置检索工具。
  */
 export function buildExpertTools(employee?: ExpertToolSource | null): CopilotToolDef[] {

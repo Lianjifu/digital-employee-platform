@@ -63,8 +63,9 @@ export default function App() {
             <Route path="/copilot/:id" element={<ProtectedRoute roles={['user', 'admin', 'auditor']}><ErrorBoundary><Copilot /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/tasks" element={<ProtectedRoute roles={['user', 'admin', 'auditor']}><ErrorBoundary><Tasks /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/workspaces" element={<ProtectedRoute roles={['admin']}><ErrorBoundary><Workspaces /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/agents" element={<ProtectedRoute roles={['user', 'admin', 'auditor']}><ErrorBoundary><DigitalEmployees /></ErrorBoundary></ProtectedRoute>} />
-            <Route path="/digital-employees" element={<Navigate to="/agents" replace />} />
+            <Route path="/partners" element={<ProtectedRoute roles={['user', 'admin', 'auditor']}><ErrorBoundary><DigitalEmployees /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/agents" element={<Navigate to="/partners" replace />} />
+            <Route path="/digital-employees" element={<Navigate to="/partners" replace />} />
             <Route path="/workflows" element={<ProtectedRoute permission="workflow.read" roles={['user', 'admin', 'auditor']}><ErrorBoundary><Workflows /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/workflows/orchestration" element={<ProtectedRoute permission="workflow.read" roles={['user', 'admin']}><ErrorBoundary><WorkflowOrchestrationSession /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/workflows/orchestration/:sessionId" element={<ProtectedRoute permission="workflow.read" roles={['user', 'admin']}><ErrorBoundary><WorkflowOrchestrationSession /></ErrorBoundary></ProtectedRoute>} />

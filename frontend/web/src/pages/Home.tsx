@@ -24,7 +24,7 @@ import { employeePrimaryLabel, employeeSecondaryLabel } from '@/lib/digital-empl
 import { roleCanMutate, rolePageCopy } from '@/features/role-nav/role-nav';
 import { dayTimelineFromTrend, employeeHealthScore, taskSuccessRate } from '@/features/home/home-metrics';
 
-const AUDITOR_SUGGESTION_PREFIXES = ['/audit-center', '/zero-trust', '/tasks', '/copilot', '/agents', '/workflows', '/knowledge', '/skills', '/memory', '/home'];
+const AUDITOR_SUGGESTION_PREFIXES = ['/audit-center', '/zero-trust', '/tasks', '/copilot', '/partners', '/workflows', '/knowledge', '/skills', '/memory', '/home'];
 
 type Period = 'day' | 'week' | 'month';
 type RecordTab = 'all' | 'attention' | 'done';
@@ -185,7 +185,7 @@ export default function Home() {
         { title: '协作记录', desc: '研判与人工审核', to: '/copilot', icon: MessageSquare, tone: 'success' as const },
       ]
     : [
-        { title: '数字员工', desc: '岗位与能力装配', to: '/agents', icon: Bot, tone: 'brand' as const },
+        { title: '工作伙伴', desc: '岗位与能力装配', to: '/partners', icon: Bot, tone: 'brand' as const },
         { title: '专家协作', desc: '研判与受控执行', to: '/copilot', icon: MessageSquare, tone: 'info' as const },
         { title: '知识记忆', desc: '检索与跨会话', to: '/knowledge', icon: BookOpen, tone: 'success' as const },
         { title: '任务 SLA', desc: '派工与处置闭环', to: '/tasks', icon: ListChecks, tone: 'warn' as const },
@@ -199,7 +199,7 @@ export default function Home() {
       sub: agentCount ? `/ ${agentCount}` : undefined,
       icon: Users,
       tone: 'brand' as const,
-      to: '/agents',
+      to: '/partners',
     },
     {
       key: 'doing',
@@ -239,7 +239,7 @@ export default function Home() {
       value: healthScore ?? '—',
       icon: HeartPulse,
       tone: 'info' as const,
-      to: '/agents?tab=operations',
+      to: '/partners?tab=operations',
     },
   ];
 
@@ -404,14 +404,14 @@ export default function Home() {
                   <div className="home-spotlight__identity">
                     <DigitalEmployeeAvatar employee={featured} size={52} rounded="lg" />
                     <div className="min-w-0">
-                      <p className="home-spotlight__label">数字员工 · 今日焦点</p>
+                      <p className="home-spotlight__label">数字工作伙伴 · 今日焦点</p>
                       <h2 className="home-spotlight__name">{employeePrimaryLabel(featured)}</h2>
                       <p className="home-spotlight__meta">{employeeSecondaryLabel(featured)} · {featured.department}</p>
                     </div>
                   </div>
                   <div className="home-spotlight__cta">
                     {featured.lifecycle === 'active' && <Badge tone="success" className="text-[10px]">在岗</Badge>}
-                    <Button size="sm" variant="secondary" onClick={() => navigate(`/agents?id=${featured.id}`)}>
+                    <Button size="sm" variant="secondary" onClick={() => navigate(`/partners?id=${featured.id}`)}>
                       档案 <ArrowRight className="h-3.5 w-3.5" />
                     </Button>
                     {!isAuditor && (
@@ -445,13 +445,13 @@ export default function Home() {
                           type="button"
                           className={cn('home-spotlight__avatar', emp.id === featured.id && 'is-active')}
                           title={employeePrimaryLabel(emp)}
-                          onClick={() => navigate(`/agents?id=${emp.id}`)}
+                          onClick={() => navigate(`/partners?id=${emp.id}`)}
                         >
                           <DigitalEmployeeAvatar employee={emp} size={28} rounded="full" />
                         </button>
                       ))}
                       {employees.length > featuredPool.length && (
-                        <Link to="/agents" className="home-spotlight__more">+{employees.length - featuredPool.length}</Link>
+                        <Link to="/partners" className="home-spotlight__more">+{employees.length - featuredPool.length}</Link>
                       )}
                     </div>
                   </div>
@@ -460,9 +460,9 @@ export default function Home() {
             ) : (
               <EmptyState
                 icon={Bot}
-                title="尚未装配数字员工"
+                title="尚未装配数字工作伙伴"
                 description="先创建或从上岗模板引入岗位，运营总览将展示在岗专家"
-                action={<Link to="/agents" className="text-xs text-[var(--brand)] hover:underline">打开数字员工</Link>}
+                action={<Link to="/partners" className="text-xs text-[var(--brand)] hover:underline">打开数字工作伙伴</Link>}
               />
             )}
           </section>

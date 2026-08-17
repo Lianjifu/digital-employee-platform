@@ -58,7 +58,7 @@ func (s *Server) getEmployee(r *http.Request) (any, error) {
 			return s.employeeWithRuntimeLocked(e), nil
 		}
 	}
-	return nil, apperr.NotFoundErr(apperr.DigitalEmployeeNotFound, "数字员工不存在")
+	return nil, apperr.NotFoundErr(apperr.DigitalEmployeeNotFound, "数字工作伙伴不存在")
 }
 
 func (s *Server) createEmployee(r *http.Request) (any, error) {
@@ -68,7 +68,7 @@ func (s *Server) createEmployee(r *http.Request) (any, error) {
 		return nil, err
 	}
 	if !auth.Has(id, "agent.write") {
-		return nil, apperr.Forbidden(apperr.RoleForbidden, "无权创建数字员工")
+		return nil, apperr.Forbidden(apperr.RoleForbidden, "无权创建数字工作伙伴")
 	}
 	body, _ := decodeMap(r)
 	name := strings.TrimSpace(str(body["name"]))
@@ -95,7 +95,7 @@ func (s *Server) createEmployee(r *http.Request) (any, error) {
 	s.Store.Lock()
 	defer s.Store.Unlock()
 	s.Store.Employees = append([]map[string]any{item}, s.Store.Employees...)
-	s.Store.AppendAudit(ws, id.Name, "创建数字员工草稿", name, "success", "")
+	s.Store.AppendAudit(ws, id.Name, "创建数字工作伙伴草稿", name, "success", "")
 	return item, nil
 }
 
@@ -119,10 +119,10 @@ func (s *Server) patchEmployee(r *http.Request) (any, error) {
 			e[k] = v
 		}
 		e["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
-		s.Store.AppendAudit(str(e["workspaceId"]), id.Name, "更新数字员工配置", str(e["name"]), "success", "")
+		s.Store.AppendAudit(str(e["workspaceId"]), id.Name, "更新数字工作伙伴配置", str(e["name"]), "success", "")
 		return e, nil
 	}
-	return nil, apperr.NotFoundErr(apperr.DigitalEmployeeNotFound, "数字员工不存在")
+	return nil, apperr.NotFoundErr(apperr.DigitalEmployeeNotFound, "数字工作伙伴不存在")
 }
 
 func (s *Server) employeeAction(r *http.Request) (any, error) {
@@ -143,7 +143,7 @@ func (s *Server) employeeAction(r *http.Request) (any, error) {
 		}
 	}
 	if emp == nil {
-		return nil, apperr.NotFoundErr(apperr.DigitalEmployeeNotFound, "数字员工不存在")
+		return nil, apperr.NotFoundErr(apperr.DigitalEmployeeNotFound, "数字工作伙伴不存在")
 	}
 	if err := s.requireWorkspaceAccess(id, str(emp["workspaceId"])); err != nil {
 		return nil, err
@@ -160,7 +160,7 @@ func (s *Server) employeeAction(r *http.Request) (any, error) {
 			"requestedBy": id.Name, "requestedById": id.ID,
 		}
 		emp["updatedAt"] = now
-		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "数字员工上岗", str(emp["name"]), "success", "")
+		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "数字工作伙伴上岗", str(emp["name"]), "success", "")
 		return emp, nil
 	case "approve":
 		// 兼容历史待审批记录：确认即可上岗，不再要求职责分离双人批。
@@ -175,7 +175,7 @@ func (s *Server) employeeAction(r *http.Request) (any, error) {
 			"approver": id.Name, "approverId": id.ID,
 		}
 		emp["updatedAt"] = now
-		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "确认数字员工上岗", str(emp["name"]), "success", "")
+		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "确认数字工作伙伴上岗", str(emp["name"]), "success", "")
 		return emp, nil
 	case "reject":
 		if !auth.Has(id, "release.approve") && id.Role != "admin" {
@@ -186,11 +186,11 @@ func (s *Server) employeeAction(r *http.Request) (any, error) {
 		}
 		emp["lifecycle"] = "draft"
 		emp["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
-		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "驳回数字员工上岗", str(emp["name"]), "success", "")
+		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "驳回数字工作伙伴上岗", str(emp["name"]), "success", "")
 		return emp, nil
 	case "pause":
 		emp["lifecycle"] = "paused"
-		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "暂停数字员工", str(emp["name"]), "success", "")
+		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "暂停数字工作伙伴", str(emp["name"]), "success", "")
 		return emp, nil
 	default:
 		return nil, apperr.NotFoundErr(apperr.NotFound, "未知动作")

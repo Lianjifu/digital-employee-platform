@@ -6,7 +6,7 @@
 | 模块 | collab · employee |
 | 逻辑层 | L02 |
 
-会话 / Copilot SSE / 任务 / 数字员工。
+会话 / Copilot SSE / 任务 / 数字工作伙伴。
 
 Copilot 模型调用经 `DE_CAP_URL`（默认 `http://127.0.0.1:8102`）转发到 de-cap `/api/model-invoke/stream`。
 
