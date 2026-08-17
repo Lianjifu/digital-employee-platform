@@ -32,12 +32,12 @@ export type RoleSetupEmployee = {
   owner?: string;
   escalationOwner?: string;
   serviceObject?: string;
-  responsibilities: string[];
-  handoffPolicy?: { triggers: string[]; approvalRequiredFor: string[] };
+  responsibilities?: string[];
+  handoffPolicy?: { triggers?: string[]; approvalRequiredFor?: string[] };
   boundaryPolicy?: {
-    responsibilities: Array<{ title: string; objective: string; trigger: string }>;
-    handoff: { triggers: string[]; approvers: string[] };
-    allowedEnvironments: string[];
+    responsibilities?: Array<{ title?: string; objective?: string; trigger?: string }>;
+    handoff?: { triggers?: string[]; approvers?: string[] };
+    allowedEnvironments?: string[];
   };
   memoryPolicy?: {
     shortTermHours: number;
@@ -56,6 +56,11 @@ export type RoleSetupCompleteness = {
   label: '待补档案' | '边界待完善' | '契约完整';
 };
 
+function hasLegacyDuties(responsibilities?: string[] | null) {
+  const duties = responsibilities ?? [];
+  return duties.length > 0 && !duties.includes('待配置岗位职责');
+}
+
 /** 岗位授权契约是否可进入能力装配 / 上岗评测。 */
 export function roleSetupCompleteness(employee: RoleSetupEmployee): RoleSetupCompleteness {
   const missing: string[] = [];
@@ -70,9 +75,9 @@ export function roleSetupCompleteness(employee: RoleSetupEmployee): RoleSetupCom
   if (!employee.serviceObject?.trim()) missing.push('服务对象');
 
   const structured = employee.boundaryPolicy?.responsibilities ?? [];
-  const legacyOk = employee.responsibilities.length > 0 && !employee.responsibilities.includes('待配置岗位职责');
+  const legacyOk = hasLegacyDuties(employee.responsibilities);
   const structuredOk = structured.length > 0
-    && structured.every((item) => item.title.trim() && item.objective.trim() && item.trigger.trim())
+    && structured.every((item) => Boolean(item.title?.trim() && item.objective?.trim() && item.trigger?.trim()))
     && !structured.some((item) => item.title === '待配置岗位职责' || item.title === '未命名岗位职责');
   const handoff = employee.boundaryPolicy?.handoff;
   const handoffOk = Boolean(
@@ -82,12 +87,11 @@ export function roleSetupCompleteness(employee: RoleSetupEmployee): RoleSetupCom
 
   let boundaryOk: boolean;
   if (employee.boundaryPolicy) {
-    boundaryOk = structuredOk
-      && handoffOk
-      && (employee.boundaryPolicy.allowedEnvironments?.length ?? 0) > 0;
+    const envs = employee.boundaryPolicy.allowedEnvironments ?? [];
+    boundaryOk = structuredOk && handoffOk && envs.length > 0;
     if (!structuredOk) missing.push('完整岗位职责');
     if (!handoffOk) missing.push('接管触发与接管人');
-    if (!(employee.boundaryPolicy.allowedEnvironments.length > 0)) missing.push('允许运行环境');
+    if (!(envs.length > 0)) missing.push('允许运行环境');
   } else {
     boundaryOk = legacyOk && handoffOk;
     if (!legacyOk) missing.push('岗位职责');
@@ -232,7 +236,7 @@ const RELEASE_STAGE_RANK: Record<ReleaseOnboardingStage, number> = {
 export function releaseOnboardingCompleteness(employee: ReleaseOnboardingEmployee): ReleaseOnboardingCompleteness {
   const role = roleSetupCompleteness(employee);
   const capability = capabilityAssemblyCompleteness(employee);
-  const legacyDutyOk = employee.responsibilities.length > 0 && !employee.responsibilities.includes('待配置岗位职责');
+  const legacyDutyOk = hasLegacyDuties(employee.responsibilities);
   const contractOk = role.profileOk && (role.boundaryOk || legacyDutyOk);
   const capabilityOk = capability.modelOk && capability.assetsOk;
   const evaluationOk = employee.evaluation.status === 'passed';

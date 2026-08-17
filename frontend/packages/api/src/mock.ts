@@ -2620,7 +2620,23 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   };
   if (path === '/api/zero-trust/overview' && method === 'GET') {
     const events = zeroTrustEvents.filter((event) => !identity || identity.workspaceIds.includes(event.workspaceId));
-    return { policies: zeroTrustPolicies.filter((policy) => policy.enabled).length, blocked: events.filter((event) => event.decision === 'deny').length, approvals: events.filter((event) => event.decision === 'approval_required').length, masked: events.filter((event) => event.decision === 'mask').length, risk: events.some((event) => event.decision === 'deny') ? 'attention' : 'normal', updatedAt: new Date().toISOString() };
+    const enabled = zeroTrustPolicies.filter((policy) => policy.enabled).length;
+    const blocked = events.filter((event) => event.decision === 'deny').length;
+    const approvals = events.filter((event) => event.decision === 'approval_required').length;
+    const masked = events.filter((event) => event.decision === 'mask').length;
+    const activeTempAuth = temporaryAuthorizations.filter((item) => item.status === 'active' && (!identity || identity.workspaceIds.includes(item.workspaceId))).length;
+    return {
+      policyCount: zeroTrustPolicies.length,
+      enabledCount: enabled,
+      eventCount: events.length,
+      activeTempAuth,
+      policies: enabled,
+      blocked,
+      approvals,
+      masked,
+      risk: blocked > 0 || approvals > 0 ? 'attention' : 'normal',
+      updatedAt: new Date().toISOString(),
+    };
   }
   if (path === '/api/zero-trust/policies' && method === 'GET') return zeroTrustPolicies;
   if (path === '/api/zero-trust/policies' && method === 'POST') {
@@ -2724,8 +2740,8 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
   if (path === '/api/audit-center/export' && method === 'POST') {
     if (!identity?.permissions.includes('audit.export')) throw new Error('E_AUDIT_EXPORT_FORBIDDEN');
     const count = workspaceAudits.filter((event) => !identity || identity.workspaceIds.includes(event.workspaceId)).length;
-    workspaceAudit(currentWorkspaceId, '导出脱敏审计证据包', `共 ${count} 条记录`);
-    return { id: mockId('export'), status: 'ready', filename: `audit-evidence-${new Date().toISOString().slice(0, 10)}.zip`, recordCount: count, masked: true };
+    workspaceAudit(currentWorkspaceId, '登记导出脱敏审计证据', `共 ${count} 条记录`);
+    return { id: mockId('export'), status: 'registered', filename: `audit-evidence-${new Date().toISOString().slice(0, 10)}.zip`, recordCount: count, masked: true, registered: true, downloadAvailable: false };
   }
   if (path === '/api/workspaces' && method === 'GET') return mockWorkspaces.filter((item) => item.tenantId === (identity?.tenantId ?? 'tenant-acme') && (!identity || identity.workspaceIds.includes(item.id)));
   if (path === '/api/workspaces' && method === 'POST') { const context = workspaceContext(); if (!context.canWrite) throw new Error('E_WORKSPACE_WRITE_FORBIDDEN'); const body = (opts.body ?? {}) as Partial<Workspace>; if (!body.name?.trim()) throw new Error('E_WORKSPACE_NAME_REQUIRED'); const item: Workspace = { id: mockId('workspace'), tenantId: 'tenant-acme', ownerId: 'u1', status: 'active', name: body.name.trim(), region: body.region ?? 'cn-east-1', plan: body.plan ?? 'enterprise', memberCount: 1, complianceScore: 80, createdAt: new Date().toISOString() }; mockWorkspaces.unshift(item); workspaceAudit(item.id, '创建工作区', item.name); return item; }

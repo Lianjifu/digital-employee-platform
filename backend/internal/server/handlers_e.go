@@ -11,13 +11,13 @@ import (
 )
 
 func (s *Server) homeKPIs(r *http.Request) (any, error) {
+	// Compact live KPIs; Home UI prefers list endpoints for display, this remains
+	// the machine-readable aggregate for agents / smoke checks.
 	return s.homeKPIsLive(r)
 }
 
 func (s *Server) homeExtra(r *http.Request) (any, error) {
-	s.Store.RLock()
-	defer s.Store.RUnlock()
-	return s.Store.HomeExtra, nil
+	return s.homeExtraLive(r)
 }
 
 func (s *Server) homeEvents(r *http.Request) (any, error) {

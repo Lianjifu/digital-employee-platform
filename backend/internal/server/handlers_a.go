@@ -352,9 +352,30 @@ func (s *Server) ztOverview(r *http.Request) (any, error) {
 			enabled++
 		}
 	}
+	blocked, approvals, masked := 0, 0, 0
+	for _, e := range s.Store.ZTEvents {
+		switch str(e["decision"]) {
+		case "deny":
+			blocked++
+		case "approval_required":
+			approvals++
+		case "mask":
+			masked++
+		}
+	}
+	activeTemp := 0
+	for _, a := range s.Store.TempAuths {
+		if str(a["status"]) == "active" {
+			activeTemp++
+		}
+	}
 	return map[string]any{
 		"policyCount": len(s.Store.ZTPolicies), "enabledCount": enabled,
-		"eventCount": len(s.Store.ZTEvents), "activeTempAuth": len(s.Store.TempAuths),
+		"eventCount": len(s.Store.ZTEvents), "activeTempAuth": activeTemp,
+		// FE-compatible aliases (derived from events / policies)
+		"policies": enabled, "blocked": blocked, "approvals": approvals, "masked": masked,
+		"risk": map[bool]string{true: "attention", false: "normal"}[blocked > 0 || approvals > 0],
+		"updatedAt": time.Now().UTC().Format(time.RFC3339),
 	}, nil
 }
 
@@ -717,11 +738,12 @@ func (s *Server) auditExport(r *http.Request) (any, error) {
 			count++
 		}
 	}
-	s.Store.AppendAudit(ws, id.Name, "导出脱敏审计证据包", "共 "+itoa(count)+" 条记录", "success", "")
+	s.Store.AppendAudit(ws, id.Name, "登记导出脱敏审计证据", "共 "+itoa(count)+" 条记录", "success", "")
 	return map[string]any{
-		"id": s.Store.ID("export"), "status": "ready",
+		"id": s.Store.ID("export"), "status": "registered",
 		"filename": "audit-evidence-" + time.Now().UTC().Format("2006-01-02") + ".zip",
 		"recordCount": count, "masked": true,
+		"registered": true, "downloadAvailable": false,
 	}, nil
 }
 

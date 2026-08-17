@@ -172,6 +172,25 @@ describe('roleSetupCompleteness', () => {
     expect(result.ready).toBe(true);
     expect(result.missing.join('')).not.toMatch(/模型/);
   });
+
+  it('tolerates missing responsibilities / sparse boundary from API hydrate', () => {
+    const sparse = {
+      owner: '张经理',
+      escalationOwner: '李值班',
+      serviceObject: '生产业务系统',
+    } as RoleSetupEmployee;
+    expect(() => roleSetupCompleteness(sparse)).not.toThrow();
+    const result = roleSetupCompleteness({
+      ...sparse,
+      boundaryPolicy: {
+        responsibilities: undefined,
+        handoff: undefined,
+        allowedEnvironments: undefined,
+      },
+    });
+    expect(result.boundaryOk).toBe(false);
+    expect(result.missing).toEqual(expect.arrayContaining(['完整岗位职责']));
+  });
 });
 
 describe('capabilityAssemblyCompleteness', () => {

@@ -1,33 +1,50 @@
 /**
- * 运营总览 — 现代 SaaS 运营台
- * 页头 → KPI 置顶 → 待办+投入产出 → 工作流三列 → 运行细节（折叠）
+ * 运营总览 — 现代 SaaS 运营台：页头 / KPI / 专家亮点 / 工作记录
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { Badge, Button, Avatar } from '@de/web-ui';
 import { PageSkeleton } from '@/components/PageSkeleton';
+import { DigitalEmployeeAvatar } from '@/components/DigitalEmployeeAvatar';
 import {
-  BarChart3, Plus, MessageSquare, ListChecks, Bot, AlertTriangle,
-  ArrowRight, TrendingUp, Activity, Bell, CheckCircle2, Clock,
-  ShieldCheck, Users, ChevronRight, Inbox, Target, Lightbulb,
-  Check, BellRing, Workflow, ChevronDown,
+  Activity, ArrowRight, BellRing, BookOpen, Bot, Brain,
+  Check, CheckCircle2, ChevronDown, ChevronRight, Clock, HeartPulse,
+  Inbox, Lightbulb, ListChecks, MessageSquare, Plus, RefreshCw,
+  ShieldCheck, Target, TrendingUp, Users,
 } from 'lucide-react';
 import {
-  AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid,
-  BarChart, Bar, PieChart as RePieChart, Pie, Cell, LineChart, Line, Legend,
+  Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { cn } from '@de/web-utils';
-import type { Task } from '@de/web-types';
+import type { DigitalEmployee, Task } from '@de/web-types';
 import { EmptyState, RoleReadonlyBanner } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
+import { employeePrimaryLabel, employeeSecondaryLabel } from '@/lib/digital-employees';
 import { roleCanMutate, rolePageCopy } from '@/features/role-nav/role-nav';
+import { dayTimelineFromTrend, employeeHealthScore, taskSuccessRate } from '@/features/home/home-metrics';
 
 const AUDITOR_SUGGESTION_PREFIXES = ['/audit-center', '/zero-trust', '/tasks', '/copilot', '/agents', '/workflows', '/knowledge', '/skills', '/memory', '/home'];
 
-const ICON_MAP: Record<string, typeof Activity> = {
-  AlertTriangle, CheckCircle2, Activity, Bot, MessageSquare, ListChecks,
-  Clock, ShieldCheck, Users, Inbox, Target, Lightbulb, Workflow,
+type Period = 'day' | 'week' | 'month';
+type RecordTab = 'all' | 'attention' | 'done';
+
+type WorkRecord = {
+  id: string;
+  title: string;
+  status: string;
+  statusTone: 'success' | 'error' | 'warn' | 'info' | 'neutral';
+  attribution?: string;
+  time: string;
+  to: string;
+  kind: 'task' | 'activity' | 'alert';
+};
+
+type TimelineSlot = {
+  label: string;
+  collab: number;
+  tasks: number;
+  alerts: number;
 };
 
 function getGreeting() {
@@ -55,71 +72,11 @@ function useCountdown(targetSec: number) {
   };
 }
 
-function useSlaRotation(alerts: Array<{ id: string }>) {
-  const [activeIndex, setActiveIndex] = useState(0);
-  const [paused, setPaused] = useState(false);
-  const [reduceMotion, setReduceMotion] = useState(
-    () => typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-  );
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const alertIds = alerts.map((a) => a.id).join('|');
-
-  useEffect(() => {
-    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const update = () => setReduceMotion(mq.matches);
-    update();
-    mq.addEventListener?.('change', update);
-    mq.addListener?.(update);
-    return () => {
-      mq.removeEventListener?.('change', update);
-      mq.removeListener?.(update);
-    };
-  }, []);
-
-  useEffect(() => {
-    setActiveIndex((i) => (alerts.length === 0 ? 0 : Math.min(i, alerts.length - 1)));
-  }, [alertIds, alerts.length]);
-
-  useEffect(() => {
-    if (reduceMotion || paused || alerts.length < 2) return undefined;
-    const timer = window.setInterval(() => {
-      setActiveIndex((i) => (i + 1) % alerts.length);
-    }, 4200);
-    return () => window.clearInterval(timer);
-  }, [alertIds, alerts.length, paused, reduceMotion]);
-
-  useEffect(() => {
-    const item = viewportRef.current?.querySelector<HTMLElement>(`[data-alert-index="${activeIndex}"]`);
-    const viewport = viewportRef.current;
-    if (!item || !viewport) return;
-    viewport.scrollTo({ top: item.offsetTop, behavior: reduceMotion ? 'auto' : 'smooth' });
-  }, [activeIndex, reduceMotion]);
-
-  return {
-    activeIndex,
-    viewportRef,
-    pause: () => setPaused(true),
-    resume: () => setPaused(false),
-  };
-}
-
-const AGENT_TREND_COLORS = [
-  'var(--chart-info)', 'var(--chart-success)', 'var(--chart-warning)',
-  'var(--brand)', 'var(--chart-neutral)', 'var(--danger)',
-];
-
-function buildAgentTrendData(agentTrend: Record<string, number[]>) {
-  const agents = Object.keys(agentTrend);
-  const rows = Array.from({ length: 7 }, (_, dayIndex) => {
-    const row: Record<string, string | number> = { day: `D-${6 - dayIndex}` };
-    agents.forEach((agent) => {
-      const values = agentTrend[agent] ?? [];
-      const peak = Math.max(...values, 0);
-      row[agent] = peak > 0 ? Math.round(((values[dayIndex] ?? 0) / peak) * 100) : 0;
-    });
-    return row;
-  });
-  return { agents, rows };
+function formatWhen(value?: string) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 export default function Home() {
@@ -133,57 +90,237 @@ export default function Home() {
 
   const { data: tasks, isLoading: lTasks } = useApiQuery<Task[]>(['home', 'tasks'], '/api/tasks');
   const { data: extra, isLoading: lExtra, isFetching: fetchingExtra, refetch: refetchExtra } = useApiQuery<any>(['home', 'extra'], '/api/home/extra');
-  const { data: team, isLoading: lTeam } = useApiQuery<any[]>(['home', 'team'], '/api/home/team');
+  const { data: employees = [], isLoading: lEmployees } = useApiQuery<DigitalEmployee[]>(['digital-employees'], '/api/digital-employees');
   const { data: operations } = useApiQuery<any>(['operations', 'overview'], '/api/operations/overview');
+  /** Compact aggregate; kept for parity checks / future widgets (lists remain display source of truth). */
+  useApiQuery<any>(['home', 'kpis'], '/api/home/kpis');
 
+  const [period, setPeriod] = useState<Period>('day');
+  const [recordTab, setRecordTab] = useState<RecordTab>('all');
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
   const [runtimeOpen, setRuntimeOpen] = useState(false);
 
-  const ackAllNotifications = () => {
-    setReadIds(new Set((extra?.notifications ?? []).map((n: { id: string }) => n.id)));
-  };
   const acknowledgeAlert = useApiMutation<{ id: string }, { id: string; note: string }>(
     ({ id }) => `/api/home/alerts/${id}/acknowledge`,
     { onSuccess: () => refetchExtra() },
   );
 
-  if (lTasks && lExtra && lTeam) {
-    return <PageSkeleton />;
-  }
+  const allTasks = tasks ?? [];
+  const inProgress = allTasks.filter((t) => t.status === 'in_progress');
+  const completed = allTasks.filter((t) => t.status === 'completed');
+  const review = allTasks.filter((t) => t.status === 'review' || t.status === 'pending');
+  const todoTasks = allTasks.filter((t) => t.status === 'pending');
 
-  const inProgress = (tasks ?? []).filter((t) => t.status === 'in_progress').slice(0, 4);
-  const agentSummary = extra?.agentCallSummary;
-  const metrics = extra?.operationalMetrics;
-  const agentCount = (agentSummary?.healthy ?? 0) + (agentSummary?.warning ?? 0) + (agentSummary?.offline ?? 0);
-  const healthScore = metrics?.healthScore ?? (agentCount > 0 ? Math.round(((agentSummary?.healthy ?? 0) / agentCount) * 100) : null);
-  const activeAgents = metrics?.activeAgents ?? operations?.health?.activeAgents ?? agentSummary?.healthy ?? 0;
+  /** KPI 与列表同源：员工/任务以列表 API 为准，extra 仅补充告警/成本/趋势桶 */
+  const activeEmployees = useMemo(
+    () => employees.filter((e) => e.lifecycle === 'active' || e.release?.status === 'released'),
+    [employees],
+  );
+  const activeAgents = activeEmployees.length;
+  const agentCount = employees.length;
+  const healthScore = employeeHealthScore(activeAgents, agentCount);
+  const taskTotal = allTasks.length;
+  const successRate = taskSuccessRate(completed.length, taskTotal);
 
-  const tc = extra?.taskCompletion ?? { done: 0, doing: 0, review: 0, todo: 0 };
-  const tcTotal = tc.done + tc.doing + tc.review + tc.todo;
-  const tcDonePct = tcTotal > 0 ? (tc.done / tcTotal) * 100 : 0;
-  const ringData = [
-    { name: '已完成', value: tc.done, fill: 'var(--chart-success)' },
-    { name: '进行中', value: tc.doing, fill: 'var(--chart-info)' },
-    { name: '待复核', value: tc.review, fill: 'var(--chart-warning)' },
-    { name: '待办', value: tc.todo, fill: 'var(--chart-neutral)' },
-  ];
-
-  const healthData = metrics?.trend24h ?? [];
-  const roleData = extra?.roleDistribution ?? [];
   const visibleAlerts = (extra?.slaAlerts ?? []).filter((a: { acknowledged?: boolean }) => !a.acknowledged);
-  const p0Count = visibleAlerts.filter((a: { level: string }) => a.level === 'P0').length;
   const unreadNotifications = (extra?.notifications ?? []).filter(
     (n: { unread?: boolean; id: string }) => n.unread && !readIds.has(n.id),
   );
-  const unreadCount = unreadNotifications.length;
-  const pendingItems = operations?.pending ?? [];
-  const costUsed = extra?.costMonth?.used ?? 0;
-  const costBudget = extra?.costMonth?.budget ?? 0;
-  const costPct = Math.min(100, (costUsed / Math.max(1, costBudget)) * 100);
-  const perHundredYuan = Math.max(
-    1,
-    Math.round(costUsed > 0 ? tc.done / Math.max(1, costUsed / 100) : tc.done),
-  );
+  const pendingItems = useMemo(() => {
+    const fromOps = (operations?.pending ?? []) as Array<{ id: string; title?: string; to?: string; level?: string }>;
+    if (fromOps.length) {
+      return fromOps.map((item) => ({
+        id: item.id,
+        title: item.title ?? item.id,
+        to: item.to || '/tasks?risk=attention',
+      }));
+    }
+    const fromAlerts = visibleAlerts.map((a: { id: string; text: string; taskCode?: string }) => ({
+      id: `alert-${a.id}`,
+      title: a.text,
+      to: `/tasks?task=${encodeURIComponent(a.taskCode ?? '')}&risk=attention`,
+    }));
+    const fromReview = review.slice(0, 5).map((t) => ({
+      id: `task-${t.id}`,
+      title: t.title,
+      to: `/tasks?task=${encodeURIComponent(t.code)}`,
+    }));
+    return [...fromAlerts, ...fromReview].slice(0, 6);
+  }, [operations?.pending, visibleAlerts, review]);
+
+  const costSource = String(extra?.costMonth?.source ?? '');
+  const costUsed = costSource === 'usage-meters' ? Number(extra?.costMonth?.used ?? 0) : 0;
+  const costBudget = costSource === 'usage-meters' ? Number(extra?.costMonth?.budget ?? 0) : 0;
+  const costPct = costBudget > 0 ? Math.min(100, (costUsed / costBudget) * 100) : 0;
+  const healthData = (extra?.operationalMetrics?.trend24h ?? []) as Array<{
+    time: string; tasks?: number; collab?: number; alerts?: number;
+  }>;
+  const attentionCount = visibleAlerts.length + review.length;
+  const todayCollab = Number(extra?.operationalMetrics?.collabToday ?? 0);
+  const tc = {
+    done: completed.length,
+    doing: inProgress.length,
+    review: review.length,
+    todo: todoTasks.length,
+  };
+
+  const featuredPool = useMemo(() => {
+    const pool = activeEmployees.length ? activeEmployees : employees;
+    return pool.slice(0, 4);
+  }, [activeEmployees, employees]);
+  const featured = featuredPool[0] ?? null;
+
+  const featureStats = useMemo(() => {
+    const knowledge = featured?.capabilities?.knowledge?.length ?? 0;
+    const skills = (featured?.capabilities?.skills?.length ?? 0) + (featured?.capabilities?.tools?.length ?? 0);
+    const workflows = featured?.capabilities?.workflows?.length ?? 0;
+    return { knowledge, skills, workflows };
+  }, [featured]);
+
+  const modules = isAuditor
+    ? [
+        { title: '审计中心', desc: '证据流水与导出', to: '/audit-center', icon: ShieldCheck, tone: 'brand' as const },
+        { title: '持续验证', desc: '策略与临时授权', to: '/zero-trust', icon: Activity, tone: 'info' as const },
+        { title: '任务核查', desc: '放行与交接证据', to: '/tasks', icon: ListChecks, tone: 'warn' as const },
+        { title: '协作记录', desc: '研判与人工审核', to: '/copilot', icon: MessageSquare, tone: 'success' as const },
+      ]
+    : [
+        { title: '数字员工', desc: '岗位与能力装配', to: '/agents', icon: Bot, tone: 'brand' as const },
+        { title: '专家协作', desc: '研判与受控执行', to: '/copilot', icon: MessageSquare, tone: 'info' as const },
+        { title: '知识记忆', desc: '检索与跨会话', to: '/knowledge', icon: BookOpen, tone: 'success' as const },
+        { title: '任务 SLA', desc: '派工与处置闭环', to: '/tasks', icon: ListChecks, tone: 'warn' as const },
+      ];
+
+  const kpis = [
+    {
+      key: 'agents',
+      label: '在岗专家',
+      value: activeAgents,
+      sub: agentCount ? `/ ${agentCount}` : undefined,
+      icon: Users,
+      tone: 'brand' as const,
+      to: '/agents',
+    },
+    {
+      key: 'doing',
+      label: '进行中',
+      value: inProgress.length,
+      icon: Activity,
+      tone: 'info' as const,
+      to: '/tasks?status=in_progress',
+    },
+    {
+      key: 'attention',
+      label: '需关注',
+      value: attentionCount,
+      icon: Target,
+      tone: attentionCount > 0 ? ('warn' as const) : ('neutral' as const),
+      to: '/tasks?risk=attention',
+    },
+    {
+      key: 'done',
+      label: '已完成',
+      value: completed.length,
+      icon: CheckCircle2,
+      tone: 'success' as const,
+      to: '/tasks?status=completed',
+    },
+    {
+      key: 'success',
+      label: '成功率',
+      value: successRate == null ? '—' : `${successRate}%`,
+      icon: TrendingUp,
+      tone: 'success' as const,
+      to: '/tasks',
+    },
+    {
+      key: 'health',
+      label: '健康度',
+      value: healthScore ?? '—',
+      icon: HeartPulse,
+      tone: 'info' as const,
+      to: '/agents?tab=operations',
+    },
+  ];
+
+  const timeline = useMemo((): TimelineSlot[] => {
+    if (period === 'day') {
+      return dayTimelineFromTrend(healthData);
+    }
+    if (allTasks.length === 0 && visibleAlerts.length === 0 && todayCollab === 0) {
+      return [];
+    }
+    const buckets = period === 'week' ? 7 : 8;
+    const slots: TimelineSlot[] = Array.from({ length: buckets }, (_, i) => ({
+      label: period === 'week' ? `D${i + 1}` : `${i + 1}`,
+      collab: 0,
+      tasks: 0,
+      alerts: 0,
+    }));
+    const now = Date.now();
+    const spanMs = period === 'week' ? 7 * 86400000 : 30 * 86400000;
+    for (const t of allTasks) {
+      const ts = Date.parse(t.updatedAt || t.createdAt);
+      if (!Number.isFinite(ts) || now - ts > spanMs || ts > now) continue;
+      const idx = Math.min(buckets - 1, Math.max(0, Math.floor(((ts - (now - spanMs)) / spanMs) * buckets)));
+      slots[idx]!.tasks += 1;
+    }
+    for (const a of visibleAlerts) {
+      const ts = Date.parse(String(a.time ?? ''));
+      if (!Number.isFinite(ts) || now - ts > spanMs || ts > now) continue;
+      const idx = Math.min(buckets - 1, Math.max(0, Math.floor(((ts - (now - spanMs)) / spanMs) * buckets)));
+      slots[idx]!.alerts += 1;
+    }
+    if (todayCollab > 0 && slots.length) {
+      slots[slots.length - 1]!.collab += todayCollab;
+    }
+    return slots.some((s) => s.collab + s.tasks + s.alerts > 0) ? slots : [];
+  }, [period, healthData, allTasks, visibleAlerts, todayCollab]);
+
+  const maxBar = Math.max(1, ...timeline.flatMap((r: TimelineSlot) => [r.collab, r.tasks, r.alerts]));
+
+  const records = useMemo(() => {
+    const out: WorkRecord[] = [];
+    for (const t of allTasks.slice(0, 12)) {
+      const done = t.status === 'completed';
+      const attention = (t.slaRemainingMin ?? 999) < 60 || t.priority === 'P0' || t.status === 'review';
+      out.push({
+        id: `task-${t.id}`,
+        title: t.title,
+        status: done ? '已完成' : attention ? '需关注' : t.status === 'in_progress' ? '进行中' : '待处理',
+        statusTone: done ? 'success' : attention ? 'error' : t.status === 'in_progress' ? 'info' : 'neutral',
+        attribution: t.digitalEmployeeName ?? t.assignee ?? '—',
+        time: formatWhen(t.updatedAt ?? t.createdAt),
+        to: `/tasks?task=${encodeURIComponent(t.code)}`,
+        kind: 'task',
+      });
+    }
+    for (const alert of visibleAlerts.slice(0, 6)) {
+      out.push({
+        id: `alert-${alert.id}`,
+        title: alert.text,
+        status: alert.level ?? '告警',
+        statusTone: alert.level === 'P0' ? 'error' : 'warn',
+        attribution: alert.assignee ?? alert.taskCode,
+        time: formatWhen(alert.time) === '—' ? (alert.time ?? '—') : formatWhen(alert.time),
+        to: `/tasks?task=${encodeURIComponent(alert.taskCode ?? '')}&risk=attention`,
+        kind: 'alert',
+      });
+    }
+    return out;
+  }, [allTasks, visibleAlerts]);
+
+  const filteredRecords = records.filter((r) => {
+    if (recordTab === 'attention') return r.statusTone === 'error' || r.statusTone === 'warn';
+    if (recordTab === 'done') return r.statusTone === 'success';
+    return true;
+  });
+
+  const suggestions = (extra?.suggestion ?? []).filter((s: { to?: string }) => {
+    if (!isAuditor) return true;
+    const to = s.to ?? '';
+    return AUDITOR_SUGGESTION_PREFIXES.some((prefix) => to === prefix || to.startsWith(`${prefix}?`) || to.startsWith(`${prefix}/`));
+  });
 
   const chartTheme = {
     grid: 'var(--chart-grid)',
@@ -192,581 +329,414 @@ export default function Home() {
     tooltipText: 'var(--text)',
   };
 
-  const successRate = metrics?.taskSuccessRate ?? operations?.health?.taskSuccessRate ?? null;
-  const suggestions = (extra?.suggestion ?? []).filter((s: { to?: string }) => {
-    if (!isAuditor) return true;
-    const to = s.to ?? '';
-    if (!to) return false;
-    return AUDITOR_SUGGESTION_PREFIXES.some((prefix) => to === prefix || to.startsWith(`${prefix}?`) || to.startsWith(`${prefix}/`));
-  });
+  if ((lTasks || lExtra || lEmployees) && tasks === undefined && extra === undefined && employees.length === 0) {
+    return <PageSkeleton />;
+  }
 
   return (
     <div className="de-employee-page home-page h-full min-w-0 overflow-y-auto bg-[var(--bg-elevated)] p-3 md:p-4 lg:p-5">
-      <div className="home-page__stack">
-        {/* 1 · 页头 */}
-        <header className="home-page__hero de-employee-shell rounded-xl bg-[var(--surface-1)] px-4 py-3 md:px-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="de-employee-icon-tile grid h-8 w-8 place-items-center rounded-lg">
-                <Activity className="h-4 w-4" />
-              </div>
-              <div className="min-w-0">
-                <h1 className="text-base font-semibold text-[var(--text)]">{homeCopy.title}</h1>
-                <p className="text-[11px] text-[var(--text-muted)]">
-                  {greeting}，{user?.name ?? '用户'} · {homeCopy.subtitle}
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              {isAuditor ? (
-                <>
-                  <Button size="sm" onClick={() => navigate('/audit-center')}>
-                    <ShieldCheck className="h-3.5 w-3.5" />审计中心
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={() => navigate('/tasks')}>
-                    <ListChecks className="h-3.5 w-3.5" />任务核查
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button size="sm" onClick={() => navigate('/copilot')}>
-                    <MessageSquare className="h-3.5 w-3.5" />专家协作
-                  </Button>
-                  <Button size="sm" variant="secondary" onClick={() => navigate('/tasks')}>
-                    <Plus className="h-3.5 w-3.5" />{user?.role === 'user' ? '我的待办' : '创建任务'}
-                  </Button>
-                </>
-              )}
-              {isAdministrator && (
-                <div className="flex items-center gap-2 border-l border-[var(--border)] pl-2 text-[11px]">
-                  <Link to="/agents" className="inline-flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--brand)]">
-                    <Bot className="h-3 w-3" />数字员工
-                  </Link>
-                  <Link to="/workflows" className="inline-flex items-center gap-1 text-[var(--text-muted)] hover:text-[var(--brand)]">
-                    <Workflow className="h-3 w-3" />工作流程
-                  </Link>
-                </div>
-              )}
-            </div>
-          </div>
-          <RoleReadonlyBanner className="mt-3 flex items-start gap-2 rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]" />
-        </header>
+      <header className="home-header">
+        <div className="home-header__copy">
+          <p className="home-header__eyebrow">{greeting}，{user?.name ?? '用户'}</p>
+          <h1 className="home-header__title">{homeCopy.title}</h1>
+          <p className="home-header__subtitle">{homeCopy.subtitle}</p>
+        </div>
+        <div className="home-header__actions">
+          <button
+            type="button"
+            className="home-icon-btn"
+            onClick={() => refetchExtra()}
+            disabled={fetchingExtra}
+            aria-label="刷新数据"
+          >
+            <RefreshCw className={cn('h-3.5 w-3.5', fetchingExtra && 'animate-spin')} />
+          </button>
+          {isAuditor ? (
+            <>
+              <Button size="sm" variant="secondary" onClick={() => navigate('/tasks')}>
+                <ListChecks className="h-3.5 w-3.5" />任务核查
+              </Button>
+              <Button size="sm" onClick={() => navigate('/audit-center')}>
+                <ShieldCheck className="h-3.5 w-3.5" />审计中心
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button size="sm" variant="secondary" onClick={() => navigate('/tasks')}>
+                <Plus className="h-3.5 w-3.5" />{user?.role === 'user' ? '我的待办' : '创建任务'}
+              </Button>
+              <Button size="sm" onClick={() => navigate('/copilot')}>
+                <MessageSquare className="h-3.5 w-3.5" />开始协作
+              </Button>
+            </>
+          )}
+        </div>
+      </header>
 
-        {/* 2 · KPI 置顶 */}
-        <section className="home-page__kpis" aria-label="关键运营指标">
-          <button type="button" className={cn('home-page__kpi', visibleAlerts.length > 0 && 'home-page__kpi--warn')} onClick={() => navigate('/tasks?risk=attention')}>
-            <span className="home-page__kpi-icon"><AlertTriangle className="h-4 w-4" /></span>
-            <span className="home-page__kpi-body">
-              <span>待处置</span>
-              <strong>{visibleAlerts.length}<small>{p0Count > 0 ? `${p0Count} P0` : '件'}</small></strong>
+      <RoleReadonlyBanner className="mb-3 flex items-start gap-2 rounded-xl bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]" />
+
+      <section className="home-kpis" aria-label="运营指标">
+        {kpis.map((kpi) => (
+          <button
+            key={kpi.key}
+            type="button"
+            className={cn('home-kpi', `home-kpi--${kpi.tone}`)}
+            onClick={() => navigate(kpi.to)}
+          >
+            <span className="home-kpi__icon"><kpi.icon className="h-4 w-4" /></span>
+            <span className="home-kpi__body">
+              <span>{kpi.label}</span>
+              <strong>
+                {kpi.value}
+                {kpi.sub && <small>{kpi.sub}</small>}
+              </strong>
             </span>
           </button>
-          <button type="button" className="home-page__kpi home-page__kpi--brand" onClick={() => navigate('/agents')}>
-            <span className="home-page__kpi-icon"><Bot className="h-4 w-4" /></span>
-            <span className="home-page__kpi-body">
-              <span>在岗员工</span>
-              <strong>{activeAgents}<small>/ {agentCount || '—'}</small></strong>
-            </span>
-          </button>
-          <button type="button" className="home-page__kpi home-page__kpi--success" onClick={() => navigate('/tasks')}>
-            <span className="home-page__kpi-icon"><CheckCircle2 className="h-4 w-4" /></span>
-            <span className="home-page__kpi-body">
-              <span>今日完成</span>
-              <strong>{tc.done}<small>项</small></strong>
-            </span>
-          </button>
-          <button type="button" className="home-page__kpi home-page__kpi--info" onClick={() => navigate('/tasks')}>
-            <span className="home-page__kpi-icon"><ListChecks className="h-4 w-4" /></span>
-            <span className="home-page__kpi-body">
-              <span>进行中</span>
-              <strong>{inProgress.length}<small>项</small></strong>
-            </span>
-          </button>
-          <button type="button" className="home-page__kpi" onClick={() => navigate('/tasks')}>
-            <span className="home-page__kpi-icon"><Target className="h-4 w-4" /></span>
-            <span className="home-page__kpi-body">
-              <span>成功率</span>
-              <strong>{successRate == null ? '--' : successRate}<small>%</small></strong>
-            </span>
-          </button>
-          <button type="button" className="home-page__kpi" onClick={() => setRuntimeOpen(true)}>
-            <span className="home-page__kpi-icon"><ShieldCheck className="h-4 w-4" /></span>
-            <span className="home-page__kpi-body">
-              <span>健康度</span>
-              <strong>{healthScore == null ? '--' : healthScore}<small>/100</small></strong>
-            </span>
-          </button>
-        </section>
+        ))}
+      </section>
 
-        {/* 3 · 待办 + 投入产出 */}
-        <section className="home-page__mid" aria-label="待办与经营">
-          <div className="home-page__attention de-employee-shell rounded-xl bg-[var(--surface-1)]">
-            <div className="home-page__section-head">
-              <div className="flex min-w-0 items-center gap-2">
-                <Inbox className="h-4 w-4 text-[var(--brand)]" />
-                <h2 className="text-sm font-semibold">{isAdministrator ? '需要关注' : '我的待办'}</h2>
-                {visibleAlerts.length > 0 && <Badge tone="error">{visibleAlerts.length} SLA</Badge>}
-                {unreadCount > 0 && <Badge tone="brand">{unreadCount} 未读</Badge>}
-              </div>
-              <Link to="/tasks?risk=attention" className="inline-flex items-center gap-0.5 text-[11px] font-medium text-[var(--brand)] hover:underline">
-                全部 <ArrowRight className="h-3 w-3" />
-              </Link>
-            </div>
-
-            {unreadCount > 0 && (
-              <div className="home-page__unread mx-4 mb-1 flex items-center gap-2 text-[11px] md:mx-5">
-                <BellRing className="h-3.5 w-3.5 shrink-0 text-[var(--brand)]" />
-                <span className="min-w-0 flex-1 truncate text-[var(--text-secondary)]">{unreadNotifications[0]?.text}</span>
-                <button type="button" onClick={ackAllNotifications} className="shrink-0 font-medium text-[var(--brand)] hover:underline">全部已读</button>
-              </div>
-            )}
-
-            <div className="home-page__pending">
-              {pendingItems.length > 0 ? (
-                pendingItems.slice(0, 5).map((item: { id: string; to: string; title: string }) => (
-                  <Link key={item.id} to={item.to} className="home-page__pending-row">
-                    <span className="home-page__pending-dot" aria-hidden />
-                    <span className="min-w-0 flex-1 truncate">{item.title}</span>
-                    <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[var(--text-muted)]" />
-                  </Link>
-                ))
-              ) : (
-                <p className="px-4 py-5 text-center text-[11px] text-[var(--text-muted)]">当前没有待处理事项</p>
-              )}
-            </div>
-          </div>
-
-          <div className="home-page__roi de-employee-shell rounded-xl bg-[var(--surface-1)]">
-            <div className="home-page__section-head">
-              <h2 className="text-sm font-semibold">投入产出</h2>
-              <Link to="/agents" className="text-[11px] font-medium text-[var(--brand)] hover:underline">按岗位</Link>
-            </div>
-            <div className="home-page__roi-body">
-              <div className="home-page__roi-cost">
-                <div className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-muted)]">本月成本</div>
-                <div className="mt-1 flex items-baseline gap-1.5">
-                  <strong className="text-2xl tabular-nums">¥{costUsed}</strong>
-                  <span className="text-[11px] text-[var(--text-muted)]">/ ¥{costBudget}</span>
-                </div>
-                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--bg-elevated)]">
-                  <div className="h-full rounded-full bg-[var(--brand)]" style={{ width: `${costPct}%` }} />
-                </div>
-                <div className="mt-1.5 flex justify-between text-[10px] text-[var(--text-muted)]">
-                  <span>已用 {Math.round(costPct)}%</span>
-                  {costPct > 80 && <span className="text-[var(--warning)]">接近预算上限</span>}
-                </div>
-              </div>
-              <div className="home-page__roi-metrics">
-                <div className="home-page__roi-metric">
-                  <span>完成任务</span>
-                  <strong>{tc.done}</strong>
-                </div>
-                <div className="home-page__roi-metric">
-                  <span>成功率</span>
-                  <strong>{successRate == null ? '--' : `${Math.round(successRate)}%`}</strong>
-                </div>
-                <div className="home-page__roi-metric">
-                  <span>每百元产出</span>
-                  <strong>{perHundredYuan}</strong>
-                </div>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* 4 · 工作流三列 */}
-        <div className="home-page__workstream grid grid-cols-1 gap-3 lg:grid-cols-3">
-          <div className="list-card home-page__panel flex flex-col">
-            <div className="list-card__header">
-              <div className="list-card__title">
-                <Clock className="h-4 w-4 text-[var(--text-muted)]" />
-                进行中任务
-                <Badge tone="brand">{inProgress.length}</Badge>
-              </div>
-              <Link to="/tasks" className="chart-card__action">全部 <ArrowRight className="h-3.5 w-3.5" /></Link>
-            </div>
-            <div className="home-page__panel-body space-y-2">
-              {inProgress.length === 0 ? (
-                <EmptyState
-                  icon={CheckCircle2}
-                  title="没有进行中的任务"
-                  description="可从任务中心或专家协作发起"
-                  action={
-                    <Link to="/tasks" className="inline-flex items-center gap-1 text-xs text-[var(--brand)] hover:underline">
-                      打开任务中心 <ArrowRight className="h-3 w-3" />
-                    </Link>
-                  }
-                />
-              ) : (
-                inProgress.map((t) => <InProgressTask key={t.id} t={t} />)
-              )}
-            </div>
-          </div>
-
-          <div className="list-card home-page__panel flex flex-col">
-            <div className="list-card__header">
-              <div className="list-card__title">
-                <Bell className="h-4 w-4 text-[var(--text-muted)]" />
-                最近活动
-              </div>
-              <button type="button" onClick={() => refetchExtra()} className="chart-card__action" disabled={fetchingExtra}>
-                刷新 <Activity className={cn('h-3.5 w-3.5', fetchingExtra && 'animate-spin')} />
-              </button>
-            </div>
-            <div className="home-page__panel-body activity-timeline">
-              {(extra?.recentActivities ?? []).length === 0 ? (
-                <EmptyState icon={Activity} title="暂无最近活动" />
-              ) : (extra?.recentActivities ?? []).slice(0, 6).map((a: any) => {
-                const Icon = ICON_MAP[a.type?.split?.('.')?.[0]] || Activity;
-                return (
-                  <div key={a.id} className="activity-timeline__item">
-                    <div className={cn('activity-timeline__dot', `activity-timeline__dot--${a.tone}`)}>
-                      <Icon className="h-3 w-3" />
-                    </div>
-                    <div className="activity-timeline__content">
-                      <div className="activity-timeline__text">{a.text}</div>
-                      <div className="mt-1 flex items-center gap-1.5">
-                        <Avatar name={a.actor} size={14} />
-                        <span className="text-[10px] text-[var(--text-muted)]">{a.actor}</span>
-                        <span className="text-[10px] text-[var(--text-muted)]">·</span>
-                        <code className="font-mono text-[10px] text-[var(--brand)]">{a.resource}</code>
-                      </div>
-                      <div className="activity-timeline__time mt-0.5">{a.time}</div>
+      <div className="home-desk">
+        <div className="home-desk__main">
+          <section className="home-spotlight de-employee-shell">
+            {featured ? (
+              <>
+                <div className="home-spotlight__head">
+                  <div className="home-spotlight__identity">
+                    <DigitalEmployeeAvatar employee={featured} size={52} rounded="lg" />
+                    <div className="min-w-0">
+                      <p className="home-spotlight__label">数字员工 · 今日焦点</p>
+                      <h2 className="home-spotlight__name">{employeePrimaryLabel(featured)}</h2>
+                      <p className="home-spotlight__meta">{employeeSecondaryLabel(featured)} · {featured.department}</p>
                     </div>
                   </div>
-                );
-              })}
+                  <div className="home-spotlight__cta">
+                    {featured.lifecycle === 'active' && <Badge tone="success" className="text-[10px]">在岗</Badge>}
+                    <Button size="sm" variant="secondary" onClick={() => navigate(`/agents?id=${featured.id}`)}>
+                      档案 <ArrowRight className="h-3.5 w-3.5" />
+                    </Button>
+                    {!isAuditor && (
+                      <Button size="sm" onClick={() => navigate(`/copilot?employee=${featured.id}`)}>
+                        <MessageSquare className="h-3.5 w-3.5" />协作
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="home-spotlight__chips">
+                  {(featured.responsibilities ?? []).slice(0, 3).map((item) => (
+                    <span key={item} className="home-chip">{item}</span>
+                  ))}
+                </div>
+
+                <div className="home-spotlight__stats">
+                  <div><span>知识</span><strong>{featureStats.knowledge}</strong></div>
+                  <div><span>技能/工具</span><strong>{featureStats.skills}</strong></div>
+                  <div><span>流程</span><strong>{featureStats.workflows}</strong></div>
+                  <div><span>24h 调用</span><strong>{featured.runtime?.calls24h ?? 0}</strong></div>
+                </div>
+
+                {featuredPool.length > 1 && (
+                  <div className="home-spotlight__team">
+                    <span className="home-spotlight__team-label">在岗团队</span>
+                    <div className="home-spotlight__avatars">
+                      {featuredPool.map((emp) => (
+                        <button
+                          key={emp.id}
+                          type="button"
+                          className={cn('home-spotlight__avatar', emp.id === featured.id && 'is-active')}
+                          title={employeePrimaryLabel(emp)}
+                          onClick={() => navigate(`/agents?id=${emp.id}`)}
+                        >
+                          <DigitalEmployeeAvatar employee={emp} size={28} rounded="full" />
+                        </button>
+                      ))}
+                      {employees.length > featuredPool.length && (
+                        <Link to="/agents" className="home-spotlight__more">+{employees.length - featuredPool.length}</Link>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </>
+            ) : (
+              <EmptyState
+                icon={Bot}
+                title="尚未装配数字员工"
+                description="先创建或从上岗模板引入岗位，运营总览将展示在岗专家"
+                action={<Link to="/agents" className="text-xs text-[var(--brand)] hover:underline">打开数字员工</Link>}
+              />
+            )}
+          </section>
+
+          <nav className="home-rail" aria-label="功能入口">
+            {modules.map((mod) => (
+              <Link key={mod.to} to={mod.to} className={cn('home-rail__item', `home-rail__item--${mod.tone}`)}>
+                <span className="home-rail__icon"><mod.icon className="h-4 w-4" /></span>
+                <span className="home-rail__copy">
+                  <strong>{mod.title}</strong>
+                  <span>{mod.desc}</span>
+                </span>
+                <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-35" />
+              </Link>
+            ))}
+          </nav>
+
+          <section className="home-mid">
+            <div className="home-panel de-employee-shell">
+              <div className="home-panel__head">
+                <div className="flex items-center gap-2 min-w-0">
+                  <Inbox className="h-4 w-4 shrink-0 text-[var(--brand)]" />
+                  <h3>{isAdministrator ? '需要关注' : '我的待办'}</h3>
+                  {attentionCount > 0 && <Badge tone="error">{attentionCount}</Badge>}
+                </div>
+                <Link to="/tasks?risk=attention" className="home-link">全部</Link>
+              </div>
+              {unreadNotifications.length > 0 && (
+                <div className="home-notice">
+                  <BellRing className="h-3.5 w-3.5 shrink-0 text-[var(--brand)]" />
+                  <span className="min-w-0 flex-1 truncate">{unreadNotifications[0]?.text}</span>
+                  <button
+                    type="button"
+                    className="home-link"
+                    onClick={() => setReadIds(new Set((extra?.notifications ?? []).map((n: { id: string }) => n.id)))}
+                  >
+                    已读
+                  </button>
+                </div>
+              )}
+              <div className="home-pending">
+                {pendingItems.slice(0, 5).map((item) => (
+                  <Link key={item.id} to={item.to} className="home-pending__row">
+                    <span className="home-pending__dot" />
+                    <span className="min-w-0 flex-1 truncate">{item.title}</span>
+                    <ChevronRight className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                  </Link>
+                ))}
+                {pendingItems.length === 0 && (
+                  <p className="home-empty">当前没有待处理事项</p>
+                )}
+              </div>
+            </div>
+
+            <div className="home-panel de-employee-shell">
+              <div className="home-panel__head">
+                <h3>投入产出</h3>
+                <span className="text-[11px] text-[var(--text-muted)]">
+                  {costSource === 'usage-meters' ? '本月计量' : '暂无计量'}
+                </span>
+              </div>
+              <div className="home-roi">
+                <div className="home-roi__value">
+                  <strong>{costUsed > 0 ? `¥${costUsed}` : '—'}</strong>
+                  <span>{costBudget > 0 ? `/ ¥${costBudget}` : ''}</span>
+                </div>
+                {costBudget > 0 && costUsed > 0 ? (
+                  <div className="home-roi__bar" aria-hidden>
+                    <div style={{ width: `${costPct}%` }} />
+                  </div>
+                ) : (
+                  <p className="mt-2 text-[11px] text-[var(--text-muted)]">仅展示 UsageMeters 实计量；无计量数据时不显示金额。</p>
+                )}
+                <div className="home-roi__grid">
+                  <div><span>完成</span><strong>{tc.done}</strong></div>
+                  <div><span>成功率</span><strong>{successRate == null ? '—' : `${Math.round(successRate)}%`}</strong></div>
+                  <div><span>健康度</span><strong>{healthScore ?? '—'}</strong></div>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <aside className="home-records de-employee-shell">
+          <div className="home-records__head">
+            <div>
+              <h2>工作记录</h2>
+              <p>协作、任务与告警的运行痕迹</p>
             </div>
           </div>
 
-          <SlaAlertPanel
-            alerts={visibleAlerts}
-            isAdministrator={isAdministrator}
-            canMutate={canMutate}
-            acknowledging={acknowledgeAlert.isPending}
-            onAcknowledge={(id) => acknowledgeAlert.mutate({ id, note: '已确认，待进入任务处置。' })}
-          />
-        </div>
+          <div className="home-records__metrics">
+            <button type="button" className="home-records__metric" onClick={() => navigate('/copilot')}>
+              <span>今日协作</span><strong>{todayCollab}</strong>
+            </button>
+            <button type="button" className="home-records__metric" onClick={() => navigate('/tasks')}>
+              <span>任务总量</span><strong>{allTasks.length}</strong>
+            </button>
+            <button type="button" className="home-records__metric home-records__metric--good" onClick={() => setRecordTab('done')}>
+              <span>已完成</span><strong>{completed.length || tc.done}</strong>
+            </button>
+            <button type="button" className="home-records__metric home-records__metric--bad" onClick={() => setRecordTab('attention')}>
+              <span>需关注</span><strong>{attentionCount}</strong>
+            </button>
+          </div>
 
-      {/* 5 · 运行细节 */}
+          <div className="home-records__period">
+            <div className="home-segment" role="tablist" aria-label="时间范围">
+              {([['day', '日'], ['week', '周'], ['month', '月']] as const).map(([key, label]) => (
+                <button
+                  key={key}
+                  type="button"
+                  role="tab"
+                  aria-selected={period === key}
+                  className={cn('home-segment__item', period === key && 'is-active')}
+                  onClick={() => setPeriod(key)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <span className="home-records__date">{new Date().toLocaleDateString('zh-CN')}</span>
+          </div>
+
+          <div className="home-timeline" aria-label="活动时间线">
+            {timeline.length === 0 ? (
+              <p className="home-empty" style={{ paddingTop: 8, paddingBottom: 8 }}>暂无时间线数据</p>
+            ) : (
+              <>
+                {(['collab', 'tasks', 'alerts'] as const).map((row) => (
+                  <div key={row} className="home-timeline__row">
+                    <span className="home-timeline__label">
+                      {row === 'collab' ? '协作' : row === 'tasks' ? '任务' : '告警'}
+                    </span>
+                    <div className="home-timeline__track">
+                      {timeline.map((slot) => (
+                        <div
+                          key={`${row}-${slot.label}`}
+                          className={cn('home-timeline__bar', `home-timeline__bar--${row}`)}
+                          style={{ height: `${Math.max(14, (slot[row] / maxBar) * 100)}%` }}
+                          title={`${slot.label}: ${slot[row]}`}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <div className="home-timeline__axis">
+                  {timeline.map((slot) => <span key={slot.label}>{slot.label}</span>)}
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="home-segment home-records__tabs" role="tablist">
+            {([['all', '全部'], ['attention', '需关注'], ['done', '已完成']] as const).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                role="tab"
+                className={cn('home-segment__item', recordTab === key && 'is-active')}
+                onClick={() => setRecordTab(key)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="home-records__table">
+            <div className="home-records__thead">
+              <span>记录</span><span>状态</span><span>归因</span><span>时间</span>
+            </div>
+            {filteredRecords.length === 0 ? (
+              <div className="home-empty">当前筛选下暂无记录</div>
+            ) : filteredRecords.slice(0, 10).map((row) => (
+              <Link key={row.id} to={row.to} className="home-records__row">
+                <span className="home-records__title">{row.title}</span>
+                <Badge tone={row.statusTone} className="text-[9px]">{row.status}</Badge>
+                <span className="truncate text-[var(--text-muted)]">{row.attribution}</span>
+                <span className="tabular-nums text-[var(--text-muted)]">{row.time}</span>
+              </Link>
+            ))}
+          </div>
+
+          {canMutate && isAdministrator && visibleAlerts.some((a: { source?: string; level?: string }) => a.source !== 'task' && a.level !== 'P0') && (
+            <div className="home-records__foot">
+              <button
+                type="button"
+                className="home-link"
+                disabled={acknowledgeAlert.isPending}
+                onClick={() => {
+                  const first = visibleAlerts.find((a: { level?: string }) => a.level !== 'P0');
+                  if (first) acknowledgeAlert.mutate({ id: first.id, note: '已确认，待进入任务处置。' });
+                }}
+              >
+                <Check className="h-3 w-3" />确认下一条非 P0 告警
+              </button>
+            </div>
+          )}
+        </aside>
+      </div>
+
       <details
-
-        className="home-page__runtime mt-3 rounded-xl border border-[var(--border)] bg-[var(--bg)]"
+        className="home-runtime de-employee-shell"
         open={runtimeOpen}
         onToggle={(e) => setRuntimeOpen((e.target as HTMLDetailsElement).open)}
       >
-        <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-xs font-semibold md:px-5">
+        <summary>
           <span className="inline-flex items-center gap-2">
             <Activity className="h-3.5 w-3.5 text-[var(--text-muted)]" />
             运行细节
-            <span className="font-normal text-[var(--text-muted)]">完成度 · 24h 趋势{isAdministrator ? ' · 调用与团队' : ''}</span>
+            <span className="font-normal text-[var(--text-muted)]">
+              24h 趋势 · 进行中任务{isAdministrator ? ' · 建议' : ''}
+            </span>
           </span>
           <ChevronDown className={cn('h-4 w-4 text-[var(--text-muted)] transition-transform', runtimeOpen && 'rotate-180')} />
         </summary>
-
-        <div className="space-y-3 border-t border-[var(--border)] px-4 py-4 md:px-5">
-          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-            <Link to="/tasks" className="chart-card chart-card--interactive block">
-              <div className="mb-2 flex items-center justify-between">
-                <div className="flex items-center gap-1.5 text-xs font-semibold">
-                  <Target className="h-3.5 w-3.5" />今日任务完成度
-                </div>
-                <span className="font-mono text-sm font-bold text-[var(--success)]">{tcDonePct.toFixed(0)}%</span>
-              </div>
-              <div className="flex items-center gap-3">
-                <div className="relative h-28 w-28 shrink-0">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <RePieChart>
-                      <Pie data={ringData} dataKey="value" innerRadius={32} outerRadius={50} paddingAngle={2}>
-                        {ringData.map((d) => <Cell key={d.name} fill={d.fill} />)}
-                      </Pie>
-                    </RePieChart>
-                  </ResponsiveContainer>
-                  <div className="absolute inset-0 grid place-items-center">
-                    <div className="text-center">
-                      <div className="font-mono text-xl font-bold leading-none">{tcTotal}</div>
-                      <div className="text-[9px] text-[var(--text-muted)]">总任务</div>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex-1 space-y-1.5 text-[11px]">
-                  {ringData.map((d) => (
-                    <div key={d.name} className="flex items-center gap-2">
-                      <span className="h-2 w-2 rounded-sm" style={{ background: d.fill }} />
-                      <span className="flex-1">{d.name}</span>
-                      <span className="font-mono font-semibold">{d.value}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </Link>
-
-            <div className="chart-card lg:col-span-2">
+        <div className="home-runtime__body">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+            <div className="list-card">
               <div className="list-card__header">
-                <div className="list-card__title">
-                  <Activity className="h-4 w-4 text-[var(--text-muted)]" />24h 系统运行趋势
-                </div>
-                <button type="button" onClick={() => refetchExtra()} className="chart-card__action" disabled={fetchingExtra}>
-                  <Activity className={cn('h-3 w-3', fetchingExtra && 'animate-spin')} />刷新
-                </button>
+                <div className="list-card__title"><Clock className="h-4 w-4" />进行中任务</div>
+                <Link to="/tasks" className="chart-card__action">全部</Link>
+              </div>
+              <div className="space-y-2 p-3 pt-0">
+                {inProgress.length === 0 ? (
+                  <EmptyState icon={CheckCircle2} title="没有进行中的任务" />
+                ) : inProgress.slice(0, 4).map((t) => <InProgressTask key={t.id} t={t} />)}
+              </div>
+            </div>
+            <div className="chart-card">
+              <div className="list-card__header">
+                <div className="list-card__title"><Activity className="h-4 w-4" />24h 健康趋势</div>
               </div>
               {healthData.length === 0 ? (
-                <EmptyState icon={TrendingUp} title="暂无 24h 趋势数据" description="系统刚启动或数据采集中" />
+                <EmptyState icon={Brain} title="暂无趋势数据" />
               ) : (
-                <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                  {[
-                    { key: 'health', label: '健康度', unit: '%', color: 'var(--chart-success)', gradient: 'health-trend-gradient', data: healthData.map((d: { time: string; health: number }) => ({ time: d.time, value: d.health })) },
-                    { key: 'apiP95', label: 'API P95', unit: 'ms', color: 'var(--chart-info)', gradient: 'api-trend-gradient', data: healthData.map((d: { time: string; apiP95: number }) => ({ time: d.time, value: d.apiP95 })) },
-                    { key: 'taskRate', label: '任务率', unit: '%', color: 'var(--brand)', gradient: 'task-trend-gradient', data: healthData.map((d: { time: string; taskRate: number }) => ({ time: d.time, value: d.taskRate })) },
-                  ].map((metric) => (
-                    <div key={metric.key} className="trend-mini-card">
-                      <div className="trend-mini-card__header">
-                        <span>{metric.label}</span>
-                        <strong>{metric.data[metric.data.length - 1]?.value ?? '--'}{metric.unit}</strong>
-                      </div>
-                      <ResponsiveContainer width="100%" height={82}>
-                        <AreaChart data={metric.data}>
-                          <defs>
-                            <linearGradient id={metric.gradient} x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="0%" stopColor={metric.color} stopOpacity={0.35} />
-                              <stop offset="100%" stopColor={metric.color} stopOpacity={0} />
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
-                          <Area type="monotone" dataKey="value" stroke={metric.color} strokeWidth={1.8} fill={`url(#${metric.gradient})`} />
-                          <XAxis dataKey="time" hide />
-                          <YAxis hide domain={['auto', 'auto']} />
-                          <Tooltip
-                            formatter={(value: number) => [`${value}${metric.unit}`, metric.label]}
-                            contentStyle={{ background: chartTheme.tooltipBackground, border: `1px solid ${chartTheme.tooltipBorder}`, color: chartTheme.tooltipText, borderRadius: 6, fontSize: 11 }}
-                          />
-                        </AreaChart>
-                      </ResponsiveContainer>
-                    </div>
-                  ))}
-                </div>
+                <ResponsiveContainer width="100%" height={160}>
+                  <AreaChart data={healthData}>
+                    <defs>
+                      <linearGradient id="home-health" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="var(--chart-success)" stopOpacity={0.35} />
+                        <stop offset="100%" stopColor="var(--chart-success)" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" />
+                    <XAxis dataKey="time" hide />
+                    <YAxis hide domain={['auto', 'auto']} />
+                    <Tooltip contentStyle={{ background: chartTheme.tooltipBackground, border: `1px solid ${chartTheme.tooltipBorder}`, color: chartTheme.tooltipText, borderRadius: 6, fontSize: 11 }} />
+                    <Area type="monotone" dataKey="health" stroke="var(--chart-success)" strokeWidth={1.8} fill="url(#home-health)" />
+                  </AreaChart>
+                </ResponsiveContainer>
               )}
             </div>
           </div>
-
-          {isAdministrator && (
-            <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
-              <div className="list-card agent-trend-card">
-                <div className="list-card__header">
-                  <div>
-                    <div className="list-card__title"><Bot className="h-3.5 w-3.5" />数字员工调用趋势（7 天）</div>
-                    <div className="agent-trend-card__subtitle">按峰值归一化，查看相对变化</div>
-                  </div>
-                  <Link to="/agents" className="chart-card__action">管理 <ArrowRight className="h-3.5 w-3.5" /></Link>
-                </div>
-                {Object.keys(extra?.agent7dTrend ?? {}).length === 0 ? (
-                  <EmptyState icon={BarChart3} title="暂无数字员工趋势数据" />
-                ) : (() => {
-                  const agentTrend = buildAgentTrendData(extra?.agent7dTrend ?? {});
-                  return (
-                    <div className="agent-trend-chart" aria-label="数字员工最近七天相对调用趋势">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <LineChart data={agentTrend.rows} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                          <CartesianGrid stroke={chartTheme.grid} strokeDasharray="3 3" vertical={false} />
-                          <XAxis dataKey="day" tick={{ fill: 'var(--text-muted)', fontSize: 10 }} tickLine={false} axisLine={false} />
-                          <YAxis domain={[0, 100]} tick={{ fill: 'var(--text-muted)', fontSize: 10 }} tickLine={false} axisLine={false} tickFormatter={(v) => `${v}%`} width={36} />
-                          <Tooltip
-                            content={({ active, payload, label }) => {
-                              if (!active || !payload?.length) return null;
-                              const dayIndex = agentTrend.rows.findIndex((row) => row.day === label);
-                              return (
-                                <div className="agent-trend-tooltip">
-                                  <div className="agent-trend-tooltip__day">{label}</div>
-                                  {payload.map((entry) => {
-                                    const agent = String(entry.name);
-                                    const raw = extra?.agent7dTrend?.[agent]?.[dayIndex] ?? 0;
-                                    return (
-                                      <div key={agent} className="agent-trend-tooltip__row">
-                                        <span className="agent-trend-tooltip__dot" style={{ background: entry.color }} />
-                                        <span>{agent}</span>
-                                        <strong>{raw.toLocaleString()} 次</strong>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              );
-                            }}
-                          />
-                          <Legend wrapperStyle={{ fontSize: 10, paddingTop: 8 }} />
-                          {agentTrend.agents.map((agent, index) => (
-                            <Line
-                              key={agent}
-                              type="monotone"
-                              dataKey={agent}
-                              name={agent}
-                              stroke={AGENT_TREND_COLORS[index % AGENT_TREND_COLORS.length]}
-                              strokeWidth={1.8}
-                              dot={{ r: 2.5, strokeWidth: 1, fill: 'var(--surface-1)' }}
-                              activeDot={{ r: 4, strokeWidth: 2, fill: 'var(--surface-1)' }}
-                              connectNulls
-                            />
-                          ))}
-                        </LineChart>
-                      </ResponsiveContainer>
-                    </div>
-                  );
-                })()}
+          {isAdministrator && suggestions.length > 0 && (
+            <div className="list-card mt-3">
+              <div className="list-card__header">
+                <div className="list-card__title"><Lightbulb className="h-3.5 w-3.5 text-[var(--warning)]" />智能建议</div>
               </div>
-
-              <div className="list-card">
-                <div className="list-card__header">
-                  <div className="list-card__title">
-                    <Users className="h-3.5 w-3.5" />团队成员
-                    <Badge tone="brand">{team?.filter((m: { online?: boolean }) => m.online).length ?? 0} 在线</Badge>
-                  </div>
-                  <Link to="/settings" className="chart-card__action">管理 <ArrowRight className="h-3.5 w-3.5" /></Link>
-                </div>
-                <div className="mb-3 space-y-2">
-                  {(team ?? []).slice(0, 5).map((m: { id: string; name: string; role: string; online?: boolean }) => (
-                    <div key={m.id} className="flex items-center gap-2.5">
-                      <div className="relative">
-                        <Avatar name={m.name} size={28} />
-                        <span className={cn(
-                          'absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-[var(--bg)]',
-                          m.online ? 'bg-[var(--success)]' : 'bg-[var(--text-muted)]',
-                        )} />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-xs font-medium">{m.name}</div>
-                        <div className="text-[10px] text-[var(--text-muted)]">{m.role}</div>
-                      </div>
+              <div className="space-y-2 p-3 pt-0">
+                {suggestions.slice(0, 4).map((s: any) => (
+                  <Link key={s.id} to={s.to} className="suggestion-item">
+                    <div className="suggestion-item__icon suggestion-item__icon--info"><Lightbulb className="h-3.5 w-3.5" /></div>
+                    <div className="suggestion-item__body">
+                      <div className="suggestion-item__text">{s.text}</div>
+                      <span className="suggestion-item__action">{s.action}<ArrowRight className="h-3 w-3" /></span>
                     </div>
-                  ))}
-                </div>
-                {roleData.length > 0 && (
-                  <div className="section-divider">
-                    <div className="mb-2 text-[10px] font-semibold text-[var(--text-muted)]">角色分布</div>
-                    <ResponsiveContainer width="100%" height={80}>
-                      <BarChart data={roleData} layout="vertical">
-                        <XAxis type="number" hide />
-                        <YAxis type="category" dataKey="role" hide />
-                        <Bar dataKey="count" fill="var(--brand)" radius={[0, 4, 4, 0]} />
-                        <Tooltip contentStyle={{ background: chartTheme.tooltipBackground, border: `1px solid ${chartTheme.tooltipBorder}`, color: chartTheme.tooltipText, borderRadius: 6, fontSize: 11 }} />
-                      </BarChart>
-                    </ResponsiveContainer>
-                  </div>
-                )}
-              </div>
-
-              <div className="list-card home-suggestions-card">
-                <div className="list-card__header">
-                  <div className="list-card__title">
-                    <Lightbulb className="h-3.5 w-3.5 text-[var(--warning)]" />智能建议
-                    <Badge tone="brand">{suggestions.length}</Badge>
-                  </div>
-                  <span className="text-[10px] text-[var(--text-muted)]">基于当前运行数据</span>
-                </div>
-                <div className="space-y-2">
-                  {suggestions.length === 0 ? (
-                    <EmptyState icon={ShieldCheck} title="暂无新的运营建议" description="基于当前运行数据" />
-                  ) : suggestions.map((s: any) => {
-                    const Icon = s.tone === 'success' ? CheckCircle2 : s.tone === 'warn' ? AlertTriangle : Lightbulb;
-                    const tone = s.tone === 'success' ? 'success' : s.tone === 'warn' ? 'warning' : 'info';
-                    const label = s.tone === 'success' ? '运行良好' : s.tone === 'warn' ? '需要关注' : '建议优化';
-                    return (
-                      <div key={s.id} className="suggestion-item">
-                        <div className={cn('suggestion-item__icon', `suggestion-item__icon--${tone}`)}>
-                          <Icon className="h-3.5 w-3.5" />
-                        </div>
-                        <div className="suggestion-item__body">
-                          <div className="suggestion-item__status">{label}</div>
-                          <div className="suggestion-item__text">{s.text}</div>
-                          <Link to={s.to} className="suggestion-item__action">
-                            {s.action}<ArrowRight className="h-3 w-3" />
-                          </Link>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                  </Link>
+                ))}
               </div>
             </div>
           )}
         </div>
       </details>
-      </div>
-    </div>
-  );
-}
-
-function SlaAlertPanel({
-  alerts,
-  isAdministrator,
-  canMutate,
-  acknowledging,
-  onAcknowledge,
-}: {
-  alerts: any[];
-  isAdministrator: boolean;
-  canMutate: boolean;
-  acknowledging: boolean;
-  onAcknowledge: (id: string) => void;
-}) {
-  const { viewportRef, activeIndex, pause, resume } = useSlaRotation(alerts);
-
-  return (
-    <div className="list-card sla-alert-card home-page__panel home-page__panel--sla flex flex-col">
-      <div className="list-card__header">
-        <div className="list-card__title">
-          <AlertTriangle className="h-4 w-4 text-[var(--danger)]" />
-          SLA 处置
-          <Badge tone="error">{alerts.length}</Badge>
-        </div>
-        <Link to="/tasks?risk=attention" className="chart-card__action">风险任务 <ArrowRight className="h-3 w-3" /></Link>
-      </div>
-      <div
-        ref={viewportRef}
-        className="sla-alert-card__viewport home-page__panel-body"
-        onPointerEnter={pause}
-        onPointerLeave={resume}
-        onFocus={pause}
-        onBlur={resume}
-      >
-        {alerts.length === 0 ? (
-          <div className="chart-card__empty sla-alert-card__empty">
-            <CheckCircle2 className="h-5 w-5" />当前没有待处理 SLA 告警
-          </div>
-        ) : alerts.map((alert, index) => (
-          <div
-            key={alert.id}
-            data-alert-index={index}
-            aria-current={index === activeIndex ? 'true' : undefined}
-            className={cn(
-              'alert-list__item sla-alert-card__item block',
-              `alert-list__item--${alert.level === 'P0' ? 'danger' : alert.level === 'P1' ? 'warning' : alert.level === 'P2' ? 'info' : 'neutral'}`,
-            )}
-          >
-            <Link to={`/tasks?task=${encodeURIComponent(alert.taskCode)}&risk=attention`} className="block transition-opacity hover:opacity-80">
-              <div className="flex items-center justify-between">
-                <div className="alert-list__title">{alert.text}</div>
-                <ChevronRight className="h-3 w-3 shrink-0 text-[var(--text-muted)]" />
-              </div>
-              <div className="alert-list__meta">{alert.time} · {alert.assignee} · {alert.taskCode}</div>
-            </Link>
-            {isAdministrator && canMutate && alert.level !== 'P0' && (
-              <button
-                type="button"
-                onClick={() => onAcknowledge(alert.id)}
-                disabled={acknowledging}
-                className="mt-1.5 inline-flex items-center gap-1 text-[10px] font-medium text-[var(--brand)] hover:underline disabled:text-[var(--text-muted)]"
-              >
-                <Check className="h-3 w-3" />确认并记录审计
-              </button>
-            )}
-            {!canMutate && (
-              <div className="mt-1.5 text-[10px] font-medium text-[var(--info)]">只读核查 · 请在任务核查中查看证据</div>
-            )}
-            {canMutate && alert.level === 'P0' && (
-              <div className="mt-1.5 text-[10px] font-medium text-[var(--danger)]">需在任务中记录处置说明后确认</div>
-            )}
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -774,14 +744,9 @@ function SlaAlertPanel({
 function InProgressTask({ t }: { t: Task }) {
   const slaSec = (t.slaRemainingMin ?? 60) * 60;
   const sla = useCountdown(slaSec);
-  const pct = Math.round((t.progress.done / t.progress.total) * 100);
+  const pct = Math.round((t.progress.done / Math.max(1, t.progress.total)) * 100);
   const slaWarn = sla.raw < 60 * 60;
   const slaError = sla.raw < 30 * 60;
-  const priorityTone: Record<string, 'error' | 'warn' | 'info' | 'neutral'> = {
-    P0: 'error', P1: 'warn', P2: 'info', P3: 'neutral',
-  };
-  const collabNames = (t.collaboratorNames ?? []).slice(0, 2);
-
   return (
     <Link
       to={`/tasks?task=${encodeURIComponent(t.code)}`}
@@ -792,40 +757,21 @@ function InProgressTask({ t }: { t: Task }) {
     >
       <div className="task-list__header">
         <span className="task-list__id">{t.code}</span>
-        <Badge tone={priorityTone[t.priority]} className="text-[10px]">{t.priority}</Badge>
+        <Badge tone={t.priority === 'P0' ? 'error' : t.priority === 'P1' ? 'warn' : 'neutral'} className="text-[10px]">{t.priority}</Badge>
       </div>
       <div className="task-list__title">{t.title}</div>
       <div className="task-list__meta">
-        <div className="flex items-center -space-x-1.5">
-          <Avatar name={t.assignee ?? t.digitalEmployeeName ?? '?'} size={18} />
-          {collabNames.map((name) => (
-            <Avatar key={name} name={name} size={18} />
-          ))}
-        </div>
+        <Avatar name={t.assignee ?? t.digitalEmployeeName ?? '?'} size={18} />
         {t.digitalEmployeeName && (
-          <span className="task-list__meta-item">
-            <Bot className="h-3 w-3 text-[var(--brand)]" />
-            {t.digitalEmployeeName}
-          </span>
+          <span className="task-list__meta-item"><Bot className="h-3 w-3 text-[var(--brand)]" />{t.digitalEmployeeName}</span>
         )}
-        <span
-          className={cn(
-            'task-list__meta-item ml-auto inline-flex items-center gap-0.5 font-mono',
-            slaError ? 'text-[var(--danger)]' : slaWarn ? 'text-[var(--warning)]' : 'text-[var(--text-muted)]',
-          )}
-          title="SLA 倒计时"
-        >
-          <Clock className="h-3 w-3" />
-          {sla.text}
+        <span className={cn('task-list__meta-item ml-auto font-mono', slaError ? 'text-[var(--danger)]' : slaWarn ? 'text-[var(--warning)]' : 'text-[var(--text-muted)]')}>
+          <Clock className="h-3 w-3" />{sla.text}
         </span>
       </div>
       <div className="task-list__progress">
-        <div className="task-list__progress-bar">
-          <div className="task-list__progress-fill" style={{ width: `${pct}%` }} />
-        </div>
-        <div className="task-list__progress-text">
-          {t.progress.done}/{t.progress.total} 步 · {pct}%
-        </div>
+        <div className="task-list__progress-bar"><div className="task-list__progress-fill" style={{ width: `${pct}%` }} /></div>
+        <div className="task-list__progress-text">{t.progress.done}/{t.progress.total} · {pct}%</div>
       </div>
     </Link>
   );

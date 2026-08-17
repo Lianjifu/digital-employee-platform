@@ -12,7 +12,13 @@ cd "$BACKEND" || exit 1
 
 export DE_BAN_MOCK_TOKEN=0
 export DE_DATABASE_URL='postgres://de:de@127.0.0.1:5432/digital_employee?sslmode=disable'
-export DE_REDIS_URL='redis://127.0.0.1:6379/0'
+# Redis optional for local: only set when 6379 is listening (Docker Compose redis).
+if /usr/sbin/lsof -nP -iTCP:6379 -sTCP:LISTEN >/dev/null 2>&1; then
+  export DE_REDIS_URL='redis://127.0.0.1:6379/0'
+else
+  unset DE_REDIS_URL 2>/dev/null || true
+  echo "$(date '+%F %T') warn: redis :6379 not listening; starting without DE_REDIS_URL" >>"$LOGDIR/keeper.log"
+fi
 export DE_PUBLIC_BASE_URL='http://127.0.0.1:8089'
 export DE_POLICY_URL='http://127.0.0.1:8100'
 export DE_CAP_URL='http://127.0.0.1:8102'

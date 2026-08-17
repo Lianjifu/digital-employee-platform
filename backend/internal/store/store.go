@@ -192,11 +192,12 @@ func (s *Store) seed() {
 	}
 	s.Quotas["w1"] = map[string]any{
 		"workspaceId": "w1",
-		"seats": map[string]any{"used": 18, "limit": 50},
-		"agents": map[string]any{"used": 6, "limit": 20},
-		"concurrency": map[string]any{"used": 4, "limit": 20},
-		"tokens": map[string]any{"used": 1240000, "limit": 5000000},
-		"budgetUsd": map[string]any{"used": 1240, "limit": 3000},
+		"seats": map[string]any{"used": 3, "limit": 50},
+		"agents": map[string]any{"used": 2, "limit": 20},
+		"concurrency": map[string]any{"used": 0, "limit": 20},
+		// Overview cost must come from UsageMeters; keep quota counters honest (no demo 1240/3000).
+		"tokens": map[string]any{"used": 0, "limit": 5000000},
+		"budgetUsd": map[string]any{"used": 0, "limit": 0},
 	}
 	s.Bindings = []map[string]any{
 		{"id": "wb1", "workspaceId": "w1", "environment": "production", "kind": "agent", "name": "故障自愈", "status": "active"},
@@ -684,50 +685,52 @@ func (s *Store) seed() {
 		},
 	}
 
+	// Fallback only; live handlers recompute from Employees/Tasks.
 	s.HomeKPIs = map[string]any{
-		"activeTasks": 12, "healthScore": 96, "aiCalls24h": 18420, "tokenUsage": "1.2M", "apiP95": 210, "slaBreaches": 1,
+		"activeTasks": 0, "healthScore": 0, "aiCalls24h": 0, "tokenUsage": "0", "apiP95": nil, "slaBreaches": 0,
 	}
-	s.HomeAlerts = []map[string]any{
-		{"id": "alert-1", "level": "P1", "text": "缓存命中率低于阈值", "time": "2026-07-22T08:10:00Z", "assignee": "业务构建者", "taskCode": "T-1001", "workspaceId": "w1"},
-	}
+	s.HomeAlerts = []map[string]any{}
 	s.HomeExtra = map[string]any{
-		"recentActivities": []map[string]any{
-			{"id": "act-1", "type": "task", "tone": "info", "text": "任务进入复核", "actor": "平台管理员", "resource": "T-1002", "time": "08:00"},
-		},
+		"recentActivities": []map[string]any{},
 		"teamMembers": []map[string]any{
 			{"id": "u1", "name": "平台管理员", "role": "admin", "online": true},
 			{"id": "u2", "name": "业务构建者", "role": "user", "online": true},
 		},
-		"slaAlerts": s.HomeAlerts,
+		"slaAlerts":        []map[string]any{},
+		"taskCompletion":   map[string]any{"done": 0, "doing": 0, "review": 0, "todo": 0},
+		"agentCallSummary": map[string]any{"total": 0, "healthy": 0, "warning": 0, "offline": 0},
+		"notifications":    []map[string]any{},
 		"operationalMetrics": map[string]any{
-			"taskSuccessRate": 0.96, "activeAgents": 6, "healthScore": 96, "apiP95": 210, "taskRate": 42,
-			"tokenUsage": map[string]any{"total": "1.2M", "input": "800K", "output": "400K"},
-			"trend24h": []map[string]any{},
+			"taskSuccessRate": nil, "activeAgents": 0, "healthScore": 0, "apiP95": nil, "taskRate": 0,
+			"tokenUsage": map[string]any{"total": "—", "input": "—", "output": "—"},
+			"trend24h":   []map[string]any{},
 		},
-		"costMonth": map[string]any{"used": 1240, "budget": 3000, "daily": []int{100, 120, 140, 160, 180, 200, 220}},
+		"costMonth": map[string]any{"used": 0, "budget": 0, "daily": []int{}, "source": "none"},
 		"quickLinks": []map[string]any{
 			{"label": "数字员工", "to": "/agents", "icon": "bot"},
 			{"label": "协作", "to": "/copilot", "icon": "message"},
 		},
 	}
+	// Billing seed is structural only; overview cost must come from UsageMeters (see homeExtraLive).
 	s.Billing = map[string]any{
 		"workspaceId": "w1", "plan": "enterprise_plus", "period": "2026-07",
-		"usage": map[string]any{"tokens": 1240000, "usd": 1240},
-		"quota": map[string]any{"tokens": 5000000, "usd": 3000},
-		"invoices": []map[string]any{{"id": "inv-1", "amount": 1240, "status": "open", "dueAt": "2026-08-05"}},
+		"usage": map[string]any{"tokens": 0, "usd": 0},
+		"quota": map[string]any{"tokens": 5000000, "usd": 0},
+		"invoices": []map[string]any{},
 	}
 	s.Backups = []map[string]any{
 		{"id": "bk-1", "workspaceId": "w1", "status": "pending_approval", "requestedBy": "平台管理员", "requestedAt": "2026-07-22T06:00:00Z", "scope": "full"},
 	}
+	// Fallback only; opsOverviewLive derives pending/health from tasks & employees.
 	s.OpsOverview = map[string]any{
 		"services": []map[string]any{
 			{"name": "de-core", "status": "up"},
 			{"name": "agent-runtime", "status": "up"},
 			{"name": "rag", "status": "up"},
 		},
-		"incidentsOpen": 1, "mttrMinutes": 18,
-		"pending": []map[string]any{{"id": "p1", "title": "待确认告警", "level": "P1"}},
-		"health": map[string]any{"activeAgents": 6, "score": 96},
+		"incidentsOpen": 0, "mttrMinutes": 0,
+		"pending": []map[string]any{},
+		"health": map[string]any{"activeAgents": 0, "score": 0},
 	}
 	s.NotificationChannels = []map[string]any{
 		{"id": "nc-1", "name": "邮件值班", "kind": "email", "enabled": true},
