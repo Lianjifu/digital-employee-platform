@@ -171,12 +171,12 @@ func normalizeEvalMetrics(m map[string]any) map[string]any {
 
 func normalizeGovernance(m map[string]any, ws string) map[string]any {
 	out := map[string]any{
-		"workspaceId":             ws,
-		"sensitiveDataDetection":  true,
-		"versionRetention":        true,
-		"retentionDays":           365,
-		"highRiskChangeApproval":  true,
-		"piiMasking":              true,
+		"workspaceId":            ws,
+		"sensitiveDataDetection": true,
+		"versionRetention":       true,
+		"retentionDays":          365,
+		"highRiskChangeApproval": true,
+		"piiMasking":             true,
 	}
 	for k, v := range m {
 		out[k] = v
@@ -415,19 +415,19 @@ func (s *Server) createKnowledgeDocAuth(r *http.Request) (any, error) {
 	}
 	item := map[string]any{
 		"id": s.Store.ID("kd"), "workspaceId": ws, "title": title,
-		"source": coalesce(str(body["source"]), "upload"),
-		"tags":   body["tags"],
-		"fileName": str(body["fileName"]),
-		"status": "indexing",
-		"ownerId": id.ID,
-		"sizeKb":  maxInt(1, len(content)/1024),
-		"chunks":  0,
+		"source":    coalesce(str(body["source"]), "upload"),
+		"tags":      body["tags"],
+		"fileName":  str(body["fileName"]),
+		"status":    "indexing",
+		"ownerId":   id.ID,
+		"sizeKb":    maxInt(1, len(content)/1024),
+		"chunks":    0,
 		"citeCount": 0,
-		"snippet": truncateRunes(content, 160),
-		"content": content,
+		"snippet":   truncateRunes(content, 160),
+		"content":   content,
 		"createdAt": now,
 		"updatedAt": now,
-		"quality": map[string]any{"completeness": 70, "freshness": 90, "citationAccuracy": 80},
+		"quality":   map[string]any{"completeness": 70, "freshness": 90, "citationAccuracy": 80},
 	}
 	if blobPath, err := s.writeKnowledgeBlob(ws, str(item["id"]), content); err == nil {
 		item["blobPath"] = blobPath
@@ -694,7 +694,7 @@ func (s *Server) syncRAGIndexStrict(workspaceID string) (int, error) {
 			docs = append(docs, map[string]any{
 				"docId": d["id"], "title": d["title"],
 				"snippet": coalesce(str(d["snippet"]), coalesce(str(d["content"]), "已发布："+str(d["title"]))),
-				"score": 0.9, "status": "published",
+				"score":   0.9, "status": "published",
 			})
 		}
 	}
@@ -742,11 +742,14 @@ func (s *Server) retrievePublishedNormalized(r *http.Request, body map[string]an
 	ws := s.workspaceID(r)
 	start := time.Now()
 	var results []map[string]any
+	sidecarOK := false
 	if hits := s.callRAGPublished(query, ws, corr); hits != nil {
+		sidecarOK = true
 		if m, ok := hits.(map[string]any); ok {
 			results = filterRetrieveToPublished(s, ws, normalizeRetrieveHitList(m["results"]))
 		}
 	}
+	publishedOnly := 0
 	if len(results) == 0 {
 		s.Store.RLock()
 		idx := 1
@@ -758,6 +761,9 @@ func (s *Server) retrievePublishedNormalized(r *http.Request, body map[string]an
 			// ready = 控制面可读；indexing/draft 等不得进入 retrieve
 			if st != "published" && st != "ready" {
 				continue
+			}
+			if st == "published" {
+				publishedOnly++
 			}
 			title := str(d["title"])
 			if query != "" && !strings.Contains(title, query) && !strings.Contains(str(d["snippet"]), query) && !strings.Contains(str(d["content"]), query) {
@@ -774,12 +780,19 @@ func (s *Server) retrievePublishedNormalized(r *http.Request, body map[string]an
 	}
 	s.recordUsageWS(ws, "rag", 1, corr)
 	latency := time.Since(start).Milliseconds()
-	return map[string]any{
+	out := map[string]any{
 		"query": query, "results": results, "backend": "knowledge-control-plane", "correlationId": corr,
 		"metrics": map[string]any{
 			"recall": float64(minInt(100, len(results)*20)), "precision": 80, "p95Latency": latency, "hitRate": len(results),
 		},
-	}, nil
+	}
+	if !sidecarOK && productionLikeEnv() && publishedOnly > 0 {
+		out["degraded"] = true
+		out["backend"] = "knowledge-control-plane-degraded"
+		out["code"] = string(apperr.RuntimeUnavailable)
+		out["warning"] = "向量检索不可用，已降级到已发布关键词检索"
+	}
+	return out, nil
 }
 
 func filterRetrieveToPublished(s *Server, workspaceID string, hits []map[string]any) []map[string]any {
@@ -876,10 +889,10 @@ func (s *Server) createKnowledgePackage(r *http.Request) (any, error) {
 	}
 	pkg := map[string]any{
 		"id": s.Store.ID("pkg"), "workspaceId": ws, "name": name,
-		"description": coalesce(str(body["description"]), ""),
-		"domain":      coalesce(str(body["domain"]), "通用"),
+		"description":    coalesce(str(body["description"]), ""),
+		"domain":         coalesce(str(body["domain"]), "通用"),
 		"classification": coalesce(str(body["classification"]), "internal"),
-		"owner": id.Name, "ownerId": id.ID, "status": "draft",
+		"owner":          id.Name, "ownerId": id.ID, "status": "draft",
 		"documentCount": 0, "documentIds": []string{}, "consumers": 0,
 		"currentVersion": ver, "versions": []map[string]any{ver}, "updatedAt": now,
 	}
@@ -991,6 +1004,33 @@ func (s *Server) knowledgePackageAction(r *http.Request) (any, error) {
 	case "publish":
 		if str(pkg["status"]) == "archived" || str(pkg["status"]) == "deprecated" {
 			return nil, apperr.BadReq(apperr.BadRequest, "已归档/废弃的知识包不可发布")
+		}
+		if productionLikeEnv() && str(pkg["status"]) != "pending_approval" && str(pkg["status"]) != "pending_countersign" {
+			if err := s.requirePackageEvalSetLocked(ws, pkgID); err != nil {
+				return nil, err
+			}
+			pkg["status"] = "pending_approval"
+			pkg["requestedBy"] = id.Name
+			pkg["requestedById"] = id.ID
+			pkg["requestedAt"] = time.Now().UTC().Format(time.RFC3339)
+			s.Store.KnowledgeExtra["packages"] = pkgs
+			s.appendKnowledgeAuditLocked(ws, id.Name, "申请发布知识包", str(pkg["name"]), "success", "待双人审批")
+			go s.persistKnowledgeExtra()
+			return pkg, nil
+		}
+		if err := requireProductionDualApproval(str(pkg["requestedById"]), str(pkg["requestedBy"]), id, "知识发布"); err != nil {
+			return nil, err
+		}
+		if err := s.requirePackageEvalSetLocked(ws, pkgID); err != nil {
+			return nil, err
+		}
+		if hold, err := maybeHoldForCountersign(pkg, id, str(pkg["classification"]), "知识发布"); err != nil {
+			return nil, err
+		} else if hold {
+			s.Store.KnowledgeExtra["packages"] = pkgs
+			s.appendKnowledgeAuditLocked(ws, id.Name, "知识发布会签待副署", str(pkg["name"]), "success", "pending_countersign")
+			go s.persistKnowledgeExtra()
+			return pkg, nil
 		}
 		memberIDs := packageDocumentIDs(pkg)
 		if len(memberIDs) == 0 {
@@ -1208,9 +1248,9 @@ func (s *Server) syncKnowledgeSource(r *http.Request) (any, error) {
 			"id": s.Store.ID("kd"), "workspaceId": ws, "title": str(src["name"]) + " 同步文档",
 			"source": str(src["name"]), "status": "ready", "ownerId": id.ID,
 			"sizeKb": 16, "chunks": 4, "citeCount": 0,
-			"snippet": "来自数据源同步：" + str(src["name"]),
+			"snippet":   "来自数据源同步：" + str(src["name"]),
 			"updatedAt": time.Now().UTC().Format(time.RFC3339),
-			"quality": map[string]any{"completeness": 75, "freshness": 95, "citationAccuracy": 80},
+			"quality":   map[string]any{"completeness": 75, "freshness": 95, "citationAccuracy": 80},
 		}
 		s.Store.KnowledgeDocs = append([]map[string]any{doc}, s.Store.KnowledgeDocs...)
 		s.appendKnowledgeAuditLocked(ws, id.Name, "同步知识数据源", str(src["name"]), "success", "")

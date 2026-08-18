@@ -216,7 +216,7 @@ func (s *Server) runPlanExecuteTurn(ctx context.Context, in reactTurnInput) reac
 	aggSystem := system + "\n你是执行汇总器。请根据「计划观察」给出面向用户的最终中文回答：结构清晰、可执行，不要输出 PLAN/TOOL 标记。"
 	aggMsgs := append([]modelprov.ChatMessage{}, messages...)
 	aggMsgs = append(aggMsgs, modelprov.ChatMessage{
-		Role: "user",
+		Role:    "user",
 		Content: "用户请求：\n" + in.UserMessage + "\n\n计划观察：\n" + strings.Join(observations, "\n\n") + "\n\n请给出最终回答。",
 	})
 	var aggBuf strings.Builder

@@ -135,12 +135,12 @@ func (s *Server) runPostTurnEvolutionLocked(in evolveTurnInput) []map[string]any
 					"scope":       "user",
 					"confidence":  0.9,
 				},
-				"digitalEmployeeId": in.DigitalEmployeeID,
-				"conversationId":    in.ConversationID,
-				"messageId":         in.MessageID,
-				"correlationId":     in.CorrelationID,
+				"digitalEmployeeId":   in.DigitalEmployeeID,
+				"conversationId":      in.ConversationID,
+				"messageId":           in.MessageID,
+				"correlationId":       in.CorrelationID,
 				"sourceCorrelationId": in.CorrelationID,
-				"submittedAt":       now, "createdBy": coalesce(in.OwnerName, in.OwnerID),
+				"submittedAt":         now, "createdBy": coalesce(in.OwnerName, in.OwnerID), "createdById": in.OwnerID,
 			}
 			s.appendEvolveCandidateLocked(cand)
 			s.appendMemoryAuditLocked(ws, coalesce(in.OwnerName, "系统"), "自进化候选", str(cand["title"]), "pending", in.CorrelationID)
@@ -163,12 +163,12 @@ func (s *Server) runPostTurnEvolutionLocked(in evolveTurnInput) []map[string]any
 					"promptHint": "当用户意图匹配时优先调用：" + strings.Join(tools, "、"),
 					"sampleUser": truncateRunes(in.UserMessage, 120),
 				},
-				"digitalEmployeeId": in.DigitalEmployeeID,
-				"conversationId":    in.ConversationID,
-				"messageId":         in.MessageID,
-				"correlationId":     in.CorrelationID,
+				"digitalEmployeeId":   in.DigitalEmployeeID,
+				"conversationId":      in.ConversationID,
+				"messageId":           in.MessageID,
+				"correlationId":       in.CorrelationID,
 				"sourceCorrelationId": in.CorrelationID,
-				"submittedAt":       now, "createdBy": coalesce(in.OwnerName, in.OwnerID),
+				"submittedAt":         now, "createdBy": coalesce(in.OwnerName, in.OwnerID), "createdById": in.OwnerID,
 			}
 			s.appendEvolveCandidateLocked(cand)
 			s.appendMemoryAuditLocked(ws, coalesce(in.OwnerName, "系统"), "自进化候选", str(cand["title"]), "pending", in.CorrelationID)
@@ -189,12 +189,12 @@ func (s *Server) runPostTurnEvolutionLocked(in evolveTurnInput) []map[string]any
 					"suggestedLevel": "P0", "mode": in.Mode,
 					"note": "仅生成 draft 路由策略，不会自动 published。",
 				},
-				"digitalEmployeeId": in.DigitalEmployeeID,
-				"conversationId":    in.ConversationID,
-				"messageId":         in.MessageID,
-				"correlationId":     in.CorrelationID,
+				"digitalEmployeeId":   in.DigitalEmployeeID,
+				"conversationId":      in.ConversationID,
+				"messageId":           in.MessageID,
+				"correlationId":       in.CorrelationID,
 				"sourceCorrelationId": in.CorrelationID,
-				"submittedAt":       now, "createdBy": coalesce(in.OwnerName, "系统"),
+				"submittedAt":         now, "createdBy": coalesce(in.OwnerName, "系统"), "createdById": in.OwnerID,
 			}
 			s.appendEvolveCandidateLocked(cand)
 			s.appendMemoryAuditLocked(ws, coalesce(in.OwnerName, "系统"), "自进化候选", str(cand["title"]), "pending", in.CorrelationID)
@@ -261,8 +261,8 @@ func (s *Server) dreamCompressConversationLocked(in evolveTurnInput) map[string]
 	item, err := s.ingestRuntimeMemoryLocked(runtimeMemoryInput{
 		WorkspaceID: ws, OwnerID: in.OwnerID, OwnerName: in.OwnerName,
 		DigitalEmployeeID: in.DigitalEmployeeID,
-		Title: "Dream 压缩 · " + truncateRunes(cid, 24),
-		Content: content, SourceType: "dream_compress", SourceID: cid,
+		Title:             "Dream 压缩 · " + truncateRunes(cid, 24),
+		Content:           content, SourceType: "dream_compress", SourceID: cid,
 		CorrelationID: in.CorrelationID, Layer: "working", Scope: "team", Confidence: 0.88,
 	})
 	if err != nil {
@@ -284,12 +284,12 @@ func (s *Server) dreamCompressConversationLocked(in evolveTurnInput) map[string]
 			"sourceMemoryIds": ids,
 			"count":           len(shorts),
 		},
-		"digitalEmployeeId": in.DigitalEmployeeID,
-		"conversationId":    cid,
-		"messageId":         in.MessageID,
-		"correlationId":     in.CorrelationID,
+		"digitalEmployeeId":   in.DigitalEmployeeID,
+		"conversationId":      cid,
+		"messageId":           in.MessageID,
+		"correlationId":       in.CorrelationID,
 		"sourceCorrelationId": in.CorrelationID,
-		"submittedAt":       now, "reviewedAt": now, "reviewer": "dream",
+		"submittedAt":         now, "reviewedAt": now, "reviewer": "dream",
 		"createdBy": coalesce(in.OwnerName, "系统"),
 	}
 	s.appendEvolveCandidateLocked(cand)
@@ -298,7 +298,7 @@ func (s *Server) dreamCompressConversationLocked(in evolveTurnInput) map[string]
 }
 
 // createFeedbackEvolveCandidateLocked records like/dislike as reviewable evolution signal.
-func (s *Server) createFeedbackEvolveCandidateLocked(ws, ownerName, cid, mid, kind, comment string, msg map[string]any) map[string]any {
+func (s *Server) createFeedbackEvolveCandidateLocked(ws, ownerID, ownerName, cid, mid, kind, comment string, msg map[string]any) map[string]any {
 	now := time.Now().UTC().Format(time.RFC3339)
 	corr := coalesce(str(msg["correlationId"]), s.Store.ID("memory_corr"))
 	content := truncateRunes(str(msg["content"]), 200)
@@ -320,7 +320,7 @@ func (s *Server) createFeedbackEvolveCandidateLocked(ws, ownerName, cid, mid, ki
 				"confidence":  0.92,
 			},
 			"conversationId": cid, "messageId": mid, "correlationId": corr,
-			"sourceCorrelationId": corr, "submittedAt": now, "createdBy": ownerName,
+			"sourceCorrelationId": corr, "submittedAt": now, "createdBy": ownerName, "createdById": ownerID,
 			"feedbackKind": "like",
 		}
 		s.appendEvolveCandidateLocked(cand)
@@ -338,12 +338,12 @@ func (s *Server) createFeedbackEvolveCandidateLocked(ws, ownerName, cid, mid, ki
 		"title": "点踩修正候选", "summary": coalesce(comment, "用户点踩，请审核提示词/技能补丁"),
 		"fingerprint": fp,
 		"payload": map[string]any{
-			"promptHint": "避免重复该回答问题：" + truncateRunes(content, 160),
-			"feedback":   comment,
+			"promptHint":      "避免重复该回答问题：" + truncateRunes(content, 160),
+			"feedback":        comment,
 			"sampleAssistant": content,
 		},
 		"conversationId": cid, "messageId": mid, "correlationId": corr,
-		"sourceCorrelationId": corr, "submittedAt": now, "createdBy": ownerName,
+		"sourceCorrelationId": corr, "submittedAt": now, "createdBy": ownerName, "createdById": ownerID,
 		"feedbackKind": "dislike",
 	}
 	s.appendEvolveCandidateLocked(cand)
@@ -517,6 +517,9 @@ func (s *Server) evolveCandidateAction(r *http.Request) (any, error) {
 
 	// approve
 	kind := str(cand["kind"])
+	if err := requireProductionDualApproval(str(cand["createdById"]), str(cand["createdBy"]), id, "自进化"); err != nil {
+		return nil, err
+	}
 	if evolveNeedsDualSign(kind) {
 		signers := knowledgeSliceMaps(cand["signers"])
 		for _, sg := range signers {
@@ -578,11 +581,11 @@ func (s *Server) applyEvolveCandidateLocked(ws, actorID, actorName string, cand 
 		item, err := s.ingestRuntimeMemoryLocked(runtimeMemoryInput{
 			WorkspaceID: ws, OwnerID: actorID, OwnerName: actorName,
 			DigitalEmployeeID: str(cand["digitalEmployeeId"]),
-			Title: coalesce(str(payload["title"]), str(cand["title"])),
-			Content: coalesce(str(payload["content"]), str(cand["summary"])),
-			SourceType: "evolve_approve", SourceID: coalesce(str(cand["conversationId"]), str(cand["id"])),
+			Title:             coalesce(str(payload["title"]), str(cand["title"])),
+			Content:           coalesce(str(payload["content"]), str(cand["summary"])),
+			SourceType:        "evolve_approve", SourceID: coalesce(str(cand["conversationId"]), str(cand["id"])),
 			CorrelationID: coalesce(str(cand["correlationId"]), str(cand["id"])),
-			Layer: target, Scope: coalesce(str(payload["scope"]), "team"),
+			Layer:         target, Scope: coalesce(str(payload["scope"]), "team"),
 			Confidence: toFloat(payload["confidence"]),
 		})
 		if err != nil {
@@ -595,11 +598,11 @@ func (s *Server) applyEvolveCandidateLocked(ws, actorID, actorName string, cand 
 		now := time.Now().UTC().Format(time.RFC3339)
 		draft := map[string]any{
 			"id": s.Store.ID("skill_draft"), "workspaceId": ws,
-			"name": coalesce(str(cand["title"]), "自进化技能草稿"),
+			"name":        coalesce(str(cand["title"]), "自进化技能草稿"),
 			"description": coalesce(str(payload["promptHint"]), str(cand["summary"])),
-			"status": "draft", "channel": "evolve", "source": "evolve_candidate",
+			"status":      "draft", "channel": "evolve", "source": "evolve_candidate",
 			"evolveCandidateId": str(cand["id"]),
-			"payload": payload, "createdAt": now, "updatedAt": now, "owner": actorName,
+			"payload":           payload, "createdAt": now, "updatedAt": now, "owner": actorName,
 		}
 		if s.Store.SkillExtra == nil {
 			s.Store.SkillExtra = map[string]any{}
@@ -676,7 +679,7 @@ func (s *Server) copilotMessageFeedback(r *http.Request) (any, error) {
 	target["feedback"] = fb
 	var cand map[string]any
 	if kind == "like" || kind == "dislike" {
-		cand = s.createFeedbackEvolveCandidateLocked(ws, id.Name, cid, mid, kind, comment, target)
+		cand = s.createFeedbackEvolveCandidateLocked(ws, id.ID, id.Name, cid, mid, kind, comment, target)
 	}
 	go func() {
 		s.Store.Persist("messages")

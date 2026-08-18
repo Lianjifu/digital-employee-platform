@@ -25,8 +25,8 @@ func TestChannelControlOverviewAligned(t *testing.T) {
 		Data map[string]any `json:"data"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &env)
-	if int(asFloat(env.Data["activeDeployments"])) != 2 {
-		t.Fatalf("activeDeployments want 2 got %#v", env.Data["activeDeployments"])
+	if int(asFloat(env.Data["activeDeployments"])) != 1 {
+		t.Fatalf("activeDeployments want 1 got %#v", env.Data["activeDeployments"])
 	}
 	if int(asFloat(env.Data["publishedPolicies"])) != 0 {
 		t.Fatalf("publishedPolicies want 0 (draft seed) got %#v", env.Data["publishedPolicies"])
@@ -52,7 +52,7 @@ func TestChannelDeploymentFieldsAndVerify(t *testing.T) {
 		Data []map[string]any `json:"data"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &env)
-	if len(env.Data) < 2 {
+	if len(env.Data) < 1 {
 		t.Fatalf("expected seeded deployments: %s", rr.Body.String())
 	}
 	first := env.Data[0]
@@ -228,7 +228,7 @@ func TestChannelHealthAndTemplates(t *testing.T) {
 		Data []map[string]any `json:"data"`
 	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &env)
-	if len(env.Data) < 2 {
+	if len(env.Data) < 1 {
 		t.Fatalf("expected health rows: %s", rr.Body.String())
 	}
 

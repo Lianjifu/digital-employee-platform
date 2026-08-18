@@ -145,8 +145,16 @@ func (s *Server) workflowByID(r *http.Request) (any, error) {
 		if wf == nil {
 			return nil, apperr.NotFoundErr(apperr.NotFound, "流程不存在")
 		}
-		skill := map[string]any{"id": s.Store.ID("wfs"), "workspaceId": s.workspaceID(r), "workflowId": wid, "name": coalesce(str(body["name"]), str(wf["name"])+"技能"), "status": "published", "version": "1.0.0"}
-		s.Store.WorkflowSkills = append([]map[string]any{skill}, s.Store.WorkflowSkills...)
+		skill, err := s.publishWorkflowAsSkillLocked(id, s.workspaceID(r), wf, str(body["name"]))
+		if err != nil {
+			return nil, err
+		}
+		cat, _ := skill["_catalog"].(map[string]any)
+		delete(skill, "_catalog")
+		go func() {
+			s.Store.Persist("workflow_skills")
+			s.applyWorkflowSkillCatalog(id, cat, r)
+		}()
 		return skill, nil
 	}
 	if strings.HasPrefix(action, "runs") {

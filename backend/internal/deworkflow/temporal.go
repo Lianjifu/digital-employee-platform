@@ -18,8 +18,16 @@ func (e *Engine) StartTrialTemporal(ctx context.Context, runID, workflowID strin
 	if !e.TemporalConfigured() {
 		return e.StartTrialLocal(ctx, runID, workflowID)
 	}
-	c, err := client.Dial(client.Options{HostPort: e.temporalHost})
+	c, err := client.Dial(client.Options{
+		HostPort: e.temporalHost,
+		ConnectionOptions: client.ConnectionOptions{
+			GetSystemInfoTimeout: 2 * time.Second,
+		},
+	})
 	if err != nil {
+		if temporalFailClosed() {
+			return nil, fmt.Errorf("%w: %v", ErrTemporalUnavailable, err)
+		}
 		log.Printf("temporal dial %s failed, falling back to local: %v", e.temporalHost, err)
 		return e.StartTrialLocal(ctx, runID, workflowID)
 	}
@@ -28,8 +36,8 @@ func (e *Engine) StartTrialTemporal(ctx context.Context, runID, workflowID strin
 	temporalID := fmt.Sprintf("de-wf-%s-%s", workflowID, runID)
 	run := &Run{
 		ID: runID, WorkflowID: workflowID, Status: "running",
-		StartedAt: time.Now().UTC(),
-		Steps:     []string{"validate_graph", "temporal_start"},
+		StartedAt:  time.Now().UTC(),
+		Steps:      []string{"validate_graph", "temporal_start"},
 		EngineName: "temporal", TemporalID: temporalID,
 	}
 	e.mu.Lock()
@@ -43,12 +51,18 @@ func (e *Engine) StartTrialTemporal(ctx context.Context, runID, workflowID strin
 		TaskQueue: "de-workflow",
 	}, TrialWorkflowName, TrialInput{RunID: runID, WorkflowID: workflowID})
 	if err != nil {
+		if temporalFailClosed() {
+			return nil, fmt.Errorf("%w: %v", ErrTemporalUnavailable, err)
+		}
 		log.Printf("temporal start failed, falling back to local: %v", err)
 		return e.StartTrialLocal(ctx, runID, workflowID)
 	}
 
 	var out TrialResult
 	if err := we.Get(wctx, &out); err != nil {
+		if temporalFailClosed() {
+			return nil, fmt.Errorf("%w: %v", ErrTemporalUnavailable, err)
+		}
 		log.Printf("temporal wait failed, falling back to local: %v", err)
 		return e.StartTrialLocal(ctx, runID, workflowID)
 	}

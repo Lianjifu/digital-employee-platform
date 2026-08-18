@@ -79,14 +79,14 @@ func (s *Server) createEmployee(r *http.Request) (any, error) {
 		"id": s.Store.ID("de"), "workspaceId": ws, "name": name,
 		"role": coalesce(str(body["role"]), "general"), "department": coalesce(str(body["department"]), "未分配"),
 		"description": coalesce(str(body["description"]), "待完善岗位职责说明。"),
-		"owner": id.Name, "ownerId": id.ID, "escalationOwner": coalesce(str(body["escalationOwner"]), "待指定"),
+		"owner":       id.Name, "ownerId": id.ID, "escalationOwner": coalesce(str(body["escalationOwner"]), "待指定"),
 		"serviceObject": coalesce(str(body["serviceObject"]), "内部用户"),
-		"version": "0.1.0", "environment": "sandbox", "lifecycle": "draft", "risk": coalesce(str(body["risk"]), "low"),
+		"version":       "0.1.0", "environment": "sandbox", "lifecycle": "draft", "risk": coalesce(str(body["risk"]), "low"),
 		"responsibilities": []string{"待配置岗位职责"}, "prohibitedActions": []string{"待配置禁止行为"},
 		"capabilities": body["capabilities"],
 		"memoryPolicy": map[string]any{"shortTermHours": 24, "workingDays": 7, "longTermCadence": "daily", "knowledgePromotion": "approval_required"},
-		"runtime": map[string]any{"calls24h": 0, "successRate": 0, "p95Ms": 0, "costToday": 0, "handoffs24h": 0, "anomalies": 0},
-		"evaluation": map[string]any{"status": "not_started"}, "release": map[string]any{"status": "not_released"},
+		"runtime":      map[string]any{"calls24h": 0, "successRate": 0, "p95Ms": 0, "costToday": 0, "handoffs24h": 0, "anomalies": 0},
+		"evaluation":   map[string]any{"status": "not_started"}, "release": map[string]any{"status": "not_released"},
 		"updatedAt": time.Now().UTC().Format(time.RFC3339),
 	}
 	if item["capabilities"] == nil {
@@ -154,6 +154,16 @@ func (s *Server) employeeAction(r *http.Request) (any, error) {
 			return nil, err
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
+		if productionLikeEnv() {
+			emp["lifecycle"] = "pending_approval"
+			emp["release"] = map[string]any{
+				"status": "pending_approval", "requestedAt": now,
+				"requestedBy": id.Name, "requestedById": id.ID,
+			}
+			emp["updatedAt"] = now
+			s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "申请数字工作伙伴上岗", str(emp["name"]), "success", "待双人审批")
+			return emp, nil
+		}
 		emp["lifecycle"] = "active"
 		emp["release"] = map[string]any{
 			"status": "released", "releasedAt": now,
@@ -163,16 +173,46 @@ func (s *Server) employeeAction(r *http.Request) (any, error) {
 		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "数字工作伙伴上岗", str(emp["name"]), "success", "")
 		return emp, nil
 	case "approve":
-		// 兼容历史待审批记录：确认即可上岗，不再要求职责分离双人批。
 		if err := s.validatePublishedCapabilities(emp); err != nil {
 			return nil, err
+		}
+		rel, _ := emp["release"].(map[string]any)
+		reqID, reqName := "", ""
+		if rel != nil {
+			reqID, reqName = str(rel["requestedById"]), str(rel["requestedBy"])
+		}
+		if reqID == "" {
+			reqID = str(emp["ownerId"])
+		}
+		if reqName == "" {
+			reqName = str(emp["owner"])
+		}
+		if err := requireProductionDualApproval(reqID, reqName, id, "上岗"); err != nil {
+			return nil, err
+		}
+		relMap := rel
+		if relMap == nil {
+			relMap = map[string]any{"requestedBy": reqName, "requestedById": reqID}
+		}
+		if hold, err := maybeHoldForCountersign(relMap, id, str(emp["risk"]), "上岗"); err != nil {
+			return nil, err
+		} else if hold {
+			now := time.Now().UTC().Format(time.RFC3339)
+			emp["lifecycle"] = "pending_countersign"
+			emp["release"] = relMap
+			emp["updatedAt"] = now
+			s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "上岗会签待副署", str(emp["name"]), "success", "pending_countersign")
+			return emp, nil
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		emp["lifecycle"] = "active"
 		emp["version"] = strings.TrimSuffix(str(emp["version"]), "-draft")
 		emp["release"] = map[string]any{
 			"status": "released", "releasedAt": now,
+			"requestedBy": reqName, "requestedById": reqID,
 			"approver": id.Name, "approverId": id.ID,
+			"firstApprover": relMap["firstApprover"], "firstApproverId": relMap["firstApproverId"],
+			"countersigner": relMap["countersigner"], "countersignerId": relMap["countersignerId"],
 		}
 		emp["updatedAt"] = now
 		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "确认数字工作伙伴上岗", str(emp["name"]), "success", "")

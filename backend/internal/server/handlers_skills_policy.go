@@ -16,14 +16,14 @@ var (
 )
 
 type skillPolicyDecision struct {
-	OK             bool
-	Blocked        bool
-	Reason         string
-	CorrelationID  string
-	RateLimited    bool
-	CircuitOpen    bool
-	EgressBlocked  bool
-	DangerBlocked  bool
+	OK            bool
+	Blocked       bool
+	Reason        string
+	CorrelationID string
+	RateLimited   bool
+	CircuitOpen   bool
+	EgressBlocked bool
+	DangerBlocked bool
 }
 
 func (s *Server) evaluateSkillSandboxPolicyLocked(ws, skillID string, commandOrTarget string) skillPolicyDecision {

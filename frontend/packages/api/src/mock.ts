@@ -1703,7 +1703,7 @@ export const mockSkills: Skill[] = [
   { id: 's7', name: 'cmdb-tool', kind: 'tool', description: 'CMDB 资产查询', version: '1.0', status: 'installed', rating: 4.6, installCount: 760, riskLevel: 'mid', cacheable: true },
   { id: 's8', name: 'jira-tool', kind: 'tool', description: 'Jira 工单', version: '1.0', status: 'installed', rating: 4.5, installCount: 690, riskLevel: 'mid', cacheable: true },
   { id: 's9', name: 'itsm-change-tool', kind: 'tool', description: '创建、查询与更新 ITSM 变更单；生产变更需要审批门禁', version: '2.3.1', status: 'installed', rating: 4.7, installCount: 920, riskLevel: 'high', cacheable: false },
-  { id: 's10', name: 'notification-tool', kind: 'tool', description: '向飞书、企业微信、邮件等受控渠道投递处置通知', version: '1.6.0', status: 'installed', rating: 4.8, installCount: 1680, riskLevel: 'low', cacheable: true },
+  { id: 's10', name: 'notification-tool', kind: 'tool', description: '向飞书、企业微信、钉钉等受控渠道投递处置通知', version: '1.6.0', status: 'installed', rating: 4.8, installCount: 1680, riskLevel: 'low', cacheable: true },
   { id: 's11', name: 'release-control-tool', kind: 'tool', description: '执行灰度发布、回滚与发布窗口校验，所有写操作要求双人审批', version: '1.4.0', status: 'installed', rating: 4.6, installCount: 540, riskLevel: 'high', cacheable: false },
   { id: 's12', name: 'customer-ticket-tool', kind: 'tool', description: '同步客户工单、服务等级与处理进展，适用于服务运营工作伙伴', version: '1.1.2', status: 'installed', rating: 4.4, installCount: 430, riskLevel: 'mid', cacheable: true },
 ];
@@ -1792,7 +1792,7 @@ export const mockMessageStream = [
   { id: 'm1', time: '14:32:01', channel: '飞书', target: '王昊', content: '[P0] Redis OOM 告警已恢复', status: 'delivered', tone: 'success' as const },
   { id: 'm2', time: '14:30:18', channel: '企微', target: 'SRE 组', content: 'K8s 节点扩容审批通过', status: 'delivered', tone: 'success' as const },
   { id: 'm3', time: '14:28:45', channel: '飞书', target: '张睿', content: 'CVE-2026-3321 修复建议', status: 'delivered', tone: 'info' as const },
-  { id: 'm4', time: '14:25:12', channel: '邮件', target: 'admin@acme.com', content: '本月合规审计报告 (94/94)', status: 'delivered', tone: 'success' as const },
+  { id: 'm4', time: '14:25:12', channel: '飞书', target: 'SRE 值班群', content: '本月合规审计报告 (94/94)', status: 'delivered', tone: 'success' as const },
   { id: 'm5', time: '14:18:32', channel: 'Webhook', target: 'SIEM', content: '告警降噪合并 23 条', status: 'failed', tone: 'warning' as const },
 ];
 
@@ -1810,7 +1810,6 @@ export const mockChannels: Channel[] = [
   { id: 'c2', name: '企业微信', kind: 'wecom', enabled: true, monthlySent: 280, successRate: 0.992 },
   { id: 'c3', name: '钉钉', kind: 'dingtalk', enabled: true, monthlySent: 120, successRate: 0.985 },
   { id: 'c4', name: 'Slack', kind: 'slack', enabled: false, monthlySent: 0, successRate: 0 },
-  { id: 'c5', name: '邮件', kind: 'email', enabled: true, monthlySent: 240, successRate: 0.978 },
   { id: 'c6', name: 'Webhook', kind: 'webhook', enabled: true, monthlySent: 120, successRate: 0.995 },
 ];
 
@@ -1880,7 +1879,7 @@ const mockSkillCatalog: Array<Skill & { publisher: string; signed: boolean; depe
   { id: 'st7', name: 'pagerduty-mcp', kind: 'mcp', description: '查询事件、升级策略与值班排班的 PagerDuty 连接器', version: '1.2.0', status: 'available', rating: 4.5, installCount: 760, riskLevel: 'mid', cacheable: false, publisher: '企业能力商店', signed: true, dependencies: ['pagerduty-oauth'], license: 'MIT', lastScannedAt: '28 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
   { id: 'st8', name: 'service-now-mcp', kind: 'mcp', description: 'ServiceNow 事件、请求与变更记录连接器', version: '1.0.2', status: 'available', rating: 4.4, installCount: 620, riskLevel: 'high', cacheable: false, publisher: '企业能力商店', signed: true, dependencies: ['servicenow-oauth'], license: '商业授权', lastScannedAt: '41 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['隔离环境'] },
   { id: 'st9', name: 'approval-center-tool', kind: 'tool', description: '发起、查询和回收企业审批；支持双人复核策略', version: '2.0.0', status: 'available', rating: 4.7, installCount: 1450, riskLevel: 'high', cacheable: false, publisher: '流程平台组', signed: true, dependencies: ['approval-api-v2'], license: '内部许可', lastScannedAt: '6 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
-  { id: 'st10', name: 'message-delivery-tool', kind: 'tool', description: '向飞书、企微和邮件渠道投递可审计的业务通知', version: '1.8.1', status: 'available', rating: 4.8, installCount: 2660, riskLevel: 'low', cacheable: true, publisher: '消息平台组', signed: true, dependencies: [], license: '内部许可', lastScannedAt: '3 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
+  { id: 'st10', name: 'message-delivery-tool', kind: 'tool', description: '向飞书、企微和钉钉渠道投递可审计的业务通知', version: '1.8.1', status: 'available', rating: 4.8, installCount: 2660, riskLevel: 'low', cacheable: true, publisher: '消息平台组', signed: true, dependencies: [], license: '内部许可', lastScannedAt: '3 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
 ];
 mockSkillCatalog.forEach((skill, index) => Object.assign(skill, {
   workspaceId: index === 2 ? 'w2' : index === 5 ? 'w3' : 'w1',
@@ -1912,7 +1911,7 @@ function skillAuditEvents(): SkillAuditEvent[] {
 const mockChannelTemplates = [
   { id: 'card1', name: '告警卡片', kind: 'feishu', locale: 'zh-CN', status: 'published', tone: 'error', desc: 'P0/P1 紧急事件 · 含一键跳转', preview: '[P0] Redis OOM\n集群: prod-redis-01\n[查看详情 →]', updatedAt: '2026-07-18T08:00:00.000Z' },
   { id: 'card2', name: '审批卡片', kind: 'feishu', locale: 'zh-CN', status: 'published', tone: 'warn', desc: '双签审批 · 同意/拒绝按钮', preview: '变更审批\n[批准] [拒绝]', updatedAt: '2026-07-17T09:30:00.000Z' },
-  { id: 'card3', name: '交接摘要', kind: 'email', locale: 'zh-CN', status: 'draft', tone: 'info', desc: '人工接管摘要 · 脱敏任务上下文', preview: '交接：夜航 → 值班经理\n任务 TSK-*** 待审批', updatedAt: '2026-07-21T07:10:00.000Z' },
+  { id: 'card3', name: '交接摘要', kind: 'feishu', locale: 'zh-CN', status: 'draft', tone: 'info', desc: '人工接管摘要 · 脱敏任务上下文', preview: '交接：夜航 → 值班经理\n任务 TSK-*** 待审批', updatedAt: '2026-07-21T07:10:00.000Z' },
 ];
 const mockChannelBlacklist = [
   { id: 'b1', type: '用户', value: 'test-spammer@external.com', reason: '高频无效告警', addedBy: '系统', expires: '2026-08-01' },
@@ -1923,19 +1922,18 @@ const mockChannelLanguages = [
   { key: 'en-US', label: 'English', sample: 'Your service has encountered an anomaly, please handle immediately.' },
 ];
 const mockChannelRoutes = [
-  { event: 'P0 紧急告警', main: '飞书', f1: '企微', f2: '电话+SMS', fb: '邮件', tone: 'error' },
-  { event: 'P1 重要升级', main: '飞书+企微', f1: '电话', f2: '邮件', fb: '—', tone: 'warn' },
-  { event: 'P2 标准通知', main: '企微', f1: '飞书', f2: '邮件', fb: '—', tone: 'info' },
+  { event: 'P0 紧急告警', main: '飞书', f1: '企微', f2: '钉钉', fb: 'Webhook', tone: 'error' },
+  { event: 'P1 重要升级', main: '飞书+企微', f1: '钉钉', f2: 'Webhook', fb: '—', tone: 'warn' },
+  { event: 'P2 标准通知', main: '企微', f1: '飞书', f2: '钉钉', fb: '—', tone: 'info' },
 ];
 
 // 渠道控制面：部署、版本化投递策略、失败队列和审计均由同一领域状态持有。
 const channelDeployments: ChannelDeployment[] = [
   { id: 'delivery-feishu', workspaceId: 'w1', name: '飞书生产投递', kind: 'feishu', environment: 'production', status: 'active', credentialRef: 'vault://channel-deployments/delivery-feishu/credential', credentialMasked: 'app-…prod', owner: '消息平台组', lastVerifiedAt: '2026-07-21T12:00:00.000Z', connectionMode: 'webhook', webhookPath: '/api/channel/feishu/events/delivery-feishu' },
-  { id: 'delivery-email', workspaceId: 'w1', name: '邮件生产投递', kind: 'email', environment: 'production', status: 'active', credentialRef: 'vault://channel-deployments/delivery-email/credential', credentialMasked: 'smtp-…prod', owner: '消息平台组', lastVerifiedAt: '2026-07-19T12:00:00.000Z' },
 ];
 const channelInbound: Array<{ id: string; workspaceId: string; deploymentId: string; text?: string; eventType?: string; receivedAt: string }> = [];
 const deliveryPolicies: DeliveryPolicyDraft[] = [
-  { id: 'delivery-policy-p0', workspaceId: 'w1', eventType: 'P0 紧急告警', primaryDeploymentId: 'delivery-feishu', fallbackDeploymentIds: ['delivery-email'], audience: 'SRE 值班组', dataClassification: 'internal', status: 'draft', validationIssues: [] },
+  { id: 'delivery-policy-p0', workspaceId: 'w1', eventType: 'P0 紧急告警', primaryDeploymentId: 'delivery-feishu', fallbackDeploymentIds: [], audience: 'SRE 值班组', dataClassification: 'internal', status: 'draft', validationIssues: [] },
 ];
 const deliveryVersions: DeliveryPolicyVersion[] = [];
 const deliveryAttempts: DeliveryAttempt[] = [
@@ -1943,7 +1941,7 @@ const deliveryAttempts: DeliveryAttempt[] = [
 ];
 const channelAuditEvents: ChannelAuditEvent[] = [
   { id: 'ca-1', workspaceId: 'w1', time: '2026-07-21T09:40:00.000Z', actor: '消息平台组', action: '验证渠道部署', target: '飞书生产投递', result: 'success', correlationId: 'corr_channel_verify_1' },
-  { id: 'ca-2', workspaceId: 'w1', time: '2026-07-20T16:20:00.000Z', actor: '平台管理员', action: '创建渠道部署', target: '邮件生产投递', result: 'success', correlationId: 'corr_channel_create_1' },
+  { id: 'ca-2', workspaceId: 'w1', time: '2026-07-20T16:20:00.000Z', actor: '平台管理员', action: '创建渠道部署', target: '飞书生产投递', result: 'success', correlationId: 'corr_channel_create_1' },
   { id: 'ca-3', workspaceId: 'w1', time: '2026-07-19T12:00:00.000Z', actor: '消息平台组', action: '保存投递策略草稿', target: 'P0 紧急告警', result: 'success', correlationId: 'corr_channel_policy_1' },
 ];
 
@@ -1972,7 +1970,7 @@ function validateDeliveryPolicy(policy: DeliveryPolicyDraft) {
   if (!deployments[0] || deployments[0].status !== 'active') issues.push('E_DELIVERY_PRIMARY_UNAVAILABLE: 主渠道不可用');
   if (new Set(ids).size !== ids.length) issues.push('E_DELIVERY_FALLBACK_INVALID: 降级链不能重复');
   if (deployments.some((item) => !item || item.workspaceId !== policy.workspaceId || item.status !== 'active')) issues.push('E_DELIVERY_FALLBACK_INVALID: 降级渠道不可用或不属于当前工作区');
-  if (policy.dataClassification === 'restricted' && deployments.some((item) => item?.kind === 'webhook' || item?.kind === 'sms')) issues.push('E_DELIVERY_CLASSIFICATION_BLOCKED: 受限数据不能投递至外部渠道');
+  if (policy.dataClassification === 'restricted' && deployments.some((item) => item?.kind === 'webhook')) issues.push('E_DELIVERY_CLASSIFICATION_BLOCKED: 受限数据不能投递至外部渠道');
   return issues;
 }
 function maskTarget(value: string) { return value.length < 5 ? '***' : `${value.slice(0, 2)}***${value.slice(-2)}`; }
@@ -2146,10 +2144,10 @@ export const mockBilling = {
 };
 
 export const mockNotificationChannels = [
-  { id: 'n1', name: '安全告警', channels: ['飞书', '邮件', '电话'], frequency: '即时', enabled: true },
-  { id: 'n2', name: '系统状态', channels: ['飞书', '邮件'], frequency: '每 5 分钟', enabled: true },
-  { id: 'n3', name: '日报', channels: ['邮件'], frequency: '每天 9:00', enabled: true },
-  { id: 'n4', name: '营销活动', channels: ['邮件'], frequency: '每周', enabled: false },
+  { id: 'n1', name: '安全告警', channels: ['飞书', '企微'], frequency: '即时', enabled: true },
+  { id: 'n2', name: '系统状态', channels: ['飞书'], frequency: '每 5 分钟', enabled: true },
+  { id: 'n3', name: '日报', channels: ['飞书'], frequency: '每天 9:00', enabled: true },
+  { id: 'n4', name: '营销活动', channels: ['企微'], frequency: '每周', enabled: false },
 ];
 
 export const mockTenantProfile: {
@@ -5195,6 +5193,9 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     let appId = String(body.appId ?? body.app_id ?? '').trim();
     let appSecret = String(body.appSecret ?? body.app_secret ?? body.credential ?? '').trim();
     if (!body.name?.trim() || !kind) throw new Error('E_CHANNEL_DEPLOYMENT_INVALID: 名称和类型不能为空');
+    if (kind === 'email' || kind === 'sms' || kind === 'phone') {
+      throw new Error('E_CHANNEL_DEPLOYMENT_INVALID: 不支持邮件、短信、电话渠道');
+    }
     if (isFeishu) {
       if (!appId && appSecret.includes(':')) {
         const i = appSecret.indexOf(':');
@@ -5382,7 +5383,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
         environment: item.environment,
         deployStatus: item.status,
         successRate: item.status === 'active' ? (status === 'attention' ? 97.2 : 99.4) : 0,
-        p95Ms: item.status === 'active' ? (item.kind === 'email' ? 280 : 140) : 0,
+        p95Ms: item.status === 'active' ? 140 : 0,
         errorCount24h,
         status,
       };
@@ -5393,7 +5394,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 渠道：投递、策略、模板和黑名单均由 Mock 域持有。
   if (path === '/api/channels' && method === 'GET') return mockChannels;
-  if (path === '/api/channels' && method === 'POST') { const body = (opts.body ?? {}) as Partial<Channel>; if (!body.name?.trim() || !body.kind) throw new Error('渠道名称和类型不能为空'); const channel: Channel = { id: mockId('channel'), name: body.name.trim(), kind: body.kind, enabled: true, monthlySent: 0, successRate: 1 }; mockChannels.unshift(channel); appendControlPlaneAudit('channel', '接入渠道', channel.name); return channel; }
+  if (path === '/api/channels' && method === 'POST') { const body = (opts.body ?? {}) as Partial<Channel> & { kind?: string }; if (!body.name?.trim() || !body.kind) throw new Error('渠道名称和类型不能为空'); if (['email', 'sms', 'phone'].includes(String(body.kind))) throw new Error('E_CHANNEL_DEPLOYMENT_INVALID: 不支持邮件、短信、电话渠道'); const channel: Channel = { id: mockId('channel'), name: body.name.trim(), kind: body.kind as ChannelKind, enabled: true, monthlySent: 0, successRate: 1 }; mockChannels.unshift(channel); appendControlPlaneAudit('channel', '接入渠道', channel.name); return channel; }
   const channelAction = path.match(/^\/api\/channels\/([^/]+)(?:\/(toggle|test|config))?$/);
   if (channelAction) { const channel = mockChannels.find((item) => item.id === channelAction[1]); if (!channel) throw new Error('渠道不存在'); const action = channelAction[2]; const body = (opts.body ?? {}) as any; if (action === 'toggle' && method === 'PATCH') { channel.enabled = !channel.enabled; appendControlPlaneAudit('channel', channel.enabled ? '恢复渠道投递' : '暂停渠道投递', channel.name); return channel; } if (action === 'test' && method === 'POST') { if (!channel.enabled) throw new Error('渠道已暂停，无法发送测试消息'); if (!body.target?.trim() || !body.content?.trim()) throw new Error('接收对象和消息内容不能为空'); const message = { id: mockId('message'), time: new Date().toLocaleTimeString('zh-CN'), channel: channel.name, target: body.target.trim(), content: body.content.trim(), status: 'delivered' as const, tone: 'success' as const }; mockDomain.messages.unshift(message); appendControlPlaneAudit('channel', '发送测试消息', channel.name); return message; } if (action === 'config' && method === 'PATCH') { mockChannelConfig[channel.id] = { ...(mockChannelConfig[channel.id] ?? {}), ...body }; appendControlPlaneAudit('channel', '更新渠道配置', channel.name); return mockChannelConfig[channel.id]; } }
   if (path === '/api/channel-health') return mockChannelHealth;
@@ -5533,6 +5534,30 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     if (index < 0) throw new Error('E_NOT_FOUND: 会话不存在');
     const [removed] = mockSessions.splice(index, 1);
     return { ok: true, id: removed.id, conversationId: (removed as { conversationId?: string }).conversationId };
+  }
+  const replayTurn = path.match(/^\/api\/copilot\/conversations\/([^/]+)\/turns\/([^/]+)\/replay$/);
+  if (replayTurn && method === 'GET') {
+    const correlationId = decodeURIComponent(replayTurn[2]);
+    return {
+      replay: true,
+      correlationId,
+      snapshot: {
+        id: `snap-mock-${correlationId}`,
+        correlationId,
+        system: '只读复盘（Mock）',
+        historyTurns: 1,
+        memoryProvenance: [],
+        ragHits: 0,
+        toolRegistry: [],
+        builtAt: new Date().toISOString(),
+        employeeId: 'de-1',
+        sessionMode: 'investigate',
+      },
+      events: [
+        { type: 'stage', stage: 'policy', correlationId, text: 'ok' },
+        { type: 'done', stage: 'done', correlationId, snapshotId: `snap-mock-${correlationId}` },
+      ],
+    };
   }
   const conversationDelete = path.match(/^\/api\/conversations\/([^/]+)$/);
   if (conversationDelete && method === 'DELETE') {

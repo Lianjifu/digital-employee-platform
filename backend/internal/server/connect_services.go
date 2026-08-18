@@ -2,18 +2,23 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 	collabv1 "github.com/digital-employee-platform/backend/gen/de/collab/v1"
 	"github.com/digital-employee-platform/backend/gen/de/collab/v1/collabv1connect"
+	commonv1 "github.com/digital-employee-platform/backend/gen/de/common/v1"
 	employeev1 "github.com/digital-employee-platform/backend/gen/de/employee/v1"
 	"github.com/digital-employee-platform/backend/gen/de/employee/v1/employeev1connect"
 	ragv1 "github.com/digital-employee-platform/backend/gen/de/rag/v1"
 	"github.com/digital-employee-platform/backend/gen/de/rag/v1/ragv1connect"
 	runtimev1 "github.com/digital-employee-platform/backend/gen/de/runtime/v1"
 	"github.com/digital-employee-platform/backend/gen/de/runtime/v1/runtimev1connect"
+	"github.com/digital-employee-platform/backend/pkg/contract"
+	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
 // mountConnectRPC registers buf-generated Connect handlers for ModeAll (compat shell).
@@ -114,23 +119,109 @@ func (c *collabConnect) CreateConversation(ctx context.Context, req *connect.Req
 }
 
 func (c *collabConnect) StreamTurn(ctx context.Context, req *connect.Request[collabv1.StreamTurnRequest], stream *connect.ServerStream[collabv1.StreamTurnEvent]) error {
-	corr := req.Msg.GetCorrelationId()
+	msg := req.Msg
+	cid := strings.TrimSpace(msg.GetConversationId())
+	if cid == "" {
+		return connect.NewError(connect.CodeInvalidArgument, apperr.BadReq(apperr.BadRequest, "缺少 conversation_id"))
+	}
+	corr := strings.TrimSpace(msg.GetCorrelationId())
+	if corr == "" && msg.GetEnvelope() != nil {
+		corr = msg.GetEnvelope().GetCorrelationId()
+	}
 	if corr == "" {
 		corr = c.s.Store.ID("corr")
 	}
-	stages := []string{"policy", "employee", "rag", "runtime", "meter"}
-	for _, stage := range stages {
-		if err := stream.Send(&collabv1.StreamTurnEvent{
-			Type: "stage", Stage: stage, CorrelationId: corr,
-			Text: "ok", Meta: map[string]string{"source": "connect"},
-		}); err != nil {
-			return err
+	body := map[string]any{
+		"content":           msg.GetContent(),
+		"correlationId":     corr,
+		"digitalEmployeeId": msg.GetDigitalEmployeeId(),
+		"clientMsgId":       msg.GetClientMsgId(),
+		"modelId":           msg.GetModelId(),
+		"modeHint":          msg.GetModeHint(),
+		"sessionMode":       contract.SessionModeFromProto(msg.GetSessionMode()),
+		"riskLevel":         contract.RiskLevelFromProto(msg.GetRiskLevel()),
+	}
+	if len(msg.GetEnabledTools()) > 0 {
+		body["enabledTools"] = msg.GetEnabledTools()
+	}
+	if env := msg.GetEnvelope(); env != nil {
+		if env.GetChannel() != 0 {
+			body["channel"] = contract.ChannelKindFromProto(env.GetChannel())
+		}
+		if env.GetChannelThreadId() != "" {
+			body["channelThreadId"] = env.GetChannelThreadId()
 		}
 	}
-	_ = ctx
-	return stream.Send(&collabv1.StreamTurnEvent{
-		Type: "done", Text: req.Msg.GetContent(), CorrelationId: corr,
-	})
+	payload, _ := json.Marshal(body)
+	r := requestFromConnect(ctx, req.Header())
+	r.Method = http.MethodPost
+	r.URL.Path = "/api/copilot/conversations/" + cid + "/stream"
+	r.Body = ioNopCloser(strings.NewReader(string(payload)))
+	r.ContentLength = int64(len(payload))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("x-correlation-id", corr)
+	if msg.GetWorkspaceId() != "" && r.Header.Get("x-workspace-id") == "" {
+		r.Header.Set("x-workspace-id", msg.GetWorkspaceId())
+	}
+	w := newConnectTurnWriter(stream)
+	c.s.copilotStream(w, r)
+	return connectErrorFromWriter(w)
+}
+
+func (c *collabConnect) ReplayTurn(ctx context.Context, req *connect.Request[collabv1.ReplayTurnRequest]) (*connect.Response[collabv1.ReplayTurnResponse], error) {
+	r := requestFromConnect(ctx, req.Header())
+	ws := c.s.workspaceID(r)
+	corr := req.Msg.GetCorrelationId()
+	cid := req.Msg.GetConversationId()
+	rec := c.s.lookupContextSnapshot(ws, cid, corr)
+	if rec == nil {
+		return nil, connect.NewError(connect.CodeNotFound, apperr.NotFoundErr(apperr.ReplayNotFound, "回合快照不存在"))
+	}
+	out := &collabv1.ReplayTurnResponse{CorrelationId: corr}
+	out.Snapshot = mapToProtoSnapshot(rec)
+	for _, ev := range snapshotEvents(rec) {
+		out.Events = append(out.Events, &collabv1.StreamTurnEvent{
+			Type:          str(ev["type"]),
+			Stage:         str(ev["stage"]),
+			Text:          str(ev["text"]),
+			CorrelationId: corr,
+			SnapshotId:    str(rec["id"]),
+			EventType:     contract.StreamEventTypeToProto(str(ev["type"])),
+		})
+	}
+	return connect.NewResponse(out), nil
+}
+
+func mapToProtoSnapshot(rec map[string]any) *commonv1.ContextSnapshot {
+	if rec == nil {
+		return nil
+	}
+	snap := &commonv1.ContextSnapshot{
+		Id:            str(rec["id"]),
+		CorrelationId: str(rec["correlationId"]),
+		System:        str(rec["system"]),
+		HistoryTurns:  int32(intFrom(rec["historyTurns"])),
+		RagHits:       int32(intFrom(rec["ragHits"])),
+		EmployeeId:    str(rec["employeeId"]),
+		BuiltAt:       str(rec["builtAt"]),
+		SessionMode:   contract.SessionModeToProto(str(rec["sessionMode"])),
+	}
+	if arr, ok := rec["toolRegistry"].([]string); ok {
+		snap.ToolRegistry = arr
+	} else if arr, ok := rec["toolRegistry"].([]any); ok {
+		for _, x := range arr {
+			if s := str(x); s != "" {
+				snap.ToolRegistry = append(snap.ToolRegistry, s)
+			}
+		}
+	}
+	for _, p := range mapsFromAny(rec["memoryProvenance"]) {
+		snap.MemoryProvenance = append(snap.MemoryProvenance, &commonv1.MemoryProvenance{
+			Id: str(p["id"]), Title: str(p["title"]), Score: toFloat(p["score"]),
+			Layer: contract.MemoryLayerToProto(str(p["layer"])),
+		})
+	}
+	return snap
 }
 
 type employeeConnect struct{ s *Server }
@@ -161,6 +252,42 @@ func (c *runtimeConnect) Invoke(ctx context.Context, req *connect.Request[runtim
 	return connect.NewResponse(&runtimev1.InvokeResponse{
 		Output: out, Graph: "minimal", CorrelationId: corr, Tokens: int32(len([]rune(out))),
 	}), nil
+}
+
+func (c *runtimeConnect) Run(ctx context.Context, req *connect.Request[runtimev1.RunRequest], stream *connect.ServerStream[runtimev1.LoopEvent]) error {
+	r := requestFromConnect(ctx, req.Header())
+	corr := req.Msg.GetEnvelope().GetCorrelationId()
+	if corr == "" {
+		corr = req.Msg.GetSnapshot().GetCorrelationId()
+	}
+	if corr == "" {
+		corr = c.s.Store.ID("corr")
+	}
+	snapID := req.Msg.GetSnapshot().GetId()
+	emit := func(typ, stage string, extra map[string]any) {
+		_ = stream.Send(loopEventFromEmit(typ, stage, corr, snapID, extra))
+	}
+	in := c.s.reactInputFromRunRequest(r, req.Msg, emit)
+	if in.CorrelationID == "" {
+		in.CorrelationID = corr
+	}
+	out := c.s.runRuntimeTurn(ctx, in)
+	if out.Err != nil {
+		_ = stream.Send(&runtimev1.LoopEvent{
+			Type:  commonv1.StreamEventType_STREAM_EVENT_TYPE_ERROR,
+			Stage: "runtime", Text: out.Err.Error(), CorrelationId: corr, SnapshotId: snapID,
+			Meta: map[string]string{"runtimeMode": runtimeMode()},
+		})
+		return nil
+	}
+	return stream.Send(&runtimev1.LoopEvent{
+		Type:          commonv1.StreamEventType_STREAM_EVENT_TYPE_DONE,
+		Stage:         "done",
+		Text:          out.Text,
+		CorrelationId: corr,
+		SnapshotId:    snapID,
+		Meta:          map[string]string{"runtimeMode": runtimeMode(), "mode": out.Mode},
+	})
 }
 
 func requestFromConnect(ctx context.Context, h http.Header) *http.Request {

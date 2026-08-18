@@ -175,14 +175,14 @@ func (s *Server) createMemory(r *http.Request) (any, error) {
 	item := map[string]any{
 		"id": s.Store.ID("memory"), "workspaceId": ws, "ownerId": id.ID,
 		"digitalEmployeeId": body["digitalEmployeeId"],
-		"layer": layer, "scope": coalesce(str(body["scope"]), "user"),
+		"layer":             layer, "scope": coalesce(str(body["scope"]), "user"),
 		"title": title, "content": content,
 		"classification": coalesce(str(body["classification"]), "internal"),
-		"sourceType": coalesce(str(body["sourceType"]), "manual"),
-		"sourceId": coalesce(str(body["sourceId"]), "manual"),
-		"correlationId": coalesce(str(body["correlationId"]), s.Store.ID("memory_corr")),
-		"confidence": coalesceAny(body["confidence"], 0.8),
-		"status": "active", "createdAt": now, "updatedAt": now,
+		"sourceType":     coalesce(str(body["sourceType"]), "manual"),
+		"sourceId":       coalesce(str(body["sourceId"]), "manual"),
+		"correlationId":  coalesce(str(body["correlationId"]), s.Store.ID("memory_corr")),
+		"confidence":     coalesceAny(body["confidence"], 0.8),
+		"status":         "active", "createdAt": now, "updatedAt": now,
 	}
 	if exp := str(body["expiresAt"]); exp != "" {
 		item["expiresAt"] = exp
@@ -259,9 +259,9 @@ func (s *Server) memoryRecordAction(r *http.Request) (any, error) {
 			cand := map[string]any{
 				"id": s.Store.ID("memory_candidate"), "workspaceId": ws, "memoryId": mid,
 				"title": coalesce(str(m["title"]), "记忆候选"), "summary": summary,
-				"classification": coalesce(str(m["classification"]), "internal"),
+				"classification":      coalesce(str(m["classification"]), "internal"),
 				"sourceCorrelationId": coalesce(str(m["correlationId"]), s.Store.ID("memory_corr")),
-				"status": "pending_review", "submittedAt": now,
+				"status":              "pending_review", "submittedAt": now,
 			}
 			s.Store.MemoryCands = append([]map[string]any{cand}, s.Store.MemoryCands...)
 			m["status"] = "pending_review"
@@ -466,6 +466,9 @@ func (s *Server) memoryRefinement(r *http.Request) (any, error) {
 			if hasLayerSource("working", str(source["sourceId"])) {
 				continue
 			}
+			if hasWorkingDreamCompressLocked(s.Store.MemoryRecords, ws, str(source["sourceId"])) {
+				continue
+			}
 			item := map[string]any{}
 			for k, v := range source {
 				item[k] = v
@@ -536,9 +539,9 @@ func (s *Server) memoryRefinement(r *http.Request) (any, error) {
 			cand := map[string]any{
 				"id": s.Store.ID("memory_candidate"), "workspaceId": ws, "memoryId": source["id"],
 				"title": coalesce(str(source["title"]), "长期记忆"), "summary": summary,
-				"classification": coalesce(str(source["classification"]), "internal"),
+				"classification":      coalesce(str(source["classification"]), "internal"),
 				"sourceCorrelationId": coalesce(str(source["correlationId"]), s.Store.ID("memory_corr")),
-				"status": "pending_review", "submittedAt": nowStr,
+				"status":              "pending_review", "submittedAt": nowStr,
 			}
 			s.Store.MemoryCands = append([]map[string]any{cand}, s.Store.MemoryCands...)
 			source["status"] = "pending_review"
@@ -669,7 +672,7 @@ func (s *Server) ingestRuntimeMemoryLocked(in runtimeMemoryInput) (map[string]an
 		"digitalEmployeeId": in.DigitalEmployeeID, "layer": layer, "scope": scope,
 		"title": truncateRunes(title, 80), "content": truncateRunes(content, 2000),
 		"classification": coalesce(in.Classification, "internal"),
-		"sourceType": coalesce(in.SourceType, "conversation"), "sourceId": coalesce(in.SourceID, "runtime"),
+		"sourceType":     coalesce(in.SourceType, "conversation"), "sourceId": coalesce(in.SourceID, "runtime"),
 		"correlationId": coalesce(in.CorrelationID, s.Store.ID("memory_corr")), "confidence": conf,
 		"status": "active", "createdAt": nowStr, "updatedAt": nowStr,
 	}
@@ -689,4 +692,17 @@ func (s *Server) ingestRuntimeMemoryLocked(in runtimeMemoryInput) (map[string]an
 	s.Store.MemoryRecords = append([]map[string]any{item}, s.Store.MemoryRecords...)
 	s.appendMemoryAuditLocked(ws, coalesce(in.OwnerName, "系统"), "写入记忆", str(item["title"]), "success", str(item["correlationId"]))
 	return item, nil
+}
+
+func hasWorkingDreamCompressLocked(records []map[string]any, ws, sourceID string) bool {
+	if sourceID == "" {
+		return false
+	}
+	for _, m := range records {
+		if str(m["workspaceId"]) == ws && str(m["layer"]) == "working" && str(m["status"]) == "active" &&
+			str(m["sourceId"]) == sourceID && str(m["sourceType"]) == "dream_compress" {
+			return true
+		}
+	}
+	return false
 }

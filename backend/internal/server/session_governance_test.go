@@ -1,6 +1,11 @@
 package server
 
-import "testing"
+import (
+	"errors"
+	"testing"
+
+	apperr "github.com/digital-employee-platform/backend/pkg/errors"
+)
 
 func TestNormalizeSessionModeAndFilter(t *testing.T) {
 	if normalizeSessionMode("exec") != sessionModeExecute {
@@ -34,10 +39,20 @@ func TestContentSafetyRedact(t *testing.T) {
 }
 
 func TestAssertSessionWritable(t *testing.T) {
-	if err := assertSessionWritableLocked(map[string]any{"status": "closed"}); err == nil {
+	err := assertSessionWritableLocked(map[string]any{"status": "closed"})
+	if err == nil {
 		t.Fatal("closed should forbid")
 	}
-	if err := assertSessionWritableLocked(map[string]any{"handoff": map[string]any{"active": true}}); err == nil {
+	var closed *apperr.AppError
+	if !errors.As(err, &closed) || closed.Code != apperr.SessionClosed {
+		t.Fatalf("want E_SESSION_CLOSED, got %v", err)
+	}
+	err = assertSessionWritableLocked(map[string]any{"handoff": map[string]any{"active": true}})
+	if err == nil {
 		t.Fatal("handoff should forbid")
+	}
+	var handoff *apperr.AppError
+	if !errors.As(err, &handoff) || handoff.Code != apperr.SessionHandoff {
+		t.Fatalf("want E_SESSION_HANDOFF, got %v", err)
 	}
 }

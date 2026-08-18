@@ -1,12 +1,14 @@
-"""Agent runtime FastAPI service: OpenAI-compatible adapter with local stub fallback."""
+"""Agent runtime FastAPI service: Invoke + Run (LoopEvent SSE)."""
 from __future__ import annotations
 
-from typing import Any
+import json
+from typing import Any, Iterator
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
-from app.llm import env, invoke_openai_compatible
+from app.llm import build_run_prompt, chunk_text, env, invoke_openai_compatible
+from app.loop import enabled_tools, iter_run_events
 
 app = FastAPI(title="de-agent-runtime", version="1.0.0")
 
@@ -14,6 +16,10 @@ app = FastAPI(title="de-agent-runtime", version="1.0.0")
 def _allow_stub() -> bool:
     v = (env("DE_ALLOW_RUNTIME_STUB") or "").strip().lower()
     return v in ("1", "true", "yes")
+
+
+def _sse(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 @app.get("/healthz")
@@ -54,7 +60,7 @@ async def invoke(request: Request) -> Any:
         return JSONResponse(
             status_code=503,
             content={
-                "error": "no LLM configured",
+                "error": "E_RUNTIME_UNAVAILABLE",
                 "message": "Set DE_LLM_BASE_URL (and optional DE_LLM_API_KEY / DE_LLM_MODEL), or DE_ALLOW_RUNTIME_STUB=1 for legacy stub.",
                 "provider": "none",
             },
@@ -65,6 +71,54 @@ async def invoke(request: Request) -> Any:
         "nodes": ["ingress", "reason", "egress"],
         "provider": "stub",
     }
+
+
+@app.post("/v1/run")
+async def run(request: Request) -> Any:
+    try:
+        data = await request.json()
+    except Exception:  # noqa: BLE001
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    envelope = data.get("envelope") if isinstance(data.get("envelope"), dict) else {}
+    snapshot = data.get("snapshot") if isinstance(data.get("snapshot"), dict) else {}
+    corr = str(envelope.get("correlationId") or snapshot.get("correlationId") or data.get("correlationId") or "")
+    snap_id = str(snapshot.get("id") or "")
+    model_id = str(data.get("modelId") or data.get("model") or "")
+    prompt = build_run_prompt(data)
+    llm = invoke_openai_compatible(prompt, model=model_id or None)
+    provider = "openai-compatible"
+    if llm is None:
+        if not _allow_stub():
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "E_RUNTIME_UNAVAILABLE",
+                    "message": "agent-runtime has no LLM; set DE_LLM_BASE_URL or DE_ALLOW_RUNTIME_STUB=1",
+                    "correlationId": corr,
+                },
+            )
+        llm = f"[runtime stub] 已处理：{data.get('input') or ''}"
+        provider = "stub"
+
+    tools = enabled_tools(data)
+    user_input = str(data.get("input") or data.get("prompt") or "")
+
+    def gen() -> Iterator[str]:
+        for ev in iter_run_events(
+            corr=corr,
+            snap_id=snap_id,
+            model_id=model_id,
+            text=str(llm),
+            tools=tools,
+            user_input=user_input,
+            provider=provider,
+            chunks=chunk_text(str(llm), 24),
+        ):
+            yield _sse(str(ev.get("type") or "message"), ev)
+
+    return StreamingResponse(gen(), media_type="text/event-stream")
 
 
 @app.exception_handler(404)

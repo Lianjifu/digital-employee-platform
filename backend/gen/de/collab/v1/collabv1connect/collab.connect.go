@@ -39,6 +39,9 @@ const (
 	// CollabServiceStreamTurnProcedure is the fully-qualified name of the CollabService's StreamTurn
 	// RPC.
 	CollabServiceStreamTurnProcedure = "/de.collab.v1.CollabService/StreamTurn"
+	// CollabServiceReplayTurnProcedure is the fully-qualified name of the CollabService's ReplayTurn
+	// RPC.
+	CollabServiceReplayTurnProcedure = "/de.collab.v1.CollabService/ReplayTurn"
 )
 
 // These variables are the protoreflect.Descriptor objects for the RPCs defined in this package.
@@ -46,12 +49,17 @@ var (
 	collabServiceServiceDescriptor                  = v1.File_de_collab_v1_collab_proto.Services().ByName("CollabService")
 	collabServiceCreateConversationMethodDescriptor = collabServiceServiceDescriptor.Methods().ByName("CreateConversation")
 	collabServiceStreamTurnMethodDescriptor         = collabServiceServiceDescriptor.Methods().ByName("StreamTurn")
+	collabServiceReplayTurnMethodDescriptor         = collabServiceServiceDescriptor.Methods().ByName("ReplayTurn")
 )
 
 // CollabServiceClient is a client for the de.collab.v1.CollabService service.
 type CollabServiceClient interface {
+	// CreateConversation 创建控制面会话。
 	CreateConversation(context.Context, *connect.Request[v1.CreateConversationRequest]) (*connect.Response[v1.Conversation], error)
+	// StreamTurn 推送与 SSE 同词表的回合事件（阶段 1 接到同一内核）。
 	StreamTurn(context.Context, *connect.Request[v1.StreamTurnRequest]) (*connect.ServerStreamForClient[v1.StreamTurnEvent], error)
+	// ReplayTurn 按 correlation_id 只读复盘；禁止再调模型或工具。
+	ReplayTurn(context.Context, *connect.Request[v1.ReplayTurnRequest]) (*connect.Response[v1.ReplayTurnResponse], error)
 }
 
 // NewCollabServiceClient constructs a client for the de.collab.v1.CollabService service. By
@@ -76,6 +84,12 @@ func NewCollabServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(collabServiceStreamTurnMethodDescriptor),
 			connect.WithClientOptions(opts...),
 		),
+		replayTurn: connect.NewClient[v1.ReplayTurnRequest, v1.ReplayTurnResponse](
+			httpClient,
+			baseURL+CollabServiceReplayTurnProcedure,
+			connect.WithSchema(collabServiceReplayTurnMethodDescriptor),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -83,6 +97,7 @@ func NewCollabServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 type collabServiceClient struct {
 	createConversation *connect.Client[v1.CreateConversationRequest, v1.Conversation]
 	streamTurn         *connect.Client[v1.StreamTurnRequest, v1.StreamTurnEvent]
+	replayTurn         *connect.Client[v1.ReplayTurnRequest, v1.ReplayTurnResponse]
 }
 
 // CreateConversation calls de.collab.v1.CollabService.CreateConversation.
@@ -95,10 +110,19 @@ func (c *collabServiceClient) StreamTurn(ctx context.Context, req *connect.Reque
 	return c.streamTurn.CallServerStream(ctx, req)
 }
 
+// ReplayTurn calls de.collab.v1.CollabService.ReplayTurn.
+func (c *collabServiceClient) ReplayTurn(ctx context.Context, req *connect.Request[v1.ReplayTurnRequest]) (*connect.Response[v1.ReplayTurnResponse], error) {
+	return c.replayTurn.CallUnary(ctx, req)
+}
+
 // CollabServiceHandler is an implementation of the de.collab.v1.CollabService service.
 type CollabServiceHandler interface {
+	// CreateConversation 创建控制面会话。
 	CreateConversation(context.Context, *connect.Request[v1.CreateConversationRequest]) (*connect.Response[v1.Conversation], error)
+	// StreamTurn 推送与 SSE 同词表的回合事件（阶段 1 接到同一内核）。
 	StreamTurn(context.Context, *connect.Request[v1.StreamTurnRequest], *connect.ServerStream[v1.StreamTurnEvent]) error
+	// ReplayTurn 按 correlation_id 只读复盘；禁止再调模型或工具。
+	ReplayTurn(context.Context, *connect.Request[v1.ReplayTurnRequest]) (*connect.Response[v1.ReplayTurnResponse], error)
 }
 
 // NewCollabServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -119,12 +143,20 @@ func NewCollabServiceHandler(svc CollabServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(collabServiceStreamTurnMethodDescriptor),
 		connect.WithHandlerOptions(opts...),
 	)
+	collabServiceReplayTurnHandler := connect.NewUnaryHandler(
+		CollabServiceReplayTurnProcedure,
+		svc.ReplayTurn,
+		connect.WithSchema(collabServiceReplayTurnMethodDescriptor),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/de.collab.v1.CollabService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case CollabServiceCreateConversationProcedure:
 			collabServiceCreateConversationHandler.ServeHTTP(w, r)
 		case CollabServiceStreamTurnProcedure:
 			collabServiceStreamTurnHandler.ServeHTTP(w, r)
+		case CollabServiceReplayTurnProcedure:
+			collabServiceReplayTurnHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -140,4 +172,8 @@ func (UnimplementedCollabServiceHandler) CreateConversation(context.Context, *co
 
 func (UnimplementedCollabServiceHandler) StreamTurn(context.Context, *connect.Request[v1.StreamTurnRequest], *connect.ServerStream[v1.StreamTurnEvent]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("de.collab.v1.CollabService.StreamTurn is not implemented"))
+}
+
+func (UnimplementedCollabServiceHandler) ReplayTurn(context.Context, *connect.Request[v1.ReplayTurnRequest]) (*connect.Response[v1.ReplayTurnResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("de.collab.v1.CollabService.ReplayTurn is not implemented"))
 }

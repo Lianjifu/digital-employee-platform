@@ -35,17 +35,23 @@ const (
 const (
 	// RuntimeServiceInvokeProcedure is the fully-qualified name of the RuntimeService's Invoke RPC.
 	RuntimeServiceInvokeProcedure = "/de.runtime.v1.RuntimeService/Invoke"
+	// RuntimeServiceRunProcedure is the fully-qualified name of the RuntimeService's Run RPC.
+	RuntimeServiceRunProcedure = "/de.runtime.v1.RuntimeService/Run"
 )
 
 // These variables are the protoreflect.Descriptor objects for the RPCs defined in this package.
 var (
 	runtimeServiceServiceDescriptor      = v1.File_de_runtime_v1_runtime_proto.Services().ByName("RuntimeService")
 	runtimeServiceInvokeMethodDescriptor = runtimeServiceServiceDescriptor.Methods().ByName("Invoke")
+	runtimeServiceRunMethodDescriptor    = runtimeServiceServiceDescriptor.Methods().ByName("Run")
 )
 
 // RuntimeServiceClient is a client for the de.runtime.v1.RuntimeService service.
 type RuntimeServiceClient interface {
+	// Invoke 返回一次性补全，仅用于联调占位。
 	Invoke(context.Context, *connect.Request[v1.InvokeRequest]) (*connect.Response[v1.InvokeResponse], error)
+	// Run 消费 ContextSnapshot 并流式输出 LoopEvent；阶段 2 由 de-agent-runtime 实现。
+	Run(context.Context, *connect.Request[v1.RunRequest]) (*connect.ServerStreamForClient[v1.LoopEvent], error)
 }
 
 // NewRuntimeServiceClient constructs a client for the de.runtime.v1.RuntimeService service. By
@@ -64,12 +70,19 @@ func NewRuntimeServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(runtimeServiceInvokeMethodDescriptor),
 			connect.WithClientOptions(opts...),
 		),
+		run: connect.NewClient[v1.RunRequest, v1.LoopEvent](
+			httpClient,
+			baseURL+RuntimeServiceRunProcedure,
+			connect.WithSchema(runtimeServiceRunMethodDescriptor),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // runtimeServiceClient implements RuntimeServiceClient.
 type runtimeServiceClient struct {
 	invoke *connect.Client[v1.InvokeRequest, v1.InvokeResponse]
+	run    *connect.Client[v1.RunRequest, v1.LoopEvent]
 }
 
 // Invoke calls de.runtime.v1.RuntimeService.Invoke.
@@ -77,9 +90,17 @@ func (c *runtimeServiceClient) Invoke(ctx context.Context, req *connect.Request[
 	return c.invoke.CallUnary(ctx, req)
 }
 
+// Run calls de.runtime.v1.RuntimeService.Run.
+func (c *runtimeServiceClient) Run(ctx context.Context, req *connect.Request[v1.RunRequest]) (*connect.ServerStreamForClient[v1.LoopEvent], error) {
+	return c.run.CallServerStream(ctx, req)
+}
+
 // RuntimeServiceHandler is an implementation of the de.runtime.v1.RuntimeService service.
 type RuntimeServiceHandler interface {
+	// Invoke 返回一次性补全，仅用于联调占位。
 	Invoke(context.Context, *connect.Request[v1.InvokeRequest]) (*connect.Response[v1.InvokeResponse], error)
+	// Run 消费 ContextSnapshot 并流式输出 LoopEvent；阶段 2 由 de-agent-runtime 实现。
+	Run(context.Context, *connect.Request[v1.RunRequest], *connect.ServerStream[v1.LoopEvent]) error
 }
 
 // NewRuntimeServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -94,10 +115,18 @@ func NewRuntimeServiceHandler(svc RuntimeServiceHandler, opts ...connect.Handler
 		connect.WithSchema(runtimeServiceInvokeMethodDescriptor),
 		connect.WithHandlerOptions(opts...),
 	)
+	runtimeServiceRunHandler := connect.NewServerStreamHandler(
+		RuntimeServiceRunProcedure,
+		svc.Run,
+		connect.WithSchema(runtimeServiceRunMethodDescriptor),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/de.runtime.v1.RuntimeService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case RuntimeServiceInvokeProcedure:
 			runtimeServiceInvokeHandler.ServeHTTP(w, r)
+		case RuntimeServiceRunProcedure:
+			runtimeServiceRunHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -109,4 +138,8 @@ type UnimplementedRuntimeServiceHandler struct{}
 
 func (UnimplementedRuntimeServiceHandler) Invoke(context.Context, *connect.Request[v1.InvokeRequest]) (*connect.Response[v1.InvokeResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("de.runtime.v1.RuntimeService.Invoke is not implemented"))
+}
+
+func (UnimplementedRuntimeServiceHandler) Run(context.Context, *connect.Request[v1.RunRequest], *connect.ServerStream[v1.LoopEvent]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("de.runtime.v1.RuntimeService.Run is not implemented"))
 }

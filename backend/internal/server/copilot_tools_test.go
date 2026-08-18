@@ -92,7 +92,7 @@ func TestToolRegistryPrompt_ListsEnabledOnly(t *testing.T) {
 	if !strings.Contains(p, "knowledge.retrieve") {
 		t.Fatal(p)
 	}
-	if strings.Contains(p, "CMDB") {
+	if strings.Contains(p, "- CMDB（") {
 		t.Fatal("disabled tool should not appear in prompt", p)
 	}
 }

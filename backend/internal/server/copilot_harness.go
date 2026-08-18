@@ -21,7 +21,7 @@ func (s *Server) runHarnessTurn(ctx context.Context, in reactTurnInput) reactTur
 	in.Emit("route", "harness", map[string]any{
 		"mode": decision.Mode, "reason": decision.Reason,
 		"enabledTools": enabledToolKeys(in.Registry), "modelId": in.ModelID,
-		"maxSteps": reactMaxSteps,
+		"maxSteps":    reactMaxSteps,
 		"policyLevel": usedLevel, "policyId": policyID,
 		"requestedLevel": decision.PolicyLevel,
 	})
@@ -34,7 +34,6 @@ func (s *Server) runHarnessTurn(ctx context.Context, in reactTurnInput) reactTur
 	case modePlanExec:
 		out = s.runPlanExecuteTurn(ctx, in)
 	case modeDirect:
-		in.NoBootstrap = true
 		in.MaxSteps = 1
 		out = s.runReactTurn(ctx, in)
 		out.Mode = modeDirect

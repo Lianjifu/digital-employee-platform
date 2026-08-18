@@ -90,6 +90,9 @@ func TestCopilotStreamStages(t *testing.T) {
 	if !strings.Contains(body, `"ok":true`) {
 		t.Fatalf("missing done ok in SSE: %s", body)
 	}
+	if !strings.Contains(body, `"snapshotId"`) {
+		t.Fatalf("missing snapshotId in SSE: %s", body)
+	}
 }
 
 func TestCopilotStreamPersistsUnderConversationID(t *testing.T) {

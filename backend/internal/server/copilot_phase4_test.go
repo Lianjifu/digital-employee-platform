@@ -126,7 +126,7 @@ func TestEvolveApprove_DoesNotPublishRouting(t *testing.T) {
 		"id": "evolve-route-1", "workspaceId": "w1",
 		"kind": evolveKindRoutingHint, "status": evolveStatusPending,
 		"title": "路由候选", "summary": "建议 P0",
-		"payload": map[string]any{"suggestedLevel": "P0", "note": "test"},
+		"payload":       map[string]any{"suggestedLevel": "P0", "note": "test"},
 		"correlationId": "corr-r1",
 	}
 	s.Store.EvolveCands = append(s.Store.EvolveCands, cand)

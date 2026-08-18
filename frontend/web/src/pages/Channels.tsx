@@ -29,10 +29,7 @@ const KIND_LABEL: Record<ChannelKind, string> = {
   weixin: '个人微信',
   dingtalk: '钉钉',
   slack: 'Slack',
-  email: '邮件',
   webhook: 'Webhook',
-  sms: '短信',
-  phone: '电话',
 };
 
 const STATUS_LABEL: Record<ChannelDeployment['status'], string> = {
@@ -431,7 +428,7 @@ function Deployments({
           })}
         </div>
       ) : (
-        <EmptyState icon={Cloud} title="暂无渠道部署" description="接入飞书、企微或邮件等投递通道后，数字工作伙伴通知与告警才能出站。" action={canWrite ? <Button size="sm" onClick={onNew}><Plus className="h-3.5 w-3.5" />接入渠道</Button> : undefined} />
+        <EmptyState icon={Cloud} title="暂无渠道部署" description="接入飞书、企微或钉钉等投递通道后，数字工作伙伴通知与告警才能出站。" action={canWrite ? <Button size="sm" onClick={onNew}><Plus className="h-3.5 w-3.5" />接入渠道</Button> : undefined} />
       )}
     </div>
   );

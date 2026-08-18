@@ -63,7 +63,7 @@ func TestStreamChatOpenAICompatible(t *testing.T) {
 
 func TestResolveCopilotModelIDPrefersEmployeeBinding(t *testing.T) {
 	emp := map[string]any{
-		"active": true,
+		"active":       true,
 		"capabilities": map[string]any{"model": "企业通用路由 v2"},
 	}
 	if got := resolveCopilotModelID("sonnet-4", emp); got != "企业通用路由 v2" {

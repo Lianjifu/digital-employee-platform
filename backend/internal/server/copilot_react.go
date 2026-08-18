@@ -12,6 +12,7 @@ import (
 )
 
 const reactMaxSteps = 7
+const reactToolObservationMaxRunes = 800
 
 type reactEmitFunc func(typ, stage string, extra map[string]any)
 
@@ -37,6 +38,8 @@ type reactTurnInput struct {
 	MaxSteps        int
 	SessionMode     string
 	RiskLevel       string
+	RAGPrefetched   bool // 主路径已预检索知识并写入 system，跳过 bootstrap retrieve
+	SnapshotID      string
 }
 
 type reactTurnResult struct {
@@ -94,7 +97,7 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 
 	// Bootstrap: if knowledge.retrieve is enabled, run once so factual turns always have RAG
 	// without relying solely on model tool-calling compliance (esp. embedded).
-	if !in.NoBootstrap {
+	if !in.NoBootstrap && !in.RAGPrefetched {
 		if t := registryLookup(reg, "knowledge.retrieve"); t != nil && t.Enabled {
 			in.Emit("stage", "react", map[string]any{"status": "running", "step": 0, "action": "bootstrap_retrieve"})
 			call := toolCallRequest{Name: "knowledge.retrieve", Args: map[string]any{"query": in.UserMessage}}
@@ -118,7 +121,7 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 			in.Emit("tool", "react", extra)
 			messages = append(messages,
 				modelprov.ChatMessage{Role: "assistant", Content: "<<<TOOL>>>\n{\"name\":\"knowledge.retrieve\",\"args\":{\"query\":" + jsonQuote(in.UserMessage) + "}}\n<<<END>>>"},
-				modelprov.ChatMessage{Role: "user", Content: "【工具观察 knowledge.retrieve】\n" + res.Output},
+				modelprov.ChatMessage{Role: "user", Content: "【工具观察 knowledge.retrieve】\n" + truncateRunes(res.Output, reactToolObservationMaxRunes)},
 			)
 		}
 	}
@@ -190,6 +193,7 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 		if obs == "" {
 			obs = coalesce(res.Error, res.Status)
 		}
+		obs = truncateRunes(obs, reactToolObservationMaxRunes)
 		messages = append(messages,
 			modelprov.ChatMessage{Role: "assistant", Content: strings.TrimSpace(text)},
 			modelprov.ChatMessage{Role: "user", Content: "【工具观察 " + displayName + " · " + res.Status + "】\n" + obs + "\n请基于观察继续：若需再调用工具请输出工具块，否则给出最终中文回答。"},

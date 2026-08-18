@@ -20,7 +20,7 @@ func (s *Server) opsOverviewLive(r *http.Request) (any, error) {
 		switch str(e["lifecycle"]) {
 		case "active", "published":
 			activeDE++
-		case "pending_approval", "draft":
+		case "pending_approval", "pending_countersign", "draft":
 			pendingDE++
 		}
 	}
@@ -85,16 +85,54 @@ func (s *Server) opsOverviewLive(r *http.Request) (any, error) {
 		}
 	}
 
+	pendingRouting, pendingKnowledge, pendingWFSkills, pendingCountersign := 0, 0, 0, 0
+	for _, p := range s.Store.RoutingPolicies {
+		if str(p["workspaceId"]) == ws && (str(p["status"]) == "pending_approval" || str(p["status"]) == "pending_countersign") {
+			pendingRouting++
+			if str(p["status"]) == "pending_countersign" {
+				pendingCountersign++
+			}
+		}
+	}
+	for _, p := range knowledgeSliceMaps(s.Store.KnowledgeExtra["packages"]) {
+		if str(p["workspaceId"]) != "" && str(p["workspaceId"]) != ws {
+			continue
+		}
+		if str(p["status"]) == "pending_approval" || str(p["status"]) == "pending_countersign" {
+			pendingKnowledge++
+			if str(p["status"]) == "pending_countersign" {
+				pendingCountersign++
+			}
+		}
+	}
+	for _, e := range s.Store.Employees {
+		if str(e["workspaceId"]) == ws && str(e["lifecycle"]) == "pending_countersign" {
+			pendingCountersign++
+		}
+	}
+	for _, sk := range s.Store.WorkflowSkills {
+		if str(sk["workspaceId"]) == ws && (str(sk["status"]) == "pending_approval" || str(sk["lifecycleStatus"]) == "pending_approval") {
+			pendingWFSkills++
+		}
+	}
+
 	return map[string]any{
-		"workspaceId": ws,
-		"generatedAt": time.Now().UTC().Format(time.RFC3339),
-		"source":      "live-aggregate",
+		"workspaceId":      ws,
+		"generatedAt":      time.Now().UTC().Format(time.RFC3339),
+		"source":           "live-aggregate",
+		"instanceId":       instanceID(),
+		"replicaRole":      replicaRole(),
 		"digitalEmployees": map[string]any{"active": activeDE, "pending": pendingDE},
 		"tasks":            map[string]any{"open": openTasks, "risk": riskTasks},
 		"channels":         map[string]any{"deadLetters": dlq},
-		"governance":       map[string]any{"pendingApprovals": pendingApprovals, "pendingBackups": pendingBackups},
-		"usage":            map[string]any{"recentUnits": usageUnits},
-		"pending":          pending,
+		"governance": map[string]any{
+			"pendingApprovals": pendingApprovals, "pendingBackups": pendingBackups,
+			"pendingEmployeeReleases": pendingDE, "pendingRouting": pendingRouting,
+			"pendingKnowledge": pendingKnowledge, "pendingWorkflowSkills": pendingWFSkills,
+			"pendingCountersign": pendingCountersign,
+		},
+		"usage":   map[string]any{"recentUnits": usageUnits},
+		"pending": pending,
 		"health": map[string]any{
 			"postgres":     s.PG != nil,
 			"redis":        s.Cache != nil && s.Cache.Available(),

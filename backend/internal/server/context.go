@@ -47,8 +47,15 @@ func workspaceFrom(ctx context.Context) *WorkspaceCtx {
 
 func (s *Server) requireAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" ||
-			r.URL.Path == "/v1/evaluate" ||
+		if r.URL.Path == "/healthz" || r.URL.Path == "/readyz" || r.URL.Path == "/metrics" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if replicaStandby() && !replicaWriteAllowedMethod(r.Method) {
+			writeErr(w, apperr.Unavailable(apperr.ReplicaStandby, "当前实例为 standby，拒绝写入"))
+			return
+		}
+		if r.URL.Path == "/v1/evaluate" ||
 			r.URL.Path == "/api/auth/login" ||
 			r.URL.Path == "/api/auth/oidc/login" || r.URL.Path == "/api/auth/oidc/callback" ||
 			strings.HasPrefix(r.URL.Path, "/api/share/") ||
@@ -67,8 +74,12 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		token := strings.TrimSpace(strings.TrimPrefix(h, "Bearer"))
 		token = strings.TrimSpace(strings.TrimPrefix(token, "bearer"))
 
-		if banMockToken() && strings.HasPrefix(token, "mock-") {
-			writeErr(w, apperr.UnauthorizedErr("生产环境禁止使用 mock token"))
+		if hasMockIdentityHeaders(r) && !allowMockIdentity() {
+			writeErr(w, apperr.New(apperr.IdentityMockForbidden, 401, "生产环境禁止使用 mock 身份头"))
+			return
+		}
+		if strings.HasPrefix(token, "mock-") && !allowMockIdentity() {
+			writeErr(w, apperr.New(apperr.IdentityMockForbidden, 401, "生产环境禁止使用 mock token"))
 			return
 		}
 
@@ -121,6 +132,59 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 func banMockToken() bool {
 	v := strings.TrimSpace(os.Getenv("DE_BAN_MOCK_TOKEN"))
 	return v == "1" || strings.EqualFold(v, "true")
+}
+
+func envFlagTrue(key string) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
+func envFlagFalse(key string) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	return v == "0" || strings.EqualFold(v, "false")
+}
+
+func productionLikeEnv() bool {
+	if banMockToken() {
+		return true
+	}
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("DE_ENV")))
+	if env == "" {
+		env = strings.ToLower(strings.TrimSpace(os.Getenv("GO_ENV")))
+	}
+	switch env {
+	case "production", "prod", "staging":
+		return true
+	default:
+		return false
+	}
+}
+
+// allowMockIdentity 仅本地/联调可伪造身份。生产信号：DE_BAN_MOCK_TOKEN、DE_ENV=production|staging。
+// 显式 DE_ALLOW_MOCK_IDENTITY=true 作为逃生舱。
+func allowMockIdentity() bool {
+	if envFlagTrue("DE_ALLOW_MOCK_IDENTITY") {
+		return true
+	}
+	if envFlagFalse("DE_ALLOW_MOCK_IDENTITY") {
+		return false
+	}
+	if productionLikeEnv() {
+		return false
+	}
+	return true
+}
+
+func hasMockIdentityHeaders(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	for _, h := range []string{"x-mock-role", "x-mock-user-id", "x-mock-actor", "x-mock-permissions"} {
+		if strings.TrimSpace(r.Header.Get(h)) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveWorkspaceCtx picks an allowed workspace from membership.

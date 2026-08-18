@@ -208,10 +208,10 @@ func (s *Server) writeTaskWorkingMemoryLocked(task map[string]any, id *auth.Iden
 	_, _ = s.ingestRuntimeMemoryLocked(runtimeMemoryInput{
 		WorkspaceID: str(task["workspaceId"]), OwnerID: coalesce(str(task["ownerId"]), id.ID), OwnerName: id.Name,
 		DigitalEmployeeID: str(task["digitalEmployeeId"]),
-		Title: title, Content: content,
+		Title:             title, Content: content,
 		SourceType: "task", SourceID: str(task["id"]),
 		CorrelationID: "corr_task_" + str(task["id"]),
-		Layer: "working", Scope: "team", Confidence: 0.9,
+		Layer:         "working", Scope: "team", Confidence: 0.9,
 	})
 	go s.persistMemory()
 }
@@ -462,8 +462,15 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 			if err := validateEmployeeReleaseGates(emp); err != nil {
 				return nil, err
 			}
-			// 上岗已改为条件满足后直接生效，不再走「提交人/批准人」职责分离。
 			now := time.Now().UTC().Format(time.RFC3339)
+			if productionLikeEnv() {
+				emp["lifecycle"] = "pending_approval"
+				emp["release"] = map[string]any{
+					"status": "pending_approval", "requestedAt": now,
+					"requestedBy": id.Name, "requestedById": id.ID,
+				}
+				break
+			}
 			emp["lifecycle"] = "active"
 			emp["release"] = map[string]any{
 				"status": "released", "releasedAt": now,
@@ -474,12 +481,23 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 		target := str(body["lifecycle"])
 		rel, _ := emp["release"].(map[string]any)
 		if target == "active" {
-			if rel != nil && str(rel["status"]) == "pending_approval" {
-				// 兼容历史待审批记录：确认即可上岗，不再要求双重审批。
+			if rel != nil && (str(rel["status"]) == "pending_approval" || str(rel["status"]) == "pending_countersign") {
+				if err := requireProductionDualApproval(str(rel["requestedById"]), str(rel["requestedBy"]), id, "上岗"); err != nil {
+					return nil, err
+				}
+				if hold, err := maybeHoldForCountersign(rel, id, str(emp["risk"]), "上岗"); err != nil {
+					return nil, err
+				} else if hold {
+					emp["lifecycle"] = "pending_countersign"
+					emp["release"] = rel
+					break
+				}
 				emp["release"] = map[string]any{
 					"status": "released", "releasedAt": time.Now().UTC().Format(time.RFC3339),
 					"requestedBy": rel["requestedBy"], "requestedById": rel["requestedById"],
 					"approver": id.Name, "approverId": id.ID,
+					"firstApprover": rel["firstApprover"], "firstApproverId": rel["firstApproverId"],
+					"countersigner": rel["countersigner"], "countersignerId": rel["countersignerId"],
 				}
 			} else if rel == nil || str(rel["status"]) != "released" {
 				return nil, apperr.BadReq(apperr.DigitalEmployeePublish, "须先完成评测并申请上岗")
@@ -501,24 +519,53 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 			return nil, err
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
+		if productionLikeEnv() {
+			emp["lifecycle"] = "pending_approval"
+			emp["release"] = map[string]any{
+				"status": "pending_approval", "requestedAt": now,
+				"requestedBy": id.Name, "requestedById": id.ID,
+			}
+			break
+		}
 		emp["lifecycle"] = "active"
 		emp["release"] = map[string]any{
 			"status": "released", "releasedAt": now,
 			"requestedBy": id.Name, "requestedById": id.ID,
 		}
 	case "approve":
-		// 兼容旧「上岗审批」入口：确认即可上岗，不再做提交人/批准人分离。
 		rel, _ := emp["release"].(map[string]any)
 		requestedBy, requestedById := "", ""
 		if rel != nil {
 			requestedBy = str(rel["requestedBy"])
 			requestedById = str(rel["requestedById"])
 		}
+		if requestedById == "" {
+			requestedById = str(emp["ownerId"])
+		}
+		if requestedBy == "" {
+			requestedBy = str(emp["owner"])
+		}
+		if err := requireProductionDualApproval(requestedById, requestedBy, id, "上岗"); err != nil {
+			return nil, err
+		}
+		relMap := rel
+		if relMap == nil {
+			relMap = map[string]any{"requestedBy": requestedBy, "requestedById": requestedById}
+		}
+		if hold, err := maybeHoldForCountersign(relMap, id, str(emp["risk"]), "上岗"); err != nil {
+			return nil, err
+		} else if hold {
+			emp["lifecycle"] = "pending_countersign"
+			emp["release"] = relMap
+			break
+		}
 		emp["lifecycle"] = "active"
 		emp["release"] = map[string]any{
 			"status": "released", "releasedAt": time.Now().UTC().Format(time.RFC3339),
 			"requestedBy": requestedBy, "requestedById": requestedById,
 			"approver": id.Name, "approverId": id.ID,
+			"firstApprover": relMap["firstApprover"], "firstApproverId": relMap["firstApproverId"],
+			"countersigner": relMap["countersigner"], "countersignerId": relMap["countersignerId"],
 		}
 	case "reject":
 		if str(emp["ownerId"]) == id.ID {
@@ -605,8 +652,8 @@ func (s *Server) adoptTemplate(r *http.Request) (any, error) {
 		"lifecycle": "draft", "risk": tpl["risk"], "responsibilities": tpl["responsibilities"],
 		"prohibitedActions": tpl["prohibitedActions"], "capabilities": tpl["capabilities"],
 		"memoryPolicy": tpl["memoryPolicy"],
-		"runtime": map[string]any{"calls24h": 0, "successRate": 0, "p95Ms": 0, "costToday": 0, "handoffs24h": 0, "anomalies": 0},
-		"evaluation": map[string]any{"status": "not_started"}, "release": map[string]any{"status": "not_released"},
+		"runtime":      map[string]any{"calls24h": 0, "successRate": 0, "p95Ms": 0, "costToday": 0, "handoffs24h": 0, "anomalies": 0},
+		"evaluation":   map[string]any{"status": "not_started"}, "release": map[string]any{"status": "not_released"},
 		"templateId": tid, "templateVersion": tpl["version"], "updatedAt": time.Now().UTC().Format(time.RFC3339),
 	}
 	s.Store.Employees = append([]map[string]any{emp}, s.Store.Employees...)
@@ -735,7 +782,7 @@ func (s *Server) createSession(r *http.Request) (any, error) {
 		"digitalEmployeeId": deID, "digitalEmployeeName": deName,
 		"conversationId": convID, "status": "active", "modelId": modelID,
 		"sessionMode": sessionModeInvestigate, "riskLevel": "medium",
-		"handoff": map[string]any{"active": false},
+		"handoff":   map[string]any{"active": false},
 		"createdAt": now, "updatedAt": now, "lastMessageAt": now,
 	}
 	defaultGovernanceOnCreate(session)

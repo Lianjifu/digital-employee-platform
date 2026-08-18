@@ -1,9 +1,9 @@
-.PHONY: run test tidy build compose-up compose-up-full compose-up-temporal compose-up-oidc compose-up-authentik compose-up-kafka compose-up-mtls compose-up-spiffe compose-up-coarse compose-up-milvus compose-up-opa compose-up-search compose-up-obs compose-up-staging compose-down compose-ps compose-logs infra-env smoke smoke-coarse test-python runtime rag skill de-workflow docker-engine buf-generate worker certs certs-rotate run-sys run-collab run-cap run-workflow
+.PHONY: run test tidy build compose-up compose-up-full compose-up-temporal compose-up-oidc compose-up-authentik compose-up-kafka compose-up-mtls compose-up-spiffe compose-up-coarse compose-up-milvus compose-up-opa compose-up-search compose-up-obs compose-up-staging compose-down compose-ps compose-logs infra-env smoke smoke-coarse test-python runtime rag skill de-workflow docker-engine buf-generate buf-lint worker certs certs-rotate run-sys run-collab run-cap run-workflow
 
 
 export DE_DATABASE_URL ?= postgres://de:de@127.0.0.1:5432/digital_employee?sslmode=disable
 export DE_REDIS_URL ?= redis://127.0.0.1:6379/0
-export PATH := /opt/homebrew/bin:$(PATH)
+export PATH := /opt/homebrew/bin:$(HOME)/go/bin:$(PATH)
 
 # Prefer backend/.tools/go when present (toolchain bootstrap; not a source tree).
 GO ?= $(shell if [ -x "$(CURDIR)/.tools/go/bin/go" ]; then echo "$(CURDIR)/.tools/go/bin/go"; else echo go; fi)
@@ -174,6 +174,10 @@ buf-generate:
 	@command -v protoc-gen-connect-go >/dev/null || $(GO) install connectrpc.com/connect/cmd/protoc-gen-connect-go@v1.17.0
 	PATH="$(HOME)/go/bin:$(PATH)" buf generate
 
+buf-lint:
+	@command -v buf >/dev/null || { echo "install buf CLI into PATH"; exit 1; }
+	buf lint
+
 certs:
 	@bash deploy/certs/generate.sh
 
@@ -219,3 +223,4 @@ smoke smoke-coarse:
 test-python:
 	python3 runtimes/de_rag/test_vector.py
 	python3 runtimes/de_skill_runtime/test_runtoken.py
+	python3 runtimes/de_agent_runtime/test_run.py

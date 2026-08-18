@@ -481,7 +481,6 @@ export const CHANNEL_NAME_ALIASES: Record<string, string> = {
   企业微信: '企业微信',
   Web: 'Web',
   飞书: '飞书',
-  邮件: '邮件',
   事件中心: '飞书',
 };
 

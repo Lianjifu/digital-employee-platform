@@ -124,7 +124,7 @@ const NODE_DESCS: Record<WorkflowNodeKind, string> = {
   decision: '由数字工作伙伴分析上下文并生成处置决策', condition: '基于表达式判断后续路径', approval: '按审批人、超时与签名规则复核', policy: '校验风险等级、权限和变更策略',
   branch: '按条件选择唯一处置路径', parallel: '并发执行多个独立步骤并汇聚',
   execute: '调用已纳管 Skill 完成受控处置动作', http: '调用企业内部或第三方 API', mcp: '调用受控 MCP 工具', task: '创建人工处置任务并回传结果',
-  retry: '按退避策略自动重试可恢复失败', compensate: '执行补偿动作或回滚变更', audit: '写入可追溯的审计证据', notify: '通过飞书、企微、短信等通知结果',
+  retry: '按退避策略自动重试可恢复失败', compensate: '执行补偿动作或回滚变更', audit: '写入可追溯的审计证据', notify: '通过飞书、企微、钉钉等通知结果',
 };
 
 type NodeLibraryCategory = 'trigger' | 'context' | 'decision' | 'action' | 'governance' | 'reliability';

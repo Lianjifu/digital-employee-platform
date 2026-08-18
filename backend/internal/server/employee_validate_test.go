@@ -42,7 +42,7 @@ func TestEmployeeEvaluateIncomplete(t *testing.T) {
 
 func TestValidateEmployeeConfigurationBody(t *testing.T) {
 	err := validateEmployeeConfigurationBody(map[string]any{
-		"profile": map[string]any{"name": "n", "role": "r", "department": "d"},
+		"profile":      map[string]any{"name": "n", "role": "r", "department": "d"},
 		"capabilities": map[string]any{"model": "m1"},
 		"boundary": map[string]any{
 			"responsibilities": []any{"值班"},

@@ -21,8 +21,9 @@ coverage/
 !.env.staging
 *.local
 
-# Local Go binaries
+# Local Go binaries and compile cache
 backend/bin/
+.gocache/
 
 # Operating system and editor files
 .DS_Store

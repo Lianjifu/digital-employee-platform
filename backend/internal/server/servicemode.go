@@ -89,7 +89,7 @@ func ownerForAPI(path string) ServiceMode {
 		"/api/digital-employee-capability-catalog",
 		"/api/tasks", "/api/agents",
 		"/api/sessions", "/api/slash-commands", "/api/conversations", "/api/copilot", "/api/actions",
-		"/api/share", "/api/attachments"):
+		"/api/share", "/api/attachments", "/api/internal/channel-sessions"):
 		return ModeCollab
 
 	case matchPref(path,
@@ -103,7 +103,7 @@ func ownerForAPI(path string) ServiceMode {
 		"/api/skills", "/api/skill-artifacts", "/api/skill-integrations", "/api/mcp-connections", "/api/tools",
 		"/api/memory",
 		"/api/channel-control", "/api/channel-templates", "/api/channel-blacklist", "/api/channels",
-		"/api/channel"):
+		"/api/channel", "/api/internal/skill-catalog"):
 		return ModeCap
 
 	case matchPref(path,

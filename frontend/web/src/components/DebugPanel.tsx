@@ -9,10 +9,12 @@ import { Badge, Button } from '@de/web-ui';
 import {
   X, Bug, Receipt, Cpu, Wrench, Database, Activity, Copy, CheckCircle2, AlertCircle,
   Sparkles, ChevronRight, ChevronDown, ShieldCheck, ShieldAlert, FileText, ListChecks, Lock,
-  Search, Filter, Download, RefreshCw, Clock, Hash, Zap, Server,
+  Search, Filter, Download, RefreshCw, Clock, Hash, Zap, Server, History,
   Box, Layers, AlertOctagon, FileDown, TrendingUp, Activity as Pulse,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
+import { getApiClient } from '@de/web-api';
+import type { ReplayTurnResponse } from '@de/web-types';
 import type { ChatMessageEx, ChatSession, ToolCall, Citation } from '@/hooks/types';
 
 interface AgentMetaDebug {
@@ -82,6 +84,8 @@ export function DebugPanel({ open, onClose, session, agentMeta }: Props) {
   const [filterCorr, setFilterCorr] = useState<string>('all');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [replayCorr, setReplayCorr] = useState<string | null>(null);
+  const [replayState, setReplayState] = useState<{ loading: boolean; error?: string; data?: ReplayTurnResponse }>({ loading: false });
 
   // Esc 关闭
   useEffect(() => {
@@ -105,6 +109,22 @@ export function DebugPanel({ open, onClose, session, agentMeta }: Props) {
     setActiveGroup(groupKey);
     setActiveTab(tabKey);
   }, []);
+
+  const runReplay = useCallback(async (corr: string) => {
+    const conversationId = session?.conversationId || session?.id;
+    if (!conversationId || !corr) return;
+    setReplayCorr(corr);
+    setReplayState({ loading: true });
+    selectTab('compliance', 'audit');
+    try {
+      const data = await getApiClient().request<ReplayTurnResponse>(
+        `/api/copilot/conversations/${encodeURIComponent(conversationId)}/turns/${encodeURIComponent(corr)}/replay`,
+      );
+      setReplayState({ loading: false, data });
+    } catch (err) {
+      setReplayState({ loading: false, error: err instanceof Error ? err.message : '复盘失败' });
+    }
+  }, [session, selectTab]);
 
   // 全部 message 列表（受搜索 + correlationId 过滤）
   const allMessages = useMemo(() => session?.messages ?? [], [session]);
@@ -278,6 +298,17 @@ export function DebugPanel({ open, onClose, session, agentMeta }: Props) {
             <option value="all">全部 corr ({corrIds.length})</option>
             {corrIds.map((c) => <option key={c} value={c}>{c.slice(0, 16)}</option>)}
           </select>
+          {filterCorr !== 'all' && (
+            <button
+              onClick={() => { void runReplay(filterCorr); }}
+              disabled={replayState.loading}
+              className="inline-flex h-8 items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 text-[11px] text-[var(--text-secondary)] hover:border-[var(--brand)] hover:text-[var(--text)] disabled:opacity-50"
+              title="按 correlationId 只读复盘，不会再调用模型"
+            >
+              <History className="h-3 w-3" />
+              {replayState.loading && replayCorr === filterCorr ? '复盘中' : '复盘本回合'}
+            </button>
+          )}
           {(searchQ || filterCorr !== 'all') && (
             <button
               onClick={() => { setSearchQ(''); setFilterCorr('all'); }}
@@ -403,7 +434,13 @@ export function DebugPanel({ open, onClose, session, agentMeta }: Props) {
                 <ApprovalView items={allApprovals} />
               )}
               {activeTab === 'audit' && (
-                <AuditView session={session} messages={matchedMessages} events={events} />
+                <AuditView
+                  session={session}
+                  messages={matchedMessages}
+                  replayCorr={replayCorr}
+                  replayState={replayState}
+                  onReplay={(corr) => { void runReplay(corr); }}
+                />
               )}
               {activeTab === 'logs' && (
                 <LogsView events={events} />
@@ -820,7 +857,15 @@ function ApprovalView({ items }: { items: ChatMessageEx[] }) {
   );
 }
 
-function AuditView({ session, messages, events }: { session: ChatSession | undefined; messages: any[]; events: any[] }) {
+function AuditView({
+  session, messages, replayCorr, replayState, onReplay,
+}: {
+  session: ChatSession | undefined;
+  messages: ChatMessageEx[];
+  replayCorr: string | null;
+  replayState: { loading: boolean; error?: string; data?: ReplayTurnResponse };
+  onReplay: (corr: string) => void;
+}) {
   return (
     <div className="space-y-2">
       {session && (
@@ -836,6 +881,26 @@ function AuditView({ session, messages, events }: { session: ChatSession | undef
             <div>owner: {session.ownerName ?? 'u1'}</div>
             <div className="col-span-2">createdAt: {new Date(session.createdAt).toISOString()}</div>
           </div>
+        </div>
+      )}
+      {(replayState.loading || replayState.error || replayState.data) && (
+        <div className="rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] p-2.5 text-[11px]">
+          <div className="flex items-center gap-1.5 mb-1.5">
+            <History className="h-3 w-3 text-[var(--brand)]" />
+            <span className="font-semibold">回合复盘</span>
+            <span className="ml-auto font-mono text-[10px] text-[var(--text-muted)]">{replayCorr?.slice(0, 16) ?? '—'}</span>
+          </div>
+          {replayState.loading && <div className="text-[10px] text-[var(--text-muted)]">正在读取快照，不会调用模型。</div>}
+          {replayState.error && <div className="text-[10px] text-[var(--danger)]">{replayState.error}</div>}
+          {replayState.data && (
+            <div className="space-y-1 text-[10px] font-mono text-[var(--text-muted)]">
+              <div>snapshotId: {replayState.data.snapshot?.id ?? '—'}</div>
+              <div>sessionMode: {replayState.data.snapshot?.sessionMode ?? '—'}</div>
+              <div>historyTurns: {replayState.data.snapshot?.historyTurns ?? 0} · ragHits: {replayState.data.snapshot?.ragHits ?? 0}</div>
+              <div>tools: {(replayState.data.snapshot?.toolRegistry ?? []).join(', ') || '—'}</div>
+              <div>events: {(replayState.data.events ?? []).map((e) => e.type).join(' → ') || '—'}</div>
+            </div>
+          )}
         </div>
       )}
       {messages.map((m) => (
@@ -854,8 +919,18 @@ function AuditView({ session, messages, events }: { session: ChatSession | undef
             <div>cache: {m.metrics?.cacheHits ?? 0}</div>
             <div>model: {m.metrics?.model ?? '—'}</div>
             <div>provider: {m.metrics?.provider ?? '—'}</div>
-            <div>feedback: {m.feedback?.kind ?? '—'}</div>
+            <div>snapshot: {m.metrics?.snapshotId?.slice(0, 12) ?? '—'}</div>
           </div>
+          {m.correlationId && m.role === 'assistant' && (
+            <button
+              type="button"
+              onClick={() => onReplay(m.correlationId!)}
+              disabled={replayState.loading}
+              className="mt-1.5 inline-flex items-center gap-1 rounded border border-[var(--border)] px-1.5 py-0.5 text-[10px] text-[var(--text-secondary)] hover:border-[var(--brand)] hover:text-[var(--text)] disabled:opacity-50"
+            >
+              <History className="h-3 w-3" />复盘本回合
+            </button>
+          )}
           {m.safety && (
             <div className="mt-1.5 pt-1.5 border-t border-[var(--border)] text-[10px] flex items-center gap-1.5">
               <ShieldAlert className="h-3 w-3 text-[var(--warning)]" />

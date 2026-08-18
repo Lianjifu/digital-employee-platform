@@ -8,6 +8,7 @@ import (
 
 	"github.com/digital-employee-platform/backend/internal/auth"
 	"github.com/digital-employee-platform/backend/internal/policy"
+	"github.com/digital-employee-platform/backend/pkg/contract"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
@@ -59,11 +60,11 @@ func (s *Server) createWorkspace(r *http.Request) (any, error) {
 		s.Store.Quotas[wsID] = cp
 	} else {
 		s.Store.Quotas[wsID] = map[string]any{
-			"seats": map[string]any{"used": 1, "limit": 50},
-			"agents": map[string]any{"used": 0, "limit": 20},
-			"tokens": map[string]any{"used": 0, "limit": 1000000},
+			"seats":       map[string]any{"used": 1, "limit": 50},
+			"agents":      map[string]any{"used": 0, "limit": 20},
+			"tokens":      map[string]any{"used": 0, "limit": 1000000},
 			"concurrency": map[string]any{"used": 0, "limit": 10},
-			"budgetUsd": map[string]any{"used": 0, "limit": 5000},
+			"budgetUsd":   map[string]any{"used": 0, "limit": 5000},
 		}
 	}
 	s.Store.ActorExtraWorkspaces[id.ID] = append(s.Store.ActorExtraWorkspaces[id.ID], wsID)
@@ -374,7 +375,7 @@ func (s *Server) ztOverview(r *http.Request) (any, error) {
 		"eventCount": len(s.Store.ZTEvents), "activeTempAuth": activeTemp,
 		// FE-compatible aliases (derived from events / policies)
 		"policies": enabled, "blocked": blocked, "approvals": approvals, "masked": masked,
-		"risk": map[bool]string{true: "attention", false: "normal"}[blocked > 0 || approvals > 0],
+		"risk":      map[bool]string{true: "attention", false: "normal"}[blocked > 0 || approvals > 0],
 		"updatedAt": time.Now().UTC().Format(time.RFC3339),
 	}, nil
 }
@@ -460,6 +461,20 @@ func (s *Server) evaluateZeroTrust(id *auth.Identity, resource, action, classifi
 	}
 	if id != nil && id.Role == "user" && resource == "memory" && action == "write" {
 		decision, reason, policyID = "deny", "普通用户不能修改记忆治理策略", "zt-memory-governance"
+	}
+	if resource == "session" && action == "write" {
+		for _, p := range s.Store.ZTPolicies {
+			if p["enabled"] != true {
+				continue
+			}
+			if str(p["resource"]) != "session" || str(p["action"]) != "write" {
+				continue
+			}
+			if str(p["decision"]) != contract.PolicyDeny {
+				continue
+			}
+			decision, reason, policyID = contract.PolicyDeny, coalesce(str(p["reason"]), coalesce(str(p["condition"]), "零信任拒绝会话写入")), str(p["id"])
+		}
 	}
 	// temp auth override
 	now := time.Now()
@@ -741,7 +756,7 @@ func (s *Server) auditExport(r *http.Request) (any, error) {
 	s.Store.AppendAudit(ws, id.Name, "登记导出脱敏审计证据", "共 "+itoa(count)+" 条记录", "success", "")
 	return map[string]any{
 		"id": s.Store.ID("export"), "status": "registered",
-		"filename": "audit-evidence-" + time.Now().UTC().Format("2006-01-02") + ".zip",
+		"filename":    "audit-evidence-" + time.Now().UTC().Format("2006-01-02") + ".zip",
 		"recordCount": count, "masked": true,
 		"registered": true, "downloadAvailable": false,
 	}, nil

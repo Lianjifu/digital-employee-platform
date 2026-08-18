@@ -5,30 +5,21 @@ import (
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
+	"github.com/digital-employee-platform/backend/pkg/contract"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
 const (
-	sessionModeInvestigate = "investigate"
-	sessionModeExecute     = "execute"
+	sessionModeInvestigate = contract.SessionModeInvestigate
+	sessionModeExecute     = contract.SessionModeExecute
 )
 
 func normalizeSessionMode(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case sessionModeExecute, "exec", "controlled":
-		return sessionModeExecute
-	default:
-		return sessionModeInvestigate
-	}
+	return contract.ParseSessionMode(v)
 }
 
 func normalizeRiskLevelSession(v string) string {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "high", "medium", "low":
-		return strings.ToLower(strings.TrimSpace(v))
-	default:
-		return "medium"
-	}
+	return contract.ParseRiskLevel(v)
 }
 
 func sessionHandoffActive(sess map[string]any) bool {
@@ -60,7 +51,7 @@ func assertSessionWritableLocked(sess map[string]any) error {
 	}
 	st := str(sess["status"])
 	if st == "closed" {
-		return apperr.Forbidden(apperr.RoleForbidden, "会话已结案，仅可查看")
+		return apperr.Forbidden(apperr.SessionClosed, "会话已结案，仅可查看")
 	}
 	if sessionHandoffActive(sess) {
 		owner := ""
@@ -71,7 +62,7 @@ func assertSessionWritableLocked(sess map[string]any) error {
 		if owner != "" {
 			msg += "（接管人：" + owner + "）"
 		}
-		return apperr.Forbidden(apperr.RoleForbidden, msg)
+		return apperr.Forbidden(apperr.SessionHandoff, msg)
 	}
 	return nil
 }

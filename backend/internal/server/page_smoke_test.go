@@ -89,7 +89,13 @@ func TestPageSmokeGETs(t *testing.T) {
 }
 
 func TestAcknowledgeAndTransition(t *testing.T) {
-	h := server.New(store.New()).Handler()
+	st := store.New()
+	st.Lock()
+	st.HomeAlerts = []map[string]any{
+		{"id": "alert-1", "workspaceId": "w1", "level": "P1", "title": "缓存延迟", "acknowledged": false},
+	}
+	st.Unlock()
+	h := server.New(st).Handler()
 
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/home/alerts/alert-1/acknowledge", nil)

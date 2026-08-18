@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	runtimev1 "github.com/digital-employee-platform/backend/gen/de/runtime/v1"
+	"github.com/digital-employee-platform/backend/pkg/contract"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
@@ -65,6 +67,55 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		writeConnect(w, map[string]any{
 			"output": out, "graph": "minimal", "correlationId": corr, "tokens": len([]rune(out)),
 		}, nil)
+	case "de.runtime.v1.RuntimeService/Run":
+		runReq := &runtimev1.RunRequest{
+			Input:        coalesce(str(body["input"]), str(body["prompt"])),
+			ModelId:      coalesce(str(body["modelId"]), str(body["model"])),
+			Envelope:     envelopeFromRunJSON(body),
+			Snapshot:     snapshotFromRunJSON(body),
+			LoopMode:     contract.LoopModeToProto(coalesce(str(body["loopMode"]), str(body["loop_mode"]))),
+			EnabledTools: stringSlice(body["enabledTools"]),
+			MaxSteps:     int32(intFrom(body["maxSteps"])),
+		}
+		if runReq.Envelope != nil && runReq.Envelope.CorrelationId == "" {
+			runReq.Envelope.CorrelationId = corr
+		}
+		var events []map[string]any
+		emit := func(typ, stage string, extra map[string]any) {
+			ev := map[string]any{"type": typ, "stage": stage, "correlationId": corr}
+			for k, v := range extra {
+				ev[k] = v
+			}
+			events = append(events, ev)
+		}
+		in := s.reactInputFromRunRequest(r, runReq, emit)
+		if in.CorrelationID == "" {
+			in.CorrelationID = corr
+		}
+		out := s.runRuntimeTurn(r.Context(), in)
+		if out.Err != nil {
+			writeErr(w, out.Err)
+			return
+		}
+		writeConnect(w, map[string]any{
+			"type": "done", "text": out.Text, "correlationId": corr,
+			"snapshotId":  coalesce(runReq.GetSnapshot().GetId(), str(body["snapshotId"])),
+			"runtimeMode": runtimeMode(),
+			"mode":        out.Mode,
+			"events":      events,
+			"replay":      false,
+		}, nil)
+	case "de.collab.v1.CollabService/ReplayTurn":
+		cid := coalesce(str(body["conversationId"]), str(body["conversation_id"]))
+		corr := coalesce(str(body["correlationId"]), str(body["correlation_id"]))
+		rec := s.lookupContextSnapshot(s.workspaceID(r), cid, corr)
+		if rec == nil {
+			writeErr(w, apperr.NotFoundErr(apperr.ReplayNotFound, "回合快照不存在"))
+			return
+		}
+		writeConnect(w, map[string]any{
+			"snapshot": rec, "events": rec["events"], "correlationId": corr, "replay": true,
+		}, nil)
 	case "de.employee.v1.EmployeeService/ResolveActive":
 		data, err := s.resolveActiveEmployee(r, coalesce(str(body["digitalEmployeeId"]), str(body["digital_employee_id"])))
 		writeConnect(w, data, err)
@@ -108,7 +159,7 @@ func (s *Server) resolveActiveEmployee(r *http.Request, deID string) (any, error
 			"description": e["description"], "responsibilities": e["responsibilities"],
 			"prohibitedActions": e["prohibitedActions"], "capabilities": e["capabilities"],
 			"boundaryPolicy": e["boundaryPolicy"],
-			"lifecycle": life, "active": active, "reason": reason,
+			"lifecycle":      life, "active": active, "reason": reason,
 		}, nil
 	}
 	return map[string]any{"id": deID, "active": false, "reason": "未找到数字工作伙伴"}, nil
@@ -123,6 +174,7 @@ func (s *Server) retrievePublished(r *http.Request, body map[string]any, corr st
 	}
 	s.Store.RLock()
 	var results []map[string]any
+	published := 0
 	for _, d := range s.Store.KnowledgeDocs {
 		if str(d["workspaceId"]) != ws {
 			continue
@@ -130,6 +182,7 @@ func (s *Server) retrievePublished(r *http.Request, body map[string]any, corr st
 		if str(d["status"]) != "published" {
 			continue
 		}
+		published++
 		if query == "" || strings.Contains(str(d["title"]), query) {
 			results = append(results, map[string]any{
 				"docId": d["id"], "title": d["title"], "score": 0.8,
@@ -139,7 +192,14 @@ func (s *Server) retrievePublished(r *http.Request, body map[string]any, corr st
 	}
 	s.Store.RUnlock()
 	s.recordUsageWS(ws, "rag", 1, corr)
-	return map[string]any{"query": query, "results": results, "backend": "published-memory", "correlationId": corr}, nil
+	fallback := map[string]any{"query": query, "results": results, "backend": "published-memory", "correlationId": corr}
+	if productionLikeEnv() && published > 0 {
+		fallback["degraded"] = true
+		fallback["backend"] = "published-memory-degraded"
+		fallback["code"] = string(apperr.RuntimeUnavailable)
+		fallback["warning"] = "向量检索不可用，已降级到已发布关键词检索"
+	}
+	return fallback, nil
 }
 
 func (s *Server) callRAGPublished(query, workspaceID, corr string) any {

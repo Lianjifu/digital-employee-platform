@@ -77,6 +77,7 @@ import { resolveHydratedMessages } from '@/features/copilot/conversation-merge';
 import { getApiClient } from '@de/web-api';
 import { deriveExpertContextOverview } from '@/features/copilot/expert-context';
 import { sessionHistoryPresentation } from '@/features/copilot/layout';
+import { COPILOT_LLM_HISTORY_TURNS, shouldShowContextWindowHint } from '@/features/copilot/context-limits';
 import { RoleReadonlyBanner } from '@/components/shared';
 import { roleCanMutate, rolePageCopy } from '@/features/role-nav/role-nav';
 import type {
@@ -1940,6 +1941,15 @@ export default function Copilot() {
                     会话受保护 · 审计已启用
                   </div>
                 </div>
+
+                {shouldShowContextWindowHint(currentSession.messages.length) && (
+                  <div
+                    className="mx-4 sm:mx-8 md:mx-12 mb-2 rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-[11px] leading-relaxed text-[var(--text-muted)]"
+                    role="status"
+                  >
+                    模型上下文仅保留最近约 {COPILOT_LLM_HISTORY_TURNS} 轮对话；更早消息仍可在列表中浏览，跨会话要点会写入工作记忆供后续检索。
+                  </div>
+                )}
 
                 <div className="copilot-message-list px-4 sm:px-8 md:px-12 py-4">
                   {currentSession.messages.map((m) => (

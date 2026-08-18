@@ -66,4 +66,3 @@ func TestChannelDLQReplay(t *testing.T) {
 		t.Fatalf("replay %d %s", rr.Code, rr.Body.String())
 	}
 }
-

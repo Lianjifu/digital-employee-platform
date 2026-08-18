@@ -106,20 +106,58 @@ func idempotencyKey(cid, clientMsgID string) string {
 	return cid + "|" + clientMsgID
 }
 
-func rememberIdempotentReply(cid, clientMsgID string, assistant map[string]any) {
+func rememberIdempotentReply(s *Server, cid, clientMsgID string, assistant map[string]any) {
 	if clientMsgID == "" {
 		return
 	}
-	streamIdempot.Store(idempotencyKey(cid, clientMsgID), assistant)
+	key := idempotencyKey(cid, clientMsgID)
+	streamIdempot.Store(key, assistant)
+	if s != nil && s.Store != nil {
+		if s.Store.CopilotIdempotency == nil {
+			s.Store.CopilotIdempotency = map[string]map[string]any{}
+		}
+		cp := map[string]any{}
+		for k, v := range assistant {
+			cp[k] = v
+		}
+		s.Store.CopilotIdempotency[key] = cp
+	}
 }
 
-func loadIdempotentReply(cid, clientMsgID string) map[string]any {
+func (s *Server) loadIdempotentReply(cid, clientMsgID string) map[string]any {
 	if clientMsgID == "" {
 		return nil
 	}
-	if v, ok := streamIdempot.Load(idempotencyKey(cid, clientMsgID)); ok {
+	key := idempotencyKey(cid, clientMsgID)
+	if v, ok := streamIdempot.Load(key); ok {
 		if m, ok := v.(map[string]any); ok {
 			return m
+		}
+	}
+	if s != nil && s.Store != nil {
+		s.Store.RLock()
+		if s.Store.CopilotIdempotency != nil {
+			if m, ok := s.Store.CopilotIdempotency[key]; ok && m != nil {
+				s.Store.RUnlock()
+				return m
+			}
+		}
+		msgs := append([]map[string]any{}, s.Store.Messages[cid]...)
+		s.Store.RUnlock()
+		for i, m := range msgs {
+			if str(m["clientMsgId"]) != clientMsgID || str(m["role"]) != "user" {
+				continue
+			}
+			for j := i + 1; j < len(msgs); j++ {
+				if str(msgs[j]["role"]) == "assistant" {
+					cp := map[string]any{}
+					for k, v := range msgs[j] {
+						cp[k] = v
+					}
+					streamIdempot.Store(key, cp)
+					return cp
+				}
+			}
 		}
 	}
 	return nil

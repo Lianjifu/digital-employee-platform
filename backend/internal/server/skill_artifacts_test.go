@@ -10,9 +10,9 @@ import (
 func TestNormalizeDocxTitle(t *testing.T) {
 	cases := map[string]string{
 		"skill_docx__输出招聘模板_docx": "输出招聘模板",
-		"《招聘岗位模板》":               "招聘岗位模板",
-		"abc123-招聘岗位模板.docx":     "招聘岗位模板",
-		"docx":                   "生成文档",
+		"《招聘岗位模板》":                "招聘岗位模板",
+		"abc123-招聘岗位模板.docx":      "招聘岗位模板",
+		"docx":                    "生成文档",
 	}
 	for in, want := range cases {
 		if got := normalizeDocxTitle(in); got != want {

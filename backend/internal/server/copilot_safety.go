@@ -23,10 +23,10 @@ func contentSafetyMode() string {
 }
 
 type safetyResult struct {
-	Text      string
-	Blocked   bool
-	Redacted  bool
-	Reasons   []string
+	Text     string
+	Blocked  bool
+	Redacted bool
+	Reasons  []string
 }
 
 func applyContentSafety(raw string) safetyResult {

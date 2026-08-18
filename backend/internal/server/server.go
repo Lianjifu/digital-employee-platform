@@ -41,6 +41,8 @@ type Server struct {
 	DingTalkHTTP *http.Client
 	WecomHTTP    *http.Client
 	WeixinHTTP   *http.Client
+	RuntimeHTTP  *http.Client
+	PeerHTTP     *http.Client
 }
 
 func New(st *store.Store) *Server {
@@ -71,13 +73,22 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		response.OK(w, map[string]any{"status": "ok", "service": mode.String(), "mode": string(mode)})
+		status := map[string]any{
+			"status":   "ok",
+			"service":  mode.String(),
+			"mode":     string(mode),
+			"instance": instanceID(),
+			"replica":  replicaRole(),
+		}
+		response.OK(w, status)
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		status := map[string]any{
 			"status":   "ready",
 			"service":  mode.String(),
 			"mode":     string(mode),
+			"instance": instanceID(),
+			"replica":  replicaRole(),
 			"postgres": s.PG != nil,
 			"redis":    s.Cache != nil && s.Cache.Available(),
 		}
@@ -311,6 +322,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.runKnowledgeEvaluation(r)
 
 	// Copilot — sessions / conversations / actions
+	case path == "/api/internal/channel-sessions" && method == http.MethodPost:
+		data, err = s.ensureChannelSessionAPI(r)
 	case path == "/api/sessions" && method == http.MethodGet:
 		data, err = s.listSessions(r)
 	case path == "/api/sessions" && method == http.MethodPost:
@@ -346,6 +359,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.listConversations(r)
 	case path == "/api/copilot/conversations" && method == http.MethodPost:
 		data, err = s.createConversation(r)
+	case strings.HasPrefix(path, "/api/copilot/conversations/") && strings.Contains(path, "/turns/") && strings.HasSuffix(path, "/replay") && method == http.MethodGet:
+		data, err = s.replayCopilotTurn(r)
 	case strings.HasPrefix(path, "/api/copilot/conversations/") && strings.HasSuffix(path, "/cancel") && method == http.MethodPost:
 		data, err = s.cancelCopilotTurn(r)
 	case strings.HasPrefix(path, "/api/copilot/conversations/") && strings.HasSuffix(path, "/stream") && method == http.MethodPost:
@@ -390,6 +405,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.workflowByID(r)
 
 	// Skills
+	case path == "/api/internal/skill-catalog" && method == http.MethodPost:
+		data, err = s.upsertSkillCatalogAPI(r)
 	case path == "/api/skills" && method == http.MethodGet:
 		data, err = s.listSkillsAligned(r)
 	case path == "/api/skills" && method == http.MethodPost:

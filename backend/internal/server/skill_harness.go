@@ -293,10 +293,10 @@ func (s *Server) skillWrite(sk map[string]any, call toolCallRequest, started tim
 		return toolExecResult{Status: "failed", Error: err.Error(), Output: "写入失败", DurationMs: int(time.Since(started).Milliseconds())}
 	}
 	return toolExecResult{
-		Status:    "success",
+		Status:     "success",
 		DurationMs: int(time.Since(started).Milliseconds()),
-		Output:    fmt.Sprintf("【skill.write】已写入 %s（%d bytes）\n下一步可用 action=run command=%s", rel, len(content), rel),
-		SandboxID: "skill-write:" + str(sk["id"]),
+		Output:     fmt.Sprintf("【skill.write】已写入 %s（%d bytes）\n下一步可用 action=run command=%s", rel, len(content), rel),
+		SandboxID:  "skill-write:" + str(sk["id"]),
 	}
 }
 
@@ -379,7 +379,7 @@ func (s *Server) skillRun(ctx toolRunContext, t *registeredTool, sk map[string]a
 		}
 		return toolExecResult{
 			Status: "needs_instruction", DurationMs: int(time.Since(started).Milliseconds()),
-			Error:  "command 不是可执行脚本路径",
+			Error: "command 不是可执行脚本路径",
 			Output: "【skill.run】拒绝：command 须匹配 scripts/... 或 .copilot-ws/...\n" +
 				"可用：" + coalesce(hint, "(无)") + "\n" +
 				"请先 action=open 阅读 SKILL.md，再指定脚本。勿将自然语言当作已执行成功。",

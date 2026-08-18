@@ -45,16 +45,16 @@ type toolExecResult struct {
 }
 
 type toolRunContext struct {
-	Request          *http.Request
-	WorkspaceID      string
-	OwnerID          string
-	DigitalEmployee  string
-	ConversationID   string
-	CorrelationID    string
-	UserMessage      string
-	Viewer           *auth.Identity
-	SessionMode      string
-	RiskLevel        string
+	Request         *http.Request
+	WorkspaceID     string
+	OwnerID         string
+	DigitalEmployee string
+	ConversationID  string
+	CorrelationID   string
+	UserMessage     string
+	Viewer          *auth.Identity
+	SessionMode     string
+	RiskLevel       string
 }
 
 var toolCallBlockRe = regexp.MustCompile(`(?s)<<<TOOL>>>\s*(\{.*?\})\s*<<<END>>>`)
@@ -378,8 +378,8 @@ func (s *Server) runCopilotTool(ctx toolRunContext, t *registeredTool, call tool
 		return toolExecResult{
 			Status: "unavailable", DurationMs: int(time.Since(started).Milliseconds()),
 			Permission: "unavailable",
-			Error:       "工具执行器未接入：" + t.Name,
-			Output:      "工具「" + t.Name + "」已装配但运行时执行器尚未接入（当前支持 knowledge.retrieve / memory.recall / CMDB 只读 / skill）。",
+			Error:      "工具执行器未接入：" + t.Name,
+			Output:     "工具「" + t.Name + "」已装配但运行时执行器尚未接入（当前支持 knowledge.retrieve / memory.recall / CMDB 只读 / skill）。",
 		}
 
 	default:

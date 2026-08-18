@@ -44,10 +44,10 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 		"description": meta.Description,
 		"version":     meta.Version,
 		"status":      ternary(risk == "high", "beta", "installed"),
-		"rating": 0, "installCount": 0, "riskLevel": risk,
-		"cacheable": false,
+		"rating":      0, "installCount": 0, "riskLevel": risk,
+		"cacheable":       false,
 		"lifecycleStatus": ternary(risk == "high", "pending_approval", "enabled"),
-		"source": "package", "environment": "sandbox", "classification": "internal",
+		"source":          "package", "environment": "sandbox", "classification": "internal",
 		"lastVerifiedAt": "刚刚", "team": "当前工作区",
 		"license": meta.License, "tags": meta.Tags,
 		"signed": false, "publisher": id.Name,
@@ -90,14 +90,14 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 	s.ensureSkillRuntimeLocked(item)
 	s.Store.SkillIntegrations = append([]map[string]any{{
 		"id": s.Store.ID("si"), "workspaceId": ws, "name": meta.Name, "type": "skill",
-		"skillId": skillID,
+		"skillId":     skillID,
 		"environment": "test", "status": "enabled", "owner": id.Name,
-		"endpoint": "package://" + meta.Name + "@" + meta.Version,
-		"credentialRef": "vault://skills/" + skillID + "/runtime",
+		"endpoint":       "package://" + meta.Name + "@" + meta.Version,
+		"credentialRef":  "vault://skills/" + skillID + "/runtime",
 		"lastVerifiedAt": "刚刚", "health": "healthy",
 		"discoveredCapabilities": len(meta.Scripts),
-		"writeApprovalRequired": risk == "high",
-		"allowedEgress": []string{},
+		"writeApprovalRequired":  risk == "high",
+		"allowedEgress":          []string{},
 	}}, s.Store.SkillIntegrations...)
 	s.Store.AppendAudit(ws, id.Name, "导入技能包", meta.Name+"@"+meta.Version, "success", "sha256="+meta.SHA256+";scripts="+itoaPolicy(len(meta.Scripts)))
 	s.Store.Unlock()
@@ -169,23 +169,23 @@ func (s *Server) skillPackageInfo(r *http.Request, id *auth.Identity, ws, skillI
 		md = string(mdBytes)
 	}
 	return map[string]any{
-		"skillId": skillID,
-		"name": sk["name"],
-		"version": sk["version"],
-		"hasPackage": pkgPath != "",
-		"packagePath": pkgPath,
-		"packageRoot": sk["packageRoot"],
-		"skillMdPath": sk["skillMdPath"],
-		"hasScripts": boolFrom(sk["hasScripts"]),
-		"scripts": sk["scripts"],
-		"entrypoints": sk["entrypoints"],
-		"readOnly": boolFrom(sk["readOnly"]),
+		"skillId":           skillID,
+		"name":              sk["name"],
+		"version":           sk["version"],
+		"hasPackage":        pkgPath != "",
+		"packagePath":       pkgPath,
+		"packageRoot":       sk["packageRoot"],
+		"skillMdPath":       sk["skillMdPath"],
+		"hasScripts":        boolFrom(sk["hasScripts"]),
+		"scripts":           sk["scripts"],
+		"entrypoints":       sk["entrypoints"],
+		"readOnly":          boolFrom(sk["readOnly"]),
 		"producesArtifacts": boolFrom(sk["producesArtifacts"]),
-		"packageFiles": sk["packageFiles"],
-		"packageSha256": sk["packageSha256"],
-		"packageSizeBytes": sk["packageSizeBytes"],
-		"packageFileName": sk["packageFileName"],
-		"skillMarkdown": md,
+		"packageFiles":      sk["packageFiles"],
+		"packageSha256":     sk["packageSha256"],
+		"packageSizeBytes":  sk["packageSizeBytes"],
+		"packageFileName":   sk["packageFileName"],
+		"skillMarkdown":     md,
 	}, nil
 }
 
@@ -208,14 +208,14 @@ func skillPackagePayload(sk map[string]any) map[string]any {
 		}
 	}
 	return map[string]any{
-		"packagePath": pkgPath,
-		"skillMarkdown": string(md),
-		"scripts": scripts,
-		"hasScripts": boolFrom(sk["hasScripts"]),
-		"name": str(sk["name"]),
-		"version": str(sk["version"]),
-		"entrypoints": decodeStringSlice(sk["entrypoints"]),
-		"readOnly": boolFrom(sk["readOnly"]),
+		"packagePath":       pkgPath,
+		"skillMarkdown":     string(md),
+		"scripts":           scripts,
+		"hasScripts":        boolFrom(sk["hasScripts"]),
+		"name":              str(sk["name"]),
+		"version":           str(sk["version"]),
+		"entrypoints":       decodeStringSlice(sk["entrypoints"]),
+		"readOnly":          boolFrom(sk["readOnly"]),
 		"producesArtifacts": boolFrom(sk["producesArtifacts"]),
 	}
 }

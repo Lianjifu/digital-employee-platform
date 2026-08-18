@@ -32,8 +32,8 @@ var taskRetryTotal atomic.Uint64
 var taskPersistFailTotal atomic.Uint64
 var taskVersionConflictTotal atomic.Uint64
 
-func IncTaskCreated()            { taskCreatedTotal.Add(1) }
-func IncTaskTransition()         { taskTransitionTotal.Add(1) }
+func IncTaskCreated()    { taskCreatedTotal.Add(1) }
+func IncTaskTransition() { taskTransitionTotal.Add(1) }
 func IncTaskApprove(approved bool) {
 	if approved {
 		taskApproveTotal.Add(1)
@@ -41,10 +41,10 @@ func IncTaskApprove(approved bool) {
 		taskApproveRejectTotal.Add(1)
 	}
 }
-func IncTaskTakeover()           { taskTakeoverTotal.Add(1) }
-func IncTaskRetry()              { taskRetryTotal.Add(1) }
-func IncTaskPersistFail()        { taskPersistFailTotal.Add(1) }
-func IncTaskVersionConflict()    { taskVersionConflictTotal.Add(1) }
+func IncTaskTakeover()        { taskTakeoverTotal.Add(1) }
+func IncTaskRetry()           { taskRetryTotal.Add(1) }
+func IncTaskPersistFail()     { taskPersistFailTotal.Add(1) }
+func IncTaskVersionConflict() { taskVersionConflictTotal.Add(1) }
 
 // IncModelProbe records a provider connectivity probe.
 func IncModelProbe(ok bool, latencyMS int64) {
@@ -57,9 +57,9 @@ func IncModelProbe(ok bool, latencyMS int64) {
 	}
 }
 
-func IncModelVaultError()       { modelVaultErrors.Add(1) }
-func IncModelPolicyPublish()    { modelPolicyPublishTotal.Add(1) }
-func IncModelBudgetDeny()       { modelBudgetDenies.Add(1) }
+func IncModelVaultError()    { modelVaultErrors.Add(1) }
+func IncModelPolicyPublish() { modelPolicyPublishTotal.Add(1) }
+func IncModelBudgetDeny()    { modelBudgetDenies.Add(1) }
 
 // IncCopilotStream records a completed Copilot SSE turn.
 func IncCopilotStream(ok bool) {
@@ -69,7 +69,7 @@ func IncCopilotStream(ok bool) {
 	}
 }
 
-func IncCopilotRateLimited()  { copilotRateLimited.Add(1) }
+func IncCopilotRateLimited()   { copilotRateLimited.Add(1) }
 func IncCopilotSafetyBlocked() { copilotSafetyBlocked.Add(1) }
 
 // countPendingAuthorizationsLocked returns Actions still awaiting human approval.

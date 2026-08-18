@@ -33,7 +33,7 @@ func (s *Server) skillExtraMap(key string) map[string]any {
 
 func defaultSkillPermissions(skillID string) []map[string]any {
 	roles := []struct {
-		role              string
+		role               string
 		canCall, canConfig bool
 	}{
 		{"Admin", true, true},
@@ -52,13 +52,13 @@ func defaultSkillPermissions(skillID string) []map[string]any {
 
 func defaultSkillGovernance(skillID string) map[string]any {
 	return map[string]any{
-		"skillId": skillID,
-		"secretRef": "vault://digital-employee/skills/" + skillID,
-		"allowedEgress": []string{"api.internal.example.com"},
+		"skillId":               skillID,
+		"secretRef":             "vault://digital-employee/skills/" + skillID,
+		"allowedEgress":         []string{"api.internal.example.com"},
 		"writeApprovalRequired": true,
-		"rateLimitPerMinute": 60,
+		"rateLimitPerMinute":    60,
 		"circuitBreakerEnabled": true,
-		"dataMaskingEnabled": true,
+		"dataMaskingEnabled":    true,
 	}
 }
 
@@ -103,8 +103,8 @@ func (s *Server) ensureSkillRuntimeLocked(skill map[string]any) map[string]any {
 	}
 	cfg := map[string]any{
 		"cacheable": boolFrom(skill["cacheable"]),
-		"timeout": "30",
-		"retries": "1",
+		"timeout":   "30",
+		"retries":   "1",
 	}
 	runtimes[sid] = cfg
 	return cfg
@@ -296,9 +296,9 @@ func (s *Server) bindAgentSkill(r *http.Request) (any, error) {
 		"targetType": "agent", "targetId": agentID, "targetName": agent["name"],
 		"capabilityKind": coalesce(str(sk["kind"]), "skill"), "capabilityId": skillID,
 		"pinnedVersion": coalesce(str(sk["version"]), "0.1.0"),
-		"status": "active", "createdBy": id.Name,
+		"status":        "active", "createdBy": id.Name,
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"auditId": s.Store.ID("audit"),
+		"auditId":   s.Store.ID("audit"),
 	}
 	s.Store.SkillExtra["bindings"] = append([]map[string]any{item}, bindings...)
 	s.skillImpactLocked(ws, skillID)
@@ -355,7 +355,7 @@ func (s *Server) bindWorkflowCapability(r *http.Request) (any, error) {
 		"capabilityKind": kind, "capabilityId": capID, "pinnedVersion": pinned,
 		"status": "active", "createdBy": id.Name,
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"auditId": s.Store.ID("audit"),
+		"auditId":   s.Store.ID("audit"),
 	}
 	s.Store.SkillExtra["bindings"] = append([]map[string]any{item}, bindings...)
 	s.skillImpactLocked(ws, capID)

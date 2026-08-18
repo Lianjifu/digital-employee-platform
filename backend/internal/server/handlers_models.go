@@ -219,6 +219,9 @@ func (s *Server) resolveProviderCredential(ctx context.Context, credRef string) 
 			return v
 		}
 	}
+	if productionLikeEnv() {
+		return ""
+	}
 	s.Store.RLock()
 	defer s.Store.RUnlock()
 	if s.Store.ModelSecrets != nil {
@@ -288,14 +291,14 @@ func (s *Server) createModelProviderFE(r *http.Request) (any, error) {
 	}
 	item := map[string]any{
 		"id": providerID, "workspaceId": ws, "name": name,
-		"tier": normalizeTier(coalesce(str(body["tier"]), "connectable")),
-		"protocol": coalesce(str(body["protocol"]), "openai_compatible"),
-		"baseUrl": strings.TrimSpace(str(body["baseUrl"])),
-		"apiVersion": strings.TrimSpace(str(body["apiVersion"])),
+		"tier":           normalizeTier(coalesce(str(body["tier"]), "connectable")),
+		"protocol":       coalesce(str(body["protocol"]), "openai_compatible"),
+		"baseUrl":        strings.TrimSpace(str(body["baseUrl"])),
+		"apiVersion":     strings.TrimSpace(str(body["apiVersion"])),
 		"organizationId": strings.TrimSpace(str(body["organizationId"])),
 		"deploymentName": strings.TrimSpace(str(body["deploymentName"])),
-		"note": strings.TrimSpace(str(body["note"])),
-		"cloudRegion": region, "dataResidency": residency,
+		"note":           strings.TrimSpace(str(body["note"])),
+		"cloudRegion":    region, "dataResidency": residency,
 		"status": "standby", "credentialRef": credRef, "credentialMasked": masked,
 		"models": []map[string]any{model},
 	}
@@ -880,10 +883,34 @@ func (s *Server) routingPolicyAction(r *http.Request) (any, error) {
 			s.Store.Unlock()
 			return nil, err
 		}
-		if str(p["status"]) != "ready" {
+		st := str(p["status"])
+		if st != "ready" && st != "pending_approval" && st != "pending_countersign" {
 			s.appendModelAudit(ws, id.Name, "发布路由版本", str(p["level"]), "failed", map[string]any{"reason": "草稿尚未通过校验"})
 			s.Store.Unlock()
 			return nil, apperr.BadReq(apperr.PolicyNotReady, "草稿尚未通过校验，无法发布")
+		}
+		if productionLikeEnv() && st == "ready" {
+			p["status"] = "pending_approval"
+			p["requestedBy"] = id.Name
+			p["requestedById"] = id.ID
+			p["requestedAt"] = time.Now().UTC().Format(time.RFC3339)
+			s.Store.PersistCollection("routing_policies", s.Store.RoutingPolicies)
+			s.appendModelAudit(ws, id.Name, "申请发布路由版本", str(p["level"]), "success", map[string]any{"reason": "待双人审批"})
+			s.Store.Unlock()
+			return p, nil
+		}
+		if err := requireProductionDualApproval(str(p["requestedById"]), str(p["requestedBy"]), id, "路由发布"); err != nil {
+			s.Store.Unlock()
+			return nil, err
+		}
+		if hold, herr := maybeHoldForCountersign(p, id, str(p["dataScope"]), "路由发布"); herr != nil {
+			s.Store.Unlock()
+			return nil, herr
+		} else if hold {
+			s.Store.PersistCollection("routing_policies", s.Store.RoutingPolicies)
+			s.appendModelAudit(ws, id.Name, "路由发布会签待副署", str(p["level"]), "success", map[string]any{"reason": "pending_countersign"})
+			s.Store.Unlock()
+			return p, nil
 		}
 		s.Store.Unlock()
 		if err := s.evaluateWrite(r, "model", "publish", policy.Input{ApproverID: id.ID, SubmitterID: id.ID}); err != nil && id.Role != "admin" {

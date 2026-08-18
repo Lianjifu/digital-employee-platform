@@ -1134,7 +1134,7 @@ export interface ModelGovernanceSnapshot {
 }
 
 // ============ 渠道 P10 ============
-export type ChannelKind = 'feishu' | 'wecom' | 'weixin' | 'slack' | 'dingtalk' | 'email' | 'webhook' | 'sms' | 'phone';
+export type ChannelKind = 'feishu' | 'wecom' | 'weixin' | 'slack' | 'dingtalk' | 'webhook';
 
 export interface Channel {
   id: ID;
@@ -1343,3 +1343,33 @@ export interface PageResult<T> {
   page: number;
   pageSize: number;
 }
+
+export {
+  AGENT_OS_ERROR_CODES,
+  INBOUND_CHANNEL_KINDS,
+  LOOP_MODES,
+  MEMORY_LAYERS,
+  POLICY_DECISIONS,
+  RISK_LEVELS,
+  SESSION_MODES,
+  STREAM_EVENT_TYPES,
+  isInboundChannelKind,
+  isPolicyDecision,
+  isSessionMode,
+  isStreamEventType,
+} from './agent-os';
+export type {
+  AgentOSErrorCode,
+  ContextSnapshot,
+  Envelope,
+  InboundChannelKind,
+  LoopMode,
+  MemoryLayerWire,
+  MemoryProvenance,
+  PolicyDecision,
+  ReplayTurnResponse,
+  RiskLevel,
+  SessionMode,
+  StreamEvent,
+  StreamEventType,
+} from './agent-os';

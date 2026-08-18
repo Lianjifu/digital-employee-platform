@@ -41,10 +41,53 @@ func TestAssembleCopilotChatMessages_WindowsLongHistory(t *testing.T) {
 		stored = append(stored, map[string]any{"role": "user", "content": "u" + string(rune('a'+i%26))})
 		stored = append(stored, map[string]any{"role": "assistant", "content": "a" + string(rune('a'+i%26))})
 	}
-	// 20 pairs = 40 messages; window keeps last 12
+	// 20 pairs = 40 messages; window keeps last copilotHistoryMaxMessages
 	msgs := assembleCopilotChatMessages(stored)
 	if len(msgs) != copilotHistoryMaxMessages {
 		t.Fatalf("want window %d, got %d", copilotHistoryMaxMessages, len(msgs))
+	}
+}
+
+func TestAssembleCopilotChatMessages_ToolResultInSummary(t *testing.T) {
+	stored := []map[string]any{
+		{"role": "assistant", "content": "已查询资产", "toolCalls": []map[string]any{
+			{"name": "cmdb-tool", "status": "success", "result": "prod-redis-01 · PRD-CACHE-019"},
+		}},
+		{"role": "user", "content": "刚才那个资产负责人是谁"},
+	}
+	msgs := assembleCopilotChatMessages(stored)
+	if len(msgs) != 2 {
+		t.Fatalf("got %d msgs", len(msgs))
+	}
+	if !strings.Contains(msgs[0].Content, "prod-redis-01") {
+		t.Fatalf("tool result missing from history: %#v", msgs[0])
+	}
+}
+
+func TestFilterRegistrySkipMemoryRecall(t *testing.T) {
+	reg := []registeredTool{
+		{Key: "builtin:memory.recall", Name: "memory.recall", Enabled: true},
+		{Key: "builtin:knowledge.retrieve", Name: "knowledge.retrieve", Enabled: true},
+	}
+	out := filterRegistrySkipMemoryRecall(reg, true)
+	if out[0].Enabled {
+		t.Fatal("memory.recall should be disabled when prefetched")
+	}
+	if !out[1].Enabled {
+		t.Fatal("knowledge.retrieve should stay enabled")
+	}
+}
+
+func TestShouldIngestTurnMemory(t *testing.T) {
+	if !shouldIngestTurnMemory(nil, "hi", "ok", nil) {
+		t.Fatal("first turn should ingest")
+	}
+	stored := make([]map[string]any, 7)
+	if shouldIngestTurnMemory(stored, "短", "短", nil) {
+		t.Fatal("short chitchat mid-session should skip")
+	}
+	if !shouldIngestTurnMemory(stored, "x", "y", []map[string]any{{"name": "tool"}}) {
+		t.Fatal("tool turn should ingest")
 	}
 }
 

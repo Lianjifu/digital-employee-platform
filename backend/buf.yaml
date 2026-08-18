@@ -4,6 +4,9 @@ modules:
 lint:
   use:
     - STANDARD
+  except:
+    # 流式事件与领域对象作 RPC 返回类型（Conversation / LoopEvent 等），避免 FILE breaking。
+    - RPC_RESPONSE_STANDARD_NAME
 breaking:
   use:
     - FILE

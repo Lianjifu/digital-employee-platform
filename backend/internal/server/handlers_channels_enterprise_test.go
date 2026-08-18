@@ -49,7 +49,9 @@ func TestDingtalkWecomWeixinCreateAndVerify(t *testing.T) {
 	if rr.Code != 200 {
 		t.Fatalf("dingtalk create %d %s", rr.Code, rr.Body.String())
 	}
-	var created struct{ Data map[string]any `json:"data"` }
+	var created struct {
+		Data map[string]any `json:"data"`
+	}
 	_ = json.Unmarshal(rr.Body.Bytes(), &created)
 	if strAny(created.Data["connectionMode"]) != "stream" {
 		t.Fatalf("%v", created.Data["connectionMode"])

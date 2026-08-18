@@ -43,4 +43,7 @@ func TestDurableCollectionsNonEmpty(t *testing.T) {
 	if len(DurableCollections) < 10 {
 		t.Fatalf("expected expanded durable set, got %d", len(DurableCollections))
 	}
+	if ShouldReplaceOnPersist("channel_inbound") {
+		t.Fatal("inbound must upsert, not replace")
+	}
 }

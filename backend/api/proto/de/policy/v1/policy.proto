@@ -2,6 +2,8 @@ syntax = "proto3";
 
 package de.policy.v1;
 
+import "de/common/v1/common.proto";
+
 option go_package = "github.com/digital-employee-platform/backend/gen/de/policy/v1;policyv1";
 
 service PolicyService {
@@ -34,8 +36,10 @@ message EvaluateZeroTrustRequest {
 }
 
 message ZeroTrustEvaluation {
+  // decision 保留线格式字符串（allow|mask|approval_required|deny），避免 FILE breaking。
   string decision = 1;
   string reason = 2;
   string policy_id = 3;
   string correlation_id = 4;
+  de.common.v1.PolicyDecision decision_enum = 5;
 }

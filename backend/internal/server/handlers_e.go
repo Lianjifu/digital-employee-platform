@@ -158,7 +158,7 @@ func (s *Server) requestBackup(r *http.Request) (any, error) {
 		"id": s.Store.ID("bk"), "workspaceId": s.workspaceID(r),
 		"status": "pending_approval", "requestedBy": id.Name,
 		"requestedAt": time.Now().UTC().Format(time.RFC3339),
-		"scope": coalesce(str(body["scope"]), "full"),
+		"scope":       coalesce(str(body["scope"]), "full"),
 	}
 	s.Store.Lock()
 	defer s.Store.Unlock()

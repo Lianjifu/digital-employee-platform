@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/binary"
@@ -294,6 +295,43 @@ func pkcs7Unpad(data []byte) []byte {
 	return data[:len(data)-pad]
 }
 
+// EncryptMsg builds EncodingAESKey ciphertext (tests / callback fixtures).
+func EncryptMsg(aesKey []byte, plaintext, corpID string) (string, error) {
+	if len(aesKey) < 16 {
+		return "", fmt.Errorf("aes key too short")
+	}
+	rand16 := make([]byte, 16)
+	if _, err := rand.Read(rand16); err != nil {
+		return "", err
+	}
+	buf := make([]byte, 0, 16+4+len(plaintext)+len(corpID)+aes.BlockSize)
+	buf = append(buf, rand16...)
+	lenBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(lenBuf, uint32(len(plaintext)))
+	buf = append(buf, lenBuf...)
+	buf = append(buf, []byte(plaintext)...)
+	buf = append(buf, []byte(corpID)...)
+	pad := aes.BlockSize - len(buf)%aes.BlockSize
+	for i := 0; i < pad; i++ {
+		buf = append(buf, byte(pad))
+	}
+	block, err := aes.NewCipher(aesKey)
+	if err != nil {
+		return "", err
+	}
+	out := make([]byte, len(buf))
+	cipher.NewCBCEncrypter(block, aesKey[:16]).CryptBlocks(out, buf)
+	return base64.StdEncoding.EncodeToString(out), nil
+}
+
+func CallbackSignature(token, timestamp, nonce, encrypt string) string {
+	parts := []string{token, timestamp, nonce, encrypt}
+	sort.Strings(parts)
+	h := sha1.New()
+	_, _ = h.Write([]byte(strings.Join(parts, "")))
+	return fmt.Sprintf("%x", h.Sum(nil))
+}
+
 type xmlEncryptedMsg struct {
 	XMLName xml.Name `xml:"xml"`
 	Encrypt string   `xml:"Encrypt"`
@@ -308,6 +346,7 @@ type xmlMessage struct {
 	Content      string   `xml:"Content"`
 	MsgID        int64    `xml:"MsgId"`
 	AgentID      int64    `xml:"AgentID"`
+	ChatID       string   `xml:"ChatId"`
 }
 
 // InboundMessage normalized wecom callback.
@@ -317,6 +356,20 @@ type InboundMessage struct {
 	MsgType      string `json:"msgType"`
 	Text         string `json:"text"`
 	AgentID      string `json:"agentId"`
+	ChatID       string `json:"chatId"`
+}
+
+func (m *InboundMessage) ThreadID() string {
+	if m == nil {
+		return ""
+	}
+	if id := strings.TrimSpace(m.ChatID); id != "" {
+		return id
+	}
+	if u := strings.TrimSpace(m.FromUserName); u != "" {
+		return "user:" + u
+	}
+	return ""
 }
 
 // ParseEncryptedCallback verifies signature and decrypts POST body.
@@ -345,11 +398,12 @@ func ParseEncryptedCallback(cred Credentials, msgSig, timestamp, nonce string, b
 		return nil, fmt.Errorf("parse inner xml: %w", err)
 	}
 	return &InboundMessage{
-		MsgID: strconv.FormatInt(msg.MsgID, 10),
+		MsgID:        strconv.FormatInt(msg.MsgID, 10),
 		FromUserName: msg.FromUserName,
-		MsgType: msg.MsgType,
-		Text: msg.Content,
-		AgentID: strconv.FormatInt(msg.AgentID, 10),
+		MsgType:      msg.MsgType,
+		Text:         msg.Content,
+		AgentID:      strconv.FormatInt(msg.AgentID, 10),
+		ChatID:       strings.TrimSpace(msg.ChatID),
 	}, nil
 }
 

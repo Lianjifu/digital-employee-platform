@@ -97,4 +97,14 @@ make test && make test-python && make smoke
 | `DE_SERVICE` | `sys` / `collab` / `cap` / `workflow` |
 | `DE_POLICY_URL` | collab/cap → `http://de-sys:8100`；sys 留空用本地 Engine |
 | `DE_AGENT_RUNTIME_URL` / `DE_RAG_URL` / `DE_SKILL_RUNTIME_URL` | 侧车 |
+| `DE_RUNTIME_MODE` | `local`（默认，进程内 Harness）或 `remote`（`POST /v1/run`） |
+| `DE_RUNTIME_FAILOVER_LOCAL` | 非生产时 remote 失败可回落 local；生产忽略 |
+| `DE_SKILL_TEST_SIM` | 开发默认开；生产强制关闭 |
 | `DE_SKILL_RUN_SECRET` | RunToken HMAC |
+| `DE_TEMPORAL_HOST` | 非空则流程试运行走 Temporal；未配置则本地 `de-workflow` |
+| `DE_TEMPORAL_FAIL_CLOSED` | `1` 强制不可达不回落；生产/staging 默认 fail-closed |
+| `DE_MODEL_BUDGET_ENFORCE` | 用量硬门禁；生产默认开，设 `0` 可关 |
+| `DE_REPLICA_MODE` | `active`（默认）或 `standby`（拒写，`E_REPLICA_STANDBY`） |
+| `DE_INSTANCE_ID` | 实例标识；默认主机名 |
+| `DE_EVAL_RECALL_MIN` | 生产知识评测召回门禁，默认 `0.7` |
+| `DE_EVAL_SCORE_MIN` | 生产上岗评测分门禁，默认 `80` |

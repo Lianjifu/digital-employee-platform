@@ -67,7 +67,7 @@ func TestRetryGateAndTakeover(t *testing.T) {
 		"lifecycleStage": stagePending, "status": "pending",
 		"sla": map[string]any{"risk": "none"}, "execution": map[string]any{"retryCount": 0, "paused": false},
 		"governance": map[string]any{"approvalRequired": false, "approvalStatus": "not_required"},
-		"links": map[string]any{}, "auditEvents": []map[string]any{}, "version": 0,
+		"links":      map[string]any{}, "auditEvents": []map[string]any{}, "version": 0,
 	}
 	if err := applyTaskRetry(task, "x", actor); err == nil {
 		t.Fatal("expected retry gate")

@@ -49,6 +49,12 @@ func vaultRequiredForCredentials() bool {
 }
 
 func budgetEnforceEnabled() bool {
+	if envFlagFalse("DE_MODEL_BUDGET_ENFORCE") {
+		return false
+	}
+	if productionLikeEnv() {
+		return true
+	}
 	v := strings.TrimSpace(os.Getenv("DE_MODEL_BUDGET_ENFORCE"))
 	if v == "" {
 		return false

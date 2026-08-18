@@ -11,10 +11,12 @@ import (
 )
 
 const (
-	copilotHistoryMaxMessages = 12 // ~6 轮
+	copilotHistoryMaxMessages = 24 // ~12 轮（与前端 COPILOT_LLM_HISTORY_MESSAGES 对齐）
 	copilotHistoryMaxRunes    = 1200
+	copilotHistoryPriorRunes  = 600 // 较早轮次更短，为最近轮留出 token
 	copilotMemoryMaxItems     = 5
 	copilotMemoryMaxRunes     = 400
+	copilotToolSummaryRunes   = 200 // 历史工具观察摘要（每条工具）
 )
 
 // assembleCopilotChatMessages projects stored conversation messages into LLM turns.
@@ -53,10 +55,9 @@ func assembleCopilotChatMessages(stored []map[string]any) []modelprov.ChatMessag
 			if body == "" {
 				continue
 			}
-			// Keep the latest assistant even if truncated; prior ones can be shorter.
 			limit := copilotHistoryMaxRunes
 			if i < len(window)-1 {
-				limit = copilotHistoryMaxRunes
+				limit = copilotHistoryPriorRunes
 			}
 			out = append(out, modelprov.ChatMessage{
 				Role:    "assistant",
@@ -90,13 +91,32 @@ func toolCallsSummary(raw any) string {
 	if len(items) == 0 {
 		return ""
 	}
+	perTool := copilotToolSummaryRunes
+	if len(items) > 1 {
+		perTool = copilotToolSummaryRunes / len(items)
+		if perTool < 48 {
+			perTool = 48
+		}
+	}
 	parts := make([]string, 0, len(items))
 	for _, tc := range items {
 		name := coalesce(str(tc["name"]), "tool")
 		status := coalesce(str(tc["status"]), "ok")
-		parts = append(parts, name+"("+status+")")
+		part := name + "(" + status + ")"
+		if snippet := toolResultSnippet(tc, perTool); snippet != "" {
+			part += "：" + snippet
+		}
+		parts = append(parts, part)
 	}
 	return "【本回合工具】" + strings.Join(parts, "、")
+}
+
+func toolResultSnippet(tc map[string]any, maxRunes int) string {
+	raw := strings.TrimSpace(coalesce(str(tc["result"]), str(tc["output"])))
+	if raw == "" {
+		return ""
+	}
+	return truncateRunes(raw, maxRunes)
 }
 
 func citationsFromRagHits(ragHits any) []map[string]any {
@@ -289,13 +309,13 @@ func tokenizeQuery(q string) []string {
 	}
 	var tokens []string
 	var b strings.Builder
+	var han strings.Builder
 	flush := func() {
 		t := b.String()
 		b.Reset()
 		if t == "" {
 			return
 		}
-		// Keep CJK unigrams and latin tokens length >= 2
 		runes := []rune(t)
 		if len(runes) == 1 && unicode.Is(unicode.Han, runes[0]) {
 			tokens = append(tokens, t)
@@ -305,12 +325,23 @@ func tokenizeQuery(q string) []string {
 			tokens = append(tokens, t)
 		}
 	}
+	flushHanBigrams := func() {
+		rs := []rune(han.String())
+		han.Reset()
+		for i := 0; i+1 < len(rs); i++ {
+			if unicode.Is(unicode.Han, rs[i]) && unicode.Is(unicode.Han, rs[i+1]) {
+				tokens = append(tokens, string(rs[i:i+2]))
+			}
+		}
+	}
 	for _, r := range q {
 		if unicode.Is(unicode.Han, r) {
 			flush()
 			tokens = append(tokens, string(r))
+			han.WriteRune(r)
 			continue
 		}
+		flushHanBigrams()
 		if unicode.IsLetter(r) || unicode.IsDigit(r) {
 			b.WriteRune(r)
 			continue
@@ -318,6 +349,7 @@ func tokenizeQuery(q string) []string {
 		flush()
 	}
 	flush()
+	flushHanBigrams()
 	return uniqueStrings(tokens)
 }
 
@@ -436,4 +468,71 @@ func lastUserContent(messages []modelprov.ChatMessage) string {
 		}
 	}
 	return ""
+}
+
+func ragHitCount(ragHits any) int {
+	return len(ragHitResults(ragHits))
+}
+
+func ragDegradeWarning(ragHits any) string {
+	m, _ := ragHits.(map[string]any)
+	if m == nil {
+		return ""
+	}
+	if b, ok := m["degraded"].(bool); ok && b {
+		return coalesce(str(m["warning"]), "向量检索已降级")
+	}
+	return ""
+}
+
+func registryHasEnabledTool(registry []registeredTool, name string) bool {
+	for _, t := range registry {
+		if t.Enabled && (t.Name == name || t.Key == "builtin:"+name) {
+			return true
+		}
+	}
+	return false
+}
+
+// filterRegistrySkipMemoryRecall 已在 system 注入记忆时禁用 memory.recall，避免重复 token。
+func filterRegistrySkipMemoryRecall(registry []registeredTool, memoryPrefetched bool) []registeredTool {
+	if !memoryPrefetched {
+		return registry
+	}
+	out := make([]registeredTool, 0, len(registry))
+	for _, t := range registry {
+		if t.Enabled && (t.Name == "memory.recall" || t.Key == "builtin:memory.recall") {
+			clone := t
+			clone.Enabled = false
+			out = append(out, clone)
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// shouldIngestTurnMemory 控制 short_term 写入频率，避免与 Messages 全量双写冗余。
+func shouldIngestTurnMemory(stored []map[string]any, userMsg, assistantText string, toolCalls []map[string]any) bool {
+	if len(toolCalls) > 0 {
+		return true
+	}
+	if len(stored) <= 2 {
+		return true
+	}
+	// 约每 2 轮（4 条消息）写一次，或内容较长时写
+	if len(stored)%4 == 0 {
+		return true
+	}
+	combined := len([]rune(userMsg + assistantText))
+	return combined >= 400
+}
+
+func toolCallsIncludeName(toolCalls []map[string]any, name string) bool {
+	for _, tc := range toolCalls {
+		if str(tc["name"]) == name {
+			return true
+		}
+	}
+	return false
 }

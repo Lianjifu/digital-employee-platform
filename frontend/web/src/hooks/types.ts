@@ -177,6 +177,9 @@ export interface MessageMetrics {
   /** 本轮注入的记忆白盒溯源 */
   memoryHits?: number;
   memoryProvenance?: Array<{ id?: string; title?: string; layer?: string; score?: number }>;
+  ragHits?: number;
+  /** Agent OS 回合快照，用于只读复盘 */
+  snapshotId?: string;
 }
 
 /* ---------- 消息 ---------- */

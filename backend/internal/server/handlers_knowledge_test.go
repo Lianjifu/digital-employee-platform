@@ -38,7 +38,7 @@ func TestKnowledgeP0AuthEvalIsolation(t *testing.T) {
 		t.Fatalf("eval %d %s", rr.Code, rr.Body.String())
 	}
 	var env struct {
-		OK   bool `json:"ok"`
+		OK   bool           `json:"ok"`
 		Data map[string]any `json:"data"`
 	}
 	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil || !env.OK {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/feishu"
+	"github.com/digital-employee-platform/backend/pkg/contract"
 )
 
 // handleFeishuWebhook is the public Feishu/Lark event callback endpoint
@@ -133,6 +135,21 @@ func (s *Server) handleFeishuWebhook(w http.ResponseWriter, r *http.Request) {
 	s.appendChannelAuditLocked(ws, "feishu-webhook", action, target, "success", str(inbound["eventType"]), str(inbound["eventId"]))
 	s.Store.Unlock()
 	go s.persistChannel()
+
+	if msg != nil && strings.TrimSpace(msg.Text) != "" && strings.TrimSpace(msg.ChatID) != "" {
+		if msg.EventID == "" || !s.inboundEventDuplicate("eventId", msg.EventID) {
+			actor := channelInboundIdentity(contract.ChannelFeishu, ws, msg.SenderOpenID)
+			employeeID := s.defaultEmployeeIDForWorkspace(ws, deploy)
+			if _, _, created := s.bindInboundSession(ws, contract.ChannelFeishu, msg.ChatID, deployID, employeeID, actor); created {
+				s.persistChannelSessionIfLocal(true)
+			}
+			deployCopy := deploy
+			go func() {
+				defer func() { _ = recover() }()
+				s.routeFeishuMessage(context.Background(), ws, deployID, deployCopy, msg)
+			}()
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)

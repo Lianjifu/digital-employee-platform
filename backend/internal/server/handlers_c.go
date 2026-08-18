@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
 	"github.com/digital-employee-platform/backend/internal/modelprov"
 	"github.com/digital-employee-platform/backend/internal/policy"
+	"github.com/digital-employee-platform/backend/pkg/contract"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
@@ -43,10 +43,12 @@ func (s *Server) createModelProvider(r *http.Request) (any, error) {
 	credRef := "vault:secret/data/models/" + s.Store.ID("cred")
 	masked := ""
 	if apiKey != "" {
-		if s.Vault != nil {
-			if err := s.Vault.Put(r.Context(), credRef, apiKey); err != nil {
-				return nil, apperr.BadReq(apperr.BadRequest, "写入凭据失败")
+		if s.Vault == nil {
+			if productionLikeEnv() {
+				return nil, apperr.Unavailable(apperr.CredentialsRequired, "生产必须通过 Vault 写入凭据")
 			}
+		} else if err := s.Vault.Put(r.Context(), credRef, apiKey); err != nil {
+			return nil, apperr.BadReq(apperr.BadRequest, "写入凭据失败")
 		}
 		if len(apiKey) > 4 {
 			masked = "sk-****" + apiKey[len(apiKey)-4:]
@@ -209,9 +211,9 @@ func (s *Server) createKnowledgeDoc(r *http.Request) (any, error) {
 	ws := s.workspaceID(r)
 	item := map[string]any{
 		"id": s.Store.ID("kd"), "workspaceId": ws, "title": title,
-		"source": coalesce(str(body["source"]), "upload"),
-		"tags":   body["tags"],
-		"status": "published",
+		"source":    coalesce(str(body["source"]), "upload"),
+		"tags":      body["tags"],
+		"status":    "published",
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
 		"updatedAt": time.Now().UTC().Format(time.RFC3339),
 	}
@@ -243,7 +245,7 @@ func (s *Server) syncRAGIndex(workspaceID string) int {
 			docs = append(docs, map[string]any{
 				"docId": d["id"], "title": d["title"],
 				"snippet": coalesce(str(d["snippet"]), "已发布："+str(d["title"])),
-				"score": 0.9, "status": "published",
+				"score":   0.9, "status": "published",
 			})
 		}
 	}
@@ -386,6 +388,8 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	reflectHint := coalesce(str(body["reflectHint"]), str(body["feedback"]))
 	sessionMode := normalizeSessionMode(str(body["sessionMode"]))
 	riskLevel := normalizeRiskLevelSession(str(body["riskLevel"]))
+	channel := coalesce(str(body["channel"]), contract.ChannelWeb)
+	channelThreadID := str(body["channelThreadId"])
 	var enabledTools []string
 	if arr, ok := body["enabledTools"].([]any); ok {
 		for _, t := range arr {
@@ -437,12 +441,29 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Store.RUnlock()
 
+	eval, err := s.evaluateZeroTrust(id, "session", "write", "internal", false, corr)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if str(eval["decision"]) == contract.PolicyDeny {
+		writeErr(w, apperr.Forbidden(apperr.ZeroTrustDeny, coalesce(str(eval["reason"]), "零信任拒绝")))
+		return
+	}
+	s.Store.Lock()
+	budgetErr := s.checkModelBudgetLocked(ws)
+	s.Store.Unlock()
+	if budgetErr != nil {
+		writeErr(w, budgetErr)
+		return
+	}
+
 	if attSum := s.attachmentSummaries(attachmentIDs, cid); attSum != "" {
 		userMsg = userMsg + attSum
 	}
 
 	if clientMsgID != "" {
-		if prev := loadIdempotentReply(cid, clientMsgID); prev != nil {
+		if prev := s.loadIdempotentReply(cid, clientMsgID); prev != nil {
 			flusher, ok := w.(http.Flusher)
 			if !ok {
 				writeErr(w, apperr.New(apperr.Unknown, 500, "流式不支持"))
@@ -474,6 +495,15 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	streamOK := false
 	defer func() { IncCopilotStream(streamOK) }()
 
+	rec := &turnEventRecorder{}
+	var snapRec map[string]any
+	defer func() {
+		if snapRec != nil {
+			snapRec["events"] = rec.Events()
+			s.persistContextSnapshot(snapRec)
+		}
+	}()
+
 	emit := func(typ, stage string, extra map[string]any) {
 		payload := map[string]any{"type": typ, "stage": stage, "correlationId": corr}
 		for k, v := range extra {
@@ -481,19 +511,11 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		}
 		writeSSE(w, typ, payload)
 		flusher.Flush()
+		rec.Add(typ, stage, extra)
 	}
 
-	// 1) policy
+	// 1) policy（求值已在开流前完成；deny 不会进入 SSE）
 	emit("stage", "policy", map[string]any{"status": "running"})
-	eval, err := s.evaluateZeroTrust(id, "session", "write", "internal", false, "")
-	if err != nil {
-		emit("error", "policy", map[string]any{"message": err.Error()})
-		return
-	}
-	if str(eval["decision"]) == "deny" {
-		emit("error", "policy", map[string]any{"message": str(eval["reason"])})
-		return
-	}
 	emit("stage", "policy", map[string]any{"status": "ok", "decision": eval["decision"]})
 
 	// 2) employee — optional; unbound sessions chat as generic assistant
@@ -555,7 +577,28 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	// Tool registry: capabilities ∩ enabledTools ∩ boundary ∩ sessionMode
 	registry := buildToolRegistry(empMap, enabledTools)
 	registry = filterRegistryBySessionMode(registry, sessionMode)
-	system := buildCopilotSystemPrompt(empMap, nil, memoryHits)
+	registry = filterRegistrySkipMemoryRecall(registry, len(memoryHits) > 0)
+
+	// 3b) 预检索已发布知识 → 写入 system（与 ReAct bootstrap 去重）
+	var ragHits any
+	ragCount := 0
+	if registryHasEnabledTool(registry, "knowledge.retrieve") {
+		emit("stage", "rag", map[string]any{"status": "running"})
+		var ragErr error
+		ragHits, ragErr = s.retrievePublished(r, map[string]any{"query": userMsg}, corr)
+		ragCount = ragHitCount(ragHits)
+		warn := ragDegradeWarning(ragHits)
+		if ragErr != nil {
+			warn = ragErr.Error()
+		}
+		if warn != "" {
+			emit("stage", "rag", map[string]any{"status": "degraded", "warning": warn, "hitCount": ragCount})
+		} else {
+			emit("stage", "rag", map[string]any{"status": "ok", "hitCount": ragCount})
+		}
+	}
+
+	system := buildCopilotSystemPrompt(empMap, ragHits, memoryHits)
 	if sessionMode == sessionModeInvestigate {
 		system += "\n当前会话为研判模式：禁止宣称已执行写操作；技能仅可 action=open/artifacts；需要变更时提示用户切换到受控执行。"
 	} else {
@@ -567,9 +610,27 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		chatMessages = []modelprov.ChatMessage{{Role: "user", Content: userMsg}}
 	}
 
-	// 4) Harness：Dynamic route → React / Plan-Exec / Direct → Reflection → stream
+	snapID := s.Store.ID("snap")
+	snapRec = buildContextSnapshotRecord(map[string]any{
+		"id": snapID, "workspaceId": ws, "conversationId": cid, "sessionId": rawID,
+		"correlationId": corr, "system": system, "historyTurns": len(chatMessages),
+		"memoryProvenance": memoryProvenanceMaps(memoryHits), "ragHits": ragCount,
+		"toolRegistry": enabledToolKeys(registry), "employeeId": resolvedDE,
+		"sessionMode": sessionMode, "riskLevel": riskLevel,
+		"channel": channel, "channelThreadId": channelThreadID,
+		"runtimeMode": runtimeMode(),
+		"envelope": map[string]any{
+			"tenantId": id.TenantID, "workspaceId": ws, "actorId": id.ID,
+			"channel": channel, "channelThreadId": channelThreadID,
+			"sessionId": rawID, "employeeId": resolvedDE, "correlationId": corr,
+			"classification": "internal", "sessionMode": sessionMode, "riskLevel": riskLevel,
+		},
+	})
+
+	// 4) Runtime.Run：local Harness / remote de-agent-runtime（ADR-013 阶段 2）
 	emit("stage", "runtime", map[string]any{
 		"status": "running", "modelId": modelID, "mode": "harness",
+		"runtimeMode": runtimeMode(),
 		"sessionMode": sessionMode, "riskLevel": riskLevel,
 		"enabledTools": enabledToolKeys(registry), "historyTurns": len(chatMessages),
 	})
@@ -579,12 +640,13 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		clearStreamCancel(corr)
 		streamCancel()
 	}()
-	reactOut := s.runHarnessTurn(streamCtx, reactTurnInput{
+	reactOut := s.runRuntimeTurn(streamCtx, reactTurnInput{
 		Request: r, WorkspaceID: ws, ModelID: modelID, System: system,
 		Messages: chatMessages, Registry: registry, UserMessage: userMsg,
 		ConversationID: cid, CorrelationID: corr, DigitalEmployee: resolvedDE,
 		Viewer: id, Emit: emit, ModeHint: modeHint, ReflectHint: reflectHint,
-		SessionMode: sessionMode, RiskLevel: riskLevel,
+		SessionMode: sessionMode, RiskLevel: riskLevel, RAGPrefetched: ragCount > 0,
+		SnapshotID: snapID,
 	})
 	if reactOut.Err != nil {
 		fallback := ""
@@ -620,6 +682,13 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	modelID = resolvedModelID
 	toolCalls := reactOut.ToolCalls
 	citations := reactOut.Citations
+	if ragCount > 0 {
+		prefetched := citationsFromRagHits(ragHits)
+		citations = dedupeCitations(append(prefetched, citations...))
+		if !toolCallsIncludeName(toolCalls, "knowledge.retrieve") {
+			toolCalls = append([]map[string]any{knowledgeToolCallFromHits(ragHits, 0)}, toolCalls...)
+		}
+	}
 	if toolCalls == nil {
 		toolCalls = []map[string]any{}
 	}
@@ -629,7 +698,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	emit("stage", "meter", map[string]any{"status": "running"})
 	units := len([]rune(full))
 	s.Store.Lock()
-	budgetErr := s.checkModelBudgetLocked(ws)
+	budgetErr = s.checkModelBudgetLocked(ws)
 	s.Store.Unlock()
 	if budgetErr != nil {
 		emit("error", "meter", map[string]any{"message": budgetErr.Error()})
@@ -645,11 +714,12 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		"toolCalls": toolCalls,
 		"metrics": map[string]any{
 			"model": modelID, "provider": coalesce(rt.ProviderID, "de-runtime"),
-			"source": coalesce(rt.Source, mode),
-			"memoryHits": len(memoryHits), "historyTurns": len(chatMessages),
+			"source":     coalesce(rt.Source, mode),
+			"memoryHits": len(memoryHits), "historyTurns": len(chatMessages), "ragHits": ragCount,
 			"reactSteps": reactOut.Steps, "mode": mode, "reflectRounds": reactOut.ReflectRounds,
 			"policyLevel": reactOut.PolicyLevel, "policyId": reactOut.PolicyID,
-			"sessionMode": sessionMode, "riskLevel": riskLevel,
+			"sessionMode": sessionMode, "riskLevel": riskLevel, "snapshotId": snapID,
+			"runtimeMode": runtimeMode(),
 		},
 	}
 	if safeOut.Redacted || safeOut.Blocked {
@@ -693,13 +763,19 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		}
 		s.recordEmployeeRuntimeLocked(resolvedDE, turnDur, turnOK)
 	}
-	_, _ = s.ingestRuntimeMemoryLocked(runtimeMemoryInput{
-		WorkspaceID: ws, OwnerID: id.ID, OwnerName: id.Name, DigitalEmployeeID: resolvedDE,
-		Title: "会话上下文 · " + truncateRunes(userMsg, 40),
-		Content: "用户：" + userMsg + "\n助手：" + full,
-		SourceType: "conversation", SourceID: cid, CorrelationID: corr,
-		Layer: "short_term", Scope: "user", Confidence: 0.85,
-	})
+	memoryIngestErr := ""
+	if shouldIngestTurnMemory(historySnapshot, userMsg, full, toolCalls) {
+		if _, err := s.ingestRuntimeMemoryLocked(runtimeMemoryInput{
+			WorkspaceID: ws, OwnerID: id.ID, OwnerName: id.Name, DigitalEmployeeID: resolvedDE,
+			Title:      "会话上下文 · " + truncateRunes(userMsg, 40),
+			Content:    "用户：" + userMsg + "\n助手：" + full,
+			SourceType: "conversation", SourceID: cid, CorrelationID: corr,
+			Layer: "short_term", Scope: "user", Confidence: 0.85,
+		}); err != nil {
+			memoryIngestErr = err.Error()
+			s.appendMemoryAuditLocked(ws, id.Name, "写入记忆", truncateRunes(userMsg, 40), "failed", corr)
+		}
+	}
 	// Phase 4: Self-Evolution candidates + Dream compress (no silent production mutate)
 	evolveCreated := s.runPostTurnEvolutionLocked(evolveTurnInput{
 		WorkspaceID: ws, OwnerID: id.ID, OwnerName: id.Name, DigitalEmployeeID: resolvedDE,
@@ -713,8 +789,12 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	s.Store.Persist("sessions")
 	s.Store.Persist("conversations")
 	s.Store.Persist("employees")
-	rememberIdempotentReply(cid, clientMsgID, assistantMsg)
+	rememberIdempotentReply(s, cid, clientMsgID, assistantMsg)
 	go s.persistEvolve()
+
+	if memoryIngestErr != "" {
+		emit("stage", "memory", map[string]any{"status": "degraded", "warning": memoryIngestErr})
+	}
 
 	for _, cand := range evolveCreated {
 		emit("evolve", "candidate", map[string]any{
@@ -725,12 +805,14 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	emit("done", "done", map[string]any{
 		"ok": true, "modelId": modelID, "mode": mode,
 		"messageId": assistantMsgID, "sessionMode": sessionMode, "riskLevel": riskLevel,
-		"memoryHits": len(memoryHits), "historyTurns": len(chatMessages),
+		"memoryHits": len(memoryHits), "historyTurns": len(chatMessages), "ragHits": ragCount,
 		"memoryProvenance": memoryProvenanceMaps(memoryHits),
-		"reactSteps": reactOut.Steps, "toolCount": len(toolCalls),
+		"reactSteps":       reactOut.Steps, "toolCount": len(toolCalls),
 		"reflectRounds": reactOut.ReflectRounds,
-		"policyLevel": reactOut.PolicyLevel, "policyId": reactOut.PolicyID,
+		"policyLevel":   reactOut.PolicyLevel, "policyId": reactOut.PolicyID,
 		"evolveCandidates": len(evolveCreated),
+		"snapshotId":       snapID,
+		"runtimeMode":      runtimeMode(),
 	})
 	streamOK = true
 }
@@ -861,8 +943,13 @@ func (s *Server) removeMemoryForConversationLocked(ws, convID string) []string {
 }
 
 func allowRuntimeStub() bool {
-	v := strings.TrimSpace(os.Getenv("DE_ALLOW_RUNTIME_STUB"))
-	return v == "1" || strings.EqualFold(v, "true")
+	if productionLikeEnv() {
+		return false
+	}
+	if !allowMockIdentity() {
+		return false
+	}
+	return envFlagTrue("DE_ALLOW_RUNTIME_STUB")
 }
 
 // resolveCopilotModelID picks the model/route for one turn.

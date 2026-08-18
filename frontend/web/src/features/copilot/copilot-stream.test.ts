@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseSSEChunk } from './copilot-stream';
+import { parseSSEChunk, mockIdentityHeaders, isMockChatMode } from './copilot-stream';
 
 describe('parseSSEChunk', () => {
   it('parses stage and delta events', () => {
@@ -45,5 +45,30 @@ describe('parseSSEChunk', () => {
     expect(events[1].data.kind).toBe('memory_promote');
     expect(events[2].data.messageId).toBe('msg-9');
     expect(events[2].data.evolveCandidates).toBe(1);
+  });
+
+  it('parses snapshotId on done', () => {
+    const events: Array<{ type: string; snapshotId?: string }> = [];
+    parseSSEChunk(
+      'event: done\ndata: {"type":"done","ok":true,"correlationId":"corr-1","snapshotId":"snap-1","ragHits":2}\n\n',
+      (_event, data) => events.push({ type: data.type, snapshotId: data.snapshotId }),
+    );
+    expect(events).toEqual([{ type: 'done', snapshotId: 'snap-1' }]);
+  });
+
+  it('gates mock identity headers on VITE_USE_MOCK', () => {
+    const headers = mockIdentityHeaders({
+      role: 'admin',
+      tenantId: 'tenant-acme',
+      name: '平台管理员',
+      id: 'u1',
+      permissions: ['workspace.read'],
+    });
+    if (isMockChatMode()) {
+      expect(headers['x-mock-role']).toBe('admin');
+      expect(headers['x-mock-user-id']).toBe('u1');
+    } else {
+      expect(headers).toEqual({});
+    }
   });
 });

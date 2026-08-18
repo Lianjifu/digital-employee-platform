@@ -198,6 +198,37 @@ func (c *Client) SendText(ctx context.Context, cred Credentials, userID, text st
 	return out.ProcessQueryKey, nil
 }
 
+// ReplySession posts a text reply to the robot sessionWebhook (inbound round-trip).
+func (c *Client) ReplySession(ctx context.Context, sessionWebhook, text string) error {
+	sessionWebhook = strings.TrimSpace(sessionWebhook)
+	text = strings.TrimSpace(text)
+	if sessionWebhook == "" {
+		return fmt.Errorf("session webhook missing")
+	}
+	if text == "" {
+		return fmt.Errorf("text is required")
+	}
+	payload, _ := json.Marshal(map[string]any{
+		"msgtype": "text",
+		"text":    map[string]string{"content": text},
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, sessionWebhook, bytes.NewReader(payload))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := c.httpClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("dingtalk session reply: %w", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<16))
+		return fmt.Errorf("dingtalk session reply status=%d body=%s", res.StatusCode, truncate(string(body), 200))
+	}
+	return nil
+}
+
 // VerifyRobotSign checks HTTP robot callback signature:
 // Base64(HmacSHA256(timestamp + "\n" + appSecret)).
 func VerifyRobotSign(timestamp, sign, appSecret string) bool {
@@ -255,6 +286,19 @@ func ParseRobotCallback(raw []byte) (*InboundMessage, error) {
 		msg.Text = strAny(root["content"])
 	}
 	return msg, nil
+}
+
+func (m *InboundMessage) ThreadID() string {
+	if m == nil {
+		return ""
+	}
+	if id := strings.TrimSpace(m.ConversationID); id != "" {
+		return id
+	}
+	if u := strings.TrimSpace(m.SenderID); u != "" {
+		return "user:" + u
+	}
+	return ""
 }
 
 func strAny(v any) string {

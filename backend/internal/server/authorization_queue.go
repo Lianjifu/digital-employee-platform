@@ -41,10 +41,10 @@ func (s *Server) queueToolAuthorization(ctx toolRunContext, tool *registeredTool
 		"action": authReq["action"], "resource": ctx.ConversationID,
 		"reason": authReq["reason"], "riskLevel": authReq["riskLevel"],
 		"required": 1, "signed": 0, "decision": "pending",
-		"skillTurn": authReq["skillTurn"],
-		"planSummary": planSummary,
-		"approverRoleHint": authReq["approverRoleHint"],
-		"approverCandidateIds": candIDs,
+		"skillTurn":              authReq["skillTurn"],
+		"planSummary":            planSummary,
+		"approverRoleHint":       authReq["approverRoleHint"],
+		"approverCandidateIds":   candIDs,
 		"approverCandidateNames": candNames,
 		"signers": []map[string]any{{
 			"userId": signerUID, "name": signerName,
@@ -57,7 +57,7 @@ func (s *Server) queueToolAuthorization(ctx toolRunContext, tool *registeredTool
 	}
 	msg := map[string]any{
 		"id": actionID, "role": "assistant",
-		"content": content,
+		"content":  content,
 		"actionId": actionID, "authorizationRequest": authReq, "approvalRequest": approvalMirror,
 		"createdAt": now, "correlationId": ctx.CorrelationID,
 		"toolCalls": []map[string]any{{

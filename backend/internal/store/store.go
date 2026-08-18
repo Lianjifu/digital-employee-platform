@@ -10,7 +10,7 @@ import (
 
 // Store is an in-memory control-plane state (Phase A–C default; PG later).
 type Store struct {
-	mu sync.RWMutex
+	mu  sync.RWMutex
 	seq atomic.Uint64
 
 	Workspaces       []map[string]any
@@ -46,43 +46,44 @@ type Store struct {
 	UsageMeters     []map[string]any
 	// ModelSecrets maps credentialRef → plaintext for local durability when Vault is unset.
 	// Never expose via HTTP list APIs.
-	ModelSecrets    map[string]string
-	KnowledgeDocs   []map[string]any
-	KBList          []map[string]any
-	KnowledgeExtra  map[string]any // packages, sources, governance, …
-	Conversations   []map[string]any
-	Messages        map[string][]map[string]any
-	Sessions        []map[string]any
-	SlashCommands   []map[string]any
-	Actions         map[string]map[string]any
+	ModelSecrets   map[string]string
+	KnowledgeDocs  []map[string]any
+	KBList         []map[string]any
+	KnowledgeExtra map[string]any // packages, sources, governance, …
+	Conversations  []map[string]any
+	Messages       map[string][]map[string]any
+	Sessions       []map[string]any
+	SlashCommands  []map[string]any
+	Actions        map[string]map[string]any
 
-	Workflows       []map[string]any
-	WorkflowSkills  []map[string]any
-	WorkflowRuns    []map[string]any
-	WorkflowVersions map[string][]map[string]any
-	WorkflowGens    []map[string]any
-	WorkflowTpls    []map[string]any
-	Skills             []map[string]any
-	SkillCatalog       []map[string]any
-	SkillGovernance    map[string]any
-	SkillHealth        []map[string]any
-	SkillIntegrations  []map[string]any
-	SkillExtra         map[string]any // policies, runtimes, permissions, versions, bindings, incidents, events
-	MemoryRecords      []map[string]any
-	MemoryCands     []map[string]any
-	EvolveCands     []map[string]any // Self-Evolution candidates (Phase 4)
-	MemoryPolicies  map[string]map[string]any
-	MemoryAudits    []map[string]any
-	Channels        []map[string]any
-	ChannelDeploys  []map[string]any
-	DeliveryPolicies []map[string]any
+	Workflows              []map[string]any
+	WorkflowSkills         []map[string]any
+	WorkflowRuns           []map[string]any
+	WorkflowVersions       map[string][]map[string]any
+	WorkflowGens           []map[string]any
+	WorkflowTpls           []map[string]any
+	Skills                 []map[string]any
+	SkillCatalog           []map[string]any
+	SkillGovernance        map[string]any
+	SkillHealth            []map[string]any
+	SkillIntegrations      []map[string]any
+	SkillExtra             map[string]any // policies, runtimes, permissions, versions, bindings, incidents, events
+	MemoryRecords          []map[string]any
+	MemoryCands            []map[string]any
+	EvolveCands            []map[string]any // Self-Evolution candidates (Phase 4)
+	MemoryPolicies         map[string]map[string]any
+	MemoryAudits           []map[string]any
+	Channels               []map[string]any
+	ChannelDeploys         []map[string]any
+	DeliveryPolicies       []map[string]any
 	DeliveryPolicyVersions []map[string]any
-	ChannelTemplates []map[string]any
-	ChannelBlacklist []map[string]any
-	ChannelAudit    []map[string]any
-	ChannelDLQ      []map[string]any
-	ChannelHealth   map[string]map[string]any
-	ChannelInbound  []map[string]any // Feishu/Lark inbound events (normalized)
+	ChannelTemplates       []map[string]any
+	ChannelBlacklist       []map[string]any
+	ChannelAudit           []map[string]any
+	ChannelDLQ             []map[string]any
+	ChannelHealth          map[string]map[string]any
+	ChannelInbound         []map[string]any // Feishu/Lark inbound events (normalized)
+	ContextSnapshots       []map[string]any // Agent OS ContextSnapshot + replay events (ADR-013)
 
 	HomeKPIs             map[string]any
 	HomeExtra            map[string]any
@@ -96,33 +97,36 @@ type Store struct {
 	TenantProfile        map[string]any
 	// ActorExtraWorkspaces tracks workspaces granted after login (e.g. create).
 	ActorExtraWorkspaces map[string][]string
+	CopilotIdempotency   map[string]map[string]any // cid|clientMsgId → assistant message replay
 
 	// Optional hook for durable audit sink (Postgres via Docker).
 	auditHook func(map[string]any)
 	// Optional durable collection snapshot (platform.kv_documents).
 	persistHook PersistFunc
 	deleteHook  DeleteFunc
+	writeDomain Domain
 }
 
 func New() *Store {
 	s := &Store{
-		Members:          map[string][]map[string]any{},
-		Quotas:           map[string]map[string]any{},
-		WorkspacePolicy:  map[string]map[string]any{},
-		ConfigDrafts:     map[string]map[string]any{},
-		Messages:         map[string][]map[string]any{},
-		Actions:          map[string]map[string]any{},
-		ModelSecrets:     map[string]string{},
-		MemoryPolicies:   map[string]map[string]any{},
-		WorkflowVersions: map[string][]map[string]any{},
-		KnowledgeExtra:   map[string]any{},
-		ChannelHealth:    map[string]map[string]any{},
+		Members:              map[string][]map[string]any{},
+		Quotas:               map[string]map[string]any{},
+		WorkspacePolicy:      map[string]map[string]any{},
+		ConfigDrafts:         map[string]map[string]any{},
+		Messages:             map[string][]map[string]any{},
+		Actions:              map[string]map[string]any{},
+		ModelSecrets:         map[string]string{},
+		MemoryPolicies:       map[string]map[string]any{},
+		WorkflowVersions:     map[string][]map[string]any{},
+		KnowledgeExtra:       map[string]any{},
+		ChannelHealth:        map[string]map[string]any{},
 		ActorExtraWorkspaces: map[string][]string{},
+		CopilotIdempotency:   map[string]map[string]any{},
 		TenantProfile: map[string]any{
 			"name": "ACME Corp", "tenantId": "tenant-acme", "region": "cn-east-1",
 			"createdAt": "2024-03-12", "status": "active",
 		},
-		SkillGovernance:  map[string]any{},
+		SkillGovernance: map[string]any{},
 	}
 	s.seed()
 	return s
@@ -146,10 +150,10 @@ func controlledTask(id, ws, code, title, priority, status, stage, ownerID, deID,
 		"status": status, "lifecycleStage": stage, "ownerId": ownerID, "ownerName": ownerID,
 		"digitalEmployeeId": deID, "digitalEmployeeName": "工作伙伴", "assignee": ownerID, "source": source,
 		"progress": map[string]any{"done": 1, "total": 3}, "tags": []string{},
-		"sla": map[string]any{"remainingMin": 45, "risk": "none", "escalated": false},
-		"execution": map[string]any{"retryCount": 0, "paused": false, "currentStep": "执行中"},
+		"sla":        map[string]any{"remainingMin": 45, "risk": "none", "escalated": false},
+		"execution":  map[string]any{"retryCount": 0, "paused": false, "currentStep": "执行中"},
 		"governance": map[string]any{"approvalRequired": false, "approvalStatus": "not_required"},
-		"links": map[string]any{}, "auditEvents": []map[string]any{}, "version": 1,
+		"links":      map[string]any{}, "auditEvents": []map[string]any{}, "version": 1,
 		"createdAt": "2026-07-22T01:00:00Z", "updatedAt": "2026-07-22T08:00:00Z",
 		"environment": "sandbox", "classification": "internal", "createdBy": ownerID,
 	}
@@ -192,11 +196,11 @@ func (s *Store) seed() {
 	}
 	s.Quotas["w1"] = map[string]any{
 		"workspaceId": "w1",
-		"seats": map[string]any{"used": 3, "limit": 50},
-		"agents": map[string]any{"used": 2, "limit": 20},
+		"seats":       map[string]any{"used": 3, "limit": 50},
+		"agents":      map[string]any{"used": 2, "limit": 20},
 		"concurrency": map[string]any{"used": 0, "limit": 20},
 		// Overview cost must come from UsageMeters; keep quota counters honest (no demo 1240/3000).
-		"tokens": map[string]any{"used": 0, "limit": 5000000},
+		"tokens":    map[string]any{"used": 0, "limit": 5000000},
 		"budgetUsd": map[string]any{"used": 0, "limit": 0},
 	}
 	s.Bindings = []map[string]any{
@@ -270,10 +274,10 @@ func (s *Store) seed() {
 			"responsibilities": []string{"故障响应", "变更护栏"}, "prohibitedActions": []string{"生产直接写库"},
 			"capabilities": map[string]any{"model": "gpt-4o", "knowledge": []string{"运维知识库"}, "skills": []string{"kubectl 只读"}, "tools": []string{"CMDB 查询"}, "workflows": []string{"故障自愈技能"}, "channels": []string{"Web"}},
 			"memoryPolicy": map[string]any{"shortTermHours": 24, "workingDays": 7, "longTermCadence": "daily", "knowledgePromotion": "approval_required"},
-			"runtime": map[string]any{"calls24h": 120, "successRate": 0.98, "p95Ms": 420, "costToday": 12.5, "handoffs24h": 2, "anomalies": 0},
-			"evaluation": map[string]any{"status": "passed", "score": 94.2, "lastRunAt": "2026-07-20T00:00:00Z"},
-			"release": map[string]any{"status": "released", "releasedAt": "2026-07-15T00:00:00Z", "requestedBy": "业务构建者", "requestedById": "u2", "approver": "平台管理员", "approverId": "u1"},
-			"templateId": "tpl-sre", "templateVersion": "1.0.0", "updatedAt": "2026-07-20T00:00:00Z",
+			"runtime":      map[string]any{"calls24h": 120, "successRate": 0.98, "p95Ms": 420, "costToday": 12.5, "handoffs24h": 2, "anomalies": 0},
+			"evaluation":   map[string]any{"status": "passed", "score": 94.2, "lastRunAt": "2026-07-20T00:00:00Z"},
+			"release":      map[string]any{"status": "released", "releasedAt": "2026-07-15T00:00:00Z", "requestedBy": "业务构建者", "requestedById": "u2", "approver": "平台管理员", "approverId": "u1"},
+			"templateId":   "tpl-sre", "templateVersion": "1.0.0", "updatedAt": "2026-07-20T00:00:00Z",
 		},
 		{
 			"id": "de-hr", "workspaceId": "w1", "name": "听风", "role": "人事专员", "department": "人事部",
@@ -282,10 +286,10 @@ func (s *Store) seed() {
 			"responsibilities": []string{"入职办理", "假期政策解答", "人事制度问答"}, "prohibitedActions": []string{"不得承诺未审批编制", "不得泄露员工隐私"},
 			"capabilities": map[string]any{"model": "gpt-4o", "knowledge": []string{"人事制度库"}, "skills": []string{"政策问答", "docx"}, "tools": []string{"HRIS"}, "workflows": []string{"人事服务协同流"}, "channels": []string{"Web"}},
 			"memoryPolicy": map[string]any{"shortTermHours": 8, "workingDays": 14, "longTermCadence": "weekly", "knowledgePromotion": "approval_required"},
-			"runtime": map[string]any{"calls24h": 48, "successRate": 0.99, "p95Ms": 380, "costToday": 3.2, "handoffs24h": 1, "anomalies": 0},
-			"evaluation": map[string]any{"status": "passed", "score": 95.0, "lastRunAt": "2026-07-21T00:00:00Z"},
-			"release": map[string]any{"status": "released", "releasedAt": "2026-07-10T00:00:00Z", "requestedBy": "业务构建者", "requestedById": "u2", "approver": "平台管理员", "approverId": "u1"},
-			"updatedAt": "2026-07-21T00:00:00Z",
+			"runtime":      map[string]any{"calls24h": 48, "successRate": 0.99, "p95Ms": 380, "costToday": 3.2, "handoffs24h": 1, "anomalies": 0},
+			"evaluation":   map[string]any{"status": "passed", "score": 95.0, "lastRunAt": "2026-07-21T00:00:00Z"},
+			"release":      map[string]any{"status": "released", "releasedAt": "2026-07-10T00:00:00Z", "requestedBy": "业务构建者", "requestedById": "u2", "approver": "平台管理员", "approverId": "u1"},
+			"updatedAt":    "2026-07-21T00:00:00Z",
 		},
 		{
 			"id": "de-2", "workspaceId": "w1", "name": "客服质检助手", "role": "QA", "department": "运营部",
@@ -294,10 +298,10 @@ func (s *Store) seed() {
 			"responsibilities": []string{"质检评分"}, "prohibitedActions": []string{"直接对客回复"},
 			"capabilities": map[string]any{"model": "gpt-4o", "knowledge": []string{"运维知识库"}, "skills": []string{}, "tools": []string{}, "workflows": []string{}, "channels": []string{"Web"}},
 			"memoryPolicy": map[string]any{"shortTermHours": 24, "workingDays": 7, "longTermCadence": "daily", "knowledgePromotion": "approval_required"},
-			"runtime": map[string]any{"calls24h": 0, "successRate": 0, "p95Ms": 0, "costToday": 0, "handoffs24h": 0, "anomalies": 0},
-			"evaluation": map[string]any{"status": "passed", "score": 92.0, "lastRunAt": "2026-07-21T00:00:00Z"},
-			"release": map[string]any{"status": "pending_approval", "requestedBy": "业务构建者", "requestedById": "u2"},
-			"updatedAt": "2026-07-21T00:00:00Z",
+			"runtime":      map[string]any{"calls24h": 0, "successRate": 0, "p95Ms": 0, "costToday": 0, "handoffs24h": 0, "anomalies": 0},
+			"evaluation":   map[string]any{"status": "passed", "score": 92.0, "lastRunAt": "2026-07-21T00:00:00Z"},
+			"release":      map[string]any{"status": "pending_approval", "requestedBy": "业务构建者", "requestedById": "u2"},
+			"updatedAt":    "2026-07-21T00:00:00Z",
 		},
 	}
 	s.ConfigVersions = []map[string]any{
@@ -526,7 +530,7 @@ func (s *Store) seed() {
 		{
 			"id": "mem-short-1", "workspaceId": "w1", "ownerId": "u1", "digitalEmployeeId": "de-sre",
 			"layer": "short_term", "scope": "user", "title": "Redis OOM 会话上下文",
-			"content": "当前会话已确认 prod-redis-01 的 maxmemory 风险，等待双重审批执行。",
+			"content":        "当前会话已确认 prod-redis-01 的 maxmemory 风险，等待双重审批执行。",
 			"classification": "internal", "sourceType": "conversation", "sourceId": "cv1",
 			"correlationId": "corr_conversation_cv1", "confidence": 0.92, "status": "active",
 			"expiresAt": "2026-07-22T08:00:00.000Z", "createdAt": "2026-07-21T08:12:00.000Z", "updatedAt": "2026-07-21T08:24:00.000Z",
@@ -534,7 +538,7 @@ func (s *Store) seed() {
 		{
 			"id": "mem-work-1", "workspaceId": "w1", "ownerId": "u1", "digitalEmployeeId": "de-sre",
 			"layer": "working", "scope": "team", "title": "TSK-20260713-001 处置上下文",
-			"content": "已完成内存趋势验证与大 Key 识别；人工接管前需保留执行证据。",
+			"content":        "已完成内存趋势验证与大 Key 识别；人工接管前需保留执行证据。",
 			"classification": "internal", "sourceType": "task", "sourceId": "t1",
 			"correlationId": "corr_task_t1", "confidence": 0.96, "status": "active",
 			"expiresAt": "2026-08-20T00:00:00.000Z", "createdAt": "2026-07-13T08:24:00.000Z", "updatedAt": "2026-07-21T08:24:00.000Z",
@@ -542,7 +546,7 @@ func (s *Store) seed() {
 		{
 			"id": "mem-long-1", "workspaceId": "w1", "ownerId": "u1", "digitalEmployeeId": "de-sre",
 			"layer": "long_term", "scope": "workspace", "title": "Redis OOM 处置偏好",
-			"content": "生产 Redis OOM 优先检索已发布 Runbook；涉及配置写入必须由 SRE 与管理员完成双重审批。",
+			"content":        "生产 Redis OOM 优先检索已发布 Runbook；涉及配置写入必须由 SRE 与管理员完成双重审批。",
 			"classification": "restricted", "sourceType": "workflow", "sourceId": "wf1",
 			"correlationId": "corr_task_t1", "confidence": 0.91, "status": "active",
 			"createdAt": "2026-07-18T09:00:00.000Z", "updatedAt": "2026-07-21T08:24:00.000Z",
@@ -550,7 +554,7 @@ func (s *Store) seed() {
 		{
 			"id": "mem-long-pending", "workspaceId": "w1", "ownerId": "u1", "digitalEmployeeId": "de-alert-ops",
 			"layer": "long_term", "scope": "workspace", "title": "告警静默窗口经验",
-			"content": "重大活动窗口内对已知抖动告警可建议静默，但不得自动关闭 P1；需值班经理确认后执行。",
+			"content":        "重大活动窗口内对已知抖动告警可建议静默，但不得自动关闭 P1；需值班经理确认后执行。",
 			"classification": "confidential", "sourceType": "task", "sourceId": "t2",
 			"correlationId": "corr_task_t2", "confidence": 0.89, "status": "pending_review",
 			"createdAt": "2026-07-20T10:00:00.000Z", "updatedAt": "2026-07-21T09:00:00.000Z",
@@ -558,7 +562,7 @@ func (s *Store) seed() {
 		{
 			"id": "mem-long-2", "workspaceId": "w2", "ownerId": "u2", "digitalEmployeeId": "de-capacity",
 			"layer": "long_term", "scope": "workspace", "title": "预发扩容验收规则",
-			"content": "预发扩容先完成 10% 灰度与回滚演练，再提交生产发布审批。",
+			"content":        "预发扩容先完成 10% 灰度与回滚演练，再提交生产发布审批。",
 			"classification": "internal", "sourceType": "task", "sourceId": "t6",
 			"correlationId": "corr_task_t6", "confidence": 0.88, "status": "active",
 			"createdAt": "2026-07-17T09:00:00.000Z", "updatedAt": "2026-07-20T08:00:00.000Z",
@@ -567,8 +571,8 @@ func (s *Store) seed() {
 	s.MemoryCands = []map[string]any{
 		{
 			"id": "mc-1", "workspaceId": "w1", "memoryId": "mem-long-pending",
-			"title": "告警静默窗口经验",
-			"summary": "重大活动窗口内对已知抖动告警可建议静默，但不得自动关闭 P1；需值班经理确认后执行。",
+			"title":          "告警静默窗口经验",
+			"summary":        "重大活动窗口内对已知抖动告警可建议静默，但不得自动关闭 P1；需值班经理确认后执行。",
 			"classification": "confidential", "sourceCorrelationId": "corr_task_t2",
 			"status": "pending_review", "submittedAt": "2026-07-21T09:00:00.000Z",
 		},
@@ -587,28 +591,20 @@ func (s *Store) seed() {
 	s.Channels = []map[string]any{
 		{"id": "ch-web", "workspaceId": "w1", "name": "Web", "kind": "web", "enabled": true, "monthlySent": 0, "successRate": 1},
 		{"id": "ch-feishu", "workspaceId": "w1", "name": "飞书", "kind": "feishu", "enabled": true, "monthlySent": 820, "successRate": 0.998},
-		{"id": "ch-email", "workspaceId": "w1", "name": "邮件", "kind": "email", "enabled": true, "monthlySent": 210, "successRate": 0.978},
 	}
 	s.ChannelDeploys = []map[string]any{
 		{
 			"id": "delivery-feishu", "workspaceId": "w1", "name": "飞书生产投递", "kind": "feishu",
 			"environment": "production", "status": "active",
-			"credentialRef": "vault://channel-deployments/delivery-feishu/credential",
+			"credentialRef":    "vault://channel-deployments/delivery-feishu/credential",
 			"credentialMasked": "app-…prod", "owner": "消息平台组",
-			"lastVerifiedAt": "2026-07-19T12:00:00.000Z",
-		},
-		{
-			"id": "delivery-email", "workspaceId": "w1", "name": "邮件生产投递", "kind": "email",
-			"environment": "production", "status": "active",
-			"credentialRef": "vault://channel-deployments/delivery-email/credential",
-			"credentialMasked": "smtp-…prod", "owner": "消息平台组",
 			"lastVerifiedAt": "2026-07-19T12:00:00.000Z",
 		},
 	}
 	s.DeliveryPolicies = []map[string]any{
 		{
 			"id": "delivery-policy-p0", "workspaceId": "w1", "eventType": "P0 紧急告警",
-			"primaryDeploymentId": "delivery-feishu", "fallbackDeploymentIds": []string{"delivery-email"},
+			"primaryDeploymentId": "delivery-feishu", "fallbackDeploymentIds": []string{},
 			"audience": "SRE 值班组", "dataClassification": "internal", "status": "draft", "validationIssues": []string{},
 		},
 	}
@@ -616,7 +612,7 @@ func (s *Store) seed() {
 	s.ChannelTemplates = []map[string]any{
 		{"id": "card1", "workspaceId": "w1", "name": "告警卡片", "kind": "feishu", "locale": "zh-CN", "status": "published", "tone": "error", "desc": "P0/P1 紧急事件 · 含一键跳转", "preview": "[P0] Redis OOM\n集群: prod-redis-01\n[查看详情 →]", "updatedAt": "2026-07-18T08:00:00.000Z"},
 		{"id": "card2", "workspaceId": "w1", "name": "审批卡片", "kind": "feishu", "locale": "zh-CN", "status": "published", "tone": "warn", "desc": "双重审批 · 同意/拒绝按钮", "preview": "变更审批\n[批准] [拒绝]", "updatedAt": "2026-07-17T09:30:00.000Z"},
-		{"id": "card3", "workspaceId": "w1", "name": "交接摘要", "kind": "email", "locale": "zh-CN", "status": "draft", "tone": "info", "desc": "人工接管摘要 · 脱敏任务上下文", "preview": "交接：夜航 → 值班经理\n任务 TSK-*** 待审批", "updatedAt": "2026-07-21T07:10:00.000Z"},
+		{"id": "card3", "workspaceId": "w1", "name": "交接摘要", "kind": "feishu", "locale": "zh-CN", "status": "draft", "tone": "info", "desc": "人工接管摘要 · 脱敏任务上下文", "preview": "交接：夜航 → 值班经理\n任务 TSK-*** 待审批", "updatedAt": "2026-07-21T07:10:00.000Z"},
 	}
 	s.ChannelBlacklist = []map[string]any{
 		{"id": "b1", "workspaceId": "w1", "type": "用户", "value": "test-spammer@external.com", "reason": "高频无效告警", "addedBy": "系统", "expires": "2026-08-01"},
@@ -624,7 +620,7 @@ func (s *Store) seed() {
 	}
 	s.ChannelAudit = []map[string]any{
 		{"id": "ca-1", "workspaceId": "w1", "time": "2026-07-21T09:40:00.000Z", "actor": "消息平台组", "action": "验证渠道部署", "target": "飞书生产投递", "result": "success", "correlationId": "corr_channel_verify_1"},
-		{"id": "ca-2", "workspaceId": "w1", "time": "2026-07-20T16:20:00.000Z", "actor": "平台管理员", "action": "创建渠道部署", "target": "邮件生产投递", "result": "success", "correlationId": "corr_channel_create_1"},
+		{"id": "ca-2", "workspaceId": "w1", "time": "2026-07-20T16:20:00.000Z", "actor": "平台管理员", "action": "创建渠道部署", "target": "飞书生产投递", "result": "success", "correlationId": "corr_channel_create_1"},
 		{"id": "ca-3", "workspaceId": "w1", "time": "2026-07-19T12:00:00.000Z", "actor": "消息平台组", "action": "保存投递策略草稿", "target": "P0 紧急告警", "result": "success", "correlationId": "corr_channel_policy_1"},
 	}
 	s.ChannelDLQ = []map[string]any{
@@ -636,7 +632,6 @@ func (s *Store) seed() {
 	}
 	s.ChannelHealth = map[string]map[string]any{
 		"delivery-feishu": {"deploymentId": "delivery-feishu", "successRate": 99.8, "p95Ms": 120, "errorCount24h": 2, "status": "healthy"},
-		"delivery-email":  {"deploymentId": "delivery-email", "successRate": 97.8, "p95Ms": 280, "errorCount24h": 24, "status": "attention"},
 	}
 	s.KnowledgeExtra = map[string]any{
 		"packages": []map[string]any{{
@@ -644,11 +639,11 @@ func (s *Store) seed() {
 			"domain": "运维", "status": "published", "classification": "internal", "owner": "平台管理员", "ownerId": "u1",
 			"documentCount": 2, "documentIds": []string{"kd-1", "kd-2"}, "consumers": 1,
 			"currentVersion": map[string]any{"id": "kpv-ops-1", "version": "3.1.0", "status": "published", "indexVersion": "idx-310", "publishedAt": "2026-07-18T00:00:00Z", "qualityScore": 88, "changeSummary": "纳入缓存手册"},
-			"versions": []map[string]any{{"id": "kpv-ops-1", "version": "3.1.0", "status": "published", "indexVersion": "idx-310", "publishedAt": "2026-07-18T00:00:00Z", "qualityScore": 88, "changeSummary": "纳入缓存手册"}},
+			"versions":       []map[string]any{{"id": "kpv-ops-1", "version": "3.1.0", "status": "published", "indexVersion": "idx-310", "publishedAt": "2026-07-18T00:00:00Z", "qualityScore": 88, "changeSummary": "纳入缓存手册"}},
 		}},
-		"sources": []map[string]any{{"id": "ks-1", "workspaceId": "w1", "name": "Confluence", "kind": "Git / Markdown", "schedule": "daily", "status": "healthy", "documents": 2, "lastSync": "2026-07-20T00:00:00Z"}},
-		"governance": map[string]any{"workspaceId": "w1", "versionRetention": true, "piiMasking": true, "sensitiveDataDetection": true, "retentionDays": 365, "highRiskChangeApproval": true},
-		"audit": []map[string]any{{"id": "ka-1", "workspaceId": "w1", "time": "2026-07-18T00:00:00Z", "actor": "平台管理员", "action": "发布知识包", "target": "运维知识库", "result": "success"}},
+		"sources":        []map[string]any{{"id": "ks-1", "workspaceId": "w1", "name": "Confluence", "kind": "Git / Markdown", "schedule": "daily", "status": "healthy", "documents": 2, "lastSync": "2026-07-20T00:00:00Z"}},
+		"governance":     map[string]any{"workspaceId": "w1", "versionRetention": true, "piiMasking": true, "sensitiveDataDetection": true, "retentionDays": 365, "highRiskChangeApproval": true},
+		"audit":          []map[string]any{{"id": "ka-1", "workspaceId": "w1", "time": "2026-07-18T00:00:00Z", "actor": "平台管理员", "action": "发布知识包", "target": "运维知识库", "result": "success"}},
 		"processingJobs": []map[string]any{{"id": "kj-1", "workspaceId": "w1", "packageId": "pkg-ops", "source": "故障手册-缓存", "strategy": "semantic", "status": "succeeded", "documentCount": 1, "chunkCount": 24, "indexVersion": "idx-310", "startedAt": "2026-07-18T00:00:00Z"}},
 		"retrievalProfiles": []map[string]any{{
 			"id": "rp-default", "workspaceId": "w1", "packageId": "pkg-ops", "name": "默认检索",
@@ -714,8 +709,8 @@ func (s *Store) seed() {
 	// Billing seed is structural only; overview cost must come from UsageMeters (see homeExtraLive).
 	s.Billing = map[string]any{
 		"workspaceId": "w1", "plan": "enterprise_plus", "period": "2026-07",
-		"usage": map[string]any{"tokens": 0, "usd": 0},
-		"quota": map[string]any{"tokens": 5000000, "usd": 0},
+		"usage":    map[string]any{"tokens": 0, "usd": 0},
+		"quota":    map[string]any{"tokens": 5000000, "usd": 0},
 		"invoices": []map[string]any{},
 	}
 	s.Backups = []map[string]any{
@@ -730,10 +725,10 @@ func (s *Store) seed() {
 		},
 		"incidentsOpen": 0, "mttrMinutes": 0,
 		"pending": []map[string]any{},
-		"health": map[string]any{"activeAgents": 0, "score": 0},
+		"health":  map[string]any{"activeAgents": 0, "score": 0},
 	}
 	s.NotificationChannels = []map[string]any{
-		{"id": "nc-1", "name": "邮件值班", "kind": "email", "enabled": true},
+		{"id": "nc-1", "name": "飞书值班", "kind": "feishu", "enabled": true},
 	}
 	s.APIKeys = []map[string]any{
 		{"id": "key-1", "name": "控制台集成", "masked": "de_****abcd", "createdAt": "2026-07-01T00:00:00Z"},

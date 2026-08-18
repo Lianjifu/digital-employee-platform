@@ -50,7 +50,7 @@ func TestShouldReflectAndParseOutput(t *testing.T) {
 		t.Fatal("short answer should reflect")
 	}
 	ok, _ = shouldReflect(reactTurnResult{
-		Text: strings.Repeat("完整可用的人事答复内容足够长。", 3),
+		Text:      strings.Repeat("完整可用的人事答复内容足够长。", 3),
 		ToolCalls: []map[string]any{{"name": "x", "status": "failed"}},
 	}, "")
 	if !ok {

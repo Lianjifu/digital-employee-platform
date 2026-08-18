@@ -125,7 +125,7 @@ func (s *Server) validateDeliveryPolicyLocked(policy map[string]any) []string {
 			}
 		}
 		for _, kind := range kinds {
-			if kind == "webhook" || kind == "sms" {
+			if kind == "webhook" {
 				issues = append(issues, "E_DELIVERY_CLASSIFICATION_BLOCKED: 受限数据不能投递至外部渠道")
 				break
 			}
@@ -383,6 +383,8 @@ func (s *Server) buildChannelCredential(kind string, body map[string]any) (paylo
 		meta["connectionMode"] = "long_poll"
 		meta["allowFrom"] = cred.AllowFrom
 		return payload, masked, meta, nil
+	case "email", "sms", "phone":
+		return "", "", nil, apperr.BadReq(apperr.BadRequest, "E_CHANNEL_DEPLOYMENT_INVALID: 不支持邮件、短信、电话渠道")
 	default:
 		cred := strings.TrimSpace(coalesce(str(body["credential"]), str(body["apiKey"])))
 		if cred == "" {
@@ -1432,9 +1434,13 @@ func (s *Server) createChannelTemplate(r *http.Request) (any, error) {
 	}
 	ws := s.workspaceID(r)
 	now := time.Now().UTC().Format(time.RFC3339)
+	kind := coalesce(str(body["kind"]), "feishu")
+	if kind == "email" || kind == "sms" || kind == "phone" {
+		return nil, apperr.BadReq(apperr.BadRequest, "E_CHANNEL_DEPLOYMENT_INVALID: 不支持邮件、短信、电话渠道")
+	}
 	item := map[string]any{
 		"id": s.Store.ID("template"), "workspaceId": ws, "name": name,
-		"kind": coalesce(str(body["kind"]), "feishu"), "desc": coalesce(str(body["desc"]), ""),
+		"kind": kind, "desc": coalesce(str(body["desc"]), ""),
 		"preview": coalesce(str(body["preview"]), ""), "locale": coalesce(str(body["locale"]), "zh-CN"),
 		"status": coalesce(str(body["status"]), "draft"), "tone": coalesce(str(body["tone"]), "info"),
 		"updatedAt": now,

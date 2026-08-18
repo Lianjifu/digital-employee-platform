@@ -46,6 +46,8 @@ func Run(opts Options) error {
 	}
 
 	st := store.New()
+	domain := store.DomainFromMode(opts.Mode.String())
+	st.SetWriteDomain(domain)
 	auditSink := &infra.AuditSink{Pool: pg}
 	auditBus := infra.NewAuditBus(rdb)
 	kafkaBus := infra.NewKafkaAuditBusFromEnv()
@@ -56,6 +58,10 @@ func Run(opts Options) error {
 		}
 	}
 	kv := &infra.KVStore{Pool: pg}
+	kernel := &infra.KernelStore{Pool: pg}
+	if err := kernel.Ensure(ctx); err != nil {
+		log.Printf("kernel schema: %v", err)
+	}
 
 	st.SetAuditHook(func(ev map[string]any) {
 		c := context.Background()
@@ -81,6 +87,11 @@ func Run(opts Options) error {
 		}
 	})
 	st.SetPersistHook(func(ctx context.Context, collection string, items []map[string]any) error {
+		if kernel.Owns(collection) {
+			if err := kernel.UpsertCollection(ctx, collection, items); err != nil {
+				return err
+			}
+		}
 		// Multi-process safe default: upsert merge. Full replace only for shrink-heavy single-writer collections.
 		if store.ShouldReplaceOnPersist(collection) {
 			return kv.ReplaceCollection(ctx, collection, items)
@@ -92,30 +103,46 @@ func Run(opts Options) error {
 	})
 
 	hydrated := 0
-	for _, coll := range store.DurableCollections {
-		items, err := kv.List(ctx, coll)
-		if err != nil {
-			log.Printf("hydrate %s: %v", coll, err)
-			continue
+	for _, coll := range store.CollectionsForDomain(domain) {
+		var items []map[string]any
+		if kernel.Owns(coll) {
+			rows, err := kernel.List(ctx, coll)
+			if err != nil {
+				log.Printf("kernel hydrate %s: %v", coll, err)
+			} else if len(rows) > 0 {
+				items = rows
+			}
+		}
+		if len(items) == 0 {
+			kvItems, err := kv.List(ctx, coll)
+			if err != nil {
+				log.Printf("hydrate %s: %v", coll, err)
+				continue
+			}
+			items = kvItems
 		}
 		if len(items) > 0 {
 			st.HydrateFrom(coll, items)
 			hydrated++
 		}
 	}
-	if n, _ := kv.Count(ctx, "workspaces"); n == 0 {
+	if n, _ := kv.Count(ctx, store.SeedCollection(domain)); n == 0 {
 		if err := st.PersistNow(ctx); err != nil {
 			log.Printf("initial persist: %v", err)
 		} else {
-			log.Printf("seeded control-plane collections into postgres")
+			log.Printf("seeded %s collections into postgres", domain)
 		}
 	} else if hydrated > 0 {
-		log.Printf("hydrated %d durable collections from postgres", hydrated)
+		log.Printf("hydrated %d durable collections from postgres [domain=%s]", hydrated, domain)
 	}
-	st.EnsureDocxSkillReady()
-	// Persist so Cap/Collab governance refresh and other units see builtin docx.
-	st.Persist("skills")
-	st.Persist("employees")
+	st.DropUnowned(domain)
+	if domain == store.DomainAll || domain == store.DomainCap {
+		st.EnsureDocxSkillReady()
+		st.Persist("skills")
+	}
+	if domain == store.DomainAll || domain == store.DomainCollab {
+		st.Persist("employees")
+	}
 
 	srv := server.New(st)
 	srv.Mode = opts.Mode

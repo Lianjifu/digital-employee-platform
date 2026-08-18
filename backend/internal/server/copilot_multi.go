@@ -244,7 +244,7 @@ func (s *Server) runMultiAgentTurn(ctx context.Context, in reactTurnInput) react
 		opinions = append(opinions, fmt.Sprintf("【%s · %s】\n%s", sp.Name, coalesce(sp.Role, sp.Department), truncateRunes(text, 1200)))
 		toolCalls = append(toolCalls, map[string]any{
 			"id": fmt.Sprintf("tc_agent_%s", sp.ID), "name": "agent.delegate",
-			"args": map[string]any{"employeeId": sp.ID, "name": sp.Name, "role": sp.Role},
+			"args":   map[string]any{"employeeId": sp.ID, "name": sp.Name, "role": sp.Role},
 			"status": status, "result": truncateRunes(text, 400), "durationMs": 0,
 		})
 		in.Emit("agent", "multi", map[string]any{
@@ -263,7 +263,7 @@ func (s *Server) runMultiAgentTurn(ctx context.Context, in reactTurnInput) react
 	aggSystem += "你是主会话专家（Supervisor）。请综合各子专家意见，给出统一、可执行的中文答复；标明共识与分歧；不要输出 TOOL/PLAN 标记。"
 	aggMsgs := append([]modelprov.ChatMessage{}, in.Messages...)
 	aggMsgs = append(aggMsgs, modelprov.ChatMessage{
-		Role: "user",
+		Role:    "user",
 		Content: "用户请求：\n" + in.UserMessage + "\n\n子专家意见：\n" + strings.Join(opinions, "\n\n") + "\n\n请汇总最终答复。",
 	})
 	var aggBuf strings.Builder

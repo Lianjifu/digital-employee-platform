@@ -64,6 +64,26 @@ func TestParseRobotCallback(t *testing.T) {
 	if msg.Text != "你好" || msg.SenderID != "u1" {
 		t.Fatalf("%+v", msg)
 	}
+	if msg.ThreadID() != "c1" {
+		t.Fatalf("thread %s", msg.ThreadID())
+	}
+}
+
+func TestReplySession(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/session", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method %s", r.Method)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	cli := NewClient()
+	cli.HTTP = srv.Client()
+	if err := cli.ReplySession(context.Background(), srv.URL+"/session", "pong"); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestParseCredentialsShorthand(t *testing.T) {

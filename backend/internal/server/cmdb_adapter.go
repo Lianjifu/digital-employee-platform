@@ -150,7 +150,7 @@ func (s *Server) searchCMDBCatalogLocked(ws, query string) []map[string]any {
 		}
 		out = append(out, map[string]any{
 			"id": id, "name": name, "type": coalesce(typ, "asset"),
-			"summary": "知识图谱实体 · source=" + coalesce(str(e["sourceDocId"]), "—"),
+			"summary":    "知识图谱实体 · source=" + coalesce(str(e["sourceDocId"]), "—"),
 			"confidence": e["confidence"],
 		})
 	}

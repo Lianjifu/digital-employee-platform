@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"log"
 )
 
@@ -12,10 +13,10 @@ type PersistFunc func(ctx context.Context, collection string, items []map[string
 type DeleteFunc func(ctx context.Context, collection string, ids []string) error
 
 // replaceOnPersist collections still use full replace (single-writer / shrink-heavy).
+// channel_inbound is a kernel table (R2) and grows; it must not replace the whole set.
 var replaceOnPersist = map[string]bool{
-	"channel_dlq":     true,
-	"channel_audit":   true,
-	"channel_inbound": true,
+	"channel_dlq":   true,
+	"channel_audit": true,
 }
 
 // ShouldReplaceOnPersist reports collections that still need full-table replace (shrink-heavy).
@@ -56,6 +57,7 @@ var DurableCollections = []string{
 	"channel_blacklist",
 	"channel_audit",
 	"channel_inbound",
+	"context_snapshots",
 	"release_approvals",
 	"skills",
 	"skill_catalog",
@@ -108,6 +110,9 @@ func (s *Store) PersistDelete(collection string, ids ...string) {
 
 // PersistCollection snapshots a collection asynchronously (caller should hold Lock or own slice).
 func (s *Store) PersistCollection(collection string, items []map[string]any) {
+	if !s.CanWrite(collection) {
+		panic(fmt.Sprintf("store write-guard: domain %s cannot persist %s", s.WriteDomain(), collection))
+	}
 	if s.persistHook == nil {
 		return
 	}
@@ -122,6 +127,9 @@ func (s *Store) PersistCollection(collection string, items []map[string]any) {
 
 // Persist snapshots a named durable collection (safe to call without holding Lock).
 func (s *Store) Persist(collection string) {
+	if !s.CanWrite(collection) {
+		panic(fmt.Sprintf("store write-guard: domain %s cannot persist %s", s.WriteDomain(), collection))
+	}
 	s.RLock()
 	items := s.snapshotLocked(collection)
 	s.RUnlock()
@@ -243,6 +251,8 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 		return s.ChannelAudit
 	case "channel_inbound":
 		return s.ChannelInbound
+	case "context_snapshots":
+		return s.ContextSnapshots
 	case "release_approvals":
 		return s.ReleaseApprovals
 	case "skills":
@@ -297,7 +307,10 @@ func (s *Store) PersistNow(ctx context.Context) error {
 	}
 	s.RLock()
 	defer s.RUnlock()
-	for _, name := range DurableCollections {
+	for _, name := range CollectionsForDomain(s.writeDomain) {
+		if s.writeDomain != "" && s.writeDomain != DomainAll && CollectionDomain(name) != s.writeDomain && CollectionDomain(name) != DomainAll {
+			continue
+		}
 		items := s.snapshotLocked(name)
 		if items == nil {
 			continue
@@ -422,6 +435,8 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 		s.ChannelAudit = items
 	case "channel_inbound":
 		s.ChannelInbound = items
+	case "context_snapshots":
+		s.ContextSnapshots = items
 	case "release_approvals":
 		s.ReleaseApprovals = items
 	case "skills":

@@ -64,6 +64,8 @@ export type CopilotSSEEvent = {
   evolveCandidates?: number;
   hitCount?: number;
   memoryHits?: number;
+  ragHits?: number;
+  snapshotId?: string;
   actionId?: string;
   messageId?: string;
   riskLevel?: string;
@@ -75,6 +77,24 @@ export type CopilotSSEEvent = {
 
 export function isMockChatMode(): boolean {
   return import.meta.env.VITE_USE_MOCK === 'true';
+}
+
+export function mockIdentityHeaders(user: {
+  role: string;
+  tenantId: string;
+  name: string;
+  id: string;
+  permissions: string[];
+} | null | undefined): Record<string, string> {
+  if (!isMockChatMode() || !user) {
+    return {};
+  }
+  return {
+    'x-mock-role': user.role,
+    'x-mock-actor': encodeURIComponent(user.name),
+    'x-mock-user-id': user.id,
+    'x-mock-permissions': user.permissions.join(','),
+  };
 }
 
 /** 解析 SSE 文本缓冲，返回已完成事件与剩余缓冲。 */
@@ -139,16 +159,8 @@ export async function streamCopilotTurn(input: StreamTurnInput): Promise<void> {
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
         'x-workspace-id': workspaceId,
         'x-correlation-id': input.correlationId,
-        ...(user
-          ? {
-              'x-tenant-id': user.tenantId,
-              'x-mock-role': user.role,
-              // fetch headers must be ISO-8859-1; Chinese display names need encoding
-              'x-mock-actor': encodeURIComponent(user.name),
-              'x-mock-user-id': user.id,
-              'x-mock-permissions': user.permissions.join(','),
-            }
-          : {}),
+        ...(user ? { 'x-tenant-id': user.tenantId } : {}),
+        ...mockIdentityHeaders(user),
       },
       body: JSON.stringify({
         content: input.content,

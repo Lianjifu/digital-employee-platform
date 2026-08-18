@@ -52,3 +52,24 @@ def invoke_openai_compatible(
         return None
     msg = (choices[0].get("message") or {}).get("content")
     return str(msg) if msg else None
+
+
+def chunk_text(text: str, size: int = 24) -> list[str]:
+    chars = list(text or "")
+    if size <= 0:
+        return [text]
+    return ["".join(chars[i : i + size]) for i in range(0, len(chars), size)]
+
+
+def build_run_prompt(payload: dict) -> str:
+    snapshot = payload.get("snapshot") if isinstance(payload.get("snapshot"), dict) else {}
+    system = str(snapshot.get("system") or "").strip()
+    user = str(payload.get("input") or payload.get("prompt") or "").strip()
+    tools = payload.get("enabledTools") or snapshot.get("toolRegistry") or []
+    if isinstance(tools, list) and tools:
+        tool_line = "enabled tools: " + ", ".join(str(t) for t in tools if t)
+        system = (system + "\n" + tool_line).strip() if system else tool_line
+    if system:
+        return system + "\n\n" + user
+    return user
+

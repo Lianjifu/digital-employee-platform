@@ -72,6 +72,11 @@ func validateEmployeeReleaseGates(emp map[string]any) error {
 	if ev == nil || str(ev["status"]) != "passed" {
 		return apperr.BadReq(apperr.DigitalEmployeeEvaluationRequired, "质量评测未通过，无法申请上岗")
 	}
+	if min := evalScoreMin(); min > 0 {
+		if toFloat(ev["score"]) < min {
+			return apperr.BadReq(apperr.DigitalEmployeeEvaluationRequired, "评测分数未达门禁，无法申请上岗")
+		}
+	}
 	return nil
 }
 

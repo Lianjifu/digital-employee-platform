@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/digital-employee-platform/backend/internal/dingtalk"
 	"github.com/digital-employee-platform/backend/internal/wecom"
+	"github.com/digital-employee-platform/backend/pkg/contract"
 )
 
 // handleWecomWebhook serves GET/POST /api/channel/wecom/events/{deploymentId}
@@ -68,8 +70,23 @@ func (s *Server) handleWecomWebhook(w http.ResponseWriter, r *http.Request) {
 		"provider": "wecom", "receivedAt": time.Now().UTC().Format(time.RFC3339),
 		"eventType": msg.MsgType, "messageId": msg.MsgID,
 		"senderOpenId": msg.FromUserName, "text": msg.Text, "agentId": msg.AgentID,
+		"chatId": msg.ChatID, "channelThreadId": msg.ThreadID(),
 	}
 	s.appendChannelInbound(ws, name, inbound)
+	if strings.TrimSpace(msg.Text) != "" && msg.ThreadID() != "" {
+		if msg.MsgID == "" || !s.inboundEventDuplicate("messageId", msg.MsgID) {
+			actor := channelInboundIdentity(contract.ChannelWecom, ws, msg.FromUserName)
+			employeeID := s.defaultEmployeeIDForWorkspace(ws, deploy)
+			if _, _, created := s.bindInboundSession(ws, contract.ChannelWecom, msg.ThreadID(), deployID, employeeID, actor); created {
+				s.persistChannelSessionIfLocal(true)
+			}
+			deployCopy := deploy
+			go func() {
+				defer func() { _ = recover() }()
+				s.routeWecomMessage(context.Background(), ws, deployID, deployCopy, msg)
+			}()
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_, _ = w.Write([]byte(`{}`))
 }
@@ -124,8 +141,23 @@ func (s *Server) handleDingtalkWebhook(w http.ResponseWriter, r *http.Request) {
 		"chatId": msg.ConversationID, "chatType": msg.ConversationType,
 		"senderOpenId": msg.SenderID, "senderNick": msg.SenderNick,
 		"text": msg.Text, "sessionWebhook": msg.SessionWebhook,
+		"channelThreadId": msg.ThreadID(),
 	}
 	s.appendChannelInbound(ws, name, inbound)
+	if strings.TrimSpace(msg.Text) != "" && msg.ThreadID() != "" {
+		if msg.MessageID == "" || !s.inboundEventDuplicate("messageId", msg.MessageID) {
+			actor := channelInboundIdentity(contract.ChannelDingtalk, ws, msg.SenderID)
+			employeeID := s.defaultEmployeeIDForWorkspace(ws, deploy)
+			if _, _, created := s.bindInboundSession(ws, contract.ChannelDingtalk, msg.ThreadID(), deployID, employeeID, actor); created {
+				s.persistChannelSessionIfLocal(true)
+			}
+			deployCopy := deploy
+			go func() {
+				defer func() { _ = recover() }()
+				s.routeDingtalkMessage(context.Background(), ws, deployID, deployCopy, msg)
+			}()
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_ = json.NewEncoder(w).Encode(map[string]any{})
 }

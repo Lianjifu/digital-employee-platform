@@ -30,6 +30,9 @@ func requireSkillWrite(id *auth.Identity) error {
 }
 
 func (s *Server) persistSkills() {
+	if s.Store != nil && !s.Store.CanWrite("skills") {
+		return
+	}
 	s.Store.Persist("skills")
 	s.Store.Persist("skill_catalog")
 	s.Store.Persist("skill_health")
@@ -141,9 +144,9 @@ func (s *Server) ensureSkillHealthLocked(skill map[string]any) map[string]any {
 	item := map[string]any{
 		"id": "sh-" + sid, "skillId": sid, "name": skill["name"], "kind": skill["kind"],
 		"environment": coalesce(str(skill["environment"]), "production"),
-		"status": status, "calls24h": 0, "successRate": 100, "p95Ms": 0, "errorRate": 0,
-		"riskLevel": normalizeRiskLevel(skill["riskLevel"]),
-		"owner": coalesce(str(skill["owner"]), "未指定"),
+		"status":      status, "calls24h": 0, "successRate": 100, "p95Ms": 0, "errorRate": 0,
+		"riskLevel":  normalizeRiskLevel(skill["riskLevel"]),
+		"owner":      coalesce(str(skill["owner"]), "未指定"),
 		"references": 0, "updatedAt": "尚未调用",
 	}
 	s.Store.SkillHealth = append(s.Store.SkillHealth, item)
@@ -386,9 +389,9 @@ func (s *Server) ensureSkillHealthLockedReadOnly(skill map[string]any) map[strin
 	return map[string]any{
 		"id": "sh-" + sid, "skillId": sid, "name": skill["name"], "kind": skill["kind"],
 		"environment": coalesce(str(skill["environment"]), "production"),
-		"status": status, "calls24h": 0, "successRate": 100, "p95Ms": 0, "errorRate": 0,
-		"riskLevel": normalizeRiskLevel(skill["riskLevel"]),
-		"owner": coalesce(str(skill["owner"]), "未指定"),
+		"status":      status, "calls24h": 0, "successRate": 100, "p95Ms": 0, "errorRate": 0,
+		"riskLevel":  normalizeRiskLevel(skill["riskLevel"]),
+		"owner":      coalesce(str(skill["owner"]), "未指定"),
 		"references": 0, "updatedAt": "尚未调用",
 	}
 }
@@ -484,11 +487,11 @@ func (s *Server) createSkill(r *http.Request) (any, error) {
 		"id": s.Store.ID("sk"), "workspaceId": ws, "ownerId": id.ID, "owner": id.Name,
 		"name": name, "kind": coalesce(str(body["kind"]), "skill"), "description": desc,
 		"version": coalesce(str(body["version"]), "0.1.0"),
-		"status": ternary(risk == "high", "beta", "installed"),
-		"rating": 0, "installCount": 0, "riskLevel": risk,
-		"cacheable": boolFrom(body["cacheable"]),
+		"status":  ternary(risk == "high", "beta", "installed"),
+		"rating":  0, "installCount": 0, "riskLevel": risk,
+		"cacheable":       boolFrom(body["cacheable"]),
 		"lifecycleStatus": ternary(risk == "high", "pending_approval", "enabled"),
-		"source": "import", "environment": "sandbox", "classification": "internal",
+		"source":          "import", "environment": "sandbox", "classification": "internal",
 		"lastVerifiedAt": "刚刚", "team": "当前工作区",
 	}
 	s.Store.Lock()
@@ -545,25 +548,25 @@ func (s *Server) importSkills(r *http.Request) (any, error) {
 			"id": s.Store.ID("sk"), "workspaceId": ws, "ownerId": id.ID, "owner": id.Name,
 			"name": name, "kind": coalesce(str(m["kind"]), "skill"),
 			"description": coalesce(strings.TrimSpace(str(m["description"])), "导入技能 · "+name),
-			"version": coalesce(str(m["version"]), "0.1.0"),
-			"status": ternary(risk == "high", "beta", "installed"),
-			"rating": 0, "installCount": 0, "riskLevel": risk,
-			"cacheable": boolFrom(m["cacheable"]),
+			"version":     coalesce(str(m["version"]), "0.1.0"),
+			"status":      ternary(risk == "high", "beta", "installed"),
+			"rating":      0, "installCount": 0, "riskLevel": risk,
+			"cacheable":       boolFrom(m["cacheable"]),
 			"lifecycleStatus": ternary(risk == "high", "pending_approval", "enabled"),
-			"source": "import", "environment": "sandbox", "classification": "internal",
+			"source":          "import", "environment": "sandbox", "classification": "internal",
 			"lastVerifiedAt": "刚刚", "team": "当前工作区",
 		}
 		s.Store.Skills = append([]map[string]any{item}, s.Store.Skills...)
 		s.ensureSkillHealthLocked(item)
 		s.Store.SkillIntegrations = append([]map[string]any{{
 			"id": s.Store.ID("si"), "workspaceId": ws, "name": name, "type": item["kind"],
-			"skillId": str(item["id"]),
+			"skillId":     str(item["id"]),
 			"environment": "test", "status": "validating", "owner": id.Name,
-			"endpoint": "registry://import/" + name + ":" + str(item["version"]),
-			"credentialRef": "vault://registries/import-reader",
+			"endpoint":       "registry://import/" + name + ":" + str(item["version"]),
+			"credentialRef":  "vault://registries/import-reader",
 			"lastVerifiedAt": "刚刚", "health": "unknown", "discoveredCapabilities": 0,
 			"writeApprovalRequired": risk == "high",
-			"allowedEgress": []string{"registry.internal.example.com"},
+			"allowedEgress":         []string{"registry.internal.example.com"},
 		}}, s.Store.SkillIntegrations...)
 		created = append(created, normalizeSkillItem(item))
 	}
@@ -818,7 +821,7 @@ func (s *Server) skillPreflight(r *http.Request, id *auth.Identity, ws, skillID 
 		"dependencies": deps, "requiresApproval": decision == "review_required",
 		"decision": decision, "reason": reason,
 		"vulnerabilityCount": intFrom(candidate["vulnerabilityCount"]),
-		"checks": supplyChecks,
+		"checks":             supplyChecks,
 	}, nil
 }
 
@@ -862,7 +865,7 @@ func (s *Server) skillInstall(r *http.Request, id *auth.Identity, ws, skillID st
 		"rating": cat["rating"], "installCount": cat["installCount"],
 		"riskLevel": risk, "cacheable": boolFrom(cat["cacheable"]),
 		"lifecycleStatus": "enabled", "source": "market",
-		"environment": coalesce(str(cat["environment"]), "production"),
+		"environment":    coalesce(str(cat["environment"]), "production"),
 		"classification": coalesce(str(cat["classification"]), "internal"),
 		"lastVerifiedAt": "刚刚", "team": "能力商店",
 		"publisher": cat["publisher"], "signed": cat["signed"], "license": cat["license"],
@@ -1026,8 +1029,8 @@ func (s *Server) skillUpgradePlan(r *http.Request, id *auth.Identity, ws, skillI
 			{"label": "权限差异分析", "status": permStatus},
 			{"label": "引用版本影响", "status": refStatus},
 		},
-		"impacted": impact,
-		"rollbackVersion": sk["version"],
+		"impacted":         impact,
+		"rollbackVersion":  sk["version"],
 		"approvalRequired": risk == "high" || len(agents)+len(workflows) > 0,
 	}, nil
 }
@@ -1097,7 +1100,7 @@ func (s *Server) skillTest(r *http.Request, id *auth.Identity, ws, skillID strin
 	}
 
 	var (
-		result map[string]any
+		result     map[string]any
 		runtimeErr error
 	)
 	for attempt := 0; attempt <= retries; attempt++ {
@@ -1116,7 +1119,7 @@ func (s *Server) skillTest(r *http.Request, id *auth.Identity, ws, skillID strin
 			s.Store.Lock()
 			s.Store.AppendAudit(ws, id.Name, "沙箱测试失败", skillName, "failed", runtimeErr.Error())
 			s.Store.Unlock()
-			return nil, apperr.BadReq(apperr.BadRequest, "技能运行时不可用: "+runtimeErr.Error())
+			return nil, apperr.Unavailable(apperr.RuntimeUnavailable, "技能运行时不可用: "+runtimeErr.Error())
 		}
 		mode = "policy-sim"
 		output = "+SIM\n" + skillName + " v" + skillVersion + " 策略校验通过；skill-runtime 不可达，已使用本地模拟（DE_SKILL_TEST_SIM=1）。\ncommand=" + command
@@ -1554,12 +1557,44 @@ func (s *Server) publishWorkflowSkill(r *http.Request) (any, error) {
 		if str(item["workspaceId"]) != "" && str(item["workspaceId"]) != ws {
 			return nil, apperr.Forbidden(apperr.WorkspaceScope, "流程技能不在当前工作区")
 		}
+		st := coalesce(str(item["status"]), str(item["lifecycleStatus"]))
+		if st == "published" || st == "enabled" || st == "active" {
+			return item, nil
+		}
+		if productionLikeEnv() && st != "pending_approval" && st != "pending_countersign" {
+			return nil, apperr.BadReq(apperr.BadRequest, "仅待审批的流程技能可发布")
+		}
+		if err := requireProductionDualApproval(str(item["requestedById"]), str(item["requestedBy"]), id, "流程技能发布"); err != nil {
+			return nil, err
+		}
+		if hold, herr := maybeHoldForCountersign(item, id, coalesce(str(item["riskLevel"]), str(item["risk"])), "流程技能发布"); herr != nil {
+			return nil, herr
+		} else if hold {
+			item["lifecycleStatus"] = "pending_countersign"
+			s.syncWorkflowSkillCatalogLocked(item)
+			s.Store.AppendAudit(ws, id.Name, "流程技能会签待副署", str(item["name"]), "success", "pending_countersign")
+			itemCopy := cloneMap(item)
+			go func() {
+				s.Store.Persist("workflow_skills")
+				s.applyWorkflowSkillCatalog(id, itemCopy, r)
+			}()
+			return item, nil
+		}
 		item["status"] = "published"
+		item["lifecycleStatus"] = "enabled"
+		item["approvedBy"] = id.Name
+		item["approvedById"] = id.ID
+		item["approvedAt"] = time.Now().UTC().Format(time.RFC3339)
 		if str(item["sourceWorkflowId"]) == "" {
 			item["sourceWorkflowId"] = item["workflowId"]
 		}
+		s.enableWorkflowSkillCatalogLocked(item)
 		s.Store.AppendAudit(ws, id.Name, "治理发布流程技能", str(item["name"]), "success", "")
-		go s.Store.Persist("workflow_skills")
+		itemCopy := cloneMap(item)
+		go func() {
+			s.Store.Persist("workflow_skills")
+			s.applyWorkflowSkillCatalog(id, itemCopy, r)
+		}()
 		return item, nil
 	}
 	return nil, apperr.NotFoundErr(apperr.NotFound, "流程技能不存在")

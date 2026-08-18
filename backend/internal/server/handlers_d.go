@@ -67,30 +67,38 @@ func (s *Server) runWorkflow(r *http.Request) (any, error) {
 	runID := s.Store.ID("run")
 	engRun, err := s.Workflows.StartTrial(r.Context(), runID, wfID)
 	if err != nil {
-		return nil, apperr.BadReq(apperr.BadRequest, err.Error())
+		return nil, apperr.Unavailable(apperr.RuntimeUnavailable, err.Error())
 	}
 	run := engRun.ToMap()
 	run["workspaceId"] = s.workspaceID(r)
 	s.Store.Lock()
 	s.Store.WorkflowRuns = append([]map[string]any{run}, s.Store.WorkflowRuns...)
-	// publish as workflow-skill when requested (after successful trial)
 	if body["publishSkill"] == true && str(run["status"]) == "succeeded" {
-		skill := map[string]any{
-			"id": s.Store.ID("wfs"), "workspaceId": s.workspaceID(r), "workflowId": wfID,
-			"name": coalesce(str(body["skillName"]), "流程技能"), "status": "published", "version": "1.0.0",
+		var wf map[string]any
+		for _, w := range s.Store.Workflows {
+			if str(w["id"]) == wfID {
+				wf = w
+				break
+			}
 		}
-		s.Store.WorkflowSkills = append([]map[string]any{skill}, s.Store.WorkflowSkills...)
-		if s.Store.CapabilityCatalog == nil {
-			s.Store.CapabilityCatalog = map[string]any{}
+		if skill, err := s.publishWorkflowAsSkillLocked(id, s.workspaceID(r), wf, coalesce(str(body["skillName"]), "流程技能")); err != nil {
+			s.Store.Unlock()
+			return nil, err
+		} else {
+			cat, _ := skill["_catalog"].(map[string]any)
+			delete(skill, "_catalog")
+			s.Store.Unlock()
+			s.Store.Persist("workflow_runs")
+			s.Store.Persist("workflow_skills")
+			s.applyWorkflowSkillCatalog(id, cat, r)
+			s.Store.Lock()
 		}
-		wfs, _ := s.Store.CapabilityCatalog["workflows"].([]map[string]any)
-		s.Store.CapabilityCatalog["workflows"] = append([]map[string]any{{
-			"id": skill["id"], "name": skill["name"], "meta": "流程技能 · " + str(skill["version"]),
-		}}, wfs...)
 	}
 	s.Store.AppendAudit(s.workspaceID(r), id.Name, "试运行工作流", wfID, "success", "engine=de-workflow")
 	s.Store.Unlock()
 	s.Store.Persist("workflow_runs")
+	s.Store.Persist("workflow_skills")
+	s.persistSkills()
 	return run, nil
 }
 
@@ -160,7 +168,7 @@ func (s *Server) executeSkill(r *http.Request) (any, error) {
 		s.Store.Unlock()
 		s.Store.Persist("skill_health")
 		s.Store.Persist("skill_extra")
-		return nil, apperr.BadReq(apperr.BadRequest, "技能运行时不可用: "+runtimeErr.Error())
+		return nil, apperr.Unavailable(apperr.RuntimeUnavailable, "技能运行时不可用: "+runtimeErr.Error())
 	}
 	if b, ok := result["ok"].(bool); ok && !b {
 		status = "failed"
@@ -211,6 +219,9 @@ func (s *Server) callSkillRuntime(body map[string]any) (map[string]any, error) {
 }
 
 func skillTestSimEnabled() bool {
+	if productionLikeEnv() {
+		return false
+	}
 	v := strings.ToLower(strings.TrimSpace(envOr("DE_SKILL_TEST_SIM", "1")))
 	return v == "1" || v == "true" || v == "yes"
 }
@@ -245,9 +256,13 @@ func (s *Server) createChannel(r *http.Request) (any, error) {
 		return nil, apperr.Forbidden(apperr.ChannelWriteForbidden, "缺少 channel.write")
 	}
 	body, _ := decodeMap(r)
+	kind := coalesce(str(body["kind"]), "webhook")
+	if kind == "email" || kind == "sms" || kind == "phone" {
+		return nil, apperr.BadReq(apperr.BadRequest, "E_CHANNEL_DEPLOYMENT_INVALID: 不支持邮件、短信、电话渠道")
+	}
 	item := map[string]any{
 		"id": s.Store.ID("ch"), "workspaceId": s.workspaceID(r),
-		"name": coalesce(str(body["name"]), "未命名渠道"), "kind": coalesce(str(body["kind"]), "webhook"),
+		"name": coalesce(str(body["name"]), "未命名渠道"), "kind": kind,
 		"status": "active",
 	}
 	s.Store.Lock()
@@ -276,10 +291,10 @@ func (s *Server) channelOutbound(r *http.Request) (any, error) {
 		"id": s.Store.ID("delivery_attempt"), "workspaceId": ws,
 		"policyId": coalesce(str(body["policyId"]), ""), "deploymentId": coalesce(str(body["channelId"]), str(body["deploymentId"])),
 		"channelId": body["channelId"], "status": "delivered",
-		"targetMasked": maskTarget(coalesce(str(body["target"]), "unknown")),
+		"targetMasked":   maskTarget(coalesce(str(body["target"]), "unknown")),
 		"payloadSummary": truncateRunes(coalesce(str(body["content"]), "outbound"), 48),
-		"normalized": map[string]any{"layer": "L01", "payload": body["payload"]},
-		"at": now, "createdAt": now, "attempts": 1, "replayable": true, "correlationId": corr,
+		"normalized":     map[string]any{"layer": "L01", "payload": body["payload"]},
+		"at":             now, "createdAt": now, "attempts": 1, "replayable": true, "correlationId": corr,
 	}
 	persistDLQ := false
 	s.Store.Lock()

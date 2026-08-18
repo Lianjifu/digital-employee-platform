@@ -24,10 +24,12 @@ function installApiClient() {
           'x-workspace-id': useWorkspaceStore.getState().currentWorkspaceId ?? user?.workspaceId ?? 'w1',
           ...(user ? {
             'x-tenant-id': user.tenantId,
-            'x-mock-role': user.role,
-            'x-mock-actor': user.name,
-            'x-mock-user-id': user.id,
-            'x-mock-permissions': user.permissions.join(','),
+            ...(isMockApiMode() ? {
+              'x-mock-role': user.role,
+              'x-mock-actor': user.name,
+              'x-mock-user-id': user.id,
+              'x-mock-permissions': user.permissions.join(','),
+            } : {}),
           } : {}),
         };
       },
