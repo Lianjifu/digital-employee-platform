@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { AlertCircle, LoaderCircle, Plus } from 'lucide-react';
 import type { ControlledTask, Priority, TaskLifecycleStage } from '@de/web-types';
 import { Input } from '@de/web-ui';
@@ -54,13 +55,13 @@ export default function Tasks() {
   const canMutate = roleCanMutate(user?.role);
   const copy = rolePageCopy('tasks', user?.role);
   const [preferences] = useState(readPreferences);
-  const taskQuery = typeof window === 'undefined' ? new URLSearchParams() : new URLSearchParams(window.location.search);
-  const taskCodeFromHome = taskQuery.get('task');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const taskCodeFromHome = searchParams.get('task');
   const [filters, setFilters] = useState<TaskFilters>(() => {
     const seeded = {
       ...preferences.filters,
       search: taskCodeFromHome ?? preferences.filters.search,
-      risk: taskQuery.get('risk') === 'attention' ? 'attention' as const : preferences.filters.risk,
+      risk: searchParams.get('risk') === 'attention' ? 'attention' as const : preferences.filters.risk,
     };
     return roleDefaultFilters(role, actor, seeded);
   });
@@ -106,6 +107,14 @@ export default function Tasks() {
     assignee: role === 'user' ? actor : 'all',
   });
   const openTask = (task: ControlledTask) => { setSelected(task); setMessage(null); };
+  const closeDrawer = useCallback(() => {
+    setSelected(null);
+    if (!searchParams.has('task') && searchParams.get('risk') !== 'attention') return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('task');
+    if (next.get('risk') === 'attention') next.delete('risk');
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
   const moveTask = (task: ControlledTask, stage: TaskLifecycleStage) => {
     if (!canMutate) {
       setMessage('审计只读模式，无法变更任务状态。');
@@ -136,7 +145,7 @@ export default function Tasks() {
     {message && <div className="task-feedback" role="status">{message}<button type="button" onClick={() => setMessage(null)}>关闭</button></div>}
     {loading ? <div className="task-loading"><LoaderCircle className="animate-spin" />正在加载协同任务…</div> : error ? <div className="task-loading error" role="alert"><AlertCircle />无法加载任务：{errorText}<button type="button" onClick={() => refetch()}>重试</button></div> : <TaskLifecycleBoard tasks={tasks} view={view} disabled={mutationPending || !canMutate} onOpen={openTask} onTransition={moveTask} />}
     </div>
-    <Drawer open={!!selectedCurrent} onClose={() => setSelected(null)} title={selectedCurrent?.title} description={selectedCurrent ? `${selectedCurrent.code} · ${getStageMeta(selectedCurrent.lifecycleStage).label}` : undefined} width={520} className="task-detail-drawer" flush>
+    <Drawer open={!!selectedCurrent} onClose={closeDrawer} title={selectedCurrent?.title} description={selectedCurrent ? `${selectedCurrent.code} · ${getStageMeta(selectedCurrent.lifecycleStage).label}` : undefined} width={520} className="task-detail-drawer" flush>
       {selectedCurrent && <div className="task-detail-drawer-body"><TaskLifecycleDrawer task={selectedCurrent} onPendingChange={setDrawerPending} /></div>}
     </Drawer>
     {canMutate && (

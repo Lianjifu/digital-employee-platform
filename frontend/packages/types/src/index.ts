@@ -597,7 +597,7 @@ export interface KnowledgeRetrievalResult {
 /** 可被智能体和工作流引用的知识交付单元，而非浮动的原始文档集合。 */
 export type KnowledgePackageStatus = 'draft' | 'review' | 'published' | 'deprecated' | 'archived';
 export type KnowledgeChunkStrategy = 'structured' | 'semantic' | 'fixed' | 'table';
-export type KnowledgeConsumerType = 'agent' | 'workflow';
+export type KnowledgeConsumerType = 'agent' | 'workflow' | 'digital_employee';
 
 export interface KnowledgePackageVersion {
   id: ID;

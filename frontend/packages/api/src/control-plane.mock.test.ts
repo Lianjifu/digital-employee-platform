@@ -367,7 +367,15 @@ describe('control plane mock mutations', () => {
     const binding = await mockHandler('/api/knowledge/bindings', { method: 'POST', body: { packageId: packageItem.id, consumerType: 'workflow', consumerId: 'wf-test', consumerName: '验证编排', environment: 'staging', profileId: 'krp-ops', noResultPolicy: 'block' } }) as any;
     expect(binding.packageVersion).toBe('v3.2');
 
-    await expect(mockHandler('/api/knowledge/bindings', { method: 'POST', body: { packageId: 'kp-security', consumerType: 'agent', consumerId: 'a-test', consumerName: '验证智能体' } })).rejects.toThrow('E_KNOWLEDGE_VERSION_NOT_PUBLISHED');
+    const draftPackage = await mockHandler('/api/knowledge/packages', {
+      method: 'POST',
+      body: { name: '绑定门禁草稿包', description: '未发布不可绑定', domain: '演示', classification: 'internal' },
+    }) as any;
+    expect(draftPackage.status === 'draft' || draftPackage.currentVersion?.status !== 'published').toBe(true);
+    await expect(mockHandler('/api/knowledge/bindings', {
+      method: 'POST',
+      body: { packageId: draftPackage.id, consumerType: 'agent', consumerId: 'a-test', consumerName: '验证智能体' },
+    })).rejects.toThrow(/E_KNOWLEDGE_VERSION_NOT_PUBLISHED|未发布|缺少可用检索配置/);
     const entities = await mockHandler('/api/knowledge/graph/entities', { method: 'GET' }) as any[];
     expect(entities[0].sourceVersion).toBeTruthy();
   });

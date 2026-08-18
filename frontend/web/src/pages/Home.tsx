@@ -1,7 +1,7 @@
 /**
  * 运营总览 — 现代 SaaS 运营台：页头 / KPI / 专家亮点 / 工作记录
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { Badge, Button, Avatar } from '@de/web-ui';
@@ -22,11 +22,12 @@ import { EmptyState, RoleReadonlyBanner } from '@/components/shared';
 import { useAuthStore } from '@/stores/authStore';
 import { employeePrimaryLabel, employeeSecondaryLabel } from '@/lib/digital-employees';
 import { roleCanMutate, rolePageCopy } from '@/features/role-nav/role-nav';
-import { dayTimelineFromTrend, employeeHealthScore, taskSuccessRate } from '@/features/home/home-metrics';
+import { employeeHealthScore, taskSuccessRate, toDateKey } from '@/features/home/home-metrics';
+import { WorkRecordCalendar, type DayScheduleEvent, type SelectDateOptions, type WorkRecordPeriod } from '@/features/home/WorkRecordCalendar';
 
 const AUDITOR_SUGGESTION_PREFIXES = ['/audit-center', '/zero-trust', '/tasks', '/copilot', '/partners', '/workflows', '/knowledge', '/skills', '/memory', '/home'];
 
-type Period = 'day' | 'week' | 'month';
+type Period = WorkRecordPeriod;
 type RecordTab = 'all' | 'attention' | 'done';
 
 type WorkRecord = {
@@ -36,15 +37,9 @@ type WorkRecord = {
   statusTone: 'success' | 'error' | 'warn' | 'info' | 'neutral';
   attribution?: string;
   time: string;
+  dateKey?: string;
   to: string;
   kind: 'task' | 'activity' | 'alert';
-};
-
-type TimelineSlot = {
-  label: string;
-  collab: number;
-  tasks: number;
-  alerts: number;
 };
 
 function getGreeting() {
@@ -97,6 +92,11 @@ export default function Home() {
 
   const [period, setPeriod] = useState<Period>('day');
   const [recordTab, setRecordTab] = useState<RecordTab>('all');
+  const [selectedDateKey, setSelectedDateKey] = useState(() => toDateKey(new Date()));
+  const handleSelectDate = useCallback((dateKey: string, options?: SelectDateOptions) => {
+    setSelectedDateKey(dateKey);
+    if (options?.drillToDay) setPeriod('day');
+  }, []);
   const [readIds, setReadIds] = useState<Set<string>>(new Set());
   const [runtimeOpen, setRuntimeOpen] = useState(false);
 
@@ -243,59 +243,97 @@ export default function Home() {
     },
   ];
 
-  const timeline = useMemo((): TimelineSlot[] => {
-    if (period === 'day') {
-      return dayTimelineFromTrend(healthData);
-    }
-    if (allTasks.length === 0 && visibleAlerts.length === 0 && todayCollab === 0) {
-      return [];
-    }
-    const buckets = period === 'week' ? 7 : 8;
-    const slots: TimelineSlot[] = Array.from({ length: buckets }, (_, i) => ({
-      label: period === 'week' ? `D${i + 1}` : `${i + 1}`,
-      collab: 0,
-      tasks: 0,
-      alerts: 0,
-    }));
-    const now = Date.now();
-    const spanMs = period === 'week' ? 7 * 86400000 : 30 * 86400000;
-    for (const t of allTasks) {
-      const ts = Date.parse(t.updatedAt || t.createdAt);
-      if (!Number.isFinite(ts) || now - ts > spanMs || ts > now) continue;
-      const idx = Math.min(buckets - 1, Math.max(0, Math.floor(((ts - (now - spanMs)) / spanMs) * buckets)));
-      slots[idx]!.tasks += 1;
-    }
-    for (const a of visibleAlerts) {
-      const ts = Date.parse(String(a.time ?? ''));
-      if (!Number.isFinite(ts) || now - ts > spanMs || ts > now) continue;
-      const idx = Math.min(buckets - 1, Math.max(0, Math.floor(((ts - (now - spanMs)) / spanMs) * buckets)));
-      slots[idx]!.alerts += 1;
-    }
-    if (todayCollab > 0 && slots.length) {
-      slots[slots.length - 1]!.collab += todayCollab;
-    }
-    return slots.some((s) => s.collab + s.tasks + s.alerts > 0) ? slots : [];
-  }, [period, healthData, allTasks, visibleAlerts, todayCollab]);
+  const calendarSource = useMemo(() => ({
+    tasks: allTasks,
+    alerts: visibleAlerts.map((a: { time?: string }) => ({ time: a.time })),
+    todayCollab,
+    trend: healthData,
+  }), [allTasks, visibleAlerts, todayCollab, healthData]);
 
-  const maxBar = Math.max(1, ...timeline.flatMap((r: TimelineSlot) => [r.collab, r.tasks, r.alerts]));
+  const dayEvents = useMemo((): DayScheduleEvent[] => {
+    const out: DayScheduleEvent[] = [];
+    for (const t of allTasks) {
+      const raw = t.updatedAt ?? t.createdAt;
+      const ts = Date.parse(raw);
+      if (!Number.isFinite(ts)) continue;
+      const d = new Date(ts);
+      const done = t.status === 'completed';
+      const attention = (t.slaRemainingMin ?? 999) < 60 || t.priority === 'P0' || t.status === 'review';
+      out.push({
+        id: `task-${t.id}`,
+        kind: 'task',
+        title: t.title,
+        subtitle: t.digitalEmployeeName ?? t.assignee,
+        hour: d.getHours(),
+        minute: d.getMinutes(),
+        dateKey: toDateKey(d),
+        to: `/tasks?task=${encodeURIComponent(t.code)}`,
+        tone: done ? 'success' : attention ? 'error' : 'info',
+      });
+    }
+    for (const alert of visibleAlerts) {
+      const ts = Date.parse(String(alert.time ?? ''));
+      if (!Number.isFinite(ts)) continue;
+      const d = new Date(ts);
+      out.push({
+        id: `alert-${alert.id}`,
+        kind: 'alert',
+        title: alert.text,
+        subtitle: alert.assignee ?? alert.taskCode,
+        hour: d.getHours(),
+        minute: d.getMinutes(),
+        dateKey: toDateKey(d),
+        to: `/tasks?task=${encodeURIComponent(alert.taskCode ?? '')}&risk=attention`,
+        tone: alert.level === 'P0' ? 'error' : 'warn',
+      });
+    }
+    if (todayCollab > 0) {
+      const now = new Date();
+      out.push({
+        id: 'collab-today',
+        kind: 'collab',
+        title: `今日协作 ${todayCollab} 次`,
+        subtitle: '专家协作会话',
+        hour: now.getHours(),
+        minute: 0,
+        dateKey: toDateKey(now),
+        to: '/copilot',
+        tone: 'info',
+      });
+    }
+    return out;
+  }, [allTasks, visibleAlerts, todayCollab]);
+
+  /** 打开「日」且今天无事件时，落到最近有活动的一天；用户手动换日则不抢焦点 */
+  useEffect(() => {
+    if (period !== 'day' || dayEvents.length === 0) return;
+    if (dayEvents.some((e) => e.dateKey === selectedDateKey)) return;
+    if (selectedDateKey !== toDateKey(new Date())) return;
+    const latest = [...dayEvents].sort((a, b) => `${b.dateKey}T${String(b.hour).padStart(2, '0')}`.localeCompare(`${a.dateKey}T${String(a.hour).padStart(2, '0')}`))[0];
+    if (latest) setSelectedDateKey(latest.dateKey);
+  }, [period, dayEvents, selectedDateKey]);
 
   const records = useMemo(() => {
     const out: WorkRecord[] = [];
-    for (const t of allTasks.slice(0, 12)) {
+    for (const t of allTasks.slice(0, 24)) {
       const done = t.status === 'completed';
       const attention = (t.slaRemainingMin ?? 999) < 60 || t.priority === 'P0' || t.status === 'review';
+      const raw = t.updatedAt ?? t.createdAt;
+      const ts = Date.parse(raw);
       out.push({
         id: `task-${t.id}`,
         title: t.title,
         status: done ? '已完成' : attention ? '需关注' : t.status === 'in_progress' ? '进行中' : '待处理',
         statusTone: done ? 'success' : attention ? 'error' : t.status === 'in_progress' ? 'info' : 'neutral',
         attribution: t.digitalEmployeeName ?? t.assignee ?? '—',
-        time: formatWhen(t.updatedAt ?? t.createdAt),
+        time: formatWhen(raw),
+        dateKey: Number.isFinite(ts) ? toDateKey(new Date(ts)) : undefined,
         to: `/tasks?task=${encodeURIComponent(t.code)}`,
         kind: 'task',
       });
     }
-    for (const alert of visibleAlerts.slice(0, 6)) {
+    for (const alert of visibleAlerts.slice(0, 12)) {
+      const ts = Date.parse(String(alert.time ?? ''));
       out.push({
         id: `alert-${alert.id}`,
         title: alert.text,
@@ -303,6 +341,7 @@ export default function Home() {
         statusTone: alert.level === 'P0' ? 'error' : 'warn',
         attribution: alert.assignee ?? alert.taskCode,
         time: formatWhen(alert.time) === '—' ? (alert.time ?? '—') : formatWhen(alert.time),
+        dateKey: Number.isFinite(ts) ? toDateKey(new Date(ts)) : undefined,
         to: `/tasks?task=${encodeURIComponent(alert.taskCode ?? '')}&risk=attention`,
         kind: 'alert',
       });
@@ -311,10 +350,23 @@ export default function Home() {
   }, [allTasks, visibleAlerts]);
 
   const filteredRecords = records.filter((r) => {
+    if (r.dateKey && r.dateKey !== selectedDateKey) return false;
     if (recordTab === 'attention') return r.statusTone === 'error' || r.statusTone === 'warn';
     if (recordTab === 'done') return r.statusTone === 'success';
     return true;
   });
+
+  const periodDateLabel = useMemo(() => {
+    const d = new Date(`${selectedDateKey}T12:00:00`);
+    if (Number.isNaN(d.getTime())) return new Date().toLocaleDateString('zh-CN');
+    if (period === 'month') {
+      return d.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long' });
+    }
+    if (period === 'week') {
+      return `${d.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' })} 所在周`;
+    }
+    return d.toLocaleDateString('zh-CN', { year: 'numeric', month: 'numeric', day: 'numeric', weekday: 'short' });
+  }, [period, selectedDateKey]);
 
   const suggestions = (extra?.suggestion ?? []).filter((s: { to?: string }) => {
     if (!isAuditor) return true;
@@ -584,37 +636,16 @@ export default function Home() {
                 </button>
               ))}
             </div>
-            <span className="home-records__date">{new Date().toLocaleDateString('zh-CN')}</span>
+            <span className="home-records__date">{periodDateLabel}</span>
           </div>
 
-          <div className="home-timeline" aria-label="活动时间线">
-            {timeline.length === 0 ? (
-              <p className="home-empty" style={{ paddingTop: 8, paddingBottom: 8 }}>暂无时间线数据</p>
-            ) : (
-              <>
-                {(['collab', 'tasks', 'alerts'] as const).map((row) => (
-                  <div key={row} className="home-timeline__row">
-                    <span className="home-timeline__label">
-                      {row === 'collab' ? '协作' : row === 'tasks' ? '任务' : '告警'}
-                    </span>
-                    <div className="home-timeline__track">
-                      {timeline.map((slot) => (
-                        <div
-                          key={`${row}-${slot.label}`}
-                          className={cn('home-timeline__bar', `home-timeline__bar--${row}`)}
-                          style={{ height: `${Math.max(14, (slot[row] / maxBar) * 100)}%` }}
-                          title={`${slot.label}: ${slot[row]}`}
-                        />
-                      ))}
-                    </div>
-                  </div>
-                ))}
-                <div className="home-timeline__axis">
-                  {timeline.map((slot) => <span key={slot.label}>{slot.label}</span>)}
-                </div>
-              </>
-            )}
-          </div>
+          <WorkRecordCalendar
+            period={period}
+            source={calendarSource}
+            selectedDateKey={selectedDateKey}
+            onSelectDate={handleSelectDate}
+            dayEvents={dayEvents}
+          />
 
           <div className="home-segment home-records__tabs" role="tablist">
             {([['all', '全部'], ['attention', '需关注'], ['done', '已完成']] as const).map(([key, label]) => (
