@@ -832,7 +832,7 @@ export interface Skill {
   packageFileName?: string;
   packageFiles?: string[];
   scripts?: string[];
-  /** 商店货源：builtin | registry | promoted */
+  /** 商店来源：builtin | registry | promoted */
   channel?: 'builtin' | 'registry' | 'promoted' | string;
   channelLabel?: string;
   syncedAt?: string;

@@ -75,7 +75,7 @@ func TestSkillStoreCatalogP0P3(t *testing.T) {
 
 	// P1: promote workspace skill
 	rr = knowledgeDo(t, h, http.MethodPost, "/api/skills/catalog/publish", "mock-admin-token",
-		`{"skillId":"sk-1","releaseChannel":"beta","visibilityScope":"workspace","approvalTicket":"APR-PROMOTE-1"}`)
+		`{"skillId":"sk-docx","releaseChannel":"beta","visibilityScope":"workspace","approvalTicket":"APR-PROMOTE-1"}`)
 	if rr.Code != 200 {
 		t.Fatalf("publish %d %s", rr.Code, rr.Body.String())
 	}

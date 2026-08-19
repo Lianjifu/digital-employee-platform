@@ -2,6 +2,7 @@ package store
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -142,6 +143,25 @@ func (s *Store) ID(prefix string) string {
 	return fmt.Sprintf("%s-%d", prefix, n)
 }
 
+// BumpSeqFromPrefixedIDs advances the ID counter past existing "{prefix}-N" values (post-hydrate).
+func (s *Store) BumpSeqFromPrefixedIDs(prefix string) {
+	prefixDash := prefix + "-"
+	var max uint64
+	for _, sk := range s.Skills {
+		id := str(sk["id"])
+		if !strings.HasPrefix(id, prefixDash) {
+			continue
+		}
+		n, err := strconv.ParseUint(strings.TrimPrefix(id, prefixDash), 10, 64)
+		if err == nil && n > max {
+			max = n
+		}
+	}
+	if max > 0 {
+		s.seq.Store(max)
+	}
+}
+
 func now() string { return time.Now().UTC().Format(time.RFC3339) }
 
 func controlledTask(id, ws, code, title, priority, status, stage, ownerID, deID, source string) map[string]any {
@@ -219,7 +239,7 @@ func (s *Store) seed() {
 	}
 	s.WorkspacePolicy["w1"] = map[string]any{
 		"workspaceId": "w1", "dataClassification": "restricted", "egressAllowed": false,
-		"toolAllowlist": []string{"kubectl", "cmdb-tool"}, "retentionDays": 365, "exceptionStatus": "none",
+		"toolAllowlist": []string{"read_file", "web_fetch"}, "retentionDays": 365, "exceptionStatus": "none",
 	}
 
 	s.ZTPolicies = []map[string]any{
@@ -255,13 +275,13 @@ func (s *Store) seed() {
 	s.CapabilityCatalog = map[string]any{
 		"models":    []map[string]any{{"id": "mdl-gpt4", "name": "gpt-4o", "meta": "Azure OpenAI CN · cn-east"}},
 		"knowledge": []map[string]any{{"id": "pkg-ops", "name": "运维知识库", "meta": "运维 · v3.1.0"}},
-		"skills":    []map[string]any{{"id": "sk-1", "name": "kubectl 只读", "meta": "技能 · 0.9.0"}},
-		"tools":     []map[string]any{{"id": "tool-cmdb", "name": "CMDB 查询", "meta": "工具 · 1.0.0"}},
+		"skills":    []map[string]any{{"id": "sk-docx", "name": "docx", "meta": "技能 · 1.0.0"}},
+		"tools":     []map[string]any{},
 		"workflows": []map[string]any{{"id": "wfs-1", "name": "故障自愈技能", "meta": "流程技能 · 1.2.0"}},
 		"channels":  []map[string]any{{"id": "ch-1", "name": "企业微信通知", "meta": "渠道 · wecom"}},
 	}
 	s.EmployeeTemplates = []map[string]any{
-		{"id": "tpl-sre", "name": "SRE 值班工作伙伴", "role": "SRE", "department": "信息技术部", "scope": "organization", "status": "certified", "source": "platform", "sourceName": "平台模板", "description": "故障响应与变更护栏", "serviceObject": "运维团队", "version": "1.0.0", "risk": "medium", "responsibilities": []string{"故障响应", "变更护栏"}, "prohibitedActions": []string{"生产直接写库"}, "capabilities": map[string]any{"model": "gpt-4o", "knowledge": []string{"运维知识库"}, "skills": []string{"kubectl 只读"}, "tools": []string{"CMDB 查询"}, "workflows": []string{"故障自愈技能"}, "channels": []string{"Web"}}, "memoryPolicy": map[string]any{"shortTermHours": 24, "workingDays": 7, "longTermCadence": "daily", "knowledgePromotion": "approval_required"}, "applicableEnvironments": []string{"sandbox", "staging", "production"}, "adoptionCount": 1, "tags": []string{"sre"}, "publishedAt": "2026-07-01T00:00:00Z", "updatedAt": "2026-07-01T00:00:00Z"},
+		{"id": "tpl-sre", "name": "SRE 值班工作伙伴", "role": "SRE", "department": "信息技术部", "scope": "organization", "status": "certified", "source": "platform", "sourceName": "平台模板", "description": "故障响应与变更护栏", "serviceObject": "运维团队", "version": "1.0.0", "risk": "medium", "responsibilities": []string{"故障响应", "变更护栏"}, "prohibitedActions": []string{"生产直接写库"}, "capabilities": map[string]any{"model": "gpt-4o", "knowledge": []string{"运维知识库"}, "skills": []string{"docx", "summarize"}, "tools": []string{}, "workflows": []string{"故障自愈技能"}, "channels": []string{"Web"}}, "memoryPolicy": map[string]any{"shortTermHours": 24, "workingDays": 7, "longTermCadence": "daily", "knowledgePromotion": "approval_required"}, "applicableEnvironments": []string{"sandbox", "staging", "production"}, "adoptionCount": 1, "tags": []string{"sre"}, "publishedAt": "2026-07-01T00:00:00Z", "updatedAt": "2026-07-01T00:00:00Z"},
 	}
 	s.TemplateAdoptions = []map[string]any{
 		{"id": "adopt-1", "templateId": "tpl-sre", "templateVersion": "1.0.0", "employeeId": "de-1", "workspaceId": "w1", "adoptedBy": "平台管理员", "status": "active", "createdAt": "2026-07-01T00:00:00Z"},
@@ -272,7 +292,7 @@ func (s *Store) seed() {
 			"description": "生产故障自愈与护栏", "owner": "平台管理员", "ownerId": "u1", "escalationOwner": "值班经理", "serviceObject": "运维团队",
 			"version": "1.0.0", "environment": "production", "lifecycle": "active", "risk": "medium",
 			"responsibilities": []string{"故障响应", "变更护栏"}, "prohibitedActions": []string{"生产直接写库"},
-			"capabilities": map[string]any{"model": "gpt-4o", "knowledge": []string{"运维知识库"}, "skills": []string{"kubectl 只读"}, "tools": []string{"CMDB 查询"}, "workflows": []string{"故障自愈技能"}, "channels": []string{"Web"}},
+			"capabilities": map[string]any{"model": "gpt-4o", "knowledge": []string{"运维知识库"}, "skills": []string{"docx", "summarize"}, "tools": []string{}, "workflows": []string{"故障自愈技能"}, "channels": []string{"Web"}},
 			"memoryPolicy": map[string]any{"shortTermHours": 24, "workingDays": 7, "longTermCadence": "daily", "knowledgePromotion": "approval_required"},
 			"runtime":      map[string]any{"calls24h": 120, "successRate": 0.98, "p95Ms": 420, "costToday": 12.5, "handoffs24h": 2, "anomalies": 0},
 			"evaluation":   map[string]any{"status": "passed", "score": 94.2, "lastRunAt": "2026-07-20T00:00:00Z"},
@@ -431,48 +451,26 @@ func (s *Store) seed() {
 	}
 	s.Skills = []map[string]any{
 		{
-			"id": "sk-1", "workspaceId": "w1", "ownerId": "u1", "owner": "平台管理员", "team": "SRE 平台组",
-			"name": "kubectl 只读", "kind": "skill", "description": "只读查询集群资源，禁止破坏性操作",
-			"lifecycleStatus": "enabled", "status": "installed", "runtime": "gvisor", "version": "0.9.0",
-			"riskLevel": "mid", "rating": 4.6, "installCount": 320, "cacheable": true, "source": "market",
-			"environment": "production", "classification": "internal", "lastVerifiedAt": "2 小时前",
-		},
-		{
-			"id": "sk-2", "workspaceId": "w1", "ownerId": "u1", "owner": "平台管理员", "team": "可观测性组",
-			"name": "loki-query", "kind": "skill", "description": "Loki 日志检索",
-			"lifecycleStatus": "enabled", "status": "installed", "version": "1.0.0",
-			"riskLevel": "low", "rating": 4.5, "installCount": 210, "cacheable": true, "source": "import",
-			"environment": "production", "classification": "internal", "lastVerifiedAt": "昨天",
-		},
-		{
-			"id": "tool-cmdb", "workspaceId": "w1", "ownerId": "u1", "owner": "平台管理员", "team": "CMDB",
-			"name": "CMDB 查询", "kind": "tool", "description": "资产与配置项只读查询",
-			"lifecycleStatus": "enabled", "status": "installed", "version": "1.0.0",
-			"riskLevel": "low", "rating": 4.4, "installCount": 180, "cacheable": true, "source": "market",
-			"environment": "production", "classification": "internal", "lastVerifiedAt": "今天",
-		},
-		{
 			"id": "sk-docx", "workspaceId": "w1", "ownerId": "u1", "owner": "平台管理员", "team": "文档能力组",
 			"name": "docx", "kind": "skill", "description": "根据文本内容生成 Word（.docx）文档并返回下载链接",
 			"lifecycleStatus": "enabled", "status": "installed", "runtime": "docx-local", "version": "1.0.0",
 			"riskLevel": "low", "rating": 4.8, "installCount": 96, "cacheable": true, "source": "builtin",
 			"environment": "production", "classification": "internal", "lastVerifiedAt": "刚刚",
 		},
+		{
+			"id": "sk-sandbox", "workspaceId": "w1", "ownerId": "u1", "owner": "平台管理员", "team": "沙箱验证组",
+			"name": "sandbox-echo", "kind": "skill", "description": "沙箱 echo 验证（治理/限流测试用）",
+			"lifecycleStatus": "enabled", "status": "installed", "version": "1.0.0",
+			"riskLevel": "low", "rating": 4.5, "installCount": 12, "cacheable": false, "source": "import",
+			"environment": "sandbox", "classification": "internal", "lastVerifiedAt": "刚刚",
+		},
 	}
 	s.SkillCatalog = []map[string]any{
 		{
-			"id": "sc-1", "workspaceId": "w1", "name": "日志检索", "kind": "skill", "version": "1.0.0",
-			"description": "跨 Loki / ES 的统一日志检索能力", "status": "available", "rating": 4.7, "installCount": 1800,
+			"id": "sc-demo", "workspaceId": "w1", "name": "api-health-check", "kind": "skill", "version": "1.0.0",
+			"description": "HTTP 健康检查", "status": "available", "rating": 4.5, "installCount": 100,
 			"riskLevel": "low", "cacheable": true, "publisher": "企业能力商店", "signed": true,
-			"dependencies": []string{}, "license": "内部许可", "lastScannedAt": "12 分钟前", "vulnerabilityCount": 0,
-			"supportedEnvironments": []string{"测试", "生产"}, "environment": "production", "classification": "internal",
-			"channel": "builtin", "syncedAt": "种子目录", "visibilityScope": "global", "releaseChannel": "stable",
-		},
-		{
-			"id": "sc-2", "workspaceId": "w1", "name": "mysql-cli", "kind": "skill", "version": "2.0.0",
-			"description": "MySQL 命令执行（受控沙箱）", "status": "available", "rating": 4.6, "installCount": 2200,
-			"riskLevel": "mid", "cacheable": true, "publisher": "企业能力商店", "signed": true,
-			"dependencies": []string{}, "license": "Apache-2.0", "lastScannedAt": "20 分钟前", "vulnerabilityCount": 0,
+			"dependencies": []string{}, "license": "MIT", "lastScannedAt": "刚刚", "vulnerabilityCount": 0,
 			"supportedEnvironments": []string{"测试", "生产"}, "environment": "production", "classification": "internal",
 			"channel": "builtin", "syncedAt": "种子目录", "visibilityScope": "global", "releaseChannel": "stable",
 		},
@@ -505,8 +503,7 @@ func (s *Store) seed() {
 		"calls24h": 0, "successRate": 100, "p95Ms": 0, "abnormalSkills": 0, "pendingActions": 0,
 	}
 	s.SkillHealth = []map[string]any{
-		{"id": "sh-sk-1", "skillId": "sk-1", "name": "kubectl 只读", "kind": "skill", "environment": "production", "status": "healthy", "calls24h": 128, "successRate": 99.6, "p95Ms": 180, "errorRate": 0.4, "riskLevel": "mid", "owner": "平台管理员", "references": 2, "updatedAt": "12 分钟前"},
-		{"id": "sh-sk-2", "skillId": "sk-2", "name": "loki-query", "kind": "skill", "environment": "production", "status": "attention", "calls24h": 86, "successRate": 98.2, "p95Ms": 240, "errorRate": 1.8, "riskLevel": "low", "owner": "平台管理员", "references": 1, "updatedAt": "28 分钟前"},
+		{"id": "sh-sk-docx", "skillId": "sk-docx", "name": "docx", "kind": "skill", "environment": "production", "status": "healthy", "calls24h": 48, "successRate": 99.2, "p95Ms": 220, "errorRate": 0.8, "riskLevel": "low", "owner": "平台管理员", "references": 2, "updatedAt": "12 分钟前"},
 	}
 	s.SkillIntegrations = []map[string]any{}
 	s.SkillExtra = map[string]any{
@@ -515,16 +512,11 @@ func (s *Store) seed() {
 		"permissions": map[string]any{},
 		"versions":    map[string]any{},
 		"bindings": []map[string]any{
-			{"id": "cap-de1-sk1", "workspaceId": "w1", "targetType": "agent", "targetId": "de-1", "targetName": "故障自愈助手", "capabilityKind": "skill", "capabilityId": "sk-1", "pinnedVersion": "0.9.0", "status": "active", "createdBy": "系统", "createdAt": "2026-07-19T09:40:00Z", "auditId": "audit-cap-1"},
-			{"id": "cap-wf1-sk1", "workspaceId": "w1", "targetType": "workflow", "targetId": "wf1", "targetName": "故障自愈", "capabilityKind": "skill", "capabilityId": "sk-1", "pinnedVersion": "0.9.0", "status": "active", "createdBy": "系统", "createdAt": "2026-07-19T09:45:00Z", "auditId": "audit-cap-2"},
+			{"id": "cap-de1-docx", "workspaceId": "w1", "targetType": "agent", "targetId": "de-1", "targetName": "故障自愈助手", "capabilityKind": "skill", "capabilityId": "sk-docx", "pinnedVersion": "1.0.0", "status": "active", "createdBy": "系统", "createdAt": "2026-07-19T09:40:00Z", "auditId": "audit-cap-1"},
+			{"id": "cap-wf1-docx", "workspaceId": "w1", "targetType": "workflow", "targetId": "wf1", "targetName": "故障自愈", "capabilityKind": "skill", "capabilityId": "sk-docx", "pinnedVersion": "1.0.0", "status": "active", "createdBy": "系统", "createdAt": "2026-07-19T09:45:00Z", "auditId": "audit-cap-2"},
 		},
-		"incidents": []map[string]any{
-			{"id": "inc-loki-1", "workspaceId": "w1", "skillId": "sk-2", "skillName": "loki-query", "severity": "P2", "type": "latency", "title": "日志检索 P95 升高", "detail": "近 30 分钟查询延迟上升，建议重新验证连接。", "status": "open", "createdAt": "14:10", "requestId": "req_loki_1"},
-		},
-		"events": []map[string]any{
-			{"id": "sev-1", "workspaceId": "w1", "time": "12:20", "skillName": "kubectl 只读", "type": "call", "action": "健康验证完成", "actor": "系统", "result": "success"},
-			{"id": "sev-2", "workspaceId": "w1", "time": "14:10", "skillName": "loki-query", "type": "call", "action": "延迟告警", "actor": "运行监控", "result": "failed"},
-		},
+		"incidents": []map[string]any{},
+		"events": []map[string]any{},
 	}
 	s.MemoryRecords = []map[string]any{
 		{

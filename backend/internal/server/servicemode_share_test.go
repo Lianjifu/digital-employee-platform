@@ -3,10 +3,11 @@ package server
 import "testing"
 
 func TestOwnsShareAndAttachments(t *testing.T) {
-	m := ModeCollab
-	for _, p := range []string{"/api/share/tok", "/api/attachments/a.bin", "/api/sessions/s1/share", "/api/internal/channel-sessions"} {
-		if !m.OwnsPath(p) {
-			t.Fatalf("%s should be owned by collab", p)
+	for _, mode := range []ServiceMode{ModeCollab, ModeApp} {
+		for _, p := range []string{"/api/share/tok", "/api/attachments/a.bin", "/api/sessions/s1/share", "/api/internal/channel-sessions"} {
+			if !mode.OwnsPath(p) {
+				t.Fatalf("%s should own %s", mode, p)
+			}
 		}
 	}
 	if !ModeCap.OwnsPath("/api/internal/skill-catalog") {

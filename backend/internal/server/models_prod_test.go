@@ -74,6 +74,45 @@ func TestModelProviderCredentialAliasAndAudit(t *testing.T) {
 	}
 }
 
+func TestCreateModelProviderAllowsLocalSecretsWithBanMockToken(t *testing.T) {
+	t.Setenv("DE_MODEL_ALLOW_PRIVATE", "1")
+	t.Setenv("DE_BAN_MOCK_TOKEN", "1")
+	t.Setenv("DE_ALLOW_PASSWORD_LOGIN", "1")
+	t.Setenv("DE_ENV", "development")
+	st := store.New()
+	h := server.New(st).Handler()
+
+	loginRR := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		bytes.NewBufferString(`{"email":"admin@acme.com","password":"x"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(loginRR, loginReq)
+	if loginRR.Code != 200 {
+		t.Fatalf("login %d %s", loginRR.Code, loginRR.Body.String())
+	}
+	var loginEnv struct {
+		Data struct {
+			Token string `json:"token"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(loginRR.Body.Bytes(), &loginEnv); err != nil || loginEnv.Data.Token == "" {
+		t.Fatalf("login token: %v body=%s", err, loginRR.Body.String())
+	}
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/model-providers", bytes.NewBufferString(`{
+		"name":"DeepSeek","model":"deepseek-chat","credential":"sk-secret-key",
+		"protocol":"openai_compatible","baseUrl":"https://api.deepseek.com","region":"cn-east","tier":"connectable"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+loginEnv.Data.Token)
+	req.Header.Set("x-workspace-id", "w1")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("create with DE_BAN_MOCK_TOKEN=1 should use ModelSecrets locally, got %d %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestModelProviderWorkspaceIsolation(t *testing.T) {
 	h := server.New(store.New()).Handler()
 	rr := httptest.NewRecorder()

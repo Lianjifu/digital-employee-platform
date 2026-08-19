@@ -26,11 +26,9 @@ func Run(opts Options) error {
 	if opts.Mode == "" {
 		opts.Mode = server.ParseServiceMode(os.Getenv("DE_SERVICE"))
 	}
-	if opts.Mode == "" || opts.Mode == server.ModeAll {
-		// ModeAll is for unit tests only; deployment binaries must set ModeSys/Collab/Cap/Workflow.
-		if opts.Mode == server.ModeAll && os.Getenv("DE_ALLOW_MODE_ALL") != "1" {
-			return fmt.Errorf("refusing ModeAll deployment (set DE_SERVICE=sys|collab|cap|workflow|policy|audit); use make compose-up-coarse")
-		}
+	if opts.Mode == server.ModeAll && os.Getenv("DE_ALLOW_MODE_ALL") != "1" {
+		// ModeAll is for unit tests only; production monolith uses ModeApp (de-app).
+		return fmt.Errorf("refusing ModeAll deployment (set DE_SERVICE=app for monolith or sys|collab|cap|workflow); use make compose-up-monolith or compose-up-coarse")
 	}
 	if opts.Addr == "" {
 		opts.Addr = env("DE_LISTEN_ADDR", ":8080")
@@ -175,10 +173,16 @@ func Run(opts Options) error {
 	st.DropUnowned(domain)
 	if domain == store.DomainAll || domain == store.DomainCap {
 		st.EnsureDocxSkillReady()
-		st.Persist("skills")
+		server.New(st).EnsureBuiltinSkillsReady()
+		if st.CanWrite("skills") {
+			st.Persist("skills")
+		}
 	}
 	if domain == store.DomainAll || domain == store.DomainCollab {
-		st.Persist("employees")
+		st.EnsureGeneralEmployee()
+		if st.CanWrite("employees") {
+			st.Persist("employees")
+		}
 	}
 
 	srv := server.New(st)
@@ -192,7 +196,7 @@ func Run(opts Options) error {
 	srv.UsageSink = &infra.UsageSink{Pool: pg}
 	srv.KV = kv
 	srv.Search = search
-	if opts.Mode == server.ModeCap || opts.Mode == server.ModeCollab || opts.Mode == server.ModeAll {
+	if opts.Mode == server.ModeCap || opts.Mode == server.ModeCollab || opts.Mode.IsUnified() {
 		srv.StartMemoryMaintenance()
 	}
 

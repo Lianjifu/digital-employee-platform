@@ -96,16 +96,26 @@ func employeeEvaluateIncomplete(emp map[string]any) bool {
 }
 
 func validateEmployeeConfigurationBody(body map[string]any) error {
+	scope := strings.TrimSpace(str(body["scope"]))
+	if scope == "" {
+		scope = "role"
+	}
 	profile, _ := body["profile"].(map[string]any)
 	caps, _ := body["capabilities"].(map[string]any)
-	if profile == nil || caps == nil {
-		return apperr.BadReq(apperr.DigitalEmployeeConfigurationRequired, "配置须包含 profile 与 capabilities")
+	if profile == nil {
+		return apperr.BadReq(apperr.DigitalEmployeeConfigurationRequired, "配置须包含 profile")
+	}
+	if scope == "capability" && caps == nil {
+		return apperr.BadReq(apperr.DigitalEmployeeConfigurationRequired, "能力装配须包含 capabilities")
 	}
 	if strings.TrimSpace(str(profile["name"])) == "" ||
 		strings.TrimSpace(str(profile["role"])) == "" ||
-		strings.TrimSpace(str(profile["department"])) == "" ||
+		strings.TrimSpace(str(profile["department"])) == "" {
+		return apperr.BadReq(apperr.DigitalEmployeeConfigurationRequired, "岗位档案为必填")
+	}
+	if scope == "capability" &&
 		(strings.TrimSpace(str(caps["model"])) == "" && strings.TrimSpace(str(caps["modelRouteId"])) == "") {
-		return apperr.BadReq(apperr.DigitalEmployeeConfigurationRequired, "岗位档案与模型能力为必填")
+		return apperr.BadReq(apperr.DigitalEmployeeConfigurationRequired, "能力装配须指定已发布模型")
 	}
 	boundary, _ := body["boundary"].(map[string]any)
 	if boundary == nil {

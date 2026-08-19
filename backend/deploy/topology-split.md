@@ -1,6 +1,29 @@
-# 服务拆分拓扑（粗粒度）
+# 服务拆分拓扑（粗粒度 + monolith）
 
-**主路径**：`make compose-up-coarse` → gateway `:8089` → `8100–8103` + FastAPI `8091–8093`。
+## 方案 A — monolith（本地 / SME 默认）
+
+**主路径**：`make compose-up-monolith` 或 `make run` → gateway `:8089` → **de-app `:8100`** + **de-skill `:8093`**。
+
+| 单元 | 端口 | 内含模块 |
+|------|------|----------|
+| de-gateway | 8089 | Envoy `envoy.monolith.yaml` 或 dev `gateway-proxy-monolith.py` |
+| **de-app** | 8100 | **sys + collab + cap**（`ModeApp` / `DomainAll`） |
+| de-skill-runtime | 8093 | 技能沙箱执行（必须独立） |
+| de-workflow（可选） | 8103 | 不用工作流时可不启 |
+
+不启：de-agent（`DE_RUNTIME_MODE=local` 默认进程内 Harness）、de-rag（按需）。
+
+可选工作流：`make compose-up-monolith-workflow` 或 `DE_WITH_WORKFLOW=1 scripts/dev-stack/run-stack.sh`。
+
+```bash
+cd backend && make compose-up-monolith
+# 裸跑：make run-app & make skill &
+# dev-stack：DE_STACK=monolith scripts/dev-stack/run-stack.sh（默认）
+```
+
+## 方案 coarse — 四进程（规模化）
+
+**路径**：`make compose-up-coarse` → gateway `:8089` → `8100–8103` + FastAPI `8091–8093`。
 
 | 单元 | 端口 | 内含模块 |
 |------|------|----------|
@@ -20,7 +43,8 @@
 ## 启动
 
 ```bash
-cd backend && make compose-up-coarse
+cd backend && make compose-up-monolith   # 默认
+# coarse：make compose-up-coarse
 # FE Vite 默认代理 → :8089
 ```
 

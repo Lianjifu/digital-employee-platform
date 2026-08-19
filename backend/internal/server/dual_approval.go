@@ -17,6 +17,9 @@ func requireProductionDualApproval(submitterID, submitterName string, actor *aut
 	if actor == nil {
 		return apperr.UnauthorizedErr("未登录")
 	}
+	if actor.Role == "admin" {
+		return nil
+	}
 	if submitterID == "" && submitterName == "" {
 		return nil
 	}

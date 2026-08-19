@@ -484,7 +484,9 @@ export default function Copilot() {
   // 优先用本地会话 conversationId；本地临时 s_* 不请求，避免 404 刷屏
   const conversationFetchId = activeSession?.conversationId
     || (serverSession ? (serverSession.conversationId || serverSession.id) : undefined);
-  const canFetchConversation = Boolean(conversationFetchId) && !/^s_/.test(conversationFetchId ?? '');
+  const canFetchConversation = Boolean(conversationFetchId)
+    && !/^s_/.test(conversationFetchId ?? '')
+    && !chat.isConversationDeleted(conversationFetchId);
   const { data: activeConversation, isError: conversationMissing } = useApiQuery<any>(
     ['conversation', conversationFetchId],
     `/api/conversations/${conversationFetchId ?? '__none__'}`,
@@ -1720,7 +1722,12 @@ export default function Copilot() {
                               event.preventDefault();
                               event.stopPropagation();
                               void (async () => {
+                                const convId = s.conversationId ?? s.id;
                                 await chat.delSession(s.id);
+                                queryClient.removeQueries({ queryKey: ['conversation', convId] });
+                                if (convId !== s.id) {
+                                  queryClient.removeQueries({ queryKey: ['conversation', s.id] });
+                                }
                                 queryClient.setQueryData<SessionItem[]>(['sessions', currentWorkspaceId], (prev) =>
                                   (prev ?? []).filter((item) => item.id !== s.id),
                                 );
@@ -2040,7 +2047,7 @@ export default function Copilot() {
                 <div className="w-full max-w-2xl">
                   <div className="text-center mb-8">
                     {activeEmployee ? (
-                      <div className="mx-auto mb-4 inline-flex"><DigitalEmployeeAvatar employee={activeEmployee} size={56} rounded="lg" /></div>
+                      <div className="mx-auto mb-4 inline-flex overflow-hidden rounded-full"><DigitalEmployeeAvatar employee={activeEmployee} size={56} /></div>
                     ) : (
                       <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-[var(--bg-elevated)] text-[var(--text-secondary)]" style={{ boxShadow: 'var(--saas-ring), var(--saas-elev-2)' }}>
                         <BriefcaseBusiness className="h-7 w-7" />
@@ -2296,41 +2303,43 @@ export default function Copilot() {
 
           {/* 运行配置 popover */}
           {isAdmin && modelOpen && (
-            <div role="menu" className="absolute right-3 bottom-full mb-2 w-72 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-1 z-30">
-              <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">运行配置 · 模型</div>
-              {modelOptions.length === 0 && (
-                <div className="px-3 py-3 text-[12px] leading-5 text-[var(--text-secondary)]">
-                  当前工作区暂无可用模型。请到「模型中心」接入供应商并完成探测；数字工作伙伴装配的模型会在此显示。
-                </div>
-              )}
-              {modelOptions.map((m) => (
-                <button
-                  key={m.key}
-                  onClick={() => {
-                    setCurrentModelKey(m.key);
-                    setModelOpen(false);
-                    const tools = enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools);
-                    persistRunConfig(m.modelId, tools);
-                  }}
-                  role="menuitemradio"
-                  aria-checked={currentModelKey === m.key}
-                  className={cn(
-                    'flex w-full items-start gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]',
-                    currentModelKey === m.key && 'bg-[var(--bg-hover)]',
-                  )}
-                >
-                  <Cpu className="h-3.5 w-3.5 text-[var(--text-muted)] mt-0.5" />
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-semibold flex items-center gap-1.5">
-                      {m.label}
-                      <Badge tone={m.tone} className="text-[9px]">{m.tier}</Badge>
-                      {currentModelKey === m.key && <Check className="h-3 w-3 text-[var(--text)] ml-auto" />}
-                    </div>
-                    <div className="text-[10px] text-[var(--text-muted)]">{m.desc}</div>
+            <div role="menu" className="absolute right-3 bottom-full mb-2 w-72 max-h-[min(24rem,calc(100dvh-10rem))] flex flex-col rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl z-30 overflow-hidden">
+              <div className="shrink-0 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">运行配置 · 模型</div>
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-1">
+                {modelOptions.length === 0 && (
+                  <div className="px-3 py-3 text-[12px] leading-5 text-[var(--text-secondary)]">
+                    当前工作区暂无可用模型。请到「模型中心」接入供应商并完成探测；数字工作伙伴装配的模型会在此显示。
                   </div>
-                </button>
-              ))}
-              <div className="mt-1 border-t border-[var(--border)] p-1">
+                )}
+                {modelOptions.map((m) => (
+                  <button
+                    key={m.key}
+                    onClick={() => {
+                      setCurrentModelKey(m.key);
+                      setModelOpen(false);
+                      const tools = enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools);
+                      persistRunConfig(m.modelId, tools);
+                    }}
+                    role="menuitemradio"
+                    aria-checked={currentModelKey === m.key}
+                    className={cn(
+                      'flex w-full items-start gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]',
+                      currentModelKey === m.key && 'bg-[var(--bg-hover)]',
+                    )}
+                  >
+                    <Cpu className="h-3.5 w-3.5 text-[var(--text-muted)] mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold flex items-center gap-1.5">
+                        {m.label}
+                        <Badge tone={m.tone} className="text-[9px]">{m.tier}</Badge>
+                        {currentModelKey === m.key && <Check className="h-3 w-3 text-[var(--text)] ml-auto" />}
+                      </div>
+                      <div className="text-[10px] text-[var(--text-muted)]">{m.desc}</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="shrink-0 border-t border-[var(--border)] p-1">
                 <Button
                   size="sm"
                   variant="secondary"
@@ -2349,70 +2358,78 @@ export default function Copilot() {
 
           {/* 工具链 popover */}
           {toolsOpen && (
-            <div role="menu" className="absolute right-3 bottom-full mb-2 w-72 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl p-1 z-30">
-              <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
+            <div role="menu" className="absolute right-3 bottom-full mb-2 w-72 max-h-[min(24rem,calc(100dvh-10rem))] flex flex-col rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl z-30 overflow-hidden">
+              <div className="shrink-0 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
                 <Wrench className="h-3 w-3" />本会话工具链
-                <button className="ml-auto text-[10px] text-[var(--text-secondary)] hover:underline" onClick={() => {
+                <button type="button" className="ml-auto text-[10px] text-[var(--text-secondary)] hover:underline" onClick={() => {
+                  setToolsOpen(false);
+                  setModelOpen(true);
+                }}>返回模型</button>
+              </div>
+              <div className="shrink-0 flex items-center justify-end px-3 pb-1">
+                <button type="button" className="text-[10px] text-[var(--text-secondary)] hover:underline" onClick={() => {
                   const next = availableTools.map((t) => t.key);
                   setEnabledTools(next);
                   persistRunConfig(runModelId, next);
                 }}>全选</button>
               </div>
-              {availableTools.length === 0 ? (
-                <div className="px-3 py-4 text-[11px] leading-5 text-[var(--text-muted)]">
-                  {hasBoundExpert
-                    ? '当前专家尚未装配工具或技能。请到「数字工作伙伴」能力装配中启用后再会话启用。'
-                    : '未绑定数字工作伙伴，本会话无可装配工具链。可先选择在岗专家。'}
-                </div>
-              ) : availableTools.map((t) => {
-                const on = enabledTools.includes(t.key);
-                const writeLocked = Boolean(t.requiresApproval && sessionMode === 'investigate');
-                const unavailable = Boolean(t.unavailable);
-                return (
-                  <button
-                    key={t.key}
-                    disabled={unavailable}
-                    onClick={() => {
-                      if (unavailable) return;
-                      if (writeLocked) {
-                        void chat.setCollaborationMode('execute', {
-                          riskLevel,
-                          enableApprovalTools: approvalToolKeys(availableTools),
-                        })
-                          .then(() => {
-                            setEnabledTools((prev) => toolsForExecuteMode(
-                              prev.length ? prev : defaultEnabledToolKeys(availableTools),
-                              availableTools,
-                            ));
-                            void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+              <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-1">
+                {availableTools.length === 0 ? (
+                  <div className="px-3 py-4 text-[11px] leading-5 text-[var(--text-muted)]">
+                    {hasBoundExpert
+                      ? '当前专家尚未装配工具或技能。请到「数字工作伙伴」能力装配中启用后再会话启用。'
+                      : '未绑定数字工作伙伴，本会话无可装配工具链。可先选择在岗专家。'}
+                  </div>
+                ) : availableTools.map((t) => {
+                  const on = enabledTools.includes(t.key);
+                  const writeLocked = Boolean(t.requiresApproval && sessionMode === 'investigate');
+                  const unavailable = Boolean(t.unavailable);
+                  return (
+                    <button
+                      key={t.key}
+                      disabled={unavailable}
+                      onClick={() => {
+                        if (unavailable) return;
+                        if (writeLocked) {
+                          void chat.setCollaborationMode('execute', {
+                            riskLevel,
+                            enableApprovalTools: approvalToolKeys(availableTools),
                           })
-                          .catch((err) => toast.error(err instanceof Error ? err.message : '无法切换到受控执行'));
-                        setToolsOpen(false);
-                        return;
-                      }
-                      setEnabledTools((prev) => {
-                        const next = on ? prev.filter((k) => k !== t.key) : [...prev, t.key];
-                        persistRunConfig(runModelId, next);
-                        return next;
-                      });
-                    }}
-                    role="menuitemcheckbox"
-                    aria-checked={on && !writeLocked && !unavailable}
-                    className={cn('flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]', on && !writeLocked && !unavailable && 'bg-[var(--bg-hover)]', (writeLocked || unavailable) && 'opacity-60')}
-                  >
-                    <span className={cn('grid h-5 w-5 place-items-center rounded border text-[10px]', on && !writeLocked && !unavailable ? 'bg-[#0f172a] text-white border-[#0f172a]' : 'border-[var(--border)] text-[var(--text-muted)]')}>
-                      {on && !writeLocked && !unavailable && <Check className="h-3 w-3" />}
-                    </span>
-                    <Plug className="h-3.5 w-3.5 text-[var(--text-muted)]" />
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-mono font-semibold">{t.name}</div>
-                      <div className="text-[10px] text-[var(--text-muted)]">{unavailable ? '执行器未接入 · 不可启用' : writeLocked ? '研判模式不可用 · 点击切换到受控执行' : t.desc}</div>
-                    </div>
-                    {unavailable && <Badge tone="neutral" className="text-[9px]">未接入</Badge>}
-                    {t.requiresApproval && !unavailable && <Badge tone="warn" className="text-[9px]">需审批</Badge>}
-                  </button>
-                );
-              })}
+                            .then(() => {
+                              setEnabledTools((prev) => toolsForExecuteMode(
+                                prev.length ? prev : defaultEnabledToolKeys(availableTools),
+                                availableTools,
+                              ));
+                              void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+                            })
+                            .catch((err) => toast.error(err instanceof Error ? err.message : '无法切换到受控执行'));
+                          setToolsOpen(false);
+                          return;
+                        }
+                        setEnabledTools((prev) => {
+                          const next = on ? prev.filter((k) => k !== t.key) : [...prev, t.key];
+                          persistRunConfig(runModelId, next);
+                          return next;
+                        });
+                      }}
+                      role="menuitemcheckbox"
+                      aria-checked={on && !writeLocked && !unavailable}
+                      className={cn('flex w-full items-center gap-2.5 rounded-md px-3 py-2 text-left hover:bg-[var(--bg-hover)]', on && !writeLocked && !unavailable && 'bg-[var(--bg-hover)]', (writeLocked || unavailable) && 'opacity-60')}
+                    >
+                      <span className={cn('grid h-5 w-5 place-items-center rounded border text-[10px]', on && !writeLocked && !unavailable ? 'bg-[#0f172a] text-white border-[#0f172a]' : 'border-[var(--border)] text-[var(--text-muted)]')}>
+                        {on && !writeLocked && !unavailable && <Check className="h-3 w-3" />}
+                      </span>
+                      <Plug className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-mono font-semibold">{t.name}</div>
+                        <div className="text-[10px] text-[var(--text-muted)]">{unavailable ? '执行器未接入 · 不可启用' : writeLocked ? '研判模式不可用 · 点击切换到受控执行' : t.desc}</div>
+                      </div>
+                      {unavailable && <Badge tone="neutral" className="text-[9px]">未接入</Badge>}
+                      {t.requiresApproval && !unavailable && <Badge tone="warn" className="text-[9px]">需审批</Badge>}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
 
@@ -2613,11 +2630,10 @@ export default function Copilot() {
           <header className="copilot-agent-details__header shrink-0">
             <div className="flex items-start justify-between gap-3">
               <div className="flex min-w-0 items-start gap-2.5">
-                <span className="copilot-agent-details__avatar shrink-0">
+                <span className="copilot-agent-details__avatar shrink-0 overflow-hidden rounded-full">
                   <DigitalEmployeeAvatar
                     employee={activeEmployee ?? { id: 'assistant', name: expertName }}
                     size={32}
-                    rounded="lg"
                   />
                 </span>
                 <div className="min-w-0">

@@ -1,0 +1,613 @@
+package server
+
+import (
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/digital-employee-platform/backend/internal/store"
+)
+
+// General pack — single default job pack「通用」.
+var generalPackSkillNames = []string{
+	"weather", "summarize", "github", "docx", "pdf", "pptx",
+	"frontend-design", "web-design-guidelines", "diagram-maker", "gog",
+}
+
+var tierDOptInSkillNames = []string{"browser-use", "1password"}
+
+var generalPackPlatformTools = []string{
+	"knowledge.retrieve", "memory.recall", "skill.read", "time.now",
+}
+
+var generalPackRuntimeTools = []string{
+	"read_file", "glob", "grep", "bash",
+}
+
+type builtinManifest struct {
+	PackID            string                    `json:"packId"`
+	PackName          string                    `json:"packName"`
+	Version           string                    `json:"version"`
+	GeneralPackSkills []string                  `json:"generalPackSkills"`
+	TierDOptIn        []string                  `json:"tierDOptIn"`
+	Packs             map[string]skillPackDef   `json:"packs"`
+	SkillMeta         map[string]map[string]any `json:"skillMeta"`
+	PlatformTools     []map[string]any          `json:"platformTools"`
+	RuntimeTools      []map[string]any          `json:"runtimeTools"`
+}
+
+func builtinSkillsRoot() string {
+	if v := strings.TrimSpace(os.Getenv("DE_BUILTIN_SKILLS_DIR")); v != "" {
+		return v
+	}
+	candidates := []string{
+		filepath.Join("backend", "builtin", "skills"),
+		filepath.Join("..", "backend", "builtin", "skills"),
+		filepath.Join("builtin", "skills"),
+	}
+	for _, c := range candidates {
+		if st, err := os.Stat(c); err == nil && st.IsDir() {
+			abs, _ := filepath.Abs(c)
+			return abs
+		}
+	}
+	return filepath.Join("backend", "builtin", "skills")
+}
+
+func loadBuiltinManifest() builtinManifest {
+	root := builtinSkillsRoot()
+	raw, err := os.ReadFile(filepath.Join(root, "manifest.json"))
+	if err != nil {
+		return builtinManifest{
+			PackID: "general", PackName: "通用", Version: "1.0.0",
+			GeneralPackSkills: generalPackSkillNames,
+			TierDOptIn:        tierDOptInSkillNames,
+			PlatformTools:     platformToolsRegistryFallback(),
+			RuntimeTools:      runtimeToolsRegistryFallback(),
+		}
+	}
+	var m builtinManifest
+	if json.Unmarshal(raw, &m) != nil {
+		m = builtinManifest{PackID: "general", PackName: "通用", Version: "1.0.0"}
+	}
+	if len(m.GeneralPackSkills) == 0 {
+		m.GeneralPackSkills = generalPackSkillNames
+	}
+	if len(m.PlatformTools) == 0 {
+		m.PlatformTools = platformToolsRegistryFallback()
+	}
+	if len(m.RuntimeTools) == 0 {
+		m.RuntimeTools = runtimeToolsRegistryFallback()
+	}
+	return m
+}
+
+func runtimeToolsRegistryFallback() []map[string]any {
+	return []map[string]any{
+		{"name": "read_file", "kind": "runtime", "mode": toolModeExecute, "description": "读取技能包内文件", "executor": "skill.open", "removable": false},
+		{"name": "glob", "kind": "runtime", "mode": toolModeExecute, "description": "列出技能包文件", "executor": "skill.open", "removable": false},
+		{"name": "grep", "kind": "runtime", "mode": toolModeExecute, "description": "搜索技能包内容", "executor": "skill.open", "removable": false},
+		{"name": "bash", "kind": "runtime", "mode": toolModeApproval, "description": "沙箱命令执行", "executor": "skill.run", "removable": false},
+		{"name": "write_file", "kind": "runtime", "phase": "P1", "mode": toolModeApproval, "description": "写入 .copilot-ws", "executor": "skill.write", "removable": false},
+		{"name": "edit_file", "kind": "runtime", "phase": "P1", "mode": toolModeApproval, "description": "Patch 编辑", "executor": "patch", "removable": false},
+		{"name": "web_search", "kind": "runtime", "phase": "P1", "mode": toolModeExecute, "description": "Web 搜索", "executor": "http", "availability": "opt_in", "removable": false},
+		{"name": "web_fetch", "kind": "runtime", "phase": "P2", "mode": toolModeExecute, "description": "HTTP GET", "executor": "http", "availability": "opt_in", "removable": false},
+	}
+}
+
+func platformToolsRegistryFallback() []map[string]any {
+	return []map[string]any{
+		{"name": "knowledge.retrieve", "kind": "platform", "mode": toolModeExecute, "description": "检索已发布知识库", "harness": "go", "removable": false},
+		{"name": "memory.recall", "kind": "platform", "mode": toolModeExecute, "description": "跨会话记忆检索", "harness": "go", "removable": false},
+		{"name": "skill.read", "kind": "platform", "mode": toolModeExecute, "description": "加载 SKILL.md 全文", "harness": "go", "removable": false},
+		{"name": "time.now", "kind": "platform", "mode": toolModeExecute, "description": "当前时间（ISO8601）", "harness": "go", "removable": false},
+	}
+}
+
+func runtimeToolsRegistryItems() []map[string]any {
+	m := loadBuiltinManifest()
+	if len(m.RuntimeTools) > 0 {
+		return m.RuntimeTools
+	}
+	return runtimeToolsRegistryFallback()
+}
+
+func platformToolsRegistryItems() []map[string]any {
+	m := loadBuiltinManifest()
+	if len(m.PlatformTools) > 0 {
+		return m.PlatformTools
+	}
+	return platformToolsRegistryFallback()
+}
+
+func listBuiltinSkillDirNames() []string {
+	root := builtinSkillsRoot()
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		if !e.IsDir() || e.Name() == "." || e.Name() == ".." {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, e.Name(), "SKILL.md")); err != nil {
+			continue
+		}
+		out = append(out, e.Name())
+	}
+	return out
+}
+
+func loadBuiltinSkillPackage(skillName string) (*skillPackageManifest, map[string][]byte, error) {
+	root := filepath.Join(builtinSkillsRoot(), skillName)
+	if st, err := os.Stat(root); err != nil || !st.IsDir() {
+		return nil, nil, fmt.Errorf("内置技能目录不存在: %s", skillName)
+	}
+	files := map[string][]byte{}
+	prefix := skillName + "/"
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil || d.IsDir() {
+			return walkErr
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if shouldSkipSkillPackagePath(rel) {
+			return nil
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		files[prefix+rel] = b
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(files) == 0 {
+		return nil, nil, fmt.Errorf("内置技能包为空: %s", skillName)
+	}
+	rootDir, skillRel, mdBytes, err := locateSkillMarkdown(files)
+	if err != nil {
+		return nil, nil, err
+	}
+	meta, body, err := parseSkillFrontmatter(string(mdBytes))
+	if err != nil {
+		return nil, nil, err
+	}
+	if meta.Name == "" {
+		meta.Name = skillName
+	}
+	if meta.Description == "" {
+		return nil, nil, fmt.Errorf("SKILL.md 缺少 description: %s", skillName)
+	}
+	meta.Markdown = body
+	meta.RootDir = rootDir
+	meta.SkillMDRel = skillRel
+	if meta.Version == "" {
+		meta.Version = "1.0.0"
+	}
+	if meta.RiskLevel == "" {
+		meta.RiskLevel = builtinSkillRiskLevel(skillName)
+	}
+	relFiles := make([]string, 0, len(files))
+	scripts := make([]string, 0)
+	for path := range files {
+		rel := path
+		if rootDir != "" && rootDir != "." {
+			if !strings.HasPrefix(path, rootDir+"/") && path != rootDir {
+				continue
+			}
+			rel = strings.TrimPrefix(path, rootDir+"/")
+		}
+		if rel == "" || shouldSkipSkillPackagePath(rel) {
+			continue
+		}
+		relFiles = append(relFiles, rel)
+		if isSkillScriptPath(rel) {
+			scripts = append(scripts, rel)
+		}
+	}
+	meta.Files = relFiles
+	meta.Scripts = scripts
+	meta.HasScripts = len(scripts) > 0
+	return &meta, files, nil
+}
+
+func builtinSkillRiskLevel(name string) string {
+	low := strings.ToLower(name)
+	for _, d := range tierDOptInSkillNames {
+		if low == d {
+			return "high"
+		}
+	}
+	if strings.Contains(low, "shell") || strings.Contains(low, "browser") {
+		return "high"
+	}
+	if low == "docx" || low == "pptx" || low == "pdf" {
+		return "low"
+	}
+	return "low"
+}
+
+func builtinSkillTier(name string, manifest builtinManifest) string {
+	for _, n := range manifest.GeneralPackSkills {
+		if n == name {
+			return "A"
+		}
+	}
+	for _, n := range manifest.TierDOptIn {
+		if n == name {
+			return "D"
+		}
+	}
+	switch name {
+	case "docx", "pdf", "pptx", "spreadsheets":
+		return "B"
+	case "skill-creator", "pilotdeck-skills-migration":
+		return "C"
+	case "frontend-design", "web-design-guidelines", "diagram-maker", "karpathy-guidelines", "react-next-best-practices":
+		return "E"
+	default:
+		return "A"
+	}
+}
+
+func (s *Server) attachBuiltinPackageToSkill(item map[string]any, ws, skillID, builtinName string) error {
+	meta, files, err := loadBuiltinSkillPackage(builtinName)
+	if err != nil {
+		return err
+	}
+	dest, err := s.materializeSkillPackage(ws, skillID, meta.RootDir, files)
+	if err != nil {
+		return err
+	}
+	item["packagePath"] = dest
+	item["packageRoot"] = meta.RootDir
+	item["skillMdPath"] = meta.SkillMDRel
+	item["hasScripts"] = meta.HasScripts
+	item["scripts"] = meta.Scripts
+	item["packageFiles"] = meta.Files
+	item["packageSha256"] = meta.SHA256
+	item["packageSizeBytes"] = meta.SizeBytes
+	item["builtinSkillName"] = builtinName
+	if len(meta.Entrypoints) > 0 {
+		item["entrypoints"] = meta.Entrypoints
+	} else if len(meta.Scripts) > 0 {
+		item["entrypoints"] = meta.Scripts
+	}
+	if meta.ReadOnly != nil {
+		item["readOnly"] = *meta.ReadOnly
+	}
+	if meta.ProducesArtifacts != nil {
+		item["producesArtifacts"] = *meta.ProducesArtifacts
+	}
+	enrichSkillMetadata(item)
+	return nil
+}
+
+func catalogBuiltinName(cat map[string]any) string {
+	if bn := strings.TrimSpace(str(cat["builtinSkillName"])); bn != "" {
+		return bn
+	}
+	name := strings.TrimSpace(str(cat["name"]))
+	if name == "" {
+		return ""
+	}
+	slug := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
+	if _, err := os.Stat(filepath.Join(builtinSkillsRoot(), slug, "SKILL.md")); err == nil {
+		return slug
+	}
+	if _, err := os.Stat(filepath.Join(builtinSkillsRoot(), name, "SKILL.md")); err == nil {
+		return name
+	}
+	return ""
+}
+
+var deprecatedSkillCatalogIDs = map[string]struct{}{
+	"sc-1": {}, "sc-2": {},
+}
+
+var deprecatedInstalledSkillIDs = map[string]struct{}{
+	"sk-1": {}, "sk-2": {}, "tool-cmdb": {},
+}
+
+var deprecatedSkillNames = map[string]struct{}{
+	"mysql-cli": {}, "日志检索": {}, "kubectl 只读": {}, "loki-query": {}, "cmdb 查询": {},
+}
+
+func isDeprecatedSkillName(name string) bool {
+	n := strings.TrimSpace(name)
+	if n == "" {
+		return false
+	}
+	if _, ok := deprecatedSkillNames[strings.ToLower(n)]; ok {
+		return true
+	}
+	_, ok := deprecatedSkillNames[n]
+	return ok
+}
+
+func isDeprecatedCatalogItem(item map[string]any) bool {
+	if _, ok := deprecatedSkillCatalogIDs[str(item["id"])]; ok {
+		return true
+	}
+	return isDeprecatedSkillName(str(item["name"]))
+}
+
+func (s *Server) pruneDeprecatedSeedSkillsLocked() (removedCatalog, removedInstalled []string) {
+	keptCatalog := make([]map[string]any, 0, len(s.Store.SkillCatalog))
+	for _, item := range s.Store.SkillCatalog {
+		if isDeprecatedCatalogItem(item) {
+			removedCatalog = append(removedCatalog, str(item["id"]))
+			continue
+		}
+		keptCatalog = append(keptCatalog, item)
+	}
+	s.Store.SkillCatalog = keptCatalog
+
+	removedSet := map[string]struct{}{}
+	keptSkills := make([]map[string]any, 0, len(s.Store.Skills))
+	for _, sk := range s.Store.Skills {
+		id := str(sk["id"])
+		if _, ok := deprecatedInstalledSkillIDs[id]; ok || isDeprecatedSkillName(str(sk["name"])) {
+			removedInstalled = append(removedInstalled, id)
+			removedSet[id] = struct{}{}
+			continue
+		}
+		keptSkills = append(keptSkills, sk)
+	}
+	s.Store.Skills = keptSkills
+
+	keptHealth := make([]map[string]any, 0, len(s.Store.SkillHealth))
+	for _, h := range s.Store.SkillHealth {
+		if _, ok := removedSet[str(h["skillId"])]; ok {
+			continue
+		}
+		keptHealth = append(keptHealth, h)
+	}
+	s.Store.SkillHealth = keptHealth
+
+	if extra := s.Store.SkillExtra; extra != nil {
+		raw, _ := extra["bindings"].([]any)
+		if len(raw) > 0 {
+			kept := make([]any, 0, len(raw))
+			for _, b := range raw {
+				m, _ := b.(map[string]any)
+				if m == nil {
+					continue
+				}
+				if _, ok := removedSet[str(m["capabilityId"])]; ok {
+					continue
+				}
+				kept = append(kept, m)
+			}
+			extra["bindings"] = kept
+		}
+	}
+	return removedCatalog, removedInstalled
+}
+
+func builtinSkillInstallID(skillName string) string {
+	return "sk-builtin-" + strings.ToLower(strings.TrimSpace(skillName))
+}
+
+// normalizeInstalledSkillsLocked assigns stable IDs to builtin installs and drops duplicate rows.
+func (s *Server) normalizeInstalledSkillsLocked() {
+	seenBuiltin := map[string]map[string]any{}
+	out := make([]map[string]any, 0, len(s.Store.Skills))
+	for _, sk := range s.Store.Skills {
+		item := sk
+		ws := str(sk["workspaceId"])
+		bn := strings.TrimSpace(str(sk["builtinSkillName"]))
+		if bn != "" {
+			bkey := ws + "|" + strings.ToLower(bn)
+			if _, dup := seenBuiltin[bkey]; dup {
+				continue
+			}
+			item["id"] = builtinSkillInstallID(bn)
+			seenBuiltin[bkey] = item
+		}
+		out = append(out, item)
+	}
+	s.Store.Skills = store.DedupeMapsByID(out)
+}
+
+// EnsureBuiltinSkillsReady seeds catalog, installs general pack to w1, binds de-general.
+func (s *Server) EnsureBuiltinSkillsReady() {
+	manifest := loadBuiltinManifest()
+	s.Store.Lock()
+	removedCatalog, removedInstalled := s.pruneDeprecatedSeedSkillsLocked()
+	s.normalizeInstalledSkillsLocked()
+	s.ensureBuiltinCatalogLocked(manifest)
+	s.ensureGeneralPackInstalledLocked("w1", manifest)
+	s.Store.Unlock()
+	if len(removedCatalog) > 0 {
+		s.Store.PersistDelete("skill_catalog", removedCatalog...)
+	}
+	if len(removedInstalled) > 0 {
+		s.Store.PersistDelete("skills", removedInstalled...)
+	}
+	go s.persistSkills()
+}
+
+func (s *Server) ensureBuiltinCatalogLocked(manifest builtinManifest) {
+	existing := map[string]map[string]any{}
+	for _, c := range s.Store.SkillCatalog {
+		key := strings.ToLower(str(c["name"]))
+		if key == "" {
+			key = str(c["id"])
+		}
+		existing[key] = c
+	}
+	for _, dirName := range listBuiltinSkillDirNames() {
+		meta, _, err := loadBuiltinSkillPackage(dirName)
+		if err != nil {
+			continue
+		}
+		key := strings.ToLower(meta.Name)
+		tier := builtinSkillTier(dirName, manifest)
+		inGeneral := false
+		for _, g := range manifest.GeneralPackSkills {
+			if g == dirName || g == meta.Name {
+				inGeneral = true
+				break
+			}
+		}
+		packIds := skillInAnyPack(manifest, dirName)
+		catID := "sc-builtin-" + dirName
+		dep := skillDependencyReport(dirName)
+		entry := map[string]any{
+			"id": catID, "workspaceId": "w1", "name": meta.Name, "kind": "skill",
+			"version": coalesce(meta.Version, "1.0.0"),
+			"description": meta.Description, "status": "available",
+			"rating": 4.5, "installCount": 0, "riskLevel": meta.RiskLevel,
+			"cacheable": tier == "E", "publisher": "企业能力商店 · 平台内置",
+			"signed": true, "dependencies": []string{}, "license": coalesce(meta.License, "内部许可"),
+			"lastScannedAt": "平台同步", "vulnerabilityCount": 0,
+			"supportedEnvironments": []string{"测试", "生产"},
+			"environment": "production", "classification": "internal",
+			"channel": "builtin", "syncedAt": "平台同步",
+			"visibilityScope": "global", "releaseChannel": "stable",
+			"builtinSkillName": dirName, "tier": tier,
+			"defaultPack": inGeneral, "defaultPackId": manifest.PackID,
+			"packIds": packIds, "hasScripts": meta.HasScripts,
+			"availability": dep["availability"], "externalBins": dep["externalBins"],
+		}
+		if old, ok := existing[key]; ok {
+			for k, v := range entry {
+				old[k] = v
+			}
+			continue
+		}
+		s.Store.SkillCatalog = append(s.Store.SkillCatalog, entry)
+	}
+}
+
+func (s *Server) ensureGeneralPackInstalledLocked(ws string, manifest builtinManifest) {
+	s.ensurePackInstalledLocked(ws, "general", manifest)
+}
+
+func (s *Server) ensureOneBuiltinInstalledLocked(ws, skillName string, manifest builtinManifest, packID string) {
+	meta, _, err := loadBuiltinSkillPackage(skillName)
+	if err != nil {
+		return
+	}
+	for _, sk := range s.Store.Skills {
+		if str(sk["workspaceId"]) != ws {
+			continue
+		}
+		canonID := builtinSkillInstallID(skillName)
+		if str(sk["id"]) == canonID || str(sk["builtinSkillName"]) == skillName || strings.EqualFold(str(sk["name"]), meta.Name) {
+			if str(sk["packagePath"]) == "" {
+				_ = s.attachBuiltinPackageToSkill(sk, ws, str(sk["id"]), skillName)
+			}
+			sk["lifecycleStatus"] = "enabled"
+			sk["status"] = "installed"
+			sk["source"] = "builtin"
+			sk["defaultPack"] = packID == "general" || str(sk["defaultPackId"]) == "general"
+			sk["defaultPackId"] = coalesce(packID, str(sk["defaultPackId"]))
+			if packID != "" {
+				pids := decodeStringSlice(sk["packIds"])
+				found := false
+				for _, p := range pids {
+					if p == packID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					sk["packIds"] = append(pids, packID)
+				}
+			}
+			return
+		}
+	}
+	skillID := builtinSkillInstallID(skillName)
+	for _, sk := range s.Store.Skills {
+		if str(sk["id"]) == skillID && str(sk["workspaceId"]) != ws {
+			skillID = s.Store.ID("sk")
+			break
+		}
+	}
+	inGeneral := packID == "" || packID == "general"
+	item := map[string]any{
+		"id": skillID, "workspaceId": ws, "ownerId": "u1", "owner": "平台管理员", "team": "岗位包·" + packID,
+		"name": meta.Name, "kind": "skill", "description": meta.Description,
+		"version": coalesce(meta.Version, "1.0.0"), "status": "installed",
+		"rating": 4.5, "installCount": 0, "riskLevel": meta.RiskLevel,
+		"cacheable": true, "lifecycleStatus": "enabled", "source": "builtin",
+		"environment": "production", "classification": "internal", "lastVerifiedAt": "刚刚",
+		"catalogId": "sc-builtin-" + skillName, "catalogChannel": "builtin",
+		"releaseChannel": "stable", "builtinSkillName": skillName,
+		"defaultPack": inGeneral, "defaultPackId": coalesce(packID, manifest.PackID),
+		"packIds": []string{packID}, "tier": builtinSkillTier(skillName, manifest),
+	}
+	_ = s.attachBuiltinPackageToSkill(item, ws, skillID, skillName)
+	s.Store.Skills = append([]map[string]any{item}, s.Store.Skills...)
+	s.ensureSkillHealthLocked(item)
+}
+
+func (s *Server) platformToolsRegistry(_ *http.Request) (any, error) {
+	manifest := loadBuiltinManifest()
+	return map[string]any{
+		"packId": manifest.PackID, "packName": manifest.PackName,
+		"platformTools": manifest.PlatformTools,
+		"runtimeTools":  manifest.RuntimeTools,
+		"pilotdeckTools": pilotdeckToolsForAPI(),
+		"alignmentScore": alignmentScore(),
+	}, nil
+}
+
+func (s *Server) applyGeneralPack(r *http.Request) (any, error) {
+	id := identityFrom(r.Context())
+	if err := requireSkillWrite(id); err != nil {
+		return nil, err
+	}
+	ws := s.workspaceID(r)
+	manifest := loadBuiltinManifest()
+	s.Store.Lock()
+	s.ensureBuiltinCatalogLocked(manifest)
+	s.ensureGeneralPackInstalledLocked(ws, manifest)
+	s.Store.Unlock()
+	go s.persistSkills()
+	return map[string]any{
+		"packId": manifest.PackID, "packName": manifest.PackName,
+		"skills": manifest.GeneralPackSkills, "workspaceId": ws,
+	}, nil
+}
+
+func catalogPlatformTools() []map[string]any {
+	out := make([]map[string]any, 0, len(platformToolsRegistryItems()))
+	for _, t := range platformToolsRegistryItems() {
+		out = append(out, map[string]any{
+			"id": "pt-" + str(t["name"]), "name": t["name"],
+			"meta": fmt.Sprintf("平台工具 · %s", str(t["description"])),
+			"kind": "platform", "mode": t["mode"], "removable": false, "builtin": true, "autoBind": true,
+		})
+	}
+	return out
+}
+
+func catalogRuntimeTools(_ []string) []map[string]any {
+	out := make([]map[string]any, 0)
+	for _, t := range runtimeToolsRegistryItems() {
+		name := str(t["name"])
+		out = append(out, map[string]any{
+			"id": "rt-" + name, "name": name,
+			"meta": fmt.Sprintf("运行时工具 · %s", str(t["description"])),
+			"kind": "runtime", "mode": t["mode"], "executor": t["executor"],
+			"availability": coalesce(str(t["availability"]), "default"), "removable": false,
+			"builtin": true, "autoBind": coalesce(str(t["availability"]), "default") != "opt_in",
+		})
+	}
+	return out
+}

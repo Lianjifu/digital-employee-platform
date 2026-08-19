@@ -96,6 +96,8 @@ func ownsAudit(d Domain) bool {
 // DomainFromMode maps ServiceMode / process name to a write domain.
 func DomainFromMode(mode string) Domain {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "app", "de-app":
+		return DomainAll
 	case "sys", "de-sys", "platform":
 		return DomainSys
 	case "collab", "de-collab":

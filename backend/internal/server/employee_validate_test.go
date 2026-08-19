@@ -55,6 +55,35 @@ func TestValidateEmployeeConfigurationBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	err = validateEmployeeConfigurationBody(map[string]any{
+		"scope":   "role",
+		"profile": map[string]any{"name": "n", "role": "r", "department": "d"},
+		"boundary": map[string]any{
+			"responsibilities": []any{"值班"},
+			"boundaryPolicy": map[string]any{
+				"responsibilities": []any{"值班"},
+				"handoff":          map[string]any{"triggers": []any{"升级"}, "approvers": []any{"经理"}},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("role scope should not require model: %v", err)
+	}
+	err = validateEmployeeConfigurationBody(map[string]any{
+		"scope":        "capability",
+		"profile":      map[string]any{"name": "n", "role": "r", "department": "d"},
+		"capabilities": map[string]any{"model": ""},
+		"boundary": map[string]any{
+			"responsibilities": []any{"值班"},
+			"boundaryPolicy": map[string]any{
+				"responsibilities": []any{"值班"},
+				"handoff":          map[string]any{"triggers": []any{"升级"}, "approvers": []any{"经理"}},
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("capability scope should require model")
+	}
 	err = validateEmployeeConfigurationBody(map[string]any{"profile": map[string]any{}})
 	if err == nil {
 		t.Fatal("expected configuration required")

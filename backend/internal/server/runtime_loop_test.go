@@ -176,7 +176,7 @@ func TestSkillSimDisabledInProduction(t *testing.T) {
 	t.Setenv("DE_SKILL_RUNTIME_URL", "http://127.0.0.1:1")
 	h := server.New(store.New()).Handler()
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/skills/sk-2/test",
+	req := httptest.NewRequest(http.MethodPost, "/api/skills/sk-docx/test",
 		bytes.NewBufferString(`{"command":"echo ok"}`))
 	req.Header.Set("Authorization", "Bearer mock-admin-token")
 	req.Header.Set("X-Workspace-Id", "w1")

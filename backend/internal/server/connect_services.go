@@ -24,14 +24,18 @@ import (
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
-// mountConnectRPC registers buf-generated Connect handlers for ModeAll (compat shell).
+// mountConnectRPC registers buf-generated Connect handlers for unified modes.
 func (s *Server) mountConnectRPC(mux *http.ServeMux) {
-	s.mountConnectRPCForMode(mux, ModeAll)
+	mode := s.Mode
+	if mode == "" {
+		mode = ModeAll
+	}
+	s.mountConnectRPCForMode(mux, mode)
 }
 
 // mountConnectRPCForMode registers Connect handlers owned by this deployment unit.
 func (s *Server) mountConnectRPCForMode(mux *http.ServeMux, mode ServiceMode) {
-	all := mode == ModeAll
+	all := mode.IsUnified()
 	if all || mode == ModeCap {
 		p, h := ragv1connect.NewRagServiceHandler(&ragConnect{s})
 		mux.Handle(p, h)

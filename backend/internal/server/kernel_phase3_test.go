@@ -280,7 +280,7 @@ func TestProductionKnowledgePublishPendingThenSoD(t *testing.T) {
 	}
 }
 
-func TestProductionEmployeeSubmitStaysPending(t *testing.T) {
+func TestProductionEmployeeSubmitAdminDirectRelease(t *testing.T) {
 	t.Setenv("DE_ENV", "production")
 	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "true")
 	st := store.New()
@@ -305,10 +305,42 @@ func TestProductionEmployeeSubmitStaysPending(t *testing.T) {
 	if rr.Code != 200 {
 		t.Fatalf("submit %d %s", rr.Code, rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), `"lifecycle":"active"`) {
+		t.Fatalf("admin production submit should activate directly: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"status":"released"`) {
+		t.Fatalf("admin production submit should release directly: %s", rr.Body.String())
+	}
+}
+
+func TestProductionEmployeeSubmitNonAdminStaysPending(t *testing.T) {
+	t.Setenv("DE_ENV", "production")
+	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "true")
+	st := store.New()
+	st.Lock()
+	for _, e := range st.Employees {
+		if strAny(e["id"]) != "de-hr" {
+			continue
+		}
+		e["lifecycle"] = "testing"
+		e["release"] = map[string]any{"status": "not_released"}
+		e["evaluation"] = map[string]any{"status": "passed", "score": 95.0}
+	}
+	st.Unlock()
+	h := server.New(st).Handler()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/digital-employees/de-hr/submit", bytes.NewBufferString(`{}`))
+	req.Header.Set("Authorization", "Bearer mock-user-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("submit %d %s", rr.Code, rr.Body.String())
+	}
 	if !strings.Contains(rr.Body.String(), "pending_approval") {
-		t.Fatalf("production submit must stay pending: %s", rr.Body.String())
+		t.Fatalf("non-admin production submit must stay pending: %s", rr.Body.String())
 	}
 	if strings.Contains(rr.Body.String(), `"lifecycle":"active"`) {
-		t.Fatalf("must not auto-activate: %s", rr.Body.String())
+		t.Fatalf("must not auto-activate for non-admin: %s", rr.Body.String())
 	}
 }

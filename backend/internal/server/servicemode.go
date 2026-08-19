@@ -12,6 +12,7 @@ type ServiceMode string
 
 const (
 	ModeAll      ServiceMode = "all"      // unit tests only (single-process full routes)
+	ModeApp      ServiceMode = "app"      // :8100 monolith · sys + collab + cap（方案 A）
 	ModeSys      ServiceMode = "sys"      // :8100 platform · ops（默认仍吸收 policy/audit）
 	ModeCollab   ServiceMode = "collab"   // :8101 collab · employee
 	ModeCap      ServiceMode = "cap"      // :8102 model · knowledge · memory · skill · channel
@@ -20,10 +21,21 @@ const (
 	ModeAudit    ServiceMode = "audit"    // :8105 audit-center · /v1/events
 )
 
+func unifiedMode(m ServiceMode) bool {
+	return m == ModeAll || m == ModeApp
+}
+
+// IsUnified reports monolith / full-route modes (tests + de-app deployment).
+func (m ServiceMode) IsUnified() bool {
+	return unifiedMode(m)
+}
+
 func ParseServiceMode(s string) ServiceMode {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "all":
 		return ModeAll
+	case "app", "de-app":
+		return ModeApp
 	case "sys", "de-sys", "platform", "":
 		return ModeSys
 	case "collab", "de-collab":
@@ -43,6 +55,8 @@ func ParseServiceMode(s string) ServiceMode {
 
 func (m ServiceMode) String() string {
 	switch m {
+	case ModeApp:
+		return "de-app"
 	case ModeSys:
 		return "de-sys"
 	case ModeCollab:
@@ -78,7 +92,7 @@ func (m ServiceMode) ownsOwner(owner ServiceMode) bool {
 
 // OwnsPath reports whether this deployment unit should handle the HTTP path.
 func (m ServiceMode) OwnsPath(path string) bool {
-	if m == ModeAll {
+	if unifiedMode(m) {
 		return true
 	}
 	if path == "/healthz" || path == "/readyz" || path == "/metrics" {
@@ -123,6 +137,10 @@ func ownerForAPI(path string) ServiceMode {
 		return ModeCollab
 
 	case matchPref(path,
+		"/api/internal/copilot/post-turn", "/api/internal/memory/purge-conversation", "/api/internal/skill/invocation"):
+		return ModeCap
+
+	case matchPref(path,
 		"/api/workflows", "/api/workflow-templates", "/api/workflow-skills", "/api/workflow-runs"):
 		return ModeWorkflow
 
@@ -131,6 +149,7 @@ func ownerForAPI(path string) ServiceMode {
 		"/api/models", "/api/model", "/api/model-invoke",
 		"/api/knowledge",
 		"/api/skills", "/api/skill-artifacts", "/api/skill-integrations", "/api/mcp-connections", "/api/tools",
+		"/api/platform-tools",
 		"/api/memory",
 		"/api/channel-control", "/api/channel-templates", "/api/channel-blacklist", "/api/channels",
 		"/api/channel", "/api/internal/skill-catalog"):

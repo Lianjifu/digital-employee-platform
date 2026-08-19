@@ -16,7 +16,6 @@ export const KIND_PROFILE: Record<Skill['kind'], { caption: string; primaryLabel
 };
 
 export const STORE_LIST = [
-  { id: 'st1', kind: 'skill' as const, name: 'mysql-cli', version: '2.0.0', description: 'MySQL 命令执行', rating: 4.7, installCount: 3200, riskLevel: 'mid' as const, calls: '—', cacheable: true },
   { id: 'st2', kind: 'skill' as const, name: 'pg-cli', version: '1.8.0', description: 'PostgreSQL 客户端', rating: 4.6, installCount: 2800, riskLevel: 'mid' as const, calls: '—', cacheable: true },
   { id: 'st3', kind: 'mcp' as const, name: 'gitlab-mcp', version: '0.9.0', description: 'GitLab MR/Issue MCP', rating: 4.4, installCount: 1200, riskLevel: 'mid' as const, calls: '—', cacheable: false },
   { id: 'st4', kind: 'mcp' as const, name: 'jenkins-mcp', version: '1.0.0', description: 'Jenkins 构建触发', rating: 4.3, installCount: 880, riskLevel: 'high' as const, calls: '—', cacheable: false },
@@ -36,9 +35,10 @@ export type SkillRow = {
   calls: string;
   cacheable: boolean;
   perf: { calls24h: number; errorRate: number; p95Ms: number };
-} & Pick<Skill, 'lifecycleStatus' | 'source' | 'owner' | 'team' | 'lastVerifiedAt' | 'hasUpdate' | 'upgradeVersion' | 'tags'>;
+} & Pick<Skill, 'lifecycleStatus' | 'source' | 'owner' | 'team' | 'lastVerifiedAt' | 'hasUpdate' | 'upgradeVersion' | 'tags'>
+  & Partial<Pick<Skill, 'hasScripts' | 'scripts' | 'packageFileName' | 'packagePath'>>;
 
-export type SkillCenterTab = 'workspace' | 'store' | 'workflowSkills' | 'integration' | 'governance';
+export type SkillCenterTab = 'workspace' | 'store' | 'platformTools' | 'workflowSkills' | 'integration' | 'governance';
 
 export type ModalKind = 'importSkill' | 'configureMcp' | 'configureTool' | 'uninstall' | 'upgrade' | null;
 

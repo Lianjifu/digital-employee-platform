@@ -1,4 +1,4 @@
-.PHONY: run test tidy build compose-up compose-up-full compose-up-temporal compose-up-oidc compose-up-authentik compose-up-kafka compose-up-mtls compose-up-spiffe compose-up-coarse compose-up-milvus compose-up-opa compose-up-search compose-up-obs compose-up-staging compose-up-replica compose-down compose-ps compose-logs infra-env smoke smoke-coarse test-python runtime rag skill de-workflow docker-engine buf-generate buf-lint worker certs certs-rotate run-sys run-collab run-cap run-workflow run-policy run-audit
+.PHONY: run test tidy build compose-up compose-up-full compose-up-temporal compose-up-oidc compose-up-authentik compose-up-kafka compose-up-mtls compose-up-spiffe compose-up-coarse compose-up-monolith compose-up-monolith-workflow compose-up-milvus compose-up-opa compose-up-search compose-up-obs compose-up-staging compose-up-replica compose-down compose-ps compose-logs infra-env smoke smoke-coarse smoke-monolith test-python runtime rag skill sync-builtin-skills de-workflow docker-engine buf-generate buf-lint worker certs certs-rotate run-sys run-collab run-cap run-app run-workflow run-policy run-audit
 
 
 export DE_DATABASE_URL ?= postgres://de:de@127.0.0.1:5432/digital_employee?sslmode=disable
@@ -9,11 +9,16 @@ export PATH := /opt/homebrew/bin:$(HOME)/go/bin:$(PATH)
 GO ?= $(shell if [ -x "$(CURDIR)/.tools/go/bin/go" ]; then echo "$(CURDIR)/.tools/go/bin/go"; else echo go; fi)
 COMPOSE := docker compose -f deploy/compose.yml
 
-# Primary local entry: coarse stack (gateway :8089).
-run: compose-up-coarse
+# Primary local entry: monolith stack (gateway :8089 → de-app :8100 + de-skill :8093).
+run: compose-up-monolith
 
 run-sys: infra-env
 	$(GO) run ./cmd/de-sys
+
+run-app: infra-env
+	DE_RUNTIME_MODE=local \
+	DE_SKILL_RUNTIME_URL=$${DE_SKILL_RUNTIME_URL:-http://127.0.0.1:8093} \
+	$(GO) run ./cmd/de-app
 
 run-collab: infra-env
 	DE_CAP_URL=$${DE_CAP_URL:-http://127.0.0.1:8102} DE_WORKFLOW_URL=$${DE_WORKFLOW_URL:-http://127.0.0.1:8103} $(GO) run ./cmd/de-collab
@@ -39,6 +44,7 @@ tidy:
 
 build:
 	$(GO) build -o ./bin/de-sys ./cmd/de-sys
+	$(GO) build -o ./bin/de-app ./cmd/de-app
 	$(GO) build -o ./bin/de-collab ./cmd/de-collab
 	$(GO) build -o ./bin/de-cap ./cmd/de-cap
 	$(GO) build -o ./bin/de-workflow ./cmd/de-workflow
@@ -123,6 +129,18 @@ compose-up-coarse: docker-engine
 	$(COMPOSE) --profile coarse up -d --build
 	@echo "coarse: gateway:8089 → sys:8100 collab:8101 cap:8102 workflow:8103 + FastAPI 8091-8093"
 	@echo "  FE proxy default → http://127.0.0.1:8089"
+
+compose-up-monolith: docker-engine
+	@$(MAKE) compose-up
+	$(COMPOSE) --profile monolith up -d --build
+	@echo "monolith: gateway:8089 → de-app:8100 + de-skill:8093"
+	@echo "  FE proxy default → http://127.0.0.1:8089"
+	@echo "  optional workflow: make compose-up-monolith-workflow"
+
+compose-up-monolith-workflow: docker-engine
+	@$(MAKE) compose-up
+	DE_WORKFLOW_URL=http://de-workflow:8103 $(COMPOSE) --profile monolith --profile monolith-workflow up -d --build
+	@echo "monolith+workflow: de-app + de-skill + de-workflow:8103"
 
 compose-up-milvus: docker-engine
 	$(COMPOSE) --profile milvus up -d
@@ -239,9 +257,24 @@ skill:
 	pip install -q -r services/de-skill-runtime/requirements.txt
 	cd services/de-skill-runtime && DE_SKILL_REQUIRE_ISOLATION=$${DE_SKILL_REQUIRE_ISOLATION:-0} python3 -m uvicorn app.main:app --host $${DE_BIND_HOST:-127.0.0.1} --port $${DE_BIND_PORT:-8093}
 
+sync-builtin-skills:
+	@bash ../scripts/sync-builtin-skills.sh
+	@chmod +x builtin/skills/runtime/bin/* 2>/dev/null || true
+
+install-external-skill-bins:
+	@bash ../scripts/install-external-skill-bins.sh
+
 BASE ?= http://127.0.0.1:8089
 
-smoke smoke-coarse:
+smoke smoke-monolith:
+	@curl -sf $(BASE)/healthz >/dev/null && echo "healthz ok" || (echo "start monolith stack first: make compose-up-monolith" && exit 1)
+	@TOKEN=$$(curl -sf -X POST $(BASE)/api/auth/login -H 'Content-Type: application/json' -d '{"email":"admin@acme.com","password":"x"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["token"])') && \
+	curl -sf -H "Authorization: Bearer $$TOKEN" $(BASE)/api/workspaces >/dev/null && echo "workspaces ok" && \
+	curl -sf -H "Authorization: Bearer $$TOKEN" $(BASE)/api/skills >/dev/null && echo "skills ok" && \
+	curl -sf -H "Authorization: Bearer $$TOKEN" $(BASE)/api/sessions >/dev/null && echo "sessions ok" && \
+	curl -sf -X POST -H "Authorization: Bearer $$TOKEN" -H 'Content-Type: application/json' -d '{"resource":"workflow","action":"publish"}' $(BASE)/api/zero-trust/evaluate >/dev/null && echo "evaluate ok"
+
+smoke-coarse:
 	@curl -sf $(BASE)/healthz >/dev/null && echo "healthz ok" || (echo "start coarse stack first: make compose-up-coarse" && exit 1)
 	@TOKEN=$$(curl -sf -X POST $(BASE)/api/auth/login -H 'Content-Type: application/json' -d '{"email":"admin@acme.com","password":"x"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["token"])') && \
 	curl -sf -H "Authorization: Bearer $$TOKEN" $(BASE)/api/workspaces >/dev/null && echo "workspaces ok" && \

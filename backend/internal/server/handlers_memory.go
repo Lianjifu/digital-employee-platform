@@ -36,10 +36,11 @@ func (s *Server) appendMemoryAuditLocked(ws, actor, action, target, result, corr
 }
 
 func (s *Server) persistMemory() {
-	s.Store.Persist("memory_records")
-	s.Store.Persist("memory_candidates")
-	s.Store.Persist("memory_policies")
-	s.Store.Persist("memory_audits")
+	for _, coll := range []string{"memory_records", "memory_candidates", "memory_policies", "memory_audits"} {
+		if s.Store.CanWrite(coll) {
+			s.Store.Persist(coll)
+		}
+	}
 }
 
 func memoryCanRead(id *auth.Identity, item map[string]any) bool {

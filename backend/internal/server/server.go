@@ -112,11 +112,11 @@ func (s *Server) Handler() http.Handler {
 		}
 		response.OK(w, status)
 	})
-	if mode == ModeAll || mode == ModeSys || mode == ModeCollab || mode == ModeCap || mode == ModePolicy || mode == ModeAudit {
+	if mode == ModeAll || mode == ModeApp || mode == ModeSys || mode == ModeCollab || mode == ModeCap || mode == ModePolicy || mode == ModeAudit {
 		s.mountConnectRPCForMode(mux, mode)
 		mux.HandleFunc("/connect/", s.handleConnect)
 	}
-	if mode == ModeAll || mode == ModePolicy || (mode == ModeSys && sysAbsorbsCrosscutting()) {
+	if mode == ModeAll || mode == ModeApp || mode == ModePolicy || (mode == ModeSys && sysAbsorbsCrosscutting()) {
 		mux.HandleFunc("/v1/evaluate", s.handleLocalPolicyEvaluate)
 	}
 	mux.HandleFunc("/metrics", s.metricsPrometheus)
@@ -329,6 +329,14 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	// Copilot — sessions / conversations / actions
 	case path == "/api/internal/channel-sessions" && method == http.MethodPost:
 		data, err = s.ensureChannelSessionAPI(r)
+	case path == "/api/internal/skill-catalog" && method == http.MethodPost:
+		data, err = s.upsertSkillCatalogAPI(r)
+	case path == "/api/internal/copilot/post-turn" && method == http.MethodPost:
+		data, err = s.copilotPostTurnAPI(r)
+	case path == "/api/internal/memory/purge-conversation" && method == http.MethodPost:
+		data, err = s.purgeConversationMemoryAPI(r)
+	case path == "/api/internal/skill/invocation" && method == http.MethodPost:
+		data, err = s.skillInvocationAPI(r)
 	case path == "/api/sessions" && method == http.MethodGet:
 		data, err = s.listSessions(r)
 	case path == "/api/sessions" && method == http.MethodPost:
@@ -412,6 +420,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	// Skills
 	case path == "/api/internal/skill-catalog" && method == http.MethodPost:
 		data, err = s.upsertSkillCatalogAPI(r)
+	case path == "/api/internal/skill/invocation" && method == http.MethodPost:
+		data, err = s.skillInvocationAPI(r)
 	case path == "/api/skills" && method == http.MethodGet:
 		data, err = s.listSkillsAligned(r)
 	case path == "/api/skills" && method == http.MethodPost:
@@ -426,6 +436,16 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.publishSkillToCatalog(r)
 	case path == "/api/skills/catalog/sync" && method == http.MethodPost:
 		data, err = s.syncSkillCatalog(r)
+	case path == "/api/skills/apply-general-pack" && method == http.MethodPost:
+		data, err = s.applyGeneralPack(r)
+	case path == "/api/skills/packs" && method == http.MethodGet:
+		data, err = s.listSkillPacks(r)
+	case path == "/api/skills/dependency-matrix" && method == http.MethodGet:
+		data, err = s.skillDependencyMatrix(r)
+	case strings.HasPrefix(path, "/api/skills/apply-pack/") && method == http.MethodPost:
+		data, err = s.applySkillPack(r)
+	case path == "/api/platform-tools/registry" && method == http.MethodGet:
+		data, err = s.platformToolsRegistry(r)
 	case path == "/api/skills/governance/overview" && method == http.MethodGet:
 		data, err = s.skillsGovernanceOverview(r)
 	case path == "/api/skills/governance/health" && method == http.MethodGet:

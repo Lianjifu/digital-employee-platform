@@ -39,13 +39,21 @@ func requireModelWrite(id *auth.Identity) error {
 }
 
 func vaultRequiredForCredentials() bool {
-	for _, k := range []string{"DE_REQUIRE_VAULT", "DE_BAN_MOCK_TOKEN"} {
-		v := strings.TrimSpace(os.Getenv(k))
-		if v == "1" || strings.EqualFold(v, "true") {
-			return true
-		}
+	v := strings.TrimSpace(os.Getenv("DE_REQUIRE_VAULT"))
+	if v == "1" || strings.EqualFold(v, "true") {
+		return true
 	}
-	return false
+	// 仅真实 staging/prod 环境强制 Vault；DE_BAN_MOCK_TOKEN 只影响鉴权，不等同于生产部署。
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("DE_ENV")))
+	if env == "" {
+		env = strings.ToLower(strings.TrimSpace(os.Getenv("GO_ENV")))
+	}
+	switch env {
+	case "production", "prod", "staging":
+		return true
+	default:
+		return false
+	}
 }
 
 func budgetEnforceEnabled() bool {

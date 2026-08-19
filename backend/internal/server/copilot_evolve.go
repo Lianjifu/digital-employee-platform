@@ -420,7 +420,9 @@ func (s *Server) evolveDreamRun(r *http.Request) (any, error) {
 }
 
 func (s *Server) persistEvolve() {
-	s.Store.Persist("evolve_candidates")
+	if s.Store.CanWrite("evolve_candidates") {
+		s.Store.Persist("evolve_candidates")
+	}
 	s.persistMemory()
 }
 
@@ -609,7 +611,7 @@ func (s *Server) applyEvolveCandidateLocked(ws, actorID, actorName string, cand 
 		}
 		drafts := knowledgeSliceMaps(s.Store.SkillExtra["evolveDrafts"])
 		s.Store.SkillExtra["evolveDrafts"] = append([]map[string]any{draft}, drafts...)
-		s.Store.Persist("skill_extra")
+		s.persistSkillHealth()
 		return map[string]any{"skillDraftId": str(draft["id"]), "status": "draft"}, nil
 
 	case evolveKindRoutingHint:

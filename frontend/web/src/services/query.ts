@@ -37,6 +37,8 @@ export function useApiQuery<T>(
 type MutationOpts<TData, TVar> = {
   onSuccess?: (data: TData, vars: TVar) => void;
   onError?: (err: unknown, vars: TVar) => void;
+  /** 精确失效的 query key 前缀；未指定时仍全量 invalidate（兼容旧行为） */
+  invalidateKeys?: readonly (readonly unknown[])[];
 };
 
 export function useApiMutation<TData, TVar>(
@@ -54,7 +56,13 @@ export function useApiMutation<TData, TVar>(
     },
     onSuccess: (data, vars) => {
       options?.onSuccess?.(data, vars);
-      qc.invalidateQueries();
+      if (options?.invalidateKeys?.length) {
+        for (const key of options.invalidateKeys) {
+          qc.invalidateQueries({ queryKey: key });
+        }
+      } else {
+        qc.invalidateQueries();
+      }
     },
     onError: (err, vars) => {
       options?.onError?.(err, vars);

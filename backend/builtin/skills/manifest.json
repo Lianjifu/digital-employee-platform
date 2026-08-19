@@ -1,0 +1,100 @@
+{
+  "version": "2.0.0",
+  "packId": "general",
+  "packName": "通用",
+  "generalPackSkills": [
+    "weather", "summarize", "github", "docx", "pdf", "pptx",
+    "frontend-design", "web-design-guidelines", "diagram-maker", "gog"
+  ],
+  "tierDOptIn": ["browser-use", "1password"],
+  "packs": {
+    "general": {
+      "packName": "通用",
+      "phase": "P0",
+      "autoInstall": true,
+      "skills": [
+        "weather", "summarize", "github", "docx", "pdf", "pptx",
+        "frontend-design", "web-design-guidelines", "diagram-maker", "gog"
+      ]
+    },
+    "collab-ext": {
+      "packName": "协作扩展",
+      "phase": "P1",
+      "autoInstall": false,
+      "skills": [
+        "trello", "spreadsheets", "tmux", "meeting-recorder-assistant",
+        "find-skills", "karpathy-guidelines", "react-next-best-practices", "powershell"
+      ]
+    },
+    "heavy-optin": {
+      "packName": "重依赖",
+      "phase": "P2",
+      "autoInstall": false,
+      "requiresApproval": true,
+      "skills": [
+        "browser-use", "1password", "notion", "obsidian", "himalaya", "apple-notes"
+      ]
+    },
+    "pilotdeck-full": {
+      "packName": "平台全量",
+      "phase": "P3",
+      "autoInstall": false,
+      "skills": [
+        "1password", "apple-notes", "apple-reminders", "bear-notes", "blogwatcher",
+        "browser-use", "diagram-maker", "docx", "find-skills", "frontend-design",
+        "frontend-slides", "github", "gog", "himalaya", "karpathy-guidelines",
+        "meeting-recorder-assistant", "notion", "obsidian", "pdf",
+        "pilotdeck-skills-migration", "powershell", "pptx", "react-next-best-practices",
+        "skill-creator", "spike", "spreadsheets", "summarize", "tmux", "trello",
+        "weather", "web-design-guidelines"
+      ]
+    }
+  },
+  "skillMeta": {
+    "github": { "externalBins": ["gh"], "tier": "A" },
+    "gog": { "externalBins": ["gog"], "tier": "A" },
+    "trello": { "externalBins": ["trello"], "tier": "A" },
+    "1password": { "externalBins": ["op"], "tier": "D" },
+    "browser-use": { "externalBins": ["python3"], "tier": "D" },
+    "spreadsheets": { "externalBins": ["node"], "tier": "B" },
+    "pptx": { "externalBins": ["node"], "tier": "B" },
+    "meeting-recorder-assistant": { "externalBins": ["python3"], "tier": "B" },
+    "himalaya": { "externalBins": ["himalaya"], "tier": "D" },
+    "notion": { "externalBins": ["ntn"], "tier": "D" },
+    "obsidian": { "externalBins": ["obsidian"], "tier": "D" },
+    "powershell": { "externalBins": ["pwsh", "powershell"], "tier": "A" },
+    "tmux": { "externalBins": ["tmux"], "tier": "A" }
+  },
+  "platformTools": [
+    { "name": "knowledge.retrieve", "kind": "platform", "mode": "execute", "description": "检索已发布知识库" },
+    { "name": "memory.recall", "kind": "platform", "mode": "execute", "description": "跨会话记忆检索" },
+    { "name": "skill.read", "kind": "platform", "mode": "execute", "description": "加载 SKILL.md 全文" },
+    { "name": "time.now", "kind": "platform", "mode": "execute", "description": "当前时间（ISO8601）" },
+    { "name": "todo_write", "kind": "platform", "phase": "P2", "mode": "execute", "description": "会话 Todo 列表" },
+    { "name": "ask_user_question", "kind": "platform", "phase": "P2", "mode": "execute", "description": "向用户提问" },
+    { "name": "structured_output", "kind": "platform", "phase": "P2", "mode": "execute", "description": "结构化 JSON 输出" },
+    { "name": "enter_plan_mode", "kind": "platform", "phase": "P3", "mode": "execute", "description": "进入研判/计划模式" },
+    { "name": "exit_plan_mode", "kind": "platform", "phase": "P3", "mode": "execute", "description": "退出计划模式" }
+  ],
+  "runtimeTools": [
+    { "name": "read_file", "kind": "runtime", "mode": "execute", "description": "读取技能包内文件", "executor": "skill.open" },
+    { "name": "glob", "kind": "runtime", "mode": "execute", "description": "列出技能包文件", "executor": "skill.open" },
+    { "name": "grep", "kind": "runtime", "mode": "execute", "description": "搜索技能包内容", "executor": "skill.open" },
+    { "name": "bash", "kind": "runtime", "mode": "approval_required", "description": "沙箱命令执行", "executor": "skill.run" },
+    { "name": "write_file", "kind": "runtime", "phase": "P1", "mode": "approval_required", "description": "写入技能包 .copilot-ws", "executor": "skill.write" },
+    { "name": "edit_file", "kind": "runtime", "phase": "P1", "mode": "approval_required", "description": "Patch 编辑包内文件", "executor": "patch" },
+    { "name": "web_search", "kind": "runtime", "phase": "P1", "mode": "execute", "description": "Web 搜索", "executor": "http", "availability": "opt_in" },
+    { "name": "web_fetch", "kind": "runtime", "phase": "P2", "mode": "execute", "description": "HTTP GET 抓取 URL", "executor": "http", "availability": "opt_in" },
+    { "name": "execute_code", "kind": "runtime", "phase": "P2", "mode": "approval_required", "description": "沙箱代码执行", "executor": "skill.run" },
+    { "name": "edit_notebook", "kind": "runtime", "phase": "P2", "mode": "approval_required", "description": "编辑 Jupyter notebook", "executor": "patch" },
+    { "name": "send_attachment", "kind": "runtime", "phase": "P2", "mode": "execute", "description": "发送附件链接", "executor": "attachment" },
+    { "name": "agent", "kind": "runtime", "phase": "P3", "mode": "approval_required", "description": "子 Agent 委派", "executor": "agent" },
+    { "name": "task_create", "kind": "runtime", "phase": "P3", "mode": "execute", "description": "创建后台任务", "executor": "task" },
+    { "name": "task_list", "kind": "runtime", "phase": "P3", "mode": "execute", "description": "列出任务", "executor": "task" },
+    { "name": "task_output", "kind": "runtime", "phase": "P3", "mode": "execute", "description": "读取任务输出", "executor": "task" },
+    { "name": "task_wait", "kind": "runtime", "phase": "P3", "mode": "execute", "description": "等待任务完成", "executor": "task" },
+    { "name": "task_stop", "kind": "runtime", "phase": "P3", "mode": "approval_required", "description": "停止任务", "executor": "task" },
+    { "name": "list_mcp_resources", "kind": "runtime", "phase": "P3", "mode": "execute", "description": "列出 MCP 资源", "executor": "mcp" },
+    { "name": "read_mcp_resource", "kind": "runtime", "phase": "P3", "mode": "execute", "description": "读取 MCP 资源", "executor": "mcp" }
+  ]
+}

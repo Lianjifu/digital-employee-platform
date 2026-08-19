@@ -309,6 +309,10 @@ func str(v any) string {
 	return s
 }
 
+func DedupeMapsByID(items []map[string]any) []map[string]any {
+	return dedupeMapsByID(items)
+}
+
 func dedupeMapsByID(items []map[string]any) []map[string]any {
 	if len(items) == 0 {
 		return items
@@ -483,6 +487,7 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 		s.TempAuths = items
 	case "skills":
 		s.Skills = dedupeMapsByID(items)
+		s.BumpSeqFromPrefixedIDs("sk")
 	case "skill_catalog":
 		s.SkillCatalog = items
 	case "skill_health":

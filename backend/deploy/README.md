@@ -30,7 +30,8 @@ Schema 初始化：`deploy/migrations/*.sql` 挂载到 Postgres 的 `/docker-ent
 ```bash
 export DE_DATABASE_URL=postgres://de:de@127.0.0.1:5432/digital_employee?sslmode=disable
 export DE_REDIS_URL=redis://127.0.0.1:6379/0
-make run
+make run                 # monolith（方案 A 默认）
+# 或 make compose-up-coarse  # 四进程 coarse
 ```
 
 `GET /readyz` 会报告 `postgres` / `redis` 连通性。
@@ -41,7 +42,9 @@ make run
 
 ```bash
 make compose-up-full       # + Vault(:8200) + Envoy(:8088)
-make compose-up-coarse     # ★ 主路径：sys/collab/cap/workflow + FastAPI + gateway:8089
+make compose-up-monolith   # ★ 主路径（方案 A）：de-app + de-skill + gateway:8089
+make compose-up-monolith-workflow  # monolith + de-workflow:8103
+make compose-up-coarse     # 四进程 coarse：sys/collab/cap/workflow + FastAPI + gateway:8089
 make compose-up-temporal   # + Temporal(:7233)
 make compose-up-oidc       # + Dex OIDC(:5556)
 make compose-up-authentik  # + Authentik(:9000)
@@ -106,7 +109,17 @@ make rag   # :8092，healthz 中 backend=milvus
 
 容器：`de-milvus`（19530/9091）、`de-milvus-etcd`、`de-milvus-minio`（内网）。Milvus 较吃内存，Colima/Docker 建议 ≥6–8GB。
 
-### 应用进程（profile `coarse`）
+### 应用进程
+
+**Monolith（默认，profile `monolith`）**
+
+```bash
+make compose-up-monolith
+# gateway:8089  de-app:8100  de-skill:8093
+# 可选：make compose-up-monolith-workflow
+```
+
+**Coarse 四进程（profile `coarse`）**
 
 ```bash
 make compose-up-coarse

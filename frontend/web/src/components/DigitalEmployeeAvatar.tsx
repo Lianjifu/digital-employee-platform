@@ -65,27 +65,25 @@ export function DigitalEmployeeAvatar({
   employee,
   size = 40,
   className,
-  rounded = 'full',
 }: {
   employee: AvatarEmployee;
   size?: number;
   className?: string;
+  /** @deprecated 头像统一为圆形，此参数已忽略 */
   rounded?: 'full' | 'lg';
 }) {
   const [failed, setFailed] = useState(false);
   const src = resolveAvatarSrc(employee);
-  const radius = rounded === 'full' ? '9999px' : '12px';
 
   if (failed) {
     const initial = employee.name?.[0] ?? '?';
     return (
       <div
         aria-label={`${employee.name}头像`}
-        className={cn('inline-grid shrink-0 place-items-center bg-[var(--bg-elevated)] font-semibold text-[var(--text-secondary)]', className)}
+        className={cn('inline-grid shrink-0 place-items-center overflow-hidden rounded-full bg-[var(--bg-elevated)] font-semibold text-[var(--text-secondary)]', className)}
         style={{
           width: size,
           height: size,
-          borderRadius: radius,
           fontSize: size * 0.38,
           boxShadow: 'var(--saas-ring), var(--saas-elev-1)',
         }}
@@ -96,21 +94,24 @@ export function DigitalEmployeeAvatar({
   }
 
   return (
-    <img
-      src={src}
-      alt={`${employee.name}头像`}
-      width={size}
-      height={size}
-      loading="lazy"
-      decoding="async"
-      onError={() => setFailed(true)}
-      className={cn('shrink-0 object-cover bg-[var(--bg-elevated)]', className)}
+    <span
+      className={cn('inline-flex shrink-0 overflow-hidden rounded-full bg-[var(--bg-elevated)]', className)}
       style={{
         width: size,
         height: size,
-        borderRadius: radius,
         boxShadow: 'var(--saas-ring), var(--saas-elev-1)',
       }}
-    />
+    >
+      <img
+        src={src}
+        alt={`${employee.name}头像`}
+        width={size}
+        height={size}
+        loading="lazy"
+        decoding="async"
+        onError={() => setFailed(true)}
+        className="h-full w-full object-cover"
+      />
+    </span>
   );
 }

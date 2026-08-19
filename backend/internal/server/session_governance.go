@@ -44,6 +44,17 @@ func findSessionForStreamLocked(sessions []map[string]any, ws, rawID, cid string
 	return nil
 }
 
+func sessionOwnerReadable(id *auth.Identity, sess map[string]any) bool {
+	if id == nil || sess == nil {
+		return false
+	}
+	if id.Role == "admin" || id.Role == "auditor" {
+		return true
+	}
+	owner := str(sess["ownerId"])
+	return owner == "" || owner == id.ID
+}
+
 // assertSessionWritableLocked rejects stream when closed or handed off.
 func assertSessionWritableLocked(sess map[string]any) error {
 	if sess == nil {

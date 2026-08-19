@@ -454,7 +454,7 @@ export default function Home() {
               <>
                 <div className="home-spotlight__head">
                   <div className="home-spotlight__identity">
-                    <DigitalEmployeeAvatar employee={featured} size={52} rounded="lg" />
+                    <DigitalEmployeeAvatar employee={featured} size={52} />
                     <div className="min-w-0">
                       <p className="home-spotlight__label">数字工作伙伴 · 今日焦点</p>
                       <h2 className="home-spotlight__name">{employeePrimaryLabel(featured)}</h2>

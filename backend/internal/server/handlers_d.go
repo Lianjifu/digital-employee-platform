@@ -166,8 +166,7 @@ func (s *Server) executeSkill(r *http.Request) (any, error) {
 			s.Store.AppendAudit(ws, id.Name, "沙箱执行技能", skillID, status, detail)
 		}
 		s.Store.Unlock()
-		s.Store.Persist("skill_health")
-		s.Store.Persist("skill_extra")
+		s.persistSkillHealth()
 		return nil, apperr.Unavailable(apperr.RuntimeUnavailable, "技能运行时不可用: "+runtimeErr.Error())
 	}
 	if b, ok := result["ok"].(bool); ok && !b {
@@ -188,8 +187,7 @@ func (s *Server) executeSkill(r *http.Request) (any, error) {
 		s.Store.AppendAudit(ws, id.Name, "沙箱执行技能", skillID, status, detail)
 	}
 	s.Store.Unlock()
-	s.Store.Persist("skill_health")
-	s.Store.Persist("skill_extra")
+	s.persistSkillHealth()
 	return result, nil
 }
 

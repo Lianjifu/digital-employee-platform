@@ -14,7 +14,7 @@ func TestCaptureEmployeeBindingFreezesPublishedVersions(t *testing.T) {
 			"model":        "企业通用路由 v2",
 			"modelRouteId": "rp-p0",
 			"knowledge":    knowledge,
-			"skills":       []string{"kubectl"},
+			"skills":       []string{"docx"},
 			"channels":     []string{"web"},
 		},
 	}

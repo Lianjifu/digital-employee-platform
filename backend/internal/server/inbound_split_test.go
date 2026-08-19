@@ -13,6 +13,40 @@ import (
 	"github.com/digital-employee-platform/backend/internal/vault"
 )
 
+func TestCollabCopilotPostTurnDelegatesToCap(t *testing.T) {
+	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "1")
+	capStore := store.New()
+	capStore.SetWriteDomain(store.DomainCap)
+	capStore.DropUnowned(store.DomainCap)
+	capSrv := server.New(capStore)
+	capSrv.Mode = server.ModeCap
+	capTS := httptest.NewServer(capSrv.Handler())
+	t.Cleanup(capTS.Close)
+
+	collabStore := store.New()
+	collabStore.SetWriteDomain(store.DomainCollab)
+	collabStore.DropUnowned(store.DomainCollab)
+	collab := server.New(collabStore)
+	collab.Mode = server.ModeCollab
+	collab.PeerHTTP = capTS.Client()
+	t.Setenv("DE_CAP_URL", capTS.URL)
+
+	rr := httptest.NewRecorder()
+	req := adminReq(http.MethodPost, "/api/internal/copilot/post-turn", `{
+		"workspaceId":"w1","ownerId":"u1","ownerName":"Admin",
+		"conversationId":"conv-1","correlationId":"corr-1","messageId":"msg-1",
+		"userMessage":"我喜欢简洁回答","assistantText":"好的","mode":"react",
+		"memoryIngest":{"workspaceId":"w1","ownerId":"u1","ownerName":"Admin","title":"t","content":"c","sourceType":"conversation","sourceId":"conv-1","correlationId":"corr-1","layer":"short_term","scope":"user","confidence":0.85}
+	}`)
+	capSrv.Handler().ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("cap post-turn %d %s", rr.Code, rr.Body.String())
+	}
+	if len(capStore.MemoryRecords) == 0 {
+		t.Fatal("expected cap to persist memory ingest")
+	}
+}
+
 func TestCapInboundSessionLandsOnCollab(t *testing.T) {
 	collabStore := store.New()
 	collabStore.SetWriteDomain(store.DomainCollab)

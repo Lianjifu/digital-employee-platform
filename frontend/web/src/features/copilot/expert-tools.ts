@@ -1,14 +1,13 @@
 /**
- * Copilot「运行配置 · 工具链」：仅展示当前数字工作伙伴已装配的工具/技能，
- * 不按岗位臆造未装配项。
+ * Copilot「运行配置 · 工具链」：展示平台工具、已装配 skills、运行时 tools。
  */
 export type CopilotToolDef = {
   key: string;
   name: string;
   desc: string;
-  kind: 'tool' | 'skill' | 'workflow';
+  kind: 'tool' | 'skill' | 'workflow' | 'platform' | 'runtime';
+  group: 'platform' | 'skill' | 'runtime' | 'enterprise';
   requiresApproval?: boolean;
-  /** 运行时执行器未接入，UI 应禁用勾选为默认执行 */
   unavailable?: boolean;
 };
 
@@ -27,6 +26,42 @@ export type ExpertToolSource = {
   };
 };
 
+const PLATFORM_TOOLS: Array<{ key: string; name: string; desc: string; phase?: string }> = [
+  { key: 'builtin:knowledge.retrieve', name: 'knowledge.retrieve', desc: '平台内置 · 检索已发布知识库', phase: 'P0' },
+  { key: 'builtin:memory.recall', name: 'memory.recall', desc: '平台内置 · 检索跨会话记忆', phase: 'P0' },
+  { key: 'builtin:skill.read', name: 'skill.read', desc: '平台内置 · 加载 SKILL.md 全文', phase: 'P0' },
+  { key: 'builtin:time.now', name: 'time.now', desc: '平台内置 · 当前时间', phase: 'P0' },
+  { key: 'builtin:todo_write', name: 'todo_write', desc: '平台 · 会话 Todo 列表', phase: 'P2' },
+  { key: 'builtin:ask_user_question', name: 'ask_user_question', desc: '平台 · 向用户提问', phase: 'P2' },
+  { key: 'builtin:structured_output', name: 'structured_output', desc: '平台 · 结构化 JSON 输出', phase: 'P2' },
+  { key: 'builtin:enter_plan_mode', name: 'enter_plan_mode', desc: '平台 · 进入计划模式', phase: 'P3' },
+  { key: 'builtin:exit_plan_mode', name: 'exit_plan_mode', desc: '平台 · 退出计划模式', phase: 'P3' },
+];
+
+const RUNTIME_TOOL_META: Record<string, { desc: string; phase: string; requiresApproval?: boolean }> = {
+  read_file: { desc: '运行时 · 读文件', phase: 'P0' },
+  glob: { desc: '运行时 · 列文件', phase: 'P0' },
+  grep: { desc: '运行时 · 搜内容', phase: 'P0' },
+  bash: { desc: '运行时 · 沙箱命令', phase: 'P0', requiresApproval: true },
+  web_fetch: { desc: '运行时 · HTTP GET', phase: 'P2' },
+  write_file: { desc: '运行时 · 写文件', phase: 'P1', requiresApproval: true },
+  edit_file: { desc: '运行时 · Patch 编辑', phase: 'P1', requiresApproval: true },
+  web_search: { desc: '运行时 · Web 搜索', phase: 'P1' },
+  execute_code: { desc: '运行时 · 代码执行', phase: 'P2', requiresApproval: true },
+  edit_notebook: { desc: '运行时 · Notebook 编辑', phase: 'P2', requiresApproval: true },
+  send_attachment: { desc: '运行时 · 发送附件', phase: 'P2' },
+  agent: { desc: '运行时 · 子 Agent', phase: 'P3', requiresApproval: true },
+  task_create: { desc: '运行时 · 创建任务', phase: 'P3' },
+  task_list: { desc: '运行时 · 列出任务', phase: 'P3' },
+  task_output: { desc: '运行时 · 任务输出', phase: 'P3' },
+  task_wait: { desc: '运行时 · 等待任务', phase: 'P3' },
+  task_stop: { desc: '运行时 · 停止任务', phase: 'P3', requiresApproval: true },
+  list_mcp_resources: { desc: '运行时 · MCP 资源列表', phase: 'P3' },
+  read_mcp_resource: { desc: '运行时 · 读 MCP 资源', phase: 'P3' },
+};
+
+const RUNTIME_TOOL_NAMES = new Set(Object.keys(RUNTIME_TOOL_META));
+
 function slug(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, '-');
 }
@@ -43,6 +78,10 @@ function describe(kind: CopilotToolDef['kind'], name: string): string {
       return `已装配技能 · ${name}`;
     case 'workflow':
       return `已装配流程 · ${name}`;
+    case 'platform':
+      return `平台工具 · ${name}`;
+    case 'runtime':
+      return `运行时工具 · ${name}`;
     default:
       return `已装配工具 · ${name}`;
   }
@@ -51,10 +90,15 @@ function describe(kind: CopilotToolDef['kind'], name: string): string {
 function isAllowlistedRuntime(kind: CopilotToolDef['kind'], name: string): boolean {
   const n = name.toLowerCase();
   if (kind === 'skill') {
-    return /docx|xlsx|pptx|excel|word|ppt/.test(n);
+    return /docx|xlsx|pptx|excel|word|ppt|weather|github|gog|summarize|pdf|diagram/.test(n);
+  }
+  if (kind === 'platform' || kind === 'runtime') {
+    return true;
   }
   if (kind === 'tool') {
-    return n === 'knowledge.retrieve' || n === 'memory.recall' || n.includes('cmdb') || n.includes('检索') || n.includes('知识库');
+    if (RUNTIME_TOOL_NAMES.has(n)) return true;
+    return n === 'knowledge.retrieve' || n === 'memory.recall' || n === 'skill.read' || n === 'time.now'
+      || n.includes('cmdb') || n.includes('检索') || n.includes('知识库');
   }
   return false;
 }
@@ -63,24 +107,30 @@ function pushUnique(
   out: CopilotToolDef[],
   seen: Set<string>,
   employee: ExpertToolSource | null | undefined,
-  kind: CopilotToolDef['kind'],
-  names: string[] | undefined,
+  item: { kind: CopilotToolDef['kind']; group: CopilotToolDef['group']; key?: string; name?: string; desc?: string; requiresApproval?: boolean; unavailable?: boolean },
+  names?: string[],
 ) {
-  for (const raw of names ?? []) {
+  const list = names ?? (item.name ? [item.name] : []);
+  for (const raw of list) {
     const name = raw.trim();
     if (!name) continue;
-    const key = `${kind}:${slug(name)}`;
+    const key = item.key ?? `${item.kind}:${slug(name)}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    const mode = modeOf(employee, kind, name);
+    const mode = modeOf(employee, item.kind === 'platform' || item.kind === 'runtime' ? 'tool' : item.kind, name);
     if (mode === 'prohibited') continue;
-    const requiresApproval = mode === 'approval_required';
-    const unavailable = kind === 'workflow' || (kind === 'tool' && !isAllowlistedRuntime(kind, name) && !requiresApproval);
+    const requiresApproval = mode === 'approval_required' || item.requiresApproval;
+    const unavailable = item.unavailable ?? (
+      item.group === 'enterprise'
+      && !isAllowlistedRuntime(item.kind, name)
+      && !requiresApproval
+    );
     out.push({
       key,
       name,
-      kind,
-      desc: unavailable ? `${describe(kind, name)}（未接入）` : describe(kind, name),
+      kind: item.kind,
+      group: item.group,
+      desc: item.desc ?? (unavailable ? `${describe(item.kind, name)}（未接入）` : describe(item.kind, name)),
       requiresApproval,
       unavailable,
     });
@@ -88,44 +138,68 @@ function pushUnique(
 }
 
 /**
- * 从数字工作伙伴能力装配构建本会话工具链。
- * 未绑定专家或未装配任何工具/技能时仍返回平台内置检索工具。
+ * 从数字工作伙伴能力装配构建本会话工具链（平台 → 技能 → 运行时 → 企业工具）。
  */
 export function buildExpertTools(employee?: ExpertToolSource | null): CopilotToolDef[] {
-  const out: CopilotToolDef[] = [
-    {
-      key: 'builtin:knowledge.retrieve',
-      name: 'knowledge.retrieve',
-      kind: 'tool',
-      desc: '平台内置 · 检索已发布知识库',
-    },
-    {
-      key: 'builtin:memory.recall',
-      name: 'memory.recall',
-      kind: 'tool',
-      desc: '平台内置 · 检索跨会话记忆',
-    },
-  ];
-  const seen = new Set(out.map((t) => t.key));
+  const out: CopilotToolDef[] = [];
+  const seen = new Set<string>();
+
+  for (const pt of PLATFORM_TOOLS) {
+    pushUnique(out, seen, employee, {
+      key: pt.key,
+      name: pt.name,
+      kind: 'platform',
+      group: 'platform',
+      desc: pt.desc,
+    });
+  }
+
   if (!employee?.capabilities) return out;
-  // 工具优先，再技能；流程一般偏编排，放最后且默认不塞满列表时可被会话选用
-  pushUnique(out, seen, employee, 'tool', employee.capabilities.tools);
-  pushUnique(out, seen, employee, 'skill', employee.capabilities.skills);
-  pushUnique(out, seen, employee, 'workflow', employee.capabilities.workflows);
+
+  const caps = employee.capabilities;
+  const toolNames = caps.tools ?? [];
+
+  for (const raw of toolNames) {
+    const name = raw.trim();
+    if (!name) continue;
+    const lower = name.toLowerCase();
+    if (RUNTIME_TOOL_NAMES.has(lower)) {
+      const meta = RUNTIME_TOOL_META[lower];
+      pushUnique(out, seen, employee, {
+        name,
+        kind: 'runtime',
+        group: 'runtime',
+        desc: meta?.desc,
+        requiresApproval: meta?.requiresApproval ?? lower === 'bash',
+      });
+      continue;
+    }
+    if (lower === 'knowledge.retrieve' || lower === 'memory.recall' || lower === 'skill.read' || lower === 'time.now'
+      || lower === 'todo_write' || lower === 'ask_user_question' || lower === 'structured_output'
+      || lower === 'enter_plan_mode' || lower === 'exit_plan_mode') {
+      continue;
+    }
+    pushUnique(out, seen, employee, {
+      name,
+      kind: 'tool',
+      group: 'enterprise',
+    });
+  }
+
+  pushUnique(out, seen, employee, { kind: 'skill', group: 'skill' }, caps.skills);
+  pushUnique(out, seen, employee, { kind: 'workflow', group: 'enterprise', unavailable: true }, caps.workflows);
+
   return out;
 }
 
 export function defaultEnabledToolKeys(tools: CopilotToolDef[]): string[] {
-  // 默认启用只读/已接入类；需审批与未接入项默认关闭
   return tools.filter((t) => !t.requiresApproval && !t.unavailable).map((t) => t.key);
 }
 
-/** 办公文档类技能（即使边界未标 approval_required，受控执行回合也应纳入）。 */
 export function isOfficeDocumentTool(tool: CopilotToolDef): boolean {
   return /docx|xlsx|pptx|excel|word|ppt/i.test(tool.name) || /docx|xlsx|pptx|excel|word|ppt/i.test(tool.key);
 }
 
-/** 受控执行下应纳入本回合的工具键（只读基线 + 审批/写技能）。 */
 export function toolsForExecuteMode(base: string[], available: CopilotToolDef[]): string[] {
   const extras = available
     .filter((t) => !t.unavailable && (t.requiresApproval || isOfficeDocumentTool(t)))
@@ -133,7 +207,6 @@ export function toolsForExecuteMode(base: string[], available: CopilotToolDef[])
   return Array.from(new Set([...base, ...extras]));
 }
 
-/** 用户意图是否要求写操作 / 文档产出（研判下应升到受控执行）。 */
 export function isWriteExecutionIntent(text: string): boolean {
   return /\/(exec|kubectl|write|apply|config)|CONFIG SET|kubectl\s+(apply|delete|exec)/i.test(text)
     || /(生成|制作|导出|写一份|做一份).{0,12}(PPT|pptx|幻灯片|演示文稿|文档|报告|docx|xlsx|表格)/i.test(text)

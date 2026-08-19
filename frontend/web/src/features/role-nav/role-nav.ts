@@ -188,7 +188,7 @@ export function visibleWorkflowTabs(role: Role | undefined | null): WorkflowTab[
 }
 
 export type KnowledgeTab = 'assets' | 'processing' | 'retrieval' | 'graph' | 'governance';
-export type SkillsTab = 'workspace' | 'store' | 'workflowSkills' | 'integration' | 'governance';
+export type SkillsTab = 'workspace' | 'store' | 'platformTools' | 'workflowSkills' | 'integration' | 'governance';
 export type MemoryTab = 'overview' | 'shortTerm' | 'working' | 'longTerm' | 'candidates' | 'governance';
 
 export function defaultKnowledgeTab(role: Role | undefined | null): KnowledgeTab {
@@ -215,7 +215,7 @@ export function visibleSkillsTabs(role: Role | undefined | null): SkillsTab[] {
   const r = resolveAppRole(role);
   if (r === 'user') return ['workspace', 'workflowSkills'];
   if (r === 'auditor') return ['governance', 'workspace'];
-  return ['workspace', 'store', 'workflowSkills', 'integration', 'governance'];
+  return ['workspace', 'store', 'platformTools', 'workflowSkills', 'integration', 'governance'];
 }
 
 export function defaultMemoryTab(role: Role | undefined | null): MemoryTab {

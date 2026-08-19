@@ -92,4 +92,5 @@
 | GET | `/metrics`（Prometheus 文本；OTel 桥后续） |
 
 拆分与 mTLS 目标见 [`deploy/topology-split.md`](../deploy/topology-split.md)。  
+**Monolith（方案 A）**：上述 sys/collab/cap 路由均由 **de-app:8100** 提供；网关 **8089** → `envoy.monolith.yaml`。  
 详见 [`contract-gap.md`](contract-gap.md)。

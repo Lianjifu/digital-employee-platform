@@ -423,9 +423,16 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	}
 	userMsg = safeIn.Text
 
+	tryOrder := workspaceLookupOrder(id, ws)
 	s.Store.RLock()
-	cid := s.resolveMessageBucketID(ws, rawID)
-	sess := findSessionForStreamLocked(s.Store.Sessions, ws, rawID, cid)
+	resolvedWS := ws
+	if sess, sws := s.findSessionInWorkspacesLocked(rawID, tryOrder); sess != nil {
+		resolvedWS = sws
+	} else if _, cws := s.findConversationInWorkspacesLocked(rawID, tryOrder); cws != "" {
+		resolvedWS = cws
+	}
+	cid := s.resolveMessageBucketID(resolvedWS, rawID)
+	sess := findSessionForStreamLocked(s.Store.Sessions, resolvedWS, rawID, cid)
 	if sess != nil {
 		if sm := str(sess["sessionMode"]); sm != "" && str(body["sessionMode"]) == "" {
 			sessionMode = normalizeSessionMode(sm)
@@ -553,7 +560,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		userRec["moderationReasons"] = safeIn.Reasons
 	}
 	s.Store.Messages[cid] = append(s.Store.Messages[cid], userRec)
-	s.touchSessionLocked(ws, rawID, cid, userMsg, now, modelID, deID, id.ID)
+	s.touchSessionLocked(resolvedWS, rawID, cid, userMsg, now, modelID, deID, id.ID)
 	s.Store.Unlock()
 	s.Store.Persist("messages")
 	s.Store.Persist("sessions")
@@ -751,7 +758,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	s.Store.Lock()
 	s.Store.Messages[cid] = append(s.Store.Messages[cid], assistantMsg)
 	preview := truncateRunes(full, 80)
-	s.touchSessionLocked(ws, rawID, cid, preview, time.Now().UTC().Format(time.RFC3339), modelID, resolvedDE, id.ID)
+	s.touchSessionLocked(resolvedWS, rawID, cid, preview, time.Now().UTC().Format(time.RFC3339), modelID, resolvedDE, id.ID)
 	s.Store.AppendAudit(ws, id.Name, "协作回合", cid, "success", corr)
 	if resolvedDE != "" {
 		turnOK := true
@@ -768,33 +775,64 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		s.recordEmployeeRuntimeLocked(resolvedDE, turnDur, turnOK)
 	}
 	memoryIngestErr := ""
-	if shouldIngestTurnMemory(historySnapshot, userMsg, full, toolCalls) {
-		if _, err := s.ingestRuntimeMemoryLocked(runtimeMemoryInput{
+	var evolveCreated []map[string]any
+	var postTurnPayload copilotPostTurnPayload
+	if s.ownsCapRuntime() {
+		if shouldIngestTurnMemory(historySnapshot, userMsg, full, toolCalls) {
+			if _, err := s.ingestRuntimeMemoryLocked(runtimeMemoryInput{
+				WorkspaceID: ws, OwnerID: id.ID, OwnerName: id.Name, DigitalEmployeeID: resolvedDE,
+				Title:      "会话上下文 · " + truncateRunes(userMsg, 40),
+				Content:    "用户：" + userMsg + "\n助手：" + full,
+				SourceType: "conversation", SourceID: cid, CorrelationID: corr,
+				Layer: "short_term", Scope: "user", Confidence: 0.85,
+			}); err != nil {
+				memoryIngestErr = err.Error()
+				s.appendMemoryAuditLocked(ws, id.Name, "写入记忆", truncateRunes(userMsg, 40), "failed", corr)
+			}
+		}
+		evolveCreated = s.runPostTurnEvolutionLocked(evolveTurnInput{
+			WorkspaceID: ws, OwnerID: id.ID, OwnerName: id.Name, DigitalEmployeeID: resolvedDE,
+			ConversationID: cid, CorrelationID: corr, MessageID: assistantMsgID,
+			UserMessage: userMsg, AssistantText: full, Mode: mode,
+			ReflectRounds: reactOut.ReflectRounds, ToolCalls: toolCalls,
+			MemoryHits: memoryHits, Emit: nil,
+		})
+	} else if shouldIngestTurnMemory(historySnapshot, userMsg, full, toolCalls) {
+		postTurnPayload.MemoryIngest = &runtimeMemoryInput{
 			WorkspaceID: ws, OwnerID: id.ID, OwnerName: id.Name, DigitalEmployeeID: resolvedDE,
 			Title:      "会话上下文 · " + truncateRunes(userMsg, 40),
 			Content:    "用户：" + userMsg + "\n助手：" + full,
 			SourceType: "conversation", SourceID: cid, CorrelationID: corr,
 			Layer: "short_term", Scope: "user", Confidence: 0.85,
-		}); err != nil {
-			memoryIngestErr = err.Error()
-			s.appendMemoryAuditLocked(ws, id.Name, "写入记忆", truncateRunes(userMsg, 40), "failed", corr)
 		}
 	}
-	// Phase 4: Self-Evolution candidates + Dream compress (no silent production mutate)
-	evolveCreated := s.runPostTurnEvolutionLocked(evolveTurnInput{
-		WorkspaceID: ws, OwnerID: id.ID, OwnerName: id.Name, DigitalEmployeeID: resolvedDE,
-		ConversationID: cid, CorrelationID: corr, MessageID: assistantMsgID,
-		UserMessage: userMsg, AssistantText: full, Mode: mode,
-		ReflectRounds: reactOut.ReflectRounds, ToolCalls: toolCalls,
-		MemoryHits: memoryHits, Emit: nil,
-	})
 	s.Store.Unlock()
 	s.Store.Persist("messages")
 	s.Store.Persist("sessions")
 	s.Store.Persist("conversations")
 	s.Store.Persist("employees")
 	rememberIdempotentReply(s, cid, clientMsgID, assistantMsg)
-	go s.persistEvolve()
+	if s.ownsCapRuntime() {
+		go s.persistEvolve()
+	} else {
+		postTurnPayload.WorkspaceID = ws
+		postTurnPayload.OwnerID = id.ID
+		postTurnPayload.OwnerName = id.Name
+		postTurnPayload.DigitalEmployeeID = resolvedDE
+		postTurnPayload.ConversationID = cid
+		postTurnPayload.CorrelationID = corr
+		postTurnPayload.MessageID = assistantMsgID
+		postTurnPayload.UserMessage = userMsg
+		postTurnPayload.AssistantText = full
+		postTurnPayload.Mode = mode
+		postTurnPayload.ReflectRounds = reactOut.ReflectRounds
+		postTurnPayload.ToolCalls = toolCalls
+		delegated, memErr := s.delegateCopilotPostTurn(r, postTurnPayload)
+		evolveCreated = delegated
+		if memErr != "" {
+			memoryIngestErr = memErr
+		}
+	}
 
 	if memoryIngestErr != "" {
 		emit("stage", "memory", map[string]any{"status": "degraded", "warning": memoryIngestErr})

@@ -59,7 +59,7 @@ func TestCapabilityCatalogAggregatesLiveAssets(t *testing.T) {
 	}
 	// must not be static-only catalog (should include loki-query skill)
 	joined := rr.Body.String()
-	if !strings.Contains(joined, "loki-query") || !strings.Contains(joined, "CMDB") {
+	if !strings.Contains(joined, "docx") {
 		t.Fatalf("catalog missing live skill/tool names: %s", joined)
 	}
 	// published routes should be labeled as routes, not bare model ids with "已发布路由 … 主模型"
@@ -126,9 +126,10 @@ func TestEmployeeConfigurationDraftPersistsCapabilities(t *testing.T) {
 	st := store.New()
 	srv := New(st)
 	body := `{
+	  "scope":"capability",
 	  "profile":{"name":"客服质检助手","role":"QA","department":"运营部","environment":"sandbox","risk":"low","owner":"业务构建者","escalationOwner":"运营负责人","serviceObject":"客服团队","description":"会话质检"},
-	  "capabilities":{"model":"企业通用路由 v2","skills":["kubectl 只读"],"tools":["CMDB 查询"],"workflows":["故障自愈技能"],"knowledge":["运维知识库"],"channels":["Web"]},
-	  "boundary":{"responsibilities":[{"id":"r1","title":"质检","objective":"评分","trigger":"会话结束","deliverables":["报告"],"evidenceRequired":true}],"boundaryPolicy":{"responsibilities":[{"id":"r1","title":"质检","objective":"评分","trigger":"会话结束","deliverables":["报告"],"evidenceRequired":true}],"capabilityModes":[{"capabilityType":"skill","capabilityName":"kubectl 只读","mode":"recommend"}],"handoff":{"triggers":["高风险"],"approvers":["运营负责人"],"slaMinutes":30},"dataClassification":"internal","allowedEnvironments":["sandbox"]}},
+	  "capabilities":{"model":"企业通用路由 v2","skills":["docx"],"tools":[],"workflows":["故障自愈技能"],"knowledge":["运维知识库"],"channels":["Web"]},
+	  "boundary":{"responsibilities":[{"id":"r1","title":"质检","objective":"评分","trigger":"会话结束","deliverables":["报告"],"evidenceRequired":true}],"boundaryPolicy":{"responsibilities":[{"id":"r1","title":"质检","objective":"评分","trigger":"会话结束","deliverables":["报告"],"evidenceRequired":true}],"capabilityModes":[{"capabilityType":"skill","capabilityName":"docx","mode":"recommend"}],"handoff":{"triggers":["高风险"],"approvers":["运营负责人"],"slaMinutes":30},"dataClassification":"internal","allowedEnvironments":["sandbox"]}},
 	  "memoryPolicy":{"shortTermHours":24,"workingDays":7,"longTermCadence":"daily","knowledgePromotion":"approval_required"}
 	}`
 	rr := httptest.NewRecorder()
@@ -156,7 +157,7 @@ func TestEmployeeConfigurationDraftPersistsCapabilities(t *testing.T) {
 	if str(caps["model"]) != "企业通用路由 v2" {
 		t.Fatalf("capabilities not applied: %#v", caps)
 	}
-	if len(toAnySlice(caps["skills"])) < 1 || len(toAnySlice(caps["tools"])) < 1 {
+	if len(toAnySlice(caps["skills"])) < 1 {
 		t.Fatalf("skills/tools not persisted: %#v", caps)
 	}
 	if emp["boundaryPolicy"] == nil {

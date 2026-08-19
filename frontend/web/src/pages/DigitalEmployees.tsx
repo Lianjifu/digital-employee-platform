@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useApiMutation, useApiQuery } from '@/services/query';
 import { useAuthStore } from '@/stores/authStore';
@@ -93,6 +93,82 @@ function matchesCatalogSegment(employee: DigitalEmployee, segment: CatalogSegmen
 
 function EmployeeAvatar({ employee, size = 40 }: { employee: DigitalEmployee; size?: number }) {
   return <DigitalEmployeeAvatar employee={employee} size={size} />;
+}
+
+function formatApiError(err: unknown, fallback: string) {
+  if (err instanceof Error) return err.message.replace(/^E_[A-Z_]+:\s*/, '');
+  return fallback;
+}
+
+function releaseRequestedBySelf(employee: DigitalEmployee, user?: { id?: string; name?: string } | null) {
+  if (!user) return false;
+  if (employee.release.requestedById && user.id && employee.release.requestedById === user.id) return true;
+  if (employee.release.requestedBy && user.name && employee.release.requestedBy === user.name) return true;
+  return false;
+}
+
+function preservedCapabilities(employee: DigitalEmployee): DigitalEmployee['capabilities'] {
+  return {
+    agentId: employee.capabilities.agentId,
+    model: employee.capabilities.model,
+    knowledge: [...employee.capabilities.knowledge],
+    skills: [...employee.capabilities.skills],
+    tools: [...employee.capabilities.tools],
+    workflows: [...employee.capabilities.workflows],
+    channels: [...employee.capabilities.channels],
+  };
+}
+
+function mergeUniqueNames(...groups: string[][]) {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const group of groups) {
+    for (const name of group) {
+      const key = name.trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(key);
+    }
+  }
+  return out;
+}
+
+function autoBindRuntimeNames(catalog: DigitalEmployeeCapabilityCatalog) {
+  return (catalog.runtimeTools ?? [])
+    .filter((item) => item.autoBind !== false && (item.availability ?? 'default') !== 'opt_in')
+    .map((item) => item.name);
+}
+
+function mergeBuiltinToolBindings(catalog: DigitalEmployeeCapabilityCatalog, tools: string[]) {
+  const platform = (catalog.platformTools ?? []).map((item) => item.name);
+  const runtimeDefault = autoBindRuntimeNames(catalog);
+  const allRuntime = new Set((catalog.runtimeTools ?? []).map((item) => item.name));
+  const optionalRuntime = (catalog.runtimeTools ?? [])
+    .filter((item) => (item.availability ?? 'default') === 'opt_in' || item.autoBind === false)
+    .map((item) => item.name);
+  const enterprise = tools.filter((name) => !platform.includes(name) && !allRuntime.has(name));
+  const selectedOptional = tools.filter((name) => optionalRuntime.includes(name));
+  return mergeUniqueNames(platform, runtimeDefault, enterprise, selectedOptional);
+}
+
+function isBuiltinPlatformOrRuntimeTool(catalog: DigitalEmployeeCapabilityCatalog | undefined, name: string) {
+  if (!catalog) return false;
+  return (catalog.platformTools ?? []).some((item) => item.name === name)
+    || (catalog.runtimeTools ?? []).some((item) => item.name === name);
+}
+
+function defaultToolExecutionMode(catalog: DigitalEmployeeCapabilityCatalog | undefined, name: string): DigitalEmployeeExecutionMode {
+  return isBuiltinPlatformOrRuntimeTool(catalog, name) ? 'execute' : 'approval_required';
+}
+
+function normalizeBuiltinToolMode(
+  catalog: DigitalEmployeeCapabilityCatalog | undefined,
+  capabilityType: 'tool' | 'workflow' | 'skill',
+  capabilityName: string,
+  mode: DigitalEmployeeExecutionMode,
+): DigitalEmployeeExecutionMode {
+  if (capabilityType !== 'tool' || !isBuiltinPlatformOrRuntimeTool(catalog, capabilityName)) return mode;
+  return mode === 'approval_required' || mode === 'recommend' ? 'execute' : mode;
 }
 
 function gateLabel(employee: DigitalEmployee) {
@@ -249,7 +325,14 @@ export default function DigitalEmployees() {
           </div>
           <div className="px-5"><RoleReadonlyBanner className="mb-2 flex items-start gap-2 rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]" /></div>
           <div className="de-employee-tabs flex overflow-x-auto px-3" role="tablist" aria-label="数字工作伙伴功能">
-            {tabs.map((item) => <button type="button" key={item.key} onClick={() => setTab(item.key)} className={cn('de-employee-tab flex shrink-0 items-center gap-1.5 px-3 py-3 text-xs transition-colors', tab === item.key && 'is-active')}><item.icon className="h-3.5 w-3.5" />{t(item.labelKey)}</button>)}
+            {tabs.map((item) => {
+              const TabIcon = item.icon;
+              return (
+                <button type="button" key={item.key} onClick={() => setTab(item.key)} className={cn('de-employee-tab flex shrink-0 items-center gap-1.5 px-3 py-3 text-xs transition-colors', tab === item.key && 'is-active')}>
+                  <TabIcon className="h-3.5 w-3.5" />{t(item.labelKey)}
+                </button>
+              );
+            })}
           </div>
         </section>
 
@@ -1227,8 +1310,17 @@ type EmployeeConfigurationInput = {
 };
 type EmployeeConfigurationResult = DigitalEmployeeConfigurationVersion & { requiresApproval: boolean };
 type EmployeeConfigurationSection = 'profile' | 'boundary' | 'capabilities' | 'memory';
-type CapabilityCatalogOption = { id: string; name: string; meta: string };
-type DigitalEmployeeCapabilityCatalog = { models: CapabilityCatalogOption[]; knowledge: CapabilityCatalogOption[]; skills: CapabilityCatalogOption[]; tools: CapabilityCatalogOption[]; workflows: CapabilityCatalogOption[]; channels: CapabilityCatalogOption[] };
+type CapabilityCatalogOption = { id: string; name: string; meta: string; removable?: boolean; builtin?: boolean; autoBind?: boolean; availability?: string };
+type DigitalEmployeeCapabilityCatalog = {
+  models: CapabilityCatalogOption[];
+  knowledge: CapabilityCatalogOption[];
+  skills: CapabilityCatalogOption[];
+  tools: CapabilityCatalogOption[];
+  workflows: CapabilityCatalogOption[];
+  channels: CapabilityCatalogOption[];
+  platformTools?: CapabilityCatalogOption[];
+  runtimeTools?: CapabilityCatalogOption[];
+};
 
 const executionModeOptions: Array<[DigitalEmployeeExecutionMode, string]> = [['recommend', '仅建议'], ['approval_required', '需双重审批后执行'], ['execute', '可执行'], ['prohibited', '禁止']];
 const environmentOptions = [['sandbox', '沙箱'], ['staging', '预发'], ['production', '生产']] as const;
@@ -1405,13 +1497,15 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
     onError: (err) => setMessage(err instanceof Error ? err.message : '驳回失败'),
   });
   const transition = useApiMutation<DigitalEmployee, { lifecycle: DigitalEmployeeLifecycle; reason?: string; confirmed?: boolean }>(() => `/api/digital-employees/${employee.id}/lifecycle`, {
+    invalidateKeys: [['digital-employees'], ['digital-employee', employee.id]],
     onSuccess: (_, input) => setMessage(input.lifecycle === 'active' ? (employee.release.status === 'pending_approval' ? '已确认上岗。' : '已恢复运行。') : input.lifecycle === 'paused' ? '已暂停员工运行。' : input.lifecycle === 'quarantined' ? '已隔离员工运行。' : '状态已更新。'),
-    onError: (err) => setMessage(err instanceof Error ? err.message : '状态变更失败'),
+    onError: (err) => setMessage(formatApiError(err, '状态变更失败')),
   });
   const meta = context === 'release'
     ? { title: '上岗发布详情', description: '集中处理质量评测与上岗门禁。' }
     : { title: '运行管理详情', description: '仅展示岗位服务健康、人工交接与运行处置；不可修改岗位或能力。' };
-  const selfRequested = Boolean(employee.release.requestedById && user?.id && employee.release.requestedById === user.id);
+  const selfRequested = releaseRequestedBySelf(employee, user);
+  const canConfirmRelease = employee.release.status === 'pending_approval' && (!selfRequested || isAdmin);
   const completeness = releaseOnboardingCompleteness(employee);
   const health = operationsHealth(employee);
   const releaseGate = completeness.gates;
@@ -1426,10 +1520,10 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
       {employee.evaluation.status === 'passed' && employee.release.status === 'not_released' && (
         <Button size="sm" loading={release.isPending} onClick={() => release.mutate({})}><Route className="h-3.5 w-3.5" />申请上岗</Button>
       )}
-      {employee.release.status === 'pending_approval' && (
+      {canConfirmRelease && (
         <Button size="sm" loading={transition.isPending} onClick={() => transition.mutate({ lifecycle: 'active' })}><CheckCircle2 className="h-3.5 w-3.5" />确认上岗</Button>
       )}
-      {employee.release.status === 'pending_approval' && selfRequested && (
+      {employee.release.status === 'pending_approval' && selfRequested && !isAdmin && (
         <Button size="sm" variant="secondary" loading={withdraw.isPending} onClick={() => withdraw.mutate({})}>撤回申请</Button>
       )}
       {employee.release.status === 'pending_approval' && isAdmin && !selfRequested && (
@@ -1515,6 +1609,20 @@ function ContextualEmployeeDetail({ employee, context, onClose, onGoToModule }: 
                 {!completeness.contractOk && ' 请先完善岗位契约。'}
                 {completeness.contractOk && !completeness.capabilityOk && ' 请先完成能力装配。'}
                 {completeness.configReady && ' 配置已齐，可直接复测。'}
+              </div>
+            )}
+            {employee.release.status === 'pending_approval' && (
+              <div className={cn(
+                'rounded-lg border px-3 py-2.5 text-xs leading-5',
+                selfRequested && !isAdmin
+                  ? 'border-[var(--info)]/30 bg-[var(--info-bg)] text-[var(--text-secondary)]'
+                  : 'border-[var(--success)]/30 bg-[var(--success-bg)] text-[var(--text-secondary)]',
+              )}>
+                {selfRequested && !isAdmin
+                  ? '生产上岗须由管理员确认；您是申请人，不能自批。可撤回申请后请管理员确认，或等待管理员处理。'
+                  : selfRequested && isAdmin
+                    ? '您是管理员，可直接确认上岗。'
+                    : `待确认上岗${employee.release.requestedBy ? ` · 申请人 ${employee.release.requestedBy}` : ''}。请核对门禁后点击「确认上岗」。`}
               </div>
             )}
             {employee.release.status === 'pending_approval' && isAdmin && !selfRequested && (
@@ -1660,25 +1768,56 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
   const [boundaryPolicy, setBoundaryPolicy] = useState<DigitalEmployeeBoundaryPolicy>(() => resolveBoundaryPolicy(employee));
   const [capabilities, setCapabilities] = useState({ ...employee.capabilities, knowledge: employee.capabilities.knowledge.join('\n'), skills: employee.capabilities.skills.join('\n'), tools: employee.capabilities.tools.join('\n'), workflows: employee.capabilities.workflows.join('\n'), channels: employee.capabilities.channels.join('\n') });
   const [memory, setMemory] = useState({ ...employee.memoryPolicy });
-  const [message, setMessage] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const user = useAuthStore((state) => state.user);
   const isAdmin = user?.role === 'admin';
   const canMutate = roleCanMutate(user?.role);
   const { data: versions = [] } = useApiQuery<DigitalEmployeeConfigurationVersion[]>(['digital-employee', employee.id, 'configuration-versions'], `/api/digital-employees/${employee.id}/configuration-versions`, undefined, { enabled: open });
   const { data: capabilityCatalog } = useApiQuery<DigitalEmployeeCapabilityCatalog>(['digital-employee-capability-catalog'], '/api/digital-employee-capability-catalog', undefined, { enabled: open });
+  const closeAfterSaveRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const save = useApiMutation<EmployeeConfigurationResult, EmployeeConfigurationInput>(() => `/api/digital-employees/${employee.id}/configuration`, {
-    onSuccess: (result) => setMessage(
-      mode === 'capability'
-        ? `${result.version} 能力装配已保存并生效。`
-        : employee.release.status === 'released' || employee.lifecycle === 'active'
-          ? `${result.version} 岗位授权契约已保存并生效。`
-          : `${result.version} 已保存，可继续执行评测与上岗流程。`,
-    ),
-    onError: () => setMessage('保存未完成，请检查必填项与岗位边界。'),
+    invalidateKeys: [['digital-employees'], ['digital-employee', employee.id], ['digital-employee', employee.id, 'configuration-versions']],
+    onSuccess: (result) => {
+      setFeedback({
+        kind: 'success',
+        text: mode === 'capability'
+          ? `${result.version} 能力装配已保存并生效。`
+          : employee.release.status === 'released' || employee.lifecycle === 'active'
+            ? `${result.version} 岗位授权契约已保存并生效。`
+            : `${result.version} 已保存，可继续执行评测与上岗流程。`,
+      });
+      if (closeAfterSaveRef.current) clearTimeout(closeAfterSaveRef.current);
+      closeAfterSaveRef.current = setTimeout(() => {
+        closeAfterSaveRef.current = null;
+        onClose();
+      }, 600);
+    },
+    onError: (err) => setFeedback({ kind: 'error', text: formatApiError(err, '保存未完成，请检查必填项与岗位边界。') }),
   });
   const approve = useApiMutation<DigitalEmployeeConfigurationVersion, { versionId: string }>(({ versionId }) => `/api/digital-employees/${employee.id}/configuration-versions/${versionId}/approve`);
   const lines = (value: string) => value.split('\n').map((item) => item.trim()).filter(Boolean);
-  useEffect(() => { if (!open) return; setSection(initialSection); setMessage(null); setProfile({ name: employee.name, role: employee.role, department: employee.department, description: employee.description, owner: employee.owner, escalationOwner: employee.escalationOwner, serviceObject: employee.serviceObject, risk: employee.risk, environment: employee.environment }); setBoundaryPolicy(resolveBoundaryPolicy(employee)); setCapabilities({ ...employee.capabilities, knowledge: employee.capabilities.knowledge.join('\n'), skills: employee.capabilities.skills.join('\n'), tools: employee.capabilities.tools.join('\n'), workflows: employee.capabilities.workflows.join('\n'), channels: employee.capabilities.channels.join('\n') }); setMemory({ ...employee.memoryPolicy }); }, [employee, open, initialSection]);
+  const syncFormFromEmployee = () => {
+    setProfile({ name: employee.name, role: employee.role, department: employee.department, description: employee.description, owner: employee.owner, escalationOwner: employee.escalationOwner, serviceObject: employee.serviceObject, risk: employee.risk, environment: employee.environment });
+    setBoundaryPolicy(resolveBoundaryPolicy(employee));
+    setCapabilities({ ...employee.capabilities, knowledge: employee.capabilities.knowledge.join('\n'), skills: employee.capabilities.skills.join('\n'), tools: employee.capabilities.tools.join('\n'), workflows: employee.capabilities.workflows.join('\n'), channels: employee.capabilities.channels.join('\n') });
+    setMemory({ ...employee.memoryPolicy });
+  };
+  useEffect(() => {
+    if (!open) {
+      if (closeAfterSaveRef.current) {
+        clearTimeout(closeAfterSaveRef.current);
+        closeAfterSaveRef.current = null;
+      }
+      setFeedback(null);
+      return;
+    }
+    setSection(initialSection);
+    setFeedback(null);
+    syncFormFromEmployee();
+  }, [open, employee.id, initialSection]);
+  useEffect(() => () => {
+    if (closeAfterSaveRef.current) clearTimeout(closeAfterSaveRef.current);
+  }, []);
   const capabilityCount = lines(capabilities.skills).length + lines(capabilities.tools).length + lines(capabilities.workflows).length;
   const boundExecutable = [
     ...lines(capabilities.skills).map((capabilityName) => ({ capabilityType: 'skill' as const, capabilityName })),
@@ -1705,12 +1844,22 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
   const roleContractReady = roleSetupCompleteness(employee).ready;
   const alreadyOnDuty = employee.release.status === 'released' || employee.lifecycle === 'active';
   const submit = () => {
-    if (blocking.length) { setMessage(`请补齐：${blocking.join('、')}`); return; }
-    const nextCapabilities = mode === 'role'
-      ? employee.capabilities
-      : { agentId: capabilities.agentId || undefined, model: capabilities.model, knowledge: lines(capabilities.knowledge), skills: lines(capabilities.skills), tools: lines(capabilities.tools), workflows: lines(capabilities.workflows), channels: lines(capabilities.channels) };
+    if (blocking.length) { setFeedback({ kind: 'error', text: `请补齐：${blocking.join('、')}` }); return; }
+    const capabilityTools = mode === 'capability' && capabilityCatalog
+      ? mergeBuiltinToolBindings(capabilityCatalog, lines(capabilities.tools))
+      : lines(capabilities.tools);
+    const nextCapabilities = mode === 'capability'
+      ? { agentId: capabilities.agentId || undefined, model: capabilities.model, knowledge: lines(capabilities.knowledge), skills: lines(capabilities.skills), tools: capabilityTools, workflows: lines(capabilities.workflows), channels: lines(capabilities.channels) }
+      : preservedCapabilities(employee);
     const syncedModes = mode === 'capability'
-      ? boundExecutable.map((item) => boundaryPolicy.capabilityModes.find((modeItem) => modeItem.capabilityType === item.capabilityType && modeItem.capabilityName === item.capabilityName) ?? { ...item, mode: item.capabilityType === 'skill' ? 'recommend' as const : 'approval_required' as const })
+      ? boundExecutable.map((item) => boundaryPolicy.capabilityModes.find((modeItem) => modeItem.capabilityType === item.capabilityType && modeItem.capabilityName === item.capabilityName) ?? {
+        ...item,
+        mode: item.capabilityType === 'skill'
+          ? 'recommend' as const
+          : item.capabilityType === 'tool'
+            ? defaultToolExecutionMode(capabilityCatalog, item.capabilityName)
+            : 'approval_required' as const,
+      })
       : boundaryPolicy.capabilityModes;
     const normalizedPolicy = {
       ...boundaryPolicy,
@@ -1803,7 +1952,19 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
             岗位授权契约尚未完整，可先装配能力；上岗评测前请到「岗位配置」补齐档案与职责。
           </p>
         )}
-        {message && <p role="status" className="rounded-lg border border-[var(--brand)]/25 bg-[var(--brand-light)] px-3 py-2 text-xs text-[var(--text-secondary)]">{message}</p>}
+        {feedback && (
+          <p
+            role="status"
+            className={cn(
+              'rounded-lg border px-3 py-2 text-xs',
+              feedback.kind === 'success'
+                ? 'border-[var(--success)]/35 bg-[var(--success-bg)] text-[var(--text-secondary)]'
+                : 'border-[var(--danger)]/35 bg-[var(--danger-light)] text-[var(--text-secondary)]',
+            )}
+          >
+            {feedback.text}
+          </p>
+        )}
         {mode === 'capability' ? (
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start">
             <main className="min-w-0 flex-1">
@@ -1875,7 +2036,7 @@ function EmployeeConfigurationWorkbench({ employee, open, onClose, initialSectio
   );
 }
 
-function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityType, modeOf, onModeChange, compact, emptyHint }: {
+function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityType, modeOf, onModeChange, compact, emptyHint, readonly }: {
   label: string;
   hint: string;
   options: CapabilityCatalogOption[];
@@ -1886,10 +2047,16 @@ function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityT
   onModeChange?: (name: string, mode: DigitalEmployeeExecutionMode) => void;
   compact?: boolean;
   emptyHint?: string;
+  readonly?: boolean;
 }) {
   const [filter, setFilter] = useState('');
-  const available = options.filter((item) => !values.includes(item.name) && (!filter.trim() || `${item.name} ${item.meta}`.toLowerCase().includes(filter.trim().toLowerCase())));
-  const remove = (name: string) => onChange(values.filter((item) => item !== name));
+  const displayValues = readonly ? options.map((item) => item.name) : values;
+  const available = readonly ? [] : options.filter((item) => !values.includes(item.name) && (!filter.trim() || `${item.name} ${item.meta}`.toLowerCase().includes(filter.trim().toLowerCase())));
+  const remove = (name: string) => {
+    const option = options.find((item) => item.name === name);
+    if (readonly || option?.removable === false) return;
+    onChange(values.filter((item) => item !== name));
+  };
   const withMode = Boolean(capabilityType && modeOf && onModeChange);
   return (
     <section className={cn('rounded-xl border border-[var(--border)] bg-[var(--bg)]', compact ? 'p-3' : 'p-3.5')}>
@@ -1897,38 +2064,41 @@ function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityT
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h3 className="text-xs font-semibold">{label}</h3>
-            <span className="text-[10px] tabular-nums text-[var(--text-muted)]">{values.length}</span>
+            <span className="text-[10px] tabular-nums text-[var(--text-muted)]">{displayValues.length}</span>
+            {readonly && <Badge tone="neutral">内置</Badge>}
           </div>
           {!compact && <p className="mt-0.5 text-[11px] leading-4 text-[var(--text-muted)]">{hint}</p>}
         </div>
-        <div className="flex items-center gap-1.5">
-          <input
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-            placeholder="搜索"
-            className="h-8 w-[108px] rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)]"
-            aria-label={`搜索${label}`}
-          />
-          <select
-            aria-label={`添加${label}`}
-            value=""
-            disabled={!available.length}
-            onChange={(event) => {
-              const selected = event.target.value;
-              if (selected) {
-                onChange([...values, selected]);
-                setFilter('');
-              }
-            }}
-            className="h-8 max-w-[160px] rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)] disabled:opacity-50"
-          >
-            <option value="">{available.length ? '+ 添加' : '无可选资产'}</option>
-            {available.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
-          </select>
-        </div>
+        {!readonly && (
+          <div className="flex items-center gap-1.5">
+            <input
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              placeholder="搜索"
+              className="h-8 w-[108px] rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)]"
+              aria-label={`搜索${label}`}
+            />
+            <select
+              aria-label={`添加${label}`}
+              value=""
+              disabled={!available.length}
+              onChange={(event) => {
+                const selected = event.target.value;
+                if (selected) {
+                  onChange([...values, selected]);
+                  setFilter('');
+                }
+              }}
+              className="h-8 max-w-[160px] rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs outline-none focus:border-[var(--brand)] disabled:opacity-50"
+            >
+              <option value="">{available.length ? '+ 添加' : '无可选资产'}</option>
+              {available.map((item) => <option key={item.id} value={item.name}>{item.name}</option>)}
+            </select>
+          </div>
+        )}
       </div>
-      <div className={cn('mt-2.5 space-y-1.5', !values.length && 'min-h-0')}>
-        {values.length ? values.map((value) => {
+      <div className={cn('mt-2.5 space-y-1.5', !displayValues.length && 'min-h-0')}>
+        {displayValues.length ? displayValues.map((value) => {
           const option = options.find((item) => item.name === value);
           return (
             <div key={value} className="flex items-center gap-2 rounded-lg bg-[var(--surface-1)] px-2.5 py-2" style={{ boxShadow: 'var(--saas-ring)' }}>
@@ -1946,7 +2116,9 @@ function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityT
                   {executionModeOptions.map(([modeValue, modeLabel]) => <option key={modeValue} value={modeValue}>{modeLabel}</option>)}
                 </select>
               )}
-              <button type="button" onClick={() => remove(value)} className="shrink-0 rounded-md px-1 text-xs text-[var(--text-muted)] hover:bg-[var(--danger-light)] hover:text-[var(--danger)]" aria-label={`移除 ${value}`}>×</button>
+              {!readonly && option?.removable !== false && (
+                <button type="button" onClick={() => remove(value)} className="shrink-0 rounded-md px-1 text-xs text-[var(--text-muted)] hover:bg-[var(--danger-light)] hover:text-[var(--danger)]" aria-label={`移除 ${value}`}>×</button>
+              )}
             </div>
           );
         }) : (
@@ -1959,17 +2131,27 @@ function LinkedAssetPicker({ label, hint, options, values, onChange, capabilityT
   );
 }
 
-function syncCapabilityModes(policy: DigitalEmployeeBoundaryPolicy, capabilities: DigitalEmployee['capabilities']): DigitalEmployeeBoundaryPolicy {
+function syncCapabilityModes(
+  policy: DigitalEmployeeBoundaryPolicy,
+  capabilities: DigitalEmployee['capabilities'],
+  catalog?: DigitalEmployeeCapabilityCatalog,
+): DigitalEmployeeBoundaryPolicy {
   const bound = [
     ...capabilities.skills.map((capabilityName) => ({ capabilityType: 'skill' as const, capabilityName, fallback: 'recommend' as DigitalEmployeeExecutionMode })),
-    ...capabilities.tools.map((capabilityName) => ({ capabilityType: 'tool' as const, capabilityName, fallback: 'approval_required' as DigitalEmployeeExecutionMode })),
+    ...capabilities.tools.map((capabilityName) => ({ capabilityType: 'tool' as const, capabilityName, fallback: defaultToolExecutionMode(catalog, capabilityName) })),
     ...capabilities.workflows.map((capabilityName) => ({ capabilityType: 'workflow' as const, capabilityName, fallback: 'approval_required' as DigitalEmployeeExecutionMode })),
   ];
   return {
     ...policy,
     capabilityModes: bound.map((item) => {
       const existing = policy.capabilityModes.find((mode) => mode.capabilityType === item.capabilityType && mode.capabilityName === item.capabilityName);
-      return existing ?? { capabilityType: item.capabilityType, capabilityName: item.capabilityName, mode: item.fallback };
+      if (existing) {
+        return {
+          ...existing,
+          mode: normalizeBuiltinToolMode(catalog, item.capabilityType, item.capabilityName, existing.mode),
+        };
+      }
+      return { capabilityType: item.capabilityType, capabilityName: item.capabilityName, mode: item.fallback };
     }),
   };
 }
@@ -1981,12 +2163,36 @@ function CapabilityAssemblySelector({ catalog, capabilities, policy, onChangeCap
   onChangeCapabilities: (capabilities: DigitalEmployee['capabilities']) => void;
   onChangePolicy: (policy: DigitalEmployeeBoundaryPolicy) => void;
 }) {
+  const seededCatalogRef = useRef('');
   const updateAssets = (key: 'knowledge' | 'skills' | 'tools' | 'workflows' | 'channels', values: string[]) => {
     const next = { ...capabilities, [key]: values };
     onChangeCapabilities(next);
-    if (key === 'skills' || key === 'tools' || key === 'workflows') onChangePolicy(syncCapabilityModes(policy, next));
+    if (key === 'skills' || key === 'tools' || key === 'workflows') onChangePolicy(syncCapabilityModes(policy, next, catalog));
   };
-  const modeOf = (capabilityType: 'tool' | 'workflow' | 'skill', capabilityName: string) => policy.capabilityModes.find((item) => item.capabilityType === capabilityType && item.capabilityName === capabilityName)?.mode ?? 'recommend';
+  useEffect(() => {
+    if (!catalog) return;
+    const signature = JSON.stringify({
+      platform: (catalog.platformTools ?? []).map((item) => item.name),
+      runtime: autoBindRuntimeNames(catalog),
+    });
+    if (seededCatalogRef.current === signature) return;
+    seededCatalogRef.current = signature;
+    const merged = mergeBuiltinToolBindings(catalog, capabilities.tools);
+    const next = { ...capabilities, tools: merged };
+    if (merged.join('\0') !== capabilities.tools.join('\0')) {
+      onChangeCapabilities(next);
+    }
+    onChangePolicy(syncCapabilityModes(policy, next, catalog));
+  // 仅在能力目录加载/变更时补齐内置绑定，避免与用户编辑循环触发
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalog]);
+  const modeOf = (capabilityType: 'tool' | 'workflow' | 'skill', capabilityName: string) => {
+    const existing = policy.capabilityModes.find((item) => item.capabilityType === capabilityType && item.capabilityName === capabilityName)?.mode;
+    if (existing) return existing;
+    if (capabilityType === 'skill') return 'recommend';
+    if (capabilityType === 'tool') return defaultToolExecutionMode(catalog, capabilityName);
+    return 'approval_required';
+  };
   const setMode = (capabilityType: 'tool' | 'workflow' | 'skill', capabilityName: string, mode: DigitalEmployeeExecutionMode) => {
     const exists = policy.capabilityModes.some((item) => item.capabilityType === capabilityType && item.capabilityName === capabilityName);
     onChangePolicy({
@@ -1998,6 +2204,12 @@ function CapabilityAssemblySelector({ catalog, capabilities, policy, onChangeCap
   };
   const modelOptions = catalog?.models ?? [];
   const modelInCatalog = modelOptions.some((item) => item.name === capabilities.model);
+  const platformTools = catalog?.platformTools ?? [];
+  const runtimeTools = catalog?.runtimeTools ?? [];
+  const defaultRuntimeTools = runtimeTools.filter((item) => item.autoBind !== false && (item.availability ?? 'default') !== 'opt_in');
+  const optionalRuntimeTools = runtimeTools.filter((item) => (item.availability ?? 'default') === 'opt_in' || item.autoBind === false);
+  const platformNames = new Set(platformTools.map((item) => item.name));
+  const runtimeNames = new Set(runtimeTools.map((item) => item.name));
   const executableCount = capabilities.skills.length + capabilities.tools.length + capabilities.workflows.length;
   const catalogEmpty = Boolean(catalog) && modelOptions.length === 0 && (catalog?.skills.length ?? 0) === 0 && (catalog?.tools.length ?? 0) === 0 && (catalog?.workflows.length ?? 0) === 0;
   return (
@@ -2050,7 +2262,34 @@ function CapabilityAssemblySelector({ catalog, capabilities, policy, onChangeCap
             </div>
             <div className="space-y-2.5">
               <LinkedAssetPicker label="技能" hint="" options={catalog.skills} values={capabilities.skills} onChange={(values) => updateAssets('skills', values)} capabilityType="skill" modeOf={(name) => modeOf('skill', name)} onModeChange={(name, mode) => setMode('skill', name, mode)} emptyHint="技能中心暂无已启用技能" />
-              <LinkedAssetPicker label="工具接入" hint="" options={catalog.tools} values={capabilities.tools} onChange={(values) => updateAssets('tools', values)} capabilityType="tool" modeOf={(name) => modeOf('tool', name)} onModeChange={(name, mode) => setMode('tool', name, mode)} emptyHint="暂无已启用工具 / MCP" />
+              <LinkedAssetPicker label="企业工具 / MCP" hint="" options={catalog.tools} values={capabilities.tools.filter((n) => !platformNames.has(n) && !runtimeNames.has(n))} onChange={(values) => {
+                const platform = capabilities.tools.filter((n) => platformNames.has(n));
+                const runtime = capabilities.tools.filter((n) => runtimeNames.has(n));
+                updateAssets('tools', [...platform, ...runtime, ...values]);
+              }} capabilityType="tool" modeOf={(name) => modeOf('tool', name)} onModeChange={(name, mode) => setMode('tool', name, mode)} emptyHint="暂无已启用工具 / MCP" />
+              {platformTools.length > 0 && (
+                <LinkedAssetPicker label="平台工具" hint="内置 · 默认全员可用" options={platformTools} values={capabilities.tools.filter((n) => platformNames.has(n))} onChange={(values) => {
+                  const enterprise = capabilities.tools.filter((n) => !platformNames.has(n) && !runtimeNames.has(n));
+                  const runtime = capabilities.tools.filter((n) => runtimeNames.has(n));
+                  updateAssets('tools', [...values, ...runtime, ...enterprise]);
+                }} capabilityType="tool" modeOf={(name) => modeOf('tool', name)} onModeChange={(name, mode) => setMode('tool', name, mode)} emptyHint="—" readonly />
+              )}
+              {defaultRuntimeTools.length > 0 && (
+                <LinkedAssetPicker label="运行时工具" hint="内置 · 文件、搜索、任务与 MCP 等" options={defaultRuntimeTools} values={capabilities.tools.filter((n) => defaultRuntimeTools.some((item) => item.name === n))} onChange={(values) => {
+                  const platform = capabilities.tools.filter((n) => platformNames.has(n));
+                  const enterprise = capabilities.tools.filter((n) => !platformNames.has(n) && !runtimeNames.has(n));
+                  const optional = capabilities.tools.filter((n) => optionalRuntimeTools.some((item) => item.name === n));
+                  updateAssets('tools', [...platform, ...values, ...optional, ...enterprise]);
+                }} capabilityType="tool" modeOf={(name) => modeOf('tool', name)} onModeChange={(name, mode) => setMode('tool', name, mode)} emptyHint="—" readonly />
+              )}
+              {optionalRuntimeTools.length > 0 && (
+                <LinkedAssetPicker label="可选运行时工具" hint="按需启用" options={optionalRuntimeTools} values={capabilities.tools.filter((n) => optionalRuntimeTools.some((item) => item.name === n))} onChange={(values) => {
+                  const platform = capabilities.tools.filter((n) => platformNames.has(n));
+                  const runtimeDefault = capabilities.tools.filter((n) => defaultRuntimeTools.some((item) => item.name === n));
+                  const enterprise = capabilities.tools.filter((n) => !platformNames.has(n) && !runtimeNames.has(n));
+                  updateAssets('tools', [...platform, ...runtimeDefault, ...values, ...enterprise]);
+                }} capabilityType="tool" modeOf={(name) => modeOf('tool', name)} onModeChange={(name, mode) => setMode('tool', name, mode)} emptyHint="—" />
+              )}
               <LinkedAssetPicker label="流程技能与工作流" hint="" options={catalog.workflows} values={capabilities.workflows} onChange={(values) => updateAssets('workflows', values)} capabilityType="workflow" modeOf={(name) => modeOf('workflow', name)} onModeChange={(name, mode) => setMode('workflow', name, mode)} emptyHint="请先在工作流程中心发布流程技能" />
             </div>
           </section>

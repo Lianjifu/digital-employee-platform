@@ -4,12 +4,14 @@
 
 | 部署单元 | 端口 | 说明 |
 |----------|------|------|
-| **de-gateway** | 8089 | Envoy |
-| **de-sys** | 8100 | platform · policy · audit · ops |
-| **de-collab** | 8101 | collab · employee · 会话治理 / 单人审核 / 附件 / 分享 |
-| **de-cap** | 8102 | model · knowledge · memory · skill · channel |
-| **de-workflow** | 8103 | workflow HTTP + Temporal Worker |
-| FastAPI 执行面 | 8091–8093 | agent-runtime / rag / skill-runtime |
+| **de-gateway** | 8089 | Envoy / dev proxy |
+| **de-app** | 8100 | **monolith（默认）**：sys + collab + cap |
+| **de-sys** | 8100 | platform · policy · audit · ops（coarse 模式） |
+| **de-collab** | 8101 | collab · employee（coarse 模式） |
+| **de-cap** | 8102 | model · knowledge · memory · skill · channel（coarse 模式） |
+| **de-workflow** | 8103 | workflow HTTP + Temporal Worker（可选） |
+| de-skill-runtime | 8093 | 技能沙箱（必须） |
+| FastAPI 侧车 | 8091–8092 | agent / rag（coarse 或按需；monolith 默认不启 agent） |
 
 已退役：`de-core`、独立 `de-policy:8094`、独立 `de-audit:8095`。
 
@@ -17,18 +19,26 @@
 
 ```bash
 cd backend
-make compose-up-coarse   # 或 make run
-make smoke               # 经 :8089
+make compose-up-monolith   # 或 make run（方案 A 默认）
+make smoke-monolith        # 经 :8089 验收
+```
+
+粗粒度四进程（规模化）：
+
+```bash
+make compose-up-coarse
+make smoke-coarse
 ```
 
 本机单进程调试：
 
 ```bash
-make run-sys       # :8100
+make run-app       # :8100 monolith
+make run-sys       # :8100 sys only
 make run-collab    # :8101
 make run-cap       # :8102
 make run-workflow  # :8103
-make runtime && make rag && make skill
+make skill         # :8093 沙箱
 ```
 
 ### 前端联调
@@ -49,7 +59,7 @@ VITE_API_BASE=
 
 ```text
 backend/
-├── cmd/                # de-sys · de-collab · de-cap · de-workflow
+├── cmd/                # de-app · de-sys · de-collab · de-cap · de-workflow
 ├── services/           # Dockerfile · SERVICE.md · FastAPI · 六边形骨架
 ├── infra/ · obs/
 ├── libs/hexkit/
@@ -64,13 +74,14 @@ backend/
 | 命令 | 说明 |
 |------|------|
 | `make compose-up` | PG + Redis |
-| `make compose-up-coarse` / `make run` | **主路径** |
+| `make compose-up-monolith` / `make run` | **主路径（方案 A）** |
+| `make compose-up-coarse` | 四进程 coarse |
 | `make compose-up-staging` | coarse + Dex + OPA + OpenSearch + obs |
 
 ## 测试
 
 ```bash
-make test && make test-python && make smoke
+make test && make test-python && make smoke-monolith
 ```
 
 网络：[`deploy/networks.md`](deploy/networks.md) · 拓扑：[`deploy/topology-split.md`](deploy/topology-split.md)

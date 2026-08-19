@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Activity, AlertTriangle, CheckCircle2, Cloud, Download, FileKey2, FlaskConical, History, Network, Pencil, Plus, RefreshCw, Route, ShieldCheck, Trash2 } from 'lucide-react';
 import { Badge, Button, Input, KpiCard, toast } from '@de/web-ui';
@@ -45,6 +45,7 @@ import {
   protocolBaseUrlHint,
   protocolLabel,
   providerConnectToPayload,
+  resolveProviderCredential,
   validateProviderConnectDraft,
   type ProviderConnectDraft,
 } from '@/features/models/provider-connect';
@@ -1234,6 +1235,8 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit, creating }: {
   creating?: boolean;
 }) {
   const [draft, setDraft] = useState<ProviderConnectDraft>(() => createProviderConnectDraft('openai_compatible'));
+  const sessionCredentialRef = useRef('');
+  const [credentialVerified, setCredentialVerified] = useState(false);
   const [discovered, setDiscovered] = useState<Array<{ id: string; name: string }>>([]);
   const [discoverHint, setDiscoverHint] = useState<string | null>(null);
   const [probeResult, setProbeResult] = useState<null | {
@@ -1244,9 +1247,12 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit, creating }: {
     suggestProtocol?: string;
   }>(null);
   const preset = getProviderConnectPreset(draft.protocol);
-  const issues = validateProviderConnectDraft(draft);
-  const discoverGate = canDiscoverModels(draft);
-  const testGate = canTestConnectDraft(draft);
+  const effectiveCredential = () => resolveProviderCredential(draft, sessionCredentialRef.current);
+  const hasCredential = Boolean(effectiveCredential()) || draft.protocol === 'ollama';
+  const credentialOptions = { sessionCredential: sessionCredentialRef.current };
+  const issues = validateProviderConnectDraft(draft, credentialOptions);
+  const discoverGate = hasCredential ? canDiscoverModels(draft, credentialOptions) : { ok: false as const, reason: '请先填写 API Key' };
+  const testGate = hasCredential ? canTestConnectDraft(draft, credentialOptions) : { ok: false as const, reason: '请先填写 API Key' };
   const protocolHint = protocolBaseUrlHint(draft.protocol, draft.baseUrl);
   const discoverModels = useApiMutation<DiscoverModelsResult, Record<string, unknown>>(
     '/api/model-providers/discover-models',
@@ -1254,7 +1260,19 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit, creating }: {
   const testConnection = useApiMutation<{ status: string; latencyMs?: number; suggestedProtocol?: string }, Record<string, unknown>>(
     '/api/model-providers/test-connection',
   );
+  const rememberCredential = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    sessionCredentialRef.current = trimmed;
+    setCredentialVerified(false);
+  };
+  const markCredentialVerified = () => {
+    const resolved = effectiveCredential();
+    if (resolved) sessionCredentialRef.current = resolved;
+    setCredentialVerified(Boolean(resolved) || draft.protocol === 'ollama');
+  };
   const patch = <K extends keyof ProviderConnectDraft>(key: K, value: ProviderConnectDraft[K]) => {
+    if (key === 'apiKey' && typeof value === 'string') rememberCredential(value);
     setDraft((current) => ({ ...current, [key]: value }));
   };
   const show = (key: (typeof preset.fields)[number]) => preset.fields.includes(key);
@@ -1262,8 +1280,8 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit, creating }: {
     workspaceId,
     protocol: draft.protocol,
     baseUrl: draft.baseUrl.trim(),
-    credential: draft.apiKey,
-    apiKey: draft.apiKey,
+    credential: effectiveCredential(),
+    apiKey: effectiveCredential(),
     apiVersion: draft.apiVersion || undefined,
     deploymentName: draft.deploymentName || undefined,
   });
@@ -1346,7 +1364,11 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit, creating }: {
             form="de-provider-secret"
           />
           <form id="de-provider-secret" className="hidden" aria-hidden="true" onSubmit={(event) => event.preventDefault()} />
-          <p className="mt-1 text-[11px] text-[var(--text-muted)]">只需填写这里；提交后写入凭据引用，不会回显明文。</p>
+          <p className="mt-1 text-[11px] text-[var(--text-muted)]">
+            {credentialVerified && !draft.apiKey.trim()
+              ? '凭据已通过连接测试，拉取模型与创建时无需重复填写。'
+              : '只需填写这里；提交后写入凭据引用，不会回显明文。'}
+          </p>
         </Field>
       )}
 
@@ -1384,6 +1406,7 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit, creating }: {
                 setDiscoverHint(null);
                 discoverModels.mutate(discoverBody(), {
                   onSuccess: (result) => {
+                    markCredentialVerified();
                     const models = result.models ?? [];
                     setDiscovered(models);
                     setDraft((current) => ({
@@ -1508,6 +1531,7 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit, creating }: {
             setProbeResult(null);
             testConnection.mutate(discoverBody(), {
               onSuccess: (result) => {
+                markCredentialVerified();
                 const latencyMs = typeof result.latencyMs === 'number' ? result.latencyMs : undefined;
                 const suggestProtocol = result.suggestedProtocol && result.suggestedProtocol !== draft.protocol
                   ? result.suggestedProtocol
@@ -1542,7 +1566,9 @@ function ProviderForm({ canWrite, workspaceId, onCancel, onSubmit, creating }: {
           disabled={!canWrite || issues.length > 0 || creating}
           loading={creating}
           onClick={() => {
-            onSubmit(providerConnectToPayload(draft, workspaceId));
+            onSubmit(providerConnectToPayload(draft, workspaceId, { sessionCredential: sessionCredentialRef.current }));
+            sessionCredentialRef.current = '';
+            setCredentialVerified(false);
             patch('apiKey', '');
           }}
         >

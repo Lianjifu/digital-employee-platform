@@ -213,3 +213,85 @@ func TestCreateSessionAndApproveAction(t *testing.T) {
 		t.Fatalf("expected completed approve: %s", rr2.Body.String())
 	}
 }
+
+func TestDeleteSessionRemovesAcrossMemberWorkspaceHeader(t *testing.T) {
+	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "1")
+	st := store.New()
+	now := "2026-08-19T12:00:00Z"
+	st.Sessions = []map[string]any{
+		{"id": "sess-del", "workspaceId": "w1", "ownerId": "u1", "conversationId": "conv-del", "title": "t", "updatedAt": now},
+	}
+	st.Conversations = []map[string]any{
+		{"id": "conv-del", "workspaceId": "w1", "title": "t", "updatedAt": now},
+	}
+	st.Messages = map[string][]map[string]any{"conv-del": {{"id": "m1", "role": "user", "content": "hi"}}}
+	h := server.New(st).Handler()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/sessions/sess-del", nil)
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w2")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("cross-workspace delete %d %s", rr.Code, rr.Body.String())
+	}
+	st.RLock()
+	defer st.RUnlock()
+	if len(st.Sessions) != 0 || len(st.Conversations) != 0 {
+		t.Fatalf("records remain sessions=%d conversations=%d", len(st.Sessions), len(st.Conversations))
+	}
+	if _, ok := st.Messages["conv-del"]; ok {
+		t.Fatal("messages bucket still present")
+	}
+}
+
+func TestGetConversationForbiddenForOtherOwner(t *testing.T) {
+	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "1")
+	st := store.New()
+	now := "2026-08-19T12:00:00Z"
+	st.Conversations = []map[string]any{
+		{"id": "conv-private", "workspaceId": "w1", "title": "私有", "updatedAt": now},
+	}
+	st.Sessions = []map[string]any{
+		{"id": "sess-private", "workspaceId": "w1", "ownerId": "u9", "conversationId": "conv-private", "title": "私有", "updatedAt": now},
+	}
+	h := server.New(st).Handler()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/conversations/conv-private", nil)
+	req.Header.Set("Authorization", "Bearer mock-user-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 403 {
+		t.Fatalf("expected 403 got %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestGetConversationResolvesAcrossMemberWorkspaces(t *testing.T) {
+	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "1")
+	st := store.New()
+	now := "2026-08-19T12:00:00Z"
+	st.Conversations = append(st.Conversations, map[string]any{
+		"id": "conv-cross", "workspaceId": "w1", "title": "跨区可读", "updatedAt": now,
+	})
+	st.Sessions = append(st.Sessions, map[string]any{
+		"id": "conv-cross", "workspaceId": "w1", "ownerId": "u1", "conversationId": "conv-cross",
+		"title": "跨区可读", "updatedAt": now, "lastMessageAt": now, "status": "active",
+	})
+	st.Messages["conv-cross"] = []map[string]any{
+		{"id": "msg-1", "role": "user", "content": "hello", "createdAt": now},
+	}
+	h := server.New(st).Handler()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/conversations/conv-cross", nil)
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w2")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("cross-workspace get %d %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "hello") {
+		t.Fatalf("missing messages: %s", rr.Body.String())
+	}
+}

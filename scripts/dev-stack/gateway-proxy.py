@@ -10,7 +10,7 @@ ROUTES = [
     ("/api/agents", 8101), ("/api/slash-commands", 8101),
     ("/api/workflows", 8103), ("/api/workflow-", 8103),
     ("/api/model", 8102), ("/api/knowledge", 8102), ("/api/memory", 8102), ("/api/skills", 8102),
-    ("/api/skill-", 8102), ("/api/mcp-connections", 8102), ("/api/tools", 8102),
+    ("/api/skill-", 8102), ("/api/platform-tools", 8102), ("/api/mcp-connections", 8102), ("/api/tools", 8102),
     ("/api/channel", 8102), ("/api/channels", 8102),
     ("/v1/evaluate", 8100), ("/api/access", 8100), ("/api/zero-trust", 8100), ("/api/governance", 8100),
     ("/api/audit", 8100), ("/api/workspaces", 8100), ("/api/auth", 8100), ("/api/home", 8100),

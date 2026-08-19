@@ -58,6 +58,15 @@ func TestPersistNowOnlyOwnedCollections(t *testing.T) {
 	}
 }
 
+func TestDomainFromModeApp(t *testing.T) {
+	if DomainFromMode("de-app") != DomainAll {
+		t.Fatal("de-app must map to DomainAll")
+	}
+	if DomainFromMode("app") != DomainAll {
+		t.Fatal("app must map to DomainAll")
+	}
+}
+
 func TestCanWriteAllByDefault(t *testing.T) {
 	st := New()
 	if !st.CanWrite("skills") || !st.CanWrite("sessions") {

@@ -738,7 +738,7 @@ type DigitalEmployeeConfigurationInput = {
   scope?: 'capability' | 'role';
   profile: Pick<DigitalEmployee, 'name' | 'role' | 'department' | 'description' | 'owner' | 'escalationOwner' | 'serviceObject' | 'risk' | 'environment'>;
   boundary: Pick<DigitalEmployee, 'responsibilities' | 'prohibitedActions' | 'handoffPolicy' | 'boundaryPolicy'>;
-  capabilities: DigitalEmployee['capabilities'];
+  capabilities?: DigitalEmployee['capabilities'];
   memoryPolicy: DigitalEmployee['memoryPolicy'];
 };
 
@@ -748,6 +748,7 @@ const mockDigitalEmployeeConfigurationVersions: DigitalEmployeeConfigurationVers
 const mockDigitalEmployeeConfigurationDrafts = new Map<string, DigitalEmployeeConfigurationInput>();
 
 function applyDigitalEmployeeConfiguration(employee: DigitalEmployee, input: DigitalEmployeeConfigurationInput) {
+  const scope = input.scope ?? 'role';
   Object.assign(employee, input.profile, {
     responsibilities: [...input.boundary.responsibilities],
     prohibitedActions: [...input.boundary.prohibitedActions],
@@ -764,7 +765,9 @@ function applyDigitalEmployeeConfiguration(employee: DigitalEmployee, input: Dig
         notificationChannels: [...input.boundary.boundaryPolicy.handoff.notificationChannels],
       },
     } : undefined,
-    capabilities: { ...input.capabilities, knowledge: [...input.capabilities.knowledge], skills: [...input.capabilities.skills], tools: [...input.capabilities.tools], workflows: [...input.capabilities.workflows], channels: [...input.capabilities.channels] },
+    ...(scope === 'capability' && input.capabilities ? {
+      capabilities: { ...input.capabilities, knowledge: [...input.capabilities.knowledge], skills: [...input.capabilities.skills], tools: [...input.capabilities.tools], workflows: [...input.capabilities.workflows], channels: [...input.capabilities.channels] },
+    } : {}),
     memoryPolicy: { ...input.memoryPolicy }, updatedAt: new Date().toISOString(),
   });
 }
@@ -1696,7 +1699,6 @@ export const mockSkillPerms = [
 export const mockSkills: Skill[] = [
   { id: 's1', name: 'redis-cli', kind: 'skill', description: 'Redis 命令执行', version: '1.0', status: 'installed', rating: 4.9, installCount: 1200, riskLevel: 'mid', cacheable: true },
   { id: 's2', name: 'kubectl', kind: 'skill', description: 'K8s 操作', version: '1.0', status: 'installed', rating: 4.8, installCount: 1100, riskLevel: 'high', cacheable: true },
-  { id: 's3', name: 'loki-query', kind: 'skill', description: 'Loki 日志查询', version: '1.0', status: 'installed', rating: 4.6, installCount: 880, riskLevel: 'low', cacheable: true },
   { id: 's4', name: 'es-query', kind: 'skill', description: 'OpenSearch 查询', version: '1.0', status: 'installed', rating: 4.6, installCount: 820, riskLevel: 'low', cacheable: true },
   { id: 's5', name: 'prometheus', kind: 'mcp', description: 'Prometheus MCP', version: '1.0', status: 'installed', rating: 4.7, installCount: 940, riskLevel: 'low', cacheable: false },
   { id: 's6', name: 'kafka-mcp', kind: 'mcp', description: 'Kafka 消息 MCP', version: '1.0', status: 'installed', rating: 4.5, installCount: 480, riskLevel: 'low', cacheable: false },
@@ -1870,7 +1872,6 @@ const mockSkillImpacts: Record<string, SkillImpactReport> = {
   s2: { skillId: 's2', agents: ['故障自愈', '变更辅助'], workflows: ['K8s 节点自愈', '灰度发布'], activeRuns: 0, uninstallAllowed: false, reason: '存在 2 个已发布智能体引用' },
 };
 const mockSkillCatalog: Array<Skill & { publisher: string; signed: boolean; dependencies: string[]; license: string; lastScannedAt: string; vulnerabilityCount: number; supportedEnvironments: string[] }> = [
-  { id: 'st1', name: 'mysql-cli', kind: 'skill', description: 'MySQL 命令执行', version: '2.0.0', status: 'available', rating: 4.7, installCount: 3200, riskLevel: 'mid', cacheable: true, publisher: '企业能力商店', signed: true, dependencies: [], license: 'Apache-2.0', lastScannedAt: '12 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
   { id: 'st2', name: 'pg-cli', kind: 'skill', description: 'PostgreSQL 客户端', version: '1.8.0', status: 'available', rating: 4.6, installCount: 2800, riskLevel: 'mid', cacheable: true, publisher: '企业能力商店', signed: true, dependencies: [], license: 'Apache-2.0', lastScannedAt: '18 分钟前', vulnerabilityCount: 0, supportedEnvironments: ['测试', '生产'] },
   { id: 'st3', name: 'gitlab-mcp', kind: 'mcp', description: 'GitLab MR/Issue MCP', version: '0.9.0', status: 'available', rating: 4.4, installCount: 1200, riskLevel: 'mid', cacheable: false, publisher: '企业能力商店', signed: true, dependencies: ['gitlab-connector'], license: 'MIT', lastScannedAt: '36 分钟前', vulnerabilityCount: 1, supportedEnvironments: ['测试'] },
   { id: 'st4', name: 'jenkins-mcp', kind: 'mcp', description: 'Jenkins 构建触发', version: '1.0.0', status: 'available', rating: 4.3, installCount: 880, riskLevel: 'high', cacheable: false, publisher: '企业能力商店', signed: true, dependencies: ['jenkins-mcp'], license: '商业授权', lastScannedAt: '刚刚', vulnerabilityCount: 0, supportedEnvironments: ['隔离环境'] },
@@ -1887,7 +1888,7 @@ mockSkillCatalog.forEach((skill, index) => Object.assign(skill, {
   environment: index === 2 ? 'staging' : 'production',
   classification: skill.riskLevel === 'high' ? 'restricted' : 'internal',
   channel: 'builtin',
-  channelLabel: '平台内置（演示）',
+  channelLabel: '平台内置',
   syncedAt: '种子目录',
   visibilityScope: skill.riskLevel === 'high' ? 'workspace' : 'global',
   releaseChannel: skill.riskLevel === 'high' ? 'beta' : 'stable',
@@ -3136,20 +3137,24 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     if (!employee) throw new Error('E_DIGITAL_EMPLOYEE_NOT_FOUND');
     if (!identity || identity.role === 'auditor') throw new Error('E_DIGITAL_EMPLOYEE_WRITE_FORBIDDEN');
     const body = (opts.body ?? {}) as DigitalEmployeeConfigurationInput;
-    if (!body.profile?.name?.trim() || !body.profile?.role?.trim() || !body.profile?.department?.trim() || !body.capabilities?.model?.trim()) throw new Error('E_DIGITAL_EMPLOYEE_CONFIGURATION_REQUIRED');
+    const scope = body.scope ?? 'role';
+    if (!body.profile?.name?.trim() || !body.profile?.role?.trim() || !body.profile?.department?.trim()) throw new Error('E_DIGITAL_EMPLOYEE_CONFIGURATION_REQUIRED');
+    if (scope === 'capability' && !body.capabilities?.model?.trim()) throw new Error('E_DIGITAL_EMPLOYEE_CONFIGURATION_REQUIRED');
     const policy = body.boundary?.boundaryPolicy;
     if (!body.boundary?.responsibilities?.length || !policy?.responsibilities?.length || !policy.handoff?.triggers?.length || !policy.handoff?.approvers?.length) throw new Error('E_DIGITAL_EMPLOYEE_BOUNDARY_REQUIRED');
-    const boundCapabilities = new Map<string, Set<string>>([
-      ['tool', new Set(body.capabilities.tools)], ['workflow', new Set(body.capabilities.workflows)], ['skill', new Set(body.capabilities.skills)],
-    ]);
-    const allowedModes = new Set(['recommend', 'approval_required', 'execute', 'prohibited']);
-    const invalidCapability = policy.capabilityModes.some((item) => !allowedModes.has(item.mode) || !boundCapabilities.get(item.capabilityType)?.has(item.capabilityName));
-    if (invalidCapability) throw new Error('E_DIGITAL_EMPLOYEE_BOUNDARY_CAPABILITY_INVALID');
+    if (scope === 'capability' && body.capabilities) {
+      const boundCapabilities = new Map<string, Set<string>>([
+        ['tool', new Set(body.capabilities.tools)], ['workflow', new Set(body.capabilities.workflows)], ['skill', new Set(body.capabilities.skills)],
+      ]);
+      const allowedModes = new Set(['recommend', 'approval_required', 'execute', 'prohibited']);
+      const invalidCapability = policy.capabilityModes.some((item) => !allowedModes.has(item.mode) || !boundCapabilities.get(item.capabilityType)?.has(item.capabilityName));
+      if (invalidCapability) throw new Error('E_DIGITAL_EMPLOYEE_BOUNDARY_CAPABILITY_INVALID');
+    }
     if (!['internal', 'confidential', 'restricted'].includes(policy.dataClassification) || !policy.allowedEnvironments.length || !policy.allowedEnvironments.every((item) => ['sandbox', 'staging', 'production'].includes(item)) || policy.handoff.slaMinutes < 1) throw new Error('E_DIGITAL_EMPLOYEE_BOUNDARY_POLICY_INVALID');
     const changedFields = [
       JSON.stringify(employee.responsibilities) !== JSON.stringify(body.boundary.responsibilities) ? '岗位职责' : null,
       JSON.stringify(employee.boundaryPolicy) !== JSON.stringify(policy) ? '执行边界与升级审批' : null,
-      JSON.stringify(employee.capabilities) !== JSON.stringify(body.capabilities) ? '能力装配' : null,
+      JSON.stringify(employee.capabilities) !== JSON.stringify(body.capabilities ?? employee.capabilities) ? '能力装配' : null,
       JSON.stringify(employee.memoryPolicy) !== JSON.stringify(body.memoryPolicy) ? '记忆策略' : null,
       ['name', 'role', 'department', 'description', 'owner', 'escalationOwner', 'serviceObject', 'risk', 'environment'].some((key) => (employee as any)[key] !== (body.profile as any)[key]) ? '岗位档案' : null,
     ].filter(Boolean) as string[];
@@ -3213,13 +3218,36 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
       if (!employee.capabilities.model || capabilityCount === 0) throw new Error('E_DIGITAL_EMPLOYEE_CAPABILITY_REQUIRED: 请先装配已发布模型与至少一项技能/工具/流程技能');
       if (employee.evaluation.status !== 'passed') throw new Error('E_DIGITAL_EMPLOYEE_EVALUATION_REQUIRED: 质量评测未通过，无法申请上岗');
       if (employee.release.status === 'released' && employee.lifecycle === 'active') throw new Error('E_DIGITAL_EMPLOYEE_ALREADY_RELEASED: 员工已上岗');
-      employee.lifecycle = 'active';
-      employee.release = {
-        status: 'released',
-        releasedAt: new Date().toISOString(),
-        requestedBy: identity.name,
-        requestedById: identity.id,
-      };
+      const now = new Date().toISOString();
+      if (employee.environment === 'production' || employee.environment === 'staging') {
+        if (identity.role === 'admin') {
+          employee.lifecycle = 'active';
+          employee.release = {
+            status: 'released',
+            releasedAt: now,
+            requestedBy: identity.name,
+            requestedById: identity.id,
+            approver: identity.name,
+            approverId: identity.id,
+          };
+        } else {
+          employee.lifecycle = 'pending_approval';
+          employee.release = {
+            status: 'pending_approval',
+            requestedAt: now,
+            requestedBy: identity.name,
+            requestedById: identity.id,
+          };
+        }
+      } else {
+        employee.lifecycle = 'active';
+        employee.release = {
+          status: 'released',
+          releasedAt: now,
+          requestedBy: identity.name,
+          requestedById: identity.id,
+        };
+      }
     }
     if (action === 'lifecycle' && method === 'POST') {
       const target = body.lifecycle as DigitalEmployee['lifecycle'];
@@ -3229,8 +3257,15 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
         if (employee.release.status === 'released' && (employee.lifecycle === 'paused' || employee.lifecycle === 'quarantined')) {
           if (!body.confirmed) throw new Error('E_DIGITAL_EMPLOYEE_RESUME_CONFIRM_REQUIRED: 恢复运行前请确认异常已处置并保留证据');
           employee.opsControl = { lastAction: 'resumed', reason: reason || '确认异常已处置并保留证据', actor: identity.name, at: new Date().toISOString() };
-        } else if (employee.release.status === 'pending_approval') {
-          // 兼容历史「待双重审批」记录：确认即可上岗，不再做申请人/批准人分离。
+        } else if (employee.release.status === 'pending_approval' || employee.release.status === 'pending_countersign') {
+          if (identity.role !== 'admin') {
+            if (employee.release.requestedById && employee.release.requestedById === identity.id) {
+              throw new Error('E_SOD_SELF_APPROVAL: 生产上岗须管理员确认，申请人不能自批');
+            }
+            if (employee.release.requestedBy && employee.release.requestedBy === identity.name) {
+              throw new Error('E_SOD_SELF_APPROVAL: 生产上岗须管理员确认，申请人不能自批');
+            }
+          }
           employee.release = {
             status: 'released',
             releasedAt: new Date().toISOString(),
@@ -4635,7 +4670,7 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     }).map((item: any) => ({
       ...item,
       channel: item.channel ?? 'builtin',
-      channelLabel: item.channel === 'registry' ? '企业 Registry' : item.channel === 'promoted' ? '工作区晋升' : '平台内置（演示）',
+      channelLabel: item.channel === 'registry' ? '企业 Registry' : item.channel === 'promoted' ? '工作区晋升' : '平台内置',
       syncedAt: item.syncedAt ?? '种子目录',
       visibilityScope: item.visibilityScope ?? 'global',
       releaseChannel: item.releaseChannel ?? 'stable',
@@ -4643,9 +4678,9 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     return {
       items,
       meta: {
-        demoNotice: '平台内置条目仅用于演示与冷启动；生产货源以 Registry 同步与工作区晋升为主。',
+        demoNotice: '平台内置条目用于冷启动；生产来源以 Registry 同步与工作区晋升为主。',
         channels: [
-          { id: 'builtin', label: '平台内置（演示）' },
+          { id: 'builtin', label: '平台内置' },
           { id: 'registry', label: '企业 Registry' },
           { id: 'promoted', label: '工作区晋升' },
         ],

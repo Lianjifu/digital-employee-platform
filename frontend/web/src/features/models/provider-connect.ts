@@ -201,7 +201,7 @@ export function applyProviderConnectProtocol(draft: ProviderConnectDraft, protoc
   const next = createProviderConnectDraft(protocol);
   return {
     ...next,
-    apiKey: '',
+    apiKey: draft.apiKey,
     note: draft.note,
     displayName: draft.displayName && draft.displayName !== getProviderConnectPreset(draft.protocol).defaultName
       ? draft.displayName
@@ -209,18 +209,26 @@ export function applyProviderConnectProtocol(draft: ProviderConnectDraft, protoc
   };
 }
 
+export function resolveProviderCredential(
+  draft: Pick<ProviderConnectDraft, 'apiKey'>,
+  sessionCredential?: string,
+): string {
+  return draft.apiKey.trim() || sessionCredential?.trim() || '';
+}
+
 export function validateProviderConnectDraft(
   draft: ProviderConnectDraft,
-  options: { requireApiKey?: boolean } = {},
+  options: { requireApiKey?: boolean; sessionCredential?: string } = {},
 ): string[] {
   const preset = getProviderConnectPreset(draft.protocol);
   const requireApiKey = options.requireApiKey ?? true;
+  const credential = resolveProviderCredential(draft, options.sessionCredential);
   const issues: string[] = [];
   if (!draft.displayName.trim()) issues.push('请填写供应商名称');
   if (preset.fields.includes('baseUrl') && !draft.baseUrl.trim()) issues.push('请填写 API 请求地址');
   if (requireApiKey && preset.fields.includes('apiKey')) {
     const optionalKey = draft.protocol === 'ollama';
-    if (!optionalKey && !draft.apiKey.trim()) issues.push(`请填写 ${preset.credentialLabel}`);
+    if (!optionalKey && !credential) issues.push(`请填写 ${preset.credentialLabel}`);
   }
   if (preset.fields.includes('modelId') && !draft.modelId.trim()) issues.push('请填写默认模型');
   if (preset.fields.includes('deploymentName') && !draft.deploymentName.trim()) issues.push('请填写 Deployment Name');
@@ -233,7 +241,7 @@ export function validateProviderConnectDraft(
 
 export function canDiscoverModels(
   draft: Pick<ProviderConnectDraft, 'protocol' | 'baseUrl' | 'apiKey' | 'deploymentName' | 'apiVersion'>,
-  options: { allowStoredCredential?: boolean } = {},
+  options: { allowStoredCredential?: boolean; sessionCredential?: string } = {},
 ) {
   return canTestConnectDraft(draft, options);
 }
@@ -241,11 +249,12 @@ export function canDiscoverModels(
 /** 连接测试 / 拉取模型：仅检查连通必需字段，不要求供应商名称等展示字段。 */
 export function canTestConnectDraft(
   draft: Pick<ProviderConnectDraft, 'protocol' | 'baseUrl' | 'apiKey' | 'deploymentName' | 'apiVersion'>,
-  options: { allowStoredCredential?: boolean } = {},
+  options: { allowStoredCredential?: boolean; sessionCredential?: string } = {},
 ) {
   if (!draft.baseUrl.trim()) return { ok: false as const, reason: '请先填写 API 请求地址' };
   if (!/^https?:\/\//i.test(draft.baseUrl.trim())) return { ok: false as const, reason: 'API 请求地址格式无效' };
-  if (draft.protocol !== 'ollama' && !draft.apiKey.trim() && !options.allowStoredCredential) {
+  const credential = resolveProviderCredential(draft, options.sessionCredential);
+  if (draft.protocol !== 'ollama' && !credential && !options.allowStoredCredential) {
     return { ok: false as const, reason: '请先填写 API Key' };
   }
   if (draft.protocol === 'azure_openai') {
@@ -310,9 +319,10 @@ export function pickModelAfterDiscover(
   return models[0].id;
 }
 
-export function providerConnectToPayload(draft: ProviderConnectDraft, workspaceId: string, options: { includeCredential?: boolean } = {}) {
+export function providerConnectToPayload(draft: ProviderConnectDraft, workspaceId: string, options: { includeCredential?: boolean; sessionCredential?: string } = {}) {
   const preset = getProviderConnectPreset(draft.protocol);
   const includeCredential = options.includeCredential ?? true;
+  const credential = resolveProviderCredential(draft, options.sessionCredential);
   const modelName = draft.protocol === 'azure_openai'
     ? (draft.modelId.trim() || draft.deploymentName.trim())
     : draft.modelId.trim();
@@ -329,8 +339,8 @@ export function providerConnectToPayload(draft: ProviderConnectDraft, workspaceI
     model: modelName,
     region: draft.region.trim() || preset.defaultRegion,
     ...(includeCredential
-      ? { credential: draft.apiKey.trim() || (draft.protocol === 'ollama' ? 'ollama-local' : '') }
-      : (draft.apiKey.trim() ? { credential: draft.apiKey.trim() } : {})),
+      ? { credential: credential || (draft.protocol === 'ollama' ? 'ollama-local' : '') }
+      : (credential ? { credential } : {})),
   };
 }
 

@@ -8,6 +8,7 @@ const secondaryWorkspaceAdmin = { Authorization: 'Bearer mock-admin-token', 'x-w
 
 function sandboxConfiguration(overrides: Record<string, unknown> = {}) {
   return {
+    scope: 'capability' as const,
     profile: {
       name: '测试采购专员',
       role: '采购询价',
@@ -63,6 +64,77 @@ describe('digital employee control plane', () => {
 
     const secondaryCatalog = await mockHandler('/api/digital-employee-capability-catalog', { method: 'GET', headers: secondaryWorkspaceAdmin }) as any;
     expect(secondaryCatalog.models.some((item: { name: string }) => item.name === 'Claude Sonnet-4')).toBe(false);
+  });
+
+  it('allows role-scope configuration without resubmitting capabilities', async () => {
+    const employee = await mockHandler('/api/digital-employees', { method: 'POST', headers: admin, body: { name: '岗位契约专员', role: '契约维护', department: '人事部' } }) as any;
+    const submitted = await mockHandler(`/api/digital-employees/${employee.id}/configuration`, {
+      method: 'POST',
+      headers: admin,
+      body: {
+        scope: 'role',
+        profile: { name: '小员', role: 'HR', department: '人事', description: 'HR 服务', owner: '平台管理员', escalationOwner: 'HR 总监', serviceObject: '内部用户', risk: 'low', environment: 'sandbox' },
+        boundary: sandboxConfiguration().boundary,
+        memoryPolicy: sandboxConfiguration().memoryPolicy,
+      },
+    }) as any;
+    expect(submitted.status).toBe('current');
+    const saved = await mockHandler(`/api/digital-employees/${employee.id}`, { method: 'GET', headers: admin }) as any;
+    expect(saved.name).toBe('小员');
+    expect(saved.capabilities.model).toBe('企业通用路由 v2');
+  });
+
+  it('allows admin to confirm their own pending release in production-like env', async () => {
+    const employee = await mockHandler('/api/digital-employees', { method: 'POST', headers: admin, body: { name: '自批校验专员', role: '自批校验', department: '信息技术部' } }) as any;
+    await mockHandler(`/api/digital-employees/${employee.id}/configuration`, {
+      method: 'POST',
+      headers: admin,
+      body: sandboxConfiguration({
+        profile: {
+          name: '自批校验专员',
+          role: '自批校验',
+          department: '信息技术部',
+          description: '验证上岗双人审批。',
+          owner: '王昊',
+          escalationOwner: '技术平台主管',
+          serviceObject: '平台配置',
+          risk: 'low',
+          environment: 'production',
+        },
+      }),
+    });
+    await mockHandler(`/api/digital-employees/${employee.id}/evaluate`, { method: 'POST', headers: admin });
+    const released = await mockHandler(`/api/digital-employees/${employee.id}/release`, { method: 'POST', headers: admin }) as any;
+    expect(released.lifecycle).toBe('active');
+    expect(released.release.status).toBe('released');
+  });
+
+  it('blocks non-admin applicant from confirming their own pending release', async () => {
+    const employee = await mockHandler('/api/digital-employees', { method: 'POST', headers: builder, body: { name: '普通用户上岗', role: '普通校验', department: '信息技术部' } }) as any;
+    await mockHandler(`/api/digital-employees/${employee.id}/configuration`, {
+      method: 'POST',
+      headers: builder,
+      body: sandboxConfiguration({
+        profile: {
+          name: '普通用户上岗',
+          role: '普通校验',
+          department: '信息技术部',
+          description: '验证普通用户须管理员确认。',
+          owner: '王昊',
+          escalationOwner: '技术平台主管',
+          serviceObject: '平台配置',
+          risk: 'low',
+          environment: 'production',
+        },
+      }),
+    });
+    await mockHandler(`/api/digital-employees/${employee.id}/evaluate`, { method: 'POST', headers: builder });
+    const pending = await mockHandler(`/api/digital-employees/${employee.id}/release`, { method: 'POST', headers: builder }) as any;
+    expect(pending.release.status).toBe('pending_approval');
+    await expect(mockHandler(`/api/digital-employees/${employee.id}/lifecycle`, { method: 'POST', headers: builder, body: { lifecycle: 'active' } })).rejects.toThrow('E_SOD_SELF_APPROVAL');
+    const approved = await mockHandler(`/api/digital-employees/${employee.id}/lifecycle`, { method: 'POST', headers: admin, body: { lifecycle: 'active' } }) as any;
+    expect(approved.lifecycle).toBe('active');
+    expect(approved.release.status).toBe('released');
   });
 
   it('requires profile, published capabilities and evaluation before release', async () => {
@@ -215,6 +287,7 @@ describe('digital employee control plane', () => {
     await mockHandler(`/api/digital-employees/${employee.id}/release`, { method: 'POST', headers: builder });
 
     const configuration = {
+      scope: 'role' as const,
       profile: { name: '配置验证专员', role: '配置验证', department: '信息技术部', description: '验证受控配置流程。', owner: '王昊', escalationOwner: '技术平台主管', serviceObject: '平台配置', risk: 'medium', environment: 'production' },
       boundary: {
         responsibilities: ['验证配置'], prohibitedActions: ['不得绕过审批'], handoffPolicy: { triggers: ['需要人工判断'], approvalRequiredFor: ['配置协同流'] },
@@ -225,7 +298,6 @@ describe('digital employee control plane', () => {
           handoff: { triggers: ['需要人工判断'], approvers: ['技术平台主管'], notificationChannels: ['Web'], slaMinutes: 30 },
         },
       },
-      capabilities: { model: '企业通用路由 v2', knowledge: ['运行手册库'], skills: ['配置核验'], tools: ['CMDB'], workflows: ['配置协同流'], channels: ['Web'] },
       memoryPolicy: { shortTermHours: 24, workingDays: 7, longTermCadence: 'daily', knowledgePromotion: 'approval_required' },
     };
     const submitted = await mockHandler(`/api/digital-employees/${employee.id}/configuration`, { method: 'POST', headers: builder, body: configuration }) as any;
@@ -268,6 +340,7 @@ describe('digital employee control plane', () => {
   it('rejects a boundary policy that grants execution to an unbound capability', async () => {
     const employee = await mockHandler('/api/digital-employees', { method: 'POST', headers: admin, body: { name: '边界校验专员', role: '策略校验', department: '信息技术部' } }) as any;
     const configuration = {
+      scope: 'capability' as const,
       profile: { name: employee.name, role: employee.role, department: employee.department, description: '校验能力引用。', owner: '王昊', escalationOwner: '值班经理', serviceObject: '策略验证', risk: 'low', environment: 'sandbox' },
       boundary: {
         responsibilities: ['校验岗位授权'], prohibitedActions: [], handoffPolicy: { triggers: ['需要人工判断'], approvalRequiredFor: [] },

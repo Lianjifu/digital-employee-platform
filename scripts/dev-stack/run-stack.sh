@@ -1,17 +1,31 @@
 #!/bin/bash
-# Keep local FE+BE up for digital-employee-platform (real DeepSeek; no Local Mock).
+# Keep local FE+BE up for digital-employee-platform (real API + PG/Redis; no frontend mock).
 set -u
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/Users/LIANJIFU/ops/digital-employee-platform/backend/.tools/go/bin:$PATH"
 ROOT="/Users/LIANJIFU/ops/digital-employee-platform"
 BACKEND="$ROOT/backend"
 FRONTEND="$ROOT/frontend"
-GATEWAY="$ROOT/scripts/dev-stack/gateway-proxy.py"
+GATEWAY_COARSE="$ROOT/scripts/dev-stack/gateway-proxy.py"
+GATEWAY_MONOLITH="$ROOT/scripts/dev-stack/gateway-proxy-monolith.py"
 LOGDIR="/tmp/de-stack"
+DE_STACK="${DE_STACK:-monolith}"
 mkdir -p "$LOGDIR"
 cd "$BACKEND" || exit 1
 
-export DE_BAN_MOCK_TOKEN=0
-export DE_DATABASE_URL='postgres://de:de@127.0.0.1:5432/digital_employee?sslmode=disable'
+# Real control-plane env (PG/Redis/LLM keys live in deploy/.env — never commit secrets).
+if [ -f "$BACKEND/deploy/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$BACKEND/deploy/.env"
+  set +a
+fi
+export DE_BAN_MOCK_TOKEN="${DE_BAN_MOCK_TOKEN:-1}"
+export DE_ALLOW_PASSWORD_LOGIN="${DE_ALLOW_PASSWORD_LOGIN:-1}"
+export DE_ALLOW_MOCK_IDENTITY="${DE_ALLOW_MOCK_IDENTITY:-0}"
+export DE_ALLOW_RUNTIME_STUB="${DE_ALLOW_RUNTIME_STUB:-0}"
+export DE_MODEL_DISCOVER_FALLBACK="${DE_MODEL_DISCOVER_FALLBACK:-0}"
+export DE_EMBEDDED_CHAT="${DE_EMBEDDED_CHAT:-0}"
+export DE_DATABASE_URL="${DE_DATABASE_URL:-postgres://de:de@127.0.0.1:5432/digital_employee?sslmode=disable}"
 # Redis optional for local: only set when 6379 is listening (Docker Compose redis).
 if /usr/sbin/lsof -nP -iTCP:6379 -sTCP:LISTEN >/dev/null 2>&1; then
   export DE_REDIS_URL='redis://127.0.0.1:6379/0'
@@ -20,12 +34,11 @@ else
   echo "$(date '+%F %T') warn: redis :6379 not listening; starting without DE_REDIS_URL" >>"$LOGDIR/keeper.log"
 fi
 export DE_PUBLIC_BASE_URL='http://127.0.0.1:8089'
-export DE_POLICY_URL='http://127.0.0.1:8100'
-export DE_CAP_URL='http://127.0.0.1:8102'
-unset DE_LLM_BASE_URL DE_LLM_API_KEY DE_LLM_MODEL 2>/dev/null || true
-export DE_EMBEDDED_CHAT=0
-export DE_MODEL_CANDIDATE_TIMEOUT=45
-export DE_COPILOT_STREAM_TIMEOUT=300
+SKILL_BIN="$BACKEND/builtin/skills/runtime/bin"
+export DE_BUILTIN_SKILL_BIN="$SKILL_BIN"
+export PATH="$SKILL_BIN:$PATH"
+export DE_MODEL_CANDIDATE_TIMEOUT="${DE_MODEL_CANDIDATE_TIMEOUT:-45}"
+export DE_COPILOT_STREAM_TIMEOUT="${DE_COPILOT_STREAM_TIMEOUT:-300}"
 
 listening() { /usr/sbin/lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 
@@ -53,15 +66,34 @@ start_vite() {
   sleep 1
 }
 
-echo "$(date '+%F %T') keeper boot pid=$$" >>"$LOGDIR/keeper.log"
+echo "$(date '+%F %T') keeper boot pid=$$ stack=$DE_STACK" >>"$LOGDIR/keeper.log"
+if [ ! -x "$BACKEND/bin/de-app" ] || [ ! -x "$BACKEND/bin/de-sys" ]; then
+  echo "$(date '+%F %T') building backend binaries..." >>"$LOGDIR/keeper.log"
+  (cd "$BACKEND" && make build) >>"$LOGDIR/keeper.log" 2>&1 || true
+fi
 while true; do
-  start_one 8100 de-sys "$BACKEND/bin/de-sys"
-  start_one 8101 de-collab env DE_POLICY_URL=http://127.0.0.1:8100 DE_CAP_URL=http://127.0.0.1:8102 DE_EMBEDDED_CHAT=0 DE_MODEL_CANDIDATE_TIMEOUT=45 DE_COPILOT_STREAM_TIMEOUT=300 "$BACKEND/bin/de-collab"
-  start_one 8102 de-cap env DE_POLICY_URL=http://127.0.0.1:8100 DE_PUBLIC_BASE_URL=http://127.0.0.1:8089 DE_EMBEDDED_CHAT=0 DE_MODEL_CANDIDATE_TIMEOUT=45 DE_COPILOT_STREAM_TIMEOUT=300 "$BACKEND/bin/de-cap"
-  start_one 8103 de-workflow env DE_WORKFLOW_WORKER=0 "$BACKEND/bin/de-workflow"
-  start_one 8091 de-agent python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8091 --app-dir "$BACKEND/services/de-agent-runtime"
-  start_one 8093 de-skill env DE_SKILL_REQUIRE_ISOLATION=0 DE_SKILL_ARTIFACT_DIR=/tmp/de-stack/artifacts DE_BIND_HOST=127.0.0.1 DE_BIND_PORT=8093 python3 "$BACKEND/runtimes/de_skill_runtime/main.py"
-  start_one 8089 de-gateway python3 "$GATEWAY"
+  if [ "$DE_STACK" = "monolith" ]; then
+    unset DE_CAP_URL DE_COLLAB_URL DE_POLICY_URL 2>/dev/null || true
+    export DE_RUNTIME_MODE=local
+    export DE_SKILL_RUNTIME_URL="${DE_SKILL_RUNTIME_URL:-http://127.0.0.1:8093}"
+    export DE_WORKFLOW_URL="${DE_WORKFLOW_URL:-http://127.0.0.1:8103}"
+    start_one 8100 de-app env DE_RUNTIME_MODE=local DE_SKILL_RUNTIME_URL="$DE_SKILL_RUNTIME_URL" DE_WORKFLOW_URL="$DE_WORKFLOW_URL" DE_EMBEDDED_CHAT=0 DE_MODEL_CANDIDATE_TIMEOUT=45 DE_COPILOT_STREAM_TIMEOUT=300 DE_BUILTIN_SKILL_BIN="$SKILL_BIN" PATH="$SKILL_BIN:$PATH" "$BACKEND/bin/de-app"
+    start_one 8093 de-skill env DE_SKILL_REQUIRE_ISOLATION=0 DE_SKILL_ARTIFACT_DIR=/tmp/de-stack/artifacts DE_BIND_HOST=127.0.0.1 DE_BIND_PORT=8093 python3 "$BACKEND/runtimes/de_skill_runtime/main.py"
+    if [ -n "${DE_WITH_WORKFLOW:-}" ]; then
+      start_one 8103 de-workflow env DE_WORKFLOW_WORKER=0 DE_WORKFLOW_URL=http://127.0.0.1:8103 "$BACKEND/bin/de-workflow"
+    fi
+    start_one 8089 de-gateway python3 "$GATEWAY_MONOLITH"
+  else
+    export DE_POLICY_URL='http://127.0.0.1:8100'
+    export DE_CAP_URL='http://127.0.0.1:8102'
+    start_one 8100 de-sys "$BACKEND/bin/de-sys"
+    start_one 8101 de-collab env DE_POLICY_URL=http://127.0.0.1:8100 DE_CAP_URL=http://127.0.0.1:8102 DE_EMBEDDED_CHAT=0 DE_MODEL_CANDIDATE_TIMEOUT=45 DE_COPILOT_STREAM_TIMEOUT=300 DE_BUILTIN_SKILL_BIN="$SKILL_BIN" PATH="$SKILL_BIN:$PATH" "$BACKEND/bin/de-collab"
+    start_one 8102 de-cap env DE_POLICY_URL=http://127.0.0.1:8100 DE_PUBLIC_BASE_URL=http://127.0.0.1:8089 DE_EMBEDDED_CHAT=0 DE_MODEL_CANDIDATE_TIMEOUT=45 DE_COPILOT_STREAM_TIMEOUT=300 DE_BUILTIN_SKILL_BIN="$SKILL_BIN" PATH="$SKILL_BIN:$PATH" "$BACKEND/bin/de-cap"
+    start_one 8103 de-workflow env DE_WORKFLOW_WORKER=0 "$BACKEND/bin/de-workflow"
+    start_one 8091 de-agent python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8091 --app-dir "$BACKEND/services/de-agent-runtime"
+    start_one 8093 de-skill env DE_SKILL_REQUIRE_ISOLATION=0 DE_SKILL_ARTIFACT_DIR=/tmp/de-stack/artifacts DE_BIND_HOST=127.0.0.1 DE_BIND_PORT=8093 python3 "$BACKEND/runtimes/de_skill_runtime/main.py"
+    start_one 8089 de-gateway python3 "$GATEWAY_COARSE"
+  fi
   start_vite
   sleep 5
 done

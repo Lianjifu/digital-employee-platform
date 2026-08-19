@@ -224,7 +224,7 @@ describe('control plane mock mutations', () => {
   });
 
   it('runs market preflight before installation and blocks missing dependencies', async () => {
-    const approved = await mockHandler('/api/skills/st1/preflight', { method: 'POST', body: {} }) as any;
+    const approved = await mockHandler('/api/skills/st2/preflight', { method: 'POST', body: {} }) as any;
     expect(approved.decision).toBe('approved');
     const blocked = await mockHandler('/api/skills/st4/preflight', { method: 'POST', body: {} }) as any;
     expect(blocked.decision).toBe('blocked');

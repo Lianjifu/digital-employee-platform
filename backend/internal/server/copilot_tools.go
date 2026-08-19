@@ -168,6 +168,23 @@ func buildToolRegistry(emp map[string]any, enabledTools []string) []registeredTo
 		Key: "builtin:memory.recall", Name: "memory.recall", Kind: "builtin",
 		Mode: toolModeExecute, Description: "检索跨会话工作/长期记忆",
 	})
+	add(registeredTool{
+		Key: "builtin:skill.read", Name: "skill.read", Kind: "builtin",
+		Mode: toolModeExecute, Description: "加载已装配技能的 SKILL.md 全文",
+	})
+	add(registeredTool{
+		Key: "builtin:time.now", Name: "time.now", Kind: "builtin",
+		Mode: toolModeExecute, Description: "返回当前时间（ISO8601）",
+	})
+	for _, pt := range pilotdeckToolRegistry() {
+		if pt.Kind != "platform" {
+			continue
+		}
+		add(registeredTool{
+			Key: "builtin:" + pt.Name, Name: pt.Name, Kind: "builtin",
+			Mode: pt.Mode, Description: pt.Description,
+		})
+	}
 
 	if emp == nil || emp["skipped"] == true {
 		return out
@@ -359,6 +376,22 @@ func (s *Server) runCopilotTool(ctx toolRunContext, t *registeredTool, call tool
 		res.Output = strings.TrimSpace(b.String())
 		return res
 
+	case t.Name == "skill.read" || t.Key == "builtin:skill.read":
+		return s.runSkillReadTool(ctx, call, started)
+
+	case t.Name == "time.now" || t.Key == "builtin:time.now":
+		now := time.Now().Format(time.RFC3339)
+		return toolExecResult{
+			Status: "success", DurationMs: int(time.Since(started).Milliseconds()),
+			Output: fmt.Sprintf("time.now: %s", now),
+		}
+
+	case isPlatformPilotdeckTool(t.Name):
+		return s.runPilotdeckTool(ctx, t, call, started)
+
+	case isRuntimeTool(t.Name):
+		return s.runRuntimeTool(ctx, t, call, started)
+
 	case isCMDBTool(t.Name) || isCMDBTool(t.Key):
 		return s.runCMDBLookup(ctx, t, call, started)
 
@@ -374,6 +407,9 @@ func (s *Server) runCopilotTool(ctx toolRunContext, t *registeredTool, call tool
 		}
 
 	case t.Kind == "tool":
+		if isRuntimeTool(t.Name) || isPlatformPilotdeckTool(t.Name) {
+			return s.runPilotdeckTool(ctx, t, call, started)
+		}
 		// Display-name enterprise tools without a concrete executor: honest failure, not fake success.
 		return toolExecResult{
 			Status: "unavailable", DurationMs: int(time.Since(started).Milliseconds()),

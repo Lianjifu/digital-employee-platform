@@ -35,9 +35,19 @@ func (s *Server) persistSkills() {
 	}
 	s.Store.Persist("skills")
 	s.Store.Persist("skill_catalog")
-	s.Store.Persist("skill_health")
+	s.persistSkillHealth()
 	s.Store.Persist("skill_integrations")
-	s.Store.Persist("skill_extra")
+}
+
+func (s *Server) persistSkillHealth() {
+	if s.Store == nil {
+		return
+	}
+	for _, coll := range []string{"skill_health", "skill_extra"} {
+		if s.Store.CanWrite(coll) {
+			s.Store.Persist(coll)
+		}
+	}
 }
 
 func normalizeRiskLevel(v any) string {
@@ -209,15 +219,21 @@ func (s *Server) recordSkillInvocationLocked(ws string, skill map[string]any, du
 }
 
 func (s *Server) recordSkillInvocation(ws string, skill map[string]any, durationMs int, ok bool, actor, source string) {
+	s.recordSkillInvocationWithRequest(nil, ws, skill, durationMs, ok, actor, source)
+}
+
+func (s *Server) recordSkillInvocationWithRequest(r *http.Request, ws string, skill map[string]any, durationMs int, ok bool, actor, source string) {
 	if skill == nil {
 		return
 	}
-	s.Store.Lock()
-	s.recordSkillInvocationLocked(ws, skill, durationMs, ok, actor, source)
-	s.Store.Unlock()
-	// Sync persist so Cap governance refresh sees Copilot/HTTP calls immediately.
-	s.Store.Persist("skill_health")
-	s.Store.Persist("skill_extra")
+	if s.ownsCapRuntime() || (s.Store != nil && s.Store.CanWrite("skill_health")) {
+		s.Store.Lock()
+		s.recordSkillInvocationLocked(ws, skill, durationMs, ok, actor, source)
+		s.Store.Unlock()
+		s.persistSkillHealth()
+		return
+	}
+	go s.delegateSkillInvocation(r, ws, skill, durationMs, ok, actor, source)
 }
 
 func defaultSkillTrendBuckets() []map[string]any {
@@ -690,6 +706,9 @@ func (s *Server) skillByID(r *http.Request) (any, error) {
 				policy[key] = body[key]
 			}
 		}
+		if body["rateLimitPerMinute"] != nil {
+			delete(s.skillExtraMap("rateWindows"), skillID)
+		}
 		if eg, ok := body["allowedEgress"]; ok {
 			policy["allowedEgress"] = eg
 		}
@@ -822,6 +841,7 @@ func (s *Server) skillPreflight(r *http.Request, id *auth.Identity, ws, skillID 
 		"decision": decision, "reason": reason,
 		"vulnerabilityCount": intFrom(candidate["vulnerabilityCount"]),
 		"checks":             supplyChecks,
+		"dependencyReport":   enrichPreflightWithDeps(candidate),
 	}, nil
 }
 
@@ -858,8 +878,9 @@ func (s *Server) skillInstall(r *http.Request, id *auth.Identity, ws, skillID st
 			}
 		}
 	}
+	installedID := s.Store.ID("sk")
 	item := map[string]any{
-		"id": s.Store.ID("sk"), "workspaceId": ws, "ownerId": id.ID, "owner": id.Name,
+		"id": installedID, "workspaceId": ws, "ownerId": id.ID, "owner": id.Name,
 		"name": cat["name"], "kind": cat["kind"], "description": cat["description"],
 		"version": cat["version"], "status": "installed",
 		"rating": cat["rating"], "installCount": cat["installCount"],
@@ -872,6 +893,14 @@ func (s *Server) skillInstall(r *http.Request, id *auth.Identity, ws, skillID st
 		"vulnerabilityCount": intFrom(cat["vulnerabilityCount"]), "lastScannedAt": cat["lastScannedAt"],
 		"catalogId": str(cat["id"]), "catalogChannel": normalizeCatalogChannel(str(cat["channel"])),
 		"releaseChannel": normalizeReleaseChannel(str(cat["releaseChannel"])),
+	}
+	if bn := catalogBuiltinName(cat); bn != "" {
+		item["source"] = "builtin"
+		item["builtinSkillName"] = bn
+		if attachErr := s.attachBuiltinPackageToSkill(item, ws, installedID, bn); attachErr != nil {
+			s.Store.Unlock()
+			return nil, apperr.BadReq(apperr.BadRequest, "内置技能落盘失败: "+attachErr.Error())
+		}
 	}
 	s.Store.Skills = append([]map[string]any{item}, s.Store.Skills...)
 	s.ensureSkillHealthLocked(item)
@@ -1153,8 +1182,7 @@ func (s *Server) skillTest(r *http.Request, id *auth.Identity, ws, skillID strin
 		s.Store.AppendAudit(ws, id.Name, ternary(status == "success", "执行沙箱测试", "沙箱测试失败"), skillName, ternary(status == "success", "success", "failed"), "mode="+mode+";corr="+dec.CorrelationID)
 	}
 	s.Store.Unlock()
-	s.Store.Persist("skill_health")
-	s.Store.Persist("skill_extra")
+	s.persistSkillHealth()
 
 	return map[string]any{
 		"command": command, "status": status, "output": output, "durationMs": duration,

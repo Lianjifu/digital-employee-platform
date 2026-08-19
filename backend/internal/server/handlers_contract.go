@@ -464,6 +464,15 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 			}
 			now := time.Now().UTC().Format(time.RFC3339)
 			if productionLikeEnv() {
+				if id.Role == "admin" {
+					emp["lifecycle"] = "active"
+					emp["release"] = map[string]any{
+						"status": "released", "releasedAt": now,
+						"requestedBy": id.Name, "requestedById": id.ID,
+						"approver": id.Name, "approverId": id.ID,
+					}
+					break
+				}
 				emp["lifecycle"] = "pending_approval"
 				emp["release"] = map[string]any{
 					"status": "pending_approval", "requestedAt": now,
@@ -520,6 +529,15 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
 		if productionLikeEnv() {
+			if id.Role == "admin" {
+				emp["lifecycle"] = "active"
+				emp["release"] = map[string]any{
+					"status": "released", "releasedAt": now,
+					"requestedBy": id.Name, "requestedById": id.ID,
+					"approver": id.Name, "approverId": id.ID,
+				}
+				break
+			}
 			emp["lifecycle"] = "pending_approval"
 			emp["release"] = map[string]any{
 				"status": "pending_approval", "requestedAt": now,
@@ -592,13 +610,20 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 }
 
 func applyEmployeeConfig(emp map[string]any, draft map[string]any) {
+	scope := strings.TrimSpace(str(draft["scope"]))
+	if scope == "" {
+		scope = "role"
+	}
 	if profile, ok := draft["profile"].(map[string]any); ok {
 		for k, v := range profile {
 			emp[k] = v
 		}
 	}
-	if caps, ok := draft["capabilities"]; ok {
-		emp["capabilities"] = caps
+	if scope == "capability" {
+		if caps, ok := draft["capabilities"].(map[string]any); ok {
+			mergeImmutableCapabilityTools(caps)
+			emp["capabilities"] = caps
+		}
 	}
 	if mem, ok := draft["memoryPolicy"]; ok {
 		emp["memoryPolicy"] = mem
@@ -617,6 +642,45 @@ func applyEmployeeConfig(emp map[string]any, draft map[string]any) {
 		}
 	}
 	emp["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
+}
+
+func immutableCapabilityToolNames() []string {
+	names := make([]string, 0)
+	seen := map[string]bool{}
+	add := func(list []map[string]any, includeOptIn bool) {
+		for _, t := range list {
+			name := strings.TrimSpace(str(t["name"]))
+			if name == "" || seen[name] {
+				continue
+			}
+			if !includeOptIn && coalesce(str(t["availability"]), "default") == "opt_in" {
+				continue
+			}
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
+	add(platformToolsRegistryItems(), true)
+	add(runtimeToolsRegistryItems(), false)
+	return names
+}
+
+func mergeImmutableCapabilityTools(caps map[string]any) {
+	if caps == nil {
+		return
+	}
+	merged := append(stringSlice(caps["tools"]), immutableCapabilityToolNames()...)
+	seen := map[string]bool{}
+	out := make([]string, 0, len(merged))
+	for _, name := range merged {
+		name = strings.TrimSpace(name)
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, name)
+	}
+	caps["tools"] = out
 }
 
 func (s *Server) adoptTemplate(r *http.Request) (any, error) {
@@ -809,7 +873,7 @@ func (s *Server) createSession(r *http.Request) (any, error) {
 
 func (s *Server) deleteSession(r *http.Request) (any, error) {
 	id := identityFrom(r.Context())
-	ws := s.workspaceID(r)
+	headerWS := s.workspaceID(r)
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
 	// api/sessions/:id
 	if len(parts) < 3 || parts[2] == "" {
@@ -818,52 +882,43 @@ func (s *Server) deleteSession(r *http.Request) (any, error) {
 	sessID := parts[2]
 
 	s.Store.Lock()
-	var removed map[string]any
-	kept := make([]map[string]any, 0, len(s.Store.Sessions))
-	convID := ""
-	for _, sess := range s.Store.Sessions {
-		if str(sess["id"]) == sessID && str(sess["workspaceId"]) == ws {
-			if owner := str(sess["ownerId"]); owner != "" && id.Role != "admin" && owner != id.ID {
-				s.Store.Unlock()
-				return nil, apperr.Forbidden(apperr.WorkspaceScope, "无权删除他人会话")
-			}
-			removed = sess
-			convID = str(sess["conversationId"])
-			continue
-		}
-		kept = append(kept, sess)
-	}
+	tryOrder := workspaceLookupOrder(id, headerWS)
+	removed, sessWS := s.findSessionInWorkspacesLocked(sessID, tryOrder)
 	if removed == nil {
 		s.Store.Unlock()
 		return nil, apperr.NotFoundErr(apperr.NotFound, "会话不存在")
 	}
-	s.Store.Sessions = kept
-	var memDeleted []string
-	if convID != "" {
-		convs := make([]map[string]any, 0, len(s.Store.Conversations))
-		for _, c := range s.Store.Conversations {
-			if str(c["id"]) == convID && (str(c["workspaceId"]) == "" || str(c["workspaceId"]) == ws) {
-				continue
-			}
-			convs = append(convs, c)
-		}
-		s.Store.Conversations = convs
-		delete(s.Store.Messages, convID)
-		memDeleted = s.removeMemoryForConversationLocked(ws, convID)
+	if owner := str(removed["ownerId"]); owner != "" && id.Role != "admin" && owner != id.ID {
+		s.Store.Unlock()
+		return nil, apperr.Forbidden(apperr.WorkspaceScope, "无权删除他人会话")
 	}
-	s.Store.AppendAudit(ws, id.Name, "删除专家会话", coalesce(str(removed["title"]), sessID), "success", "")
+	convID := coalesce(str(removed["conversationId"]), sessID)
+	kept := make([]map[string]any, 0, len(s.Store.Sessions))
+	for _, sess := range s.Store.Sessions {
+		if str(sess["id"]) == sessID && str(sess["workspaceId"]) == sessWS {
+			continue
+		}
+		kept = append(kept, sess)
+	}
+	s.Store.Sessions = kept
+	memDeleted := s.purgeConversationLocked(sessWS, convID)
+	s.Store.AppendAudit(sessWS, id.Name, "删除专家会话", coalesce(str(removed["title"]), sessID), "success", "")
 	s.Store.Unlock()
 	s.Store.Persist("sessions")
 	s.Store.Persist("conversations")
 	s.Store.Persist("messages")
-	s.Store.Persist("memory_records")
+	if s.Store.CanWrite("memory_records") {
+		s.Store.Persist("memory_records")
+		if len(memDeleted) > 0 {
+			s.Store.PersistDelete("memory_records", memDeleted...)
+		}
+	} else if convID != "" {
+		go s.delegatePurgeConversationMemory(r, sessWS, convID)
+	}
 	s.Store.PersistDelete("sessions", sessID)
 	if convID != "" {
 		s.Store.PersistDelete("conversations", convID)
 		s.Store.PersistDelete("messages", convID)
-	}
-	if len(memDeleted) > 0 {
-		s.Store.PersistDelete("memory_records", memDeleted...)
 	}
 	return map[string]any{"ok": true, "id": sessID, "conversationId": convID}, nil
 }
@@ -949,56 +1004,59 @@ func (s *Server) patchSession(r *http.Request) (any, error) {
 
 func (s *Server) deleteConversation(r *http.Request) (any, error) {
 	id := identityFrom(r.Context())
-	ws := s.workspaceID(r)
+	headerWS := s.workspaceID(r)
 	cid := conversationIDFromPath(r.URL.Path)
 	if cid == "" {
 		return nil, apperr.BadReq(apperr.BadRequest, "缺少会话 ID")
 	}
 	s.Store.Lock()
-	found := false
-	convs := make([]map[string]any, 0, len(s.Store.Conversations))
-	for _, c := range s.Store.Conversations {
-		if str(c["id"]) == cid && (str(c["workspaceId"]) == "" || str(c["workspaceId"]) == ws) {
-			found = true
-			continue
-		}
-		convs = append(convs, c)
-	}
-	if !found {
-		// also allow deleting message buckets / orphan ids
-		if _, ok := s.Store.Messages[cid]; !ok {
+	tryOrder := workspaceLookupOrder(id, headerWS)
+	foundWS := ""
+	if _, ws := s.findConversationInWorkspacesLocked(cid, tryOrder); ws != "" {
+		foundWS = ws
+	} else if sess, ws := s.findSessionInWorkspacesLocked(cid, tryOrder); sess != nil {
+		foundWS = ws
+		if owner := str(sess["ownerId"]); owner != "" && id.Role != "admin" && owner != id.ID {
 			s.Store.Unlock()
-			return nil, apperr.NotFoundErr(apperr.NotFound, "会话不存在")
+			return nil, apperr.Forbidden(apperr.WorkspaceScope, "无权删除他人会话")
 		}
-		found = true
+	} else if _, ok := s.Store.Messages[cid]; ok {
+		foundWS = headerWS
+	} else {
+		s.Store.Unlock()
+		return nil, apperr.NotFoundErr(apperr.NotFound, "会话不存在")
 	}
-	s.Store.Conversations = convs
-	delete(s.Store.Messages, cid)
-	memDeleted := s.removeMemoryForConversationLocked(ws, cid)
-	// drop sessions pointing at this conversation
+	memDeleted := s.purgeConversationLocked(foundWS, cid)
 	kept := make([]map[string]any, 0, len(s.Store.Sessions))
 	var removedSess []string
 	for _, sess := range s.Store.Sessions {
 		if str(sess["conversationId"]) == cid || str(sess["id"]) == cid {
+			if owner := str(sess["ownerId"]); owner != "" && id.Role != "admin" && owner != id.ID {
+				continue
+			}
 			removedSess = append(removedSess, str(sess["id"]))
 			continue
 		}
 		kept = append(kept, sess)
 	}
 	s.Store.Sessions = kept
-	s.Store.AppendAudit(ws, id.Name, "删除协作会话", cid, "success", "")
+	s.Store.AppendAudit(foundWS, id.Name, "删除协作会话", cid, "success", "")
 	s.Store.Unlock()
 	s.Store.Persist("conversations")
 	s.Store.Persist("messages")
 	s.Store.Persist("sessions")
-	s.Store.Persist("memory_records")
+	if s.Store.CanWrite("memory_records") {
+		s.Store.Persist("memory_records")
+		if len(memDeleted) > 0 {
+			s.Store.PersistDelete("memory_records", memDeleted...)
+		}
+	} else {
+		go s.delegatePurgeConversationMemory(r, foundWS, cid)
+	}
 	s.Store.PersistDelete("conversations", cid)
 	s.Store.PersistDelete("messages", cid)
 	if len(removedSess) > 0 {
 		s.Store.PersistDelete("sessions", removedSess...)
-	}
-	if len(memDeleted) > 0 {
-		s.Store.PersistDelete("memory_records", memDeleted...)
 	}
 	return map[string]any{"ok": true, "id": cid}, nil
 }
@@ -1014,73 +1072,23 @@ func (s *Server) getConversation(r *http.Request) (any, error) {
 	if cid == "" {
 		return nil, apperr.NotFoundErr(apperr.NotFound, "会话不存在")
 	}
+	id := identityFrom(r.Context())
 	ws := s.workspaceID(r)
 	s.Store.RLock()
 	defer s.Store.RUnlock()
 
-	findConversation := func(id string) map[string]any {
-		for _, c := range s.Store.Conversations {
-			if str(c["id"]) != id {
-				continue
-			}
-			if w := str(c["workspaceId"]); w != "" && w != ws {
-				return nil
-			}
-			cp := map[string]any{}
-			for k, v := range c {
-				cp[k] = v
-			}
-			if msgs, ok := s.Store.Messages[id]; ok {
-				cp["messages"] = msgs
-			} else if cp["messages"] == nil {
-				cp["messages"] = []map[string]any{}
-			}
-			return cp
+	tryOrder := []string{ws}
+	for _, alt := range allowedWorkspaceIDs(id) {
+		if alt != ws {
+			tryOrder = append(tryOrder, alt)
 		}
-		return nil
 	}
-
-	if cp := findConversation(cid); cp != nil {
-		return cp, nil
-	}
-
-	// 兼容：前端可能用 session.id 拉详情；解析 session.conversationId 或返回空消息壳
-	for _, sess := range s.Store.Sessions {
-		if str(sess["id"]) != cid {
-			continue
+	for _, targetWS := range tryOrder {
+		if cp, forbidden := s.resolveConversationDetailLocked(id, targetWS, cid); forbidden {
+			return nil, apperr.Forbidden(apperr.WorkspaceScope, "无权查看他人会话")
+		} else if cp != nil {
+			return cp, nil
 		}
-		if str(sess["workspaceId"]) != ws {
-			return nil, apperr.Forbidden(apperr.WorkspaceScope, "无权读取其他工作区会话")
-		}
-		convID := str(sess["conversationId"])
-		if convID != "" {
-			if cp := findConversation(convID); cp != nil {
-				return cp, nil
-			}
-		}
-		messages := s.Store.Messages[cid]
-		if messages == nil && convID != "" {
-			messages = s.Store.Messages[convID]
-		}
-		if messages == nil {
-			messages = []map[string]any{}
-		}
-		outID := convID
-		if outID == "" {
-			outID = cid
-		}
-		updatedAt := str(sess["updatedAt"])
-		if updatedAt == "" {
-			updatedAt = str(sess["lastMessageAt"])
-		}
-		return map[string]any{
-			"id":                outID,
-			"workspaceId":       str(sess["workspaceId"]),
-			"title":             sess["title"],
-			"digitalEmployeeId": sess["digitalEmployeeId"],
-			"updatedAt":         updatedAt,
-			"messages":          messages,
-		}, nil
 	}
 
 	return nil, apperr.NotFoundErr(apperr.NotFound, "会话不存在")

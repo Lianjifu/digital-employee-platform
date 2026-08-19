@@ -148,7 +148,7 @@ const zh: Dict = {
   'module.skills.cta.connect': '接入能力',
   'module.skills.cta.store': '从商店安装',
   'module.skills.summary.workspace': '已纳管且可分配给智能体、工作流的技能与工具资产。',
-  'module.skills.summary.store': '可安装目录来自平台内置（演示）、企业 Registry 同步与工作区晋升；安装前执行供应链预检。',
+  'module.skills.summary.store': '可安装目录来自平台内置、企业 Registry 同步与工作区晋升；安装前执行供应链预检。',
   'module.skills.summary.integration': '导入通用 Skill，或接入企业 MCP、Tool 并完成连通性校验。',
   'module.skills.summary.governance': '查看运行证据、权限范围、沙箱策略与审计记录。',
   'module.skills.summary.workflowSkills': '流程技能来自工作流程发布，供数字工作伙伴装配调用。',

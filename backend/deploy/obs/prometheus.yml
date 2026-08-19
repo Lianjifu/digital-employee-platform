@@ -6,6 +6,11 @@ rule_files:
   - /etc/prometheus/alerts.yml
 
 scrape_configs:
+  - job_name: de-monolith
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["host.docker.internal:8100"]
+        labels: { service: de-app }
   - job_name: de-coarse
     metrics_path: /metrics
     static_configs:

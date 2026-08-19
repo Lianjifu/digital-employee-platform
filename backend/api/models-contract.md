@@ -15,7 +15,7 @@
 
 - 请求：`credential`（兼容 `apiKey`）
 - 落库：仅 `credentialRef`（`vault://model-providers/:id/credential`）+ `credentialMasked`
-- staging/prod：`DE_REQUIRE_VAULT=1` 或 `DE_BAN_MOCK_TOKEN=1` 时拒绝无 Vault 写凭据
+- staging/prod：`DE_REQUIRE_VAULT=1` 或 `DE_ENV=production|staging` 时拒绝无 Vault 写凭据（`DE_BAN_MOCK_TOKEN` 仅影响鉴权，不单独触发 Vault 门禁）
 
 ## 关键响应
 

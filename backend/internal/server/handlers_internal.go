@@ -120,6 +120,133 @@ func (s *Server) applyWorkflowSkillCatalog(actor *auth.Identity, skill map[strin
 	}
 }
 
+func (s *Server) copilotPostTurnAPI(r *http.Request) (any, error) {
+	if r.Method != http.MethodPost {
+		return nil, apperr.BadReq(apperr.BadRequest, "仅支持 POST")
+	}
+	if !s.ownsCapRuntime() {
+		return nil, apperr.Forbidden(apperr.AdminRequired, "仅 cap 进程可处理 post-turn")
+	}
+	body, _ := decodeMap(r)
+	ws := coalesce(str(body["workspaceId"]), s.workspaceID(r))
+	id := identityFrom(r.Context())
+	ownerID := str(body["ownerId"])
+	ownerName := str(body["ownerName"])
+	if id != nil {
+		if ownerID == "" {
+			ownerID = id.ID
+		}
+		if ownerName == "" {
+			ownerName = id.Name
+		}
+	}
+	var memoryErr string
+	s.Store.Lock()
+	if raw, ok := body["memoryIngest"].(map[string]any); ok && len(raw) > 0 {
+		in := runtimeMemoryInput{
+			WorkspaceID:       coalesce(str(raw["workspaceId"]), ws),
+			OwnerID:           coalesce(str(raw["ownerId"]), ownerID),
+			OwnerName:         coalesce(str(raw["ownerName"]), ownerName),
+			DigitalEmployeeID: str(raw["digitalEmployeeId"]),
+			Title:             str(raw["title"]),
+			Content:           str(raw["content"]),
+			SourceType:        str(raw["sourceType"]),
+			SourceID:          str(raw["sourceId"]),
+			CorrelationID:     str(raw["correlationId"]),
+			Layer:             str(raw["layer"]),
+			Scope:             str(raw["scope"]),
+			Classification:    str(raw["classification"]),
+			Confidence:        toFloat(raw["confidence"]),
+		}
+		if _, err := s.ingestRuntimeMemoryLocked(in); err != nil {
+			memoryErr = err.Error()
+			s.appendMemoryAuditLocked(ws, coalesce(ownerName, "系统"), "写入记忆", truncateRunes(str(raw["title"]), 40), "failed", str(raw["correlationId"]))
+		}
+	}
+	created := s.runPostTurnEvolutionLocked(evolveTurnInput{
+		WorkspaceID:       ws,
+		OwnerID:           ownerID,
+		OwnerName:         ownerName,
+		DigitalEmployeeID: str(body["digitalEmployeeId"]),
+		ConversationID:    str(body["conversationId"]),
+		CorrelationID:     str(body["correlationId"]),
+		MessageID:         str(body["messageId"]),
+		UserMessage:       str(body["userMessage"]),
+		AssistantText:     str(body["assistantText"]),
+		Mode:              str(body["mode"]),
+		ReflectRounds:     toInt(body["reflectRounds"]),
+		ToolCalls:         asMapSlice(body["toolCalls"]),
+	})
+	s.Store.Unlock()
+	go s.persistEvolve()
+	return map[string]any{
+		"evolveCandidates": created,
+		"memoryError":      memoryErr,
+	}, nil
+}
+
+func (s *Server) purgeConversationMemoryAPI(r *http.Request) (any, error) {
+	if r.Method != http.MethodPost {
+		return nil, apperr.BadReq(apperr.BadRequest, "仅支持 POST")
+	}
+	if !s.ownsCapRuntime() {
+		return nil, apperr.Forbidden(apperr.AdminRequired, "仅 cap 进程可清理记忆")
+	}
+	body, _ := decodeMap(r)
+	ws := coalesce(str(body["workspaceId"]), s.workspaceID(r))
+	convID := str(body["conversationId"])
+	if convID == "" {
+		return nil, apperr.BadReq(apperr.BadRequest, "缺少 conversationId")
+	}
+	s.Store.Lock()
+	deleted := s.removeMemoryForConversationLocked(ws, convID)
+	s.Store.Unlock()
+	if s.Store.CanWrite("memory_records") {
+		s.Store.Persist("memory_records")
+		if len(deleted) > 0 {
+			s.Store.PersistDelete("memory_records", deleted...)
+		}
+	}
+	return map[string]any{"deleted": len(deleted), "conversationId": convID}, nil
+}
+
+func (s *Server) skillInvocationAPI(r *http.Request) (any, error) {
+	if r.Method != http.MethodPost {
+		return nil, apperr.BadReq(apperr.BadRequest, "仅支持 POST")
+	}
+	if !s.ownsCapRuntime() {
+		return nil, apperr.Forbidden(apperr.AdminRequired, "仅 cap 进程可处理 skill invocation")
+	}
+	body, _ := decodeMap(r)
+	ws := coalesce(str(body["workspaceId"]), s.workspaceID(r))
+	skillID := str(body["skillId"])
+	if skillID == "" {
+		return nil, apperr.BadReq(apperr.BadRequest, "缺少 skillId")
+	}
+	durationMs := toInt(body["durationMs"])
+	ok := boolFrom(body["ok"])
+	actor := str(body["actor"])
+	source := str(body["source"])
+	s.Store.Lock()
+	var sk map[string]any
+	if _, found := s.findSkillLocked(ws, skillID); found != nil {
+		sk = found
+	} else {
+		for _, item := range s.Store.Skills {
+			if str(item["id"]) == skillID {
+				sk = item
+				break
+			}
+		}
+	}
+	if sk != nil {
+		s.recordSkillInvocationLocked(ws, sk, durationMs, ok, actor, source)
+	}
+	s.Store.Unlock()
+	s.persistSkillHealth()
+	return map[string]any{"ok": true}, nil
+}
+
 func actorName(id *auth.Identity) string {
 	if id == nil {
 		return ""

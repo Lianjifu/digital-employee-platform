@@ -47,7 +47,7 @@ func catalogChannelLabel(ch string) string {
 	case "promoted":
 		return "工作区晋升"
 	default:
-		return "平台内置（演示）"
+		return "平台内置"
 	}
 }
 
@@ -125,7 +125,7 @@ func (s *Server) listSkillCatalog(r *http.Request) (any, error) {
 	return map[string]any{
 		"items": out,
 		"meta": map[string]any{
-			"demoNotice": "平台内置条目仅用于演示与冷启动；生产货源以 Registry 同步与工作区晋升为主。",
+			"demoNotice": "平台内置条目用于冷启动；生产来源以 Registry 同步与工作区晋升为主。",
 			"channels": []map[string]any{
 				{"id": "builtin", "label": catalogChannelLabel("builtin")},
 				{"id": "registry", "label": catalogChannelLabel("registry")},

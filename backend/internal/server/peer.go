@@ -157,9 +157,9 @@ func lastSSEAssistantText(body string) string {
 }
 
 func (s *Server) ownsCollabRuntime() bool {
-	return s == nil || s.Mode == "" || s.Mode == ModeAll || s.Mode == ModeCollab
+	return s == nil || s.Mode == "" || unifiedMode(s.Mode) || s.Mode == ModeCollab
 }
 
 func (s *Server) ownsCapRuntime() bool {
-	return s == nil || s.Mode == "" || s.Mode == ModeAll || s.Mode == ModeCap
+	return s == nil || s.Mode == "" || unifiedMode(s.Mode) || s.Mode == ModeCap
 }

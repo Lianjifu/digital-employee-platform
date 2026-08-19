@@ -38,6 +38,11 @@ func (s *Server) capabilityCatalogAligned(r *http.Request) (any, error) {
 		if err == nil {
 			workflows = peerWF
 		}
+	} else if s.Mode == ModeApp && strings.TrimSpace(os.Getenv("DE_WORKFLOW_URL")) != "" {
+		peerWF, err := s.fetchWorkflowCatalogParts(r, ws)
+		if err == nil {
+			workflows = peerWF
+		}
 	}
 
 	// Local store fill / ModeAll / peer miss fallback.
@@ -58,12 +63,14 @@ func (s *Server) capabilityCatalogAligned(r *http.Request) (any, error) {
 	})
 
 	return map[string]any{
-		"models":    models,
-		"skills":    skills,
-		"tools":     tools,
-		"workflows": workflows,
-		"knowledge": knowledge,
-		"channels":  channels,
+		"models":         models,
+		"skills":         skills,
+		"tools":          tools,
+		"workflows":      workflows,
+		"knowledge":      knowledge,
+		"channels":       channels,
+		"platformTools": catalogPlatformTools(),
+		"runtimeTools":  catalogRuntimeTools(nil),
 	}, nil
 }
 

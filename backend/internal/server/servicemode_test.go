@@ -9,6 +9,10 @@ func TestServiceModeOwnsPath(t *testing.T) {
 		want bool
 	}{
 		{ModeAll, "/api/skills", true},
+		{ModeApp, "/api/skills", true},
+		{ModeApp, "/api/sessions", true},
+		{ModeApp, "/api/workspaces", true},
+		{ModeApp, "/api/model-providers", true},
 		{ModeSys, "/api/workspaces", true},
 		{ModeSys, "/api/audit-center", true},
 		{ModeSys, "/api/zero-trust/evaluate", true},
@@ -58,6 +62,12 @@ func TestParseServiceMode(t *testing.T) {
 	}
 	if ParseServiceMode("all") != ModeAll {
 		t.Fatal("all")
+	}
+	if ParseServiceMode("de-app") != ModeApp {
+		t.Fatal("de-app")
+	}
+	if ParseServiceMode("app") != ModeApp {
+		t.Fatal("app")
 	}
 	if ParseServiceMode("de-policy") != ModePolicy {
 		t.Fatal("de-policy")

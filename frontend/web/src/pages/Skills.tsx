@@ -3,7 +3,7 @@ import { useApiMutation, useApiQuery, useApiUploadMutation } from '@/services/qu
 import { Badge, Button, Input, KpiCard } from '@de/web-ui';
 import {
   Wrench, ShieldAlert, ShieldCheck, Settings, Search, AlertTriangle, CheckCircle2, Box, Star, Globe, Activity, History,
-  Play, RefreshCw, Lock, Container, Eye, Terminal, Sparkles, Trash2, GitBranch,
+  Play, RefreshCw, Lock, Container, Eye, Terminal, Sparkles, Trash2, GitBranch, Cpu,
   Save, List, LayoutGrid, Power, ArrowUpCircle, Upload, Network,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
@@ -23,8 +23,21 @@ import {
 } from '@/features/skills/skill-modals';
 import { IntegrationWorkspace } from '@/features/skills/integration-workspace';
 import { GovernanceWorkspace } from '@/features/skills/governance-workspace';
+import { PlatformToolsWorkspace } from '@/features/skills/platform-tools-workspace';
 
-const VALID_TABS: SkillCenterTab[] = ['workspace', 'store', 'workflowSkills', 'integration', 'governance'];
+const VALID_TABS: SkillCenterTab[] = ['workspace', 'store', 'platformTools', 'workflowSkills', 'integration', 'governance'];
+const EMPTY_SKILLS: Skill[] = [];
+const EMPTY_CATALOG: Skill[] = [];
+const EMPTY_HEALTH: SkillRuntimeHealth[] = [];
+const EMPTY_WORKFLOW_SKILLS: WorkflowSkill[] = [];
+
+function dedupeSkillsById<T extends { id: string }>(skills: T[]): T[] {
+  const seen = new Map<string, T>();
+  for (const skill of skills) {
+    seen.set(skill.id, skill);
+  }
+  return Array.from(seen.values());
+}
 
 function resolveTab(raw: string | null, roleDefault: SkillCenterTab): SkillCenterTab {
   if (raw === 'atomic') return 'workspace';
@@ -51,19 +64,9 @@ export default function Skills() {
   const [typeFilters, setTypeFilters] = useState<Record<'workspace' | 'store' | 'integration' | 'governance', 'all' | Skill['kind']>>({ workspace: initialTabRaw === 'atomic' ? 'skill' : 'all', store: 'all', integration: 'all', governance: 'all' });
 
   useEffect(() => {
-    if (initialTabRaw === 'atomic') {
-      setTypeFilters((filters) => ({ ...filters, workspace: 'skill' }));
-      const params = new URLSearchParams(searchParams);
-      params.delete('tab');
-      setSearchParams(params, { replace: true });
-      setTab('workspace');
-    }
-  }, []);
-
-  useEffect(() => {
     const nextRaw = searchParams.get('tab');
     const preferred = defaultSkillsTab(user?.role);
-    const next = resolveTab(nextRaw, preferred);
+    const allowed = visibleSkillsTabs(user?.role);
     if (nextRaw === 'atomic') {
       setTypeFilters((filters) => ({ ...filters, workspace: 'skill' }));
       const params = new URLSearchParams(searchParams);
@@ -72,9 +75,10 @@ export default function Skills() {
       setTab('workspace');
       return;
     }
-    const resolved = allowedTabs.includes(next) ? next : preferred;
-    if (resolved !== tab) setTab(resolved);
-  }, [searchParams, tab, setSearchParams, user?.role, allowedTabs]);
+    const next = resolveTab(nextRaw, preferred);
+    const resolved = allowed.includes(next) ? next : preferred;
+    setTab((current) => (current === resolved ? current : resolved));
+  }, [searchParams, setSearchParams, user?.role]);
 
   const selectTab = (next: SkillCenterTab) => {
     setTab(next);
@@ -124,14 +128,14 @@ export default function Skills() {
     undefined,
     { enabled: tab === 'workspace' || tab === 'governance' },
   );
-  const apiInstalled = apiInstalledData ?? [];
-  const apiCatalog = apiCatalogData?.items ?? [];
+  const apiInstalled = apiInstalledData ?? EMPTY_SKILLS;
+  const apiCatalog = apiCatalogData?.items ?? EMPTY_CATALOG;
   const catalogMeta = apiCatalogData?.meta;
-  const governanceHealth = governanceHealthData ?? [];
+  const governanceHealth = governanceHealthData ?? EMPTY_HEALTH;
   const healthBySkillId = useMemo(() => buildHealthBySkillId(governanceHealth), [governanceHealth]);
   const referenceBySkillId = useMemo(() => buildReferenceBySkillId(governanceHealth), [governanceHealth]);
   const { data: workflowSkillsData, refetch: refetchWorkflowSkills } = useApiQuery<WorkflowSkill[]>(['workflow-skills'], '/api/workflow-skills');
-  const workflowSkills = workflowSkillsData ?? [];
+  const workflowSkills = workflowSkillsData ?? EMPTY_WORKFLOW_SKILLS;
   const promoteWorkflowSkillApi = useApiMutation<WorkflowSkill, { id: string }>(
     (vars) => `/api/workflow-skills/${vars.id}/publish`,
     {
@@ -147,8 +151,9 @@ export default function Skills() {
   );
 
   useEffect(() => {
-    setInstalled(apiInstalled.map((skill) => enrichSkillRow(skill, healthBySkillId)));
-  }, [apiInstalled, healthBySkillId]);
+    if (apiInstalledData == null) return;
+    setInstalled(dedupeSkillsById(apiInstalledData.map((skill) => enrichSkillRow(skill, healthBySkillId))));
+  }, [apiInstalledData, healthBySkillId]);
 
   // 测试运行器输入与输出
   const [testCmd, setTestCmd] = useState('');
@@ -211,6 +216,7 @@ export default function Skills() {
     integration: t('module.skills.summary.integration'),
     governance: t('module.skills.summary.governance'),
     workflowSkills: t('module.skills.summary.workflowSkills'),
+    platformTools: '平台工具与运行时工具（通用岗位包）',
   }[tab];
 
   const enabledCount = useMemo(() => installed.filter((s) => (s.lifecycleStatus ?? 'enabled') === 'enabled').length, [installed]);
@@ -447,6 +453,7 @@ export default function Skills() {
   const skillTabs = [
     { key: 'workspace' as const, labelKey: 'module.skills.tabs.installed', icon: Wrench, count: installed.length },
     { key: 'store' as const, labelKey: 'module.skills.tabs.store', icon: Sparkles, count: apiCatalog.length },
+    { key: 'platformTools' as const, labelKey: 'module.skills.tabs.platformTools' as const, label: '平台工具', icon: Cpu, count: 26 },
     { key: 'workflowSkills' as const, labelKey: 'module.skills.tabs.workflowSkills', icon: GitBranch, count: workflowSkills.length },
     { key: 'integration' as const, labelKey: 'module.skills.tabs.integration', icon: Network, count: null },
     { key: 'governance' as const, labelKey: 'module.skills.tabs.governance', icon: ShieldCheck, count: attentionCount },
@@ -495,12 +502,17 @@ export default function Skills() {
               <button type="button" onClick={() => setOperationNotice(null)} className="text-[var(--brand)]">知道了</button>
             </div>
           )}
-          {tab !== 'workflowSkills' && tab !== 'integration' && tab !== 'governance' && (
+          {tab !== 'workflowSkills' && tab !== 'integration' && tab !== 'governance' && tab !== 'platformTools' && (
+            <p className="px-4 pb-2 text-xs text-[var(--text-muted)] md:px-5">{tabSummary}</p>
+          )}
+          {tab === 'platformTools' && (
             <p className="px-4 pb-2 text-xs text-[var(--text-muted)] md:px-5">{tabSummary}</p>
           )}
           <div className="px-4 md:px-5"><RoleReadonlyBanner className="mb-2 flex items-start gap-2 rounded-lg bg-[var(--info-bg)] px-3 py-2 text-[11px] leading-5 text-[var(--info)]" /></div>
           <div className="de-employee-tabs flex overflow-x-auto px-3" role="tablist" aria-label="技能中心分区">
-            {skillTabs.map((item) => (
+            {skillTabs.map((item) => {
+              const TabIcon = item.icon;
+              return (
               <button
                 key={item.key}
                 type="button"
@@ -509,16 +521,20 @@ export default function Skills() {
                 onClick={() => selectTab(item.key)}
                 className={cn('de-employee-tab flex shrink-0 items-center gap-1.5 px-3 py-2.5 text-xs transition-colors', tab === item.key && 'is-active')}
               >
-                <item.icon className="h-3.5 w-3.5" />
-                {t(item.labelKey)}
+                <TabIcon className="h-3.5 w-3.5" />
+                {('label' in item && item.label) ? item.label : t(item.labelKey)}
                 {item.count != null && <Badge tone={item.key === 'workspace' ? 'brand' : item.key === 'workflowSkills' ? 'purple' : 'neutral'} className="ml-1">{item.count}</Badge>}
               </button>
-            ))}
+            );})}
           </div>
         </section>
 
         <div className="pb-4">
-          {tab === 'workflowSkills' ? (
+          {tab === 'platformTools' ? (
+            <section className="de-employee-shell rounded-xl bg-[var(--surface-1)] p-4 md:p-5">
+              <PlatformToolsWorkspace />
+            </section>
+          ) : tab === 'workflowSkills' ? (
             <section className="skills-workflow">
               <div className="skills-workflow__intro">
                 <div className="min-w-0 flex-1">
@@ -603,11 +619,11 @@ export default function Skills() {
                   <div className="flex flex-wrap items-center gap-2.5">
                     <h3 className="skills-store-toolbar__title">{t('module.skills.tabs.store')}</h3>
                     <Badge tone="neutral" className="text-[10px]">{filtered.length} 项</Badge>
-                    <Badge tone="info" className="text-[10px]">三层货源</Badge>
+                    <Badge tone="info" className="text-[10px]">三层来源</Badge>
                   </div>
                   <p className="mt-1.5 max-w-[72ch] text-[12px] leading-5 text-[var(--text-muted)]">
                     {catalogMeta?.demoNotice
-                      ?? '安装前将执行发布方、签名、依赖与风险预检；平台内置条目仅用于演示，生产货源以 Registry 同步与工作区晋升为主。'}
+                      ?? '安装前将执行发布方、签名、依赖与风险预检；生产来源以 Registry 同步与工作区晋升为主。'}
                   </p>
                 </div>
                 {isAdmin && canWrite && (
@@ -633,9 +649,9 @@ export default function Skills() {
                     </button>
                   ))}
                 </div>
-                <select value={storeChannelFilter} onChange={(event) => setStoreChannelFilter(event.target.value as typeof storeChannelFilter)} className="h-9 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 text-[11px]" aria-label="货源筛选">
-                  <option value="all">全部货源</option>
-                  <option value="builtin">平台内置（演示）</option>
+                <select value={storeChannelFilter} onChange={(event) => setStoreChannelFilter(event.target.value as typeof storeChannelFilter)} className="h-9 rounded-lg border border-[var(--border)] bg-[var(--bg)] px-2.5 text-[11px]" aria-label="来源筛选">
+                  <option value="all">全部来源</option>
+                  <option value="builtin">平台内置</option>
                   <option value="registry">企业 Registry</option>
                   <option value="promoted">工作区晋升</option>
                 </select>
@@ -900,7 +916,7 @@ export default function Skills() {
                     </div>
 
                     <dl className="skill-store-card__foot">
-                      <div><dt>货源</dt><dd>{market.channelLabel ?? (market.channel === 'registry' ? '企业 Registry' : market.channel === 'promoted' ? '工作区晋升' : '平台内置（演示）')}</dd></div>
+                      <div><dt>来源</dt><dd>{market.channelLabel ?? (market.channel === 'registry' ? '企业 Registry' : market.channel === 'promoted' ? '工作区晋升' : '平台内置')}</dd></div>
                       <div><dt>频道</dt><dd className="font-mono">{market.releaseChannel ?? 'stable'}</dd></div>
                       <div><dt>发布方</dt><dd>{market.publisher ?? '社区发布方'}</dd></div>
                       <div><dt>签名</dt><dd className={market.signed ? 'text-[var(--success)]' : 'text-[var(--warning)]'}>{market.signed ? '已验证' : '待验证'}</dd></div>

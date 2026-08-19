@@ -854,6 +854,7 @@ export function useChat(agentMeta?: { name: string }) {
   // 超时监控：超时自动 abort + 写错误
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deletedSessionIdsRef = useRef<Set<string>>(new Set());
+  const deletedConversationIdsRef = useRef<Set<string>>(new Set());
 
   /* ==================== 内部：启动流式 ==================== */
 
@@ -1508,7 +1509,12 @@ export function useChat(agentMeta?: { name: string }) {
 
   /** 将当前工作区的只读历史记录并入本地会话，并剔除服务端已不存在的残留。 */
   const importSessions = useCallback((sessions: ChatSession[], opts?: { workspaceId?: string; reconcile?: boolean }) => {
-    const filtered = sessions.filter((session) => session.id && !deletedSessionIdsRef.current.has(session.id));
+    const filtered = sessions.filter((session) => {
+      if (!session.id || deletedSessionIdsRef.current.has(session.id)) return false;
+      const convId = session.conversationId;
+      if (convId && deletedConversationIdsRef.current.has(convId)) return false;
+      return true;
+    });
     if (filtered.length) dispatch({ type: 'merge_sessions', sessions: filtered });
     // 仅在拿到非空权威清单时 reconcile；空数组可能是 owner 过滤 / 瞬态空响应，切勿误删本地会话记录。
     if (opts?.reconcile && opts.workspaceId && filtered.length > 0) {
@@ -1622,6 +1628,8 @@ export function useChat(agentMeta?: { name: string }) {
   const delSession = useCallback(async (id: string) => {
     if (!id) return;
     deletedSessionIdsRef.current.add(id);
+    const convId = state.sessions[id]?.conversationId;
+    if (convId) deletedConversationIdsRef.current.add(convId);
     dispatch({ type: 'del_session', id });
     if (isMockChatMode()) return;
     try {
@@ -1629,7 +1637,7 @@ export function useChat(agentMeta?: { name: string }) {
     } catch {
       // 本地已删；服务端失败时 tombstone 阻止 importSessions 回灌
     }
-  }, []);
+  }, [state.sessions]);
   const switchSession = useCallback((id: string) => dispatch({ type: 'switch', id }), []);
   const togglePin = useCallback((id: string) => {
     const sess = state.sessions[id];
@@ -2167,6 +2175,12 @@ export function useChat(agentMeta?: { name: string }) {
   const setDebugOpen = useCallback((open: boolean) => dispatch({ type: 'set_debug', open }), []);
   const clearRequests = useCallback(() => dispatch({ type: 'clear_requests' }), []);
 
+  const isConversationDeleted = useCallback((conversationId?: string | null) => {
+    if (!conversationId) return false;
+    return deletedConversationIdsRef.current.has(conversationId)
+      || deletedSessionIdsRef.current.has(conversationId);
+  }, []);
+
   return {
     state,
     activeSession: state.sessions[state.activeId],
@@ -2181,6 +2195,7 @@ export function useChat(agentMeta?: { name: string }) {
     setCollaborationMode,
     clearActive,
     delSession,
+    isConversationDeleted,
     switchSession,
     togglePin,
     toggleStar,

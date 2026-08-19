@@ -99,7 +99,7 @@ export class ApiClient {
         }
         const hint = this.baseURL
           ? `无法连接控制面 ${this.baseURL}，请先启动：cd backend && make run`
-          : '无法连接控制面（同源 /api → Vite 代理 → :8089 网关）。请确认已启动粗粒度栈（cd backend && make compose-up-coarse），并重启前端 dev（环境变量变更需重启 Vite）';
+          : '无法连接控制面（同源 /api → Vite 代理 → :8089 网关）。请确认已启动后端栈（cd backend && make compose-up-monolith 或 make run），并重启前端 dev（环境变量变更需重启 Vite）';
         throw new ApiError('E_NETWORK', hint, 0);
       }
       let json: ApiResponse<T>;

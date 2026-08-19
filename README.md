@@ -209,28 +209,23 @@
 └────────────────────────────┬─────────────────────────────────┘
                              │ 同源 /api（开发态 Vite 代理）
 ┌────────────────────────────▼─────────────────────────────────┐
-│  de-gateway :8089 · Envoy 粗粒度路由                          │
-└───┬──────────────┬──────────────┬──────────────┬─────────────┘
-    │              │              │              │
-    ▼              ▼              ▼              ▼
- de-sys:8100   de-collab:8101  de-cap:8102   de-workflow:8103
- 平台/策略      协作/伙伴       能力五中心      工作流 + Temporal
- 审计/运营聚合   会话/审核/附件   模型知识记忆    Worker
-                             技能/渠道
-    │              │              │
-    └──────────────┴──────────────┴──► FastAPI 执行面
-                                         :8091 agent-runtime
-                                         :8092 RAG
-                                         :8093 skill-runtime
+│  de-gateway :8089 · Envoy（monolith 或 coarse 路由）           │
+└───────────────┬──────────────────────────────┬───────────────┘
+                │ 默认 monolith                 │ coarse 四进程
+                ▼                               ▼
+         de-app:8100                    de-sys / collab / cap / workflow
+    sys + collab + cap 合一              :8100–8103
+                │
+                └──► de-skill-runtime :8093（沙箱，必须独立）
+                     de-agent / de-rag（coarse 或按需）
 ```
 
-一次「人对在岗数字工作伙伴发消息」的典型路径：
+一次「人对在岗数字工作伙伴发消息」的典型路径（monolith）：
 
 ```text
-控制台 → gateway → de-collab（会话/治理）
-                 ↘ de-cap（模型路由 / 知识 / 技能 / 记忆）
-                 ↘ agent-runtime / rag / skill-runtime（推理与工具）
-                 ↘ de-sys（策略评估 / 审计写入 / 运营聚合）
+控制台 → gateway → de-app（会话/治理 + 模型/知识/技能/记忆 + 策略/审计）
+                 ↘ de-skill-runtime（技能沙箱执行）
+                 ↘ de-workflow（可选，流程编排）
 ```
 
 ### 3.3 技术栈
@@ -246,12 +241,14 @@
 
 | 单元 | 端口 | 产品侧覆盖 | 内含逻辑模块 |
 |------|------|------------|--------------|
-| **de-gateway** | 8089 | 统一 API 入口 | Envoy 粗粒度路由 |
-| **de-sys** | 8100 | 工作区、平台设置、零信任、审计、运营总览聚合 | platform · policy · audit · ops |
-| **de-collab** | 8101 | 专家协作、数字工作伙伴、任务、审核、附件/分享 | collab · employee · session governance |
-| **de-cap** | 8102 | 模型 / 知识 / 记忆 / 技能 / 渠道 | model · knowledge · memory · skill · channel |
-| **de-workflow** | 8103 | 工作流程与流程技能发布 | workflow HTTP + Temporal Worker |
-| **执行面** | 8091–8093 | 推理、检索、技能执行 | agent-runtime · rag · skill-runtime |
+| **de-gateway** | 8089 | 统一 API 入口 | Envoy monolith / coarse |
+| **de-app** | 8100 | **monolith 默认**：上述 sys+collab+cap 全部 | sys + collab + cap |
+| **de-sys** | 8100 | coarse：工作区、平台设置、零信任、审计、运营总览 | platform · policy · audit · ops |
+| **de-collab** | 8101 | coarse：专家协作、数字工作伙伴、任务、审核 | collab · employee |
+| **de-cap** | 8102 | coarse：模型 / 知识 / 记忆 / 技能 / 渠道 | model · knowledge · memory · skill · channel |
+| **de-workflow** | 8103 | 工作流程与流程技能发布（可选） | workflow HTTP + Temporal Worker |
+| **de-skill-runtime** | 8093 | 技能沙箱执行（必须） | skill-runtime |
+| **执行面** | 8091–8092 | coarse 或按需：推理、RAG | agent-runtime · rag |
 
 > 已退役：`de-core:8080`、细端口 `de-policy:8094` / `de-audit:8095`（能力并入 de-sys）。
 
@@ -265,7 +262,7 @@
 | **运营聚合** | `/api/home/extra`、`/api/home/kpis`、`/api/operations/overview` 为 live-aggregate；成本仅认 UsageMeters |
 | **能力引用** | 数字工作伙伴只装配已发布的模型/知识/技能/渠道版本 |
 | **观测** | 各服务 `/metrics`；Copilot 流式经网关超时约 180s |
-| **本机二进制** | LaunchAgent 读 `backend/bin/de-*`；改 Go 后需重新 `go build -o bin/...` 再重启 |
+| **本机二进制** | LaunchAgent 读 `backend/bin/de-*`（默认 `de-app`）；改 Go 后需 `make build` 再 kickstart |
 
 ### 3.6 仓库结构
 
@@ -275,13 +272,13 @@ digital-employee-platform/
 │   ├── web/                 # React 控制台
 │   └── packages/            # api · types · ui · utils · hooks
 ├── backend/
-│   ├── cmd/                 # de-sys · de-collab · de-cap · de-workflow
+│   ├── cmd/                 # de-app · de-sys · de-collab · de-cap · de-workflow
 │   ├── services/            # 一部署单元一目录（Dockerfile · SERVICE.md · FastAPI）
 │   ├── infra/ · obs/        # 基础服务与可观测
 │   ├── internal/            # apprun · server(ServiceMode) · store …
 │   ├── runtimes/            # 测试辅助（向量 / RunToken 等）
-│   └── deploy/              # compose · envoy.coarse.yaml · topology-split
-├── scripts/dev-stack/       # 本机 LaunchAgent 粗粒度联调栈
+│   └── deploy/              # compose · envoy.monolith.yaml · envoy.coarse.yaml
+├── scripts/dev-stack/       # 本机 LaunchAgent 联调栈（默认 monolith）
 └── docs/                    # 架构 · 模块 · 规格 · 视觉
 ```
 
@@ -440,11 +437,11 @@ digital-employee-platform/
 | 服务 | 端口 | 说明 |
 |------|------|------|
 | **de-gateway** | 8089 | 统一 API 入口（健康检查 `/healthz`） |
-| de-sys | 8100 | 平台 / 策略 / 审计 / 运营聚合 |
-| de-collab | 8101 | 协作 / 伙伴 / 任务 / 审核 |
-| de-cap | 8102 | 模型 / 知识 / 记忆 / 技能 / 渠道 |
-| de-workflow | 8103 | 工作流 + Temporal Worker |
-| agent / rag / skill | 8091–8093 | FastAPI 执行面 |
+| **de-app** | 8100 | **monolith 默认**：sys + collab + cap |
+| de-sys / de-collab / de-cap | 8100–8102 | coarse 四进程模式 |
+| de-workflow | 8103 | 工作流（可选） |
+| de-skill-runtime | 8093 | 技能沙箱（必须） |
+| agent / rag | 8091–8092 | coarse 或按需 |
 | Vite 控制台 | 5173 | 前端开发服 |
 
 ### 5.3 路径 A：Compose（推荐）
@@ -453,8 +450,16 @@ digital-employee-platform/
 
 ```bash
 cd backend
-make compose-up-coarse   # PG/Redis + 四 Go + FastAPI + gateway:8089
+make compose-up-monolith   # PG/Redis + de-app + de-skill + gateway:8089
 # 等价：make run
+# 可选工作流：make compose-up-monolith-workflow
+```
+
+粗粒度四进程（规模化 / 对照）：
+
+```bash
+make compose-up-coarse
+make smoke-coarse
 ```
 
 验证网关：
@@ -473,29 +478,28 @@ cd backend && make compose-up-staging
 
 ```bash
 cd backend
-make run-sys        # :8100
+make run-app        # :8100 monolith
+make run-sys        # :8100 sys only
 make run-collab     # :8101
 make run-cap        # :8102
 make run-workflow   # :8103
-make runtime && make rag && make skill
+make skill          # :8093 沙箱
 ```
 
 ### 5.4 路径 B：本机 LaunchAgent（常驻联调）
 
-适合日常改 Go / 前端、希望栈常驻。脚本：[`scripts/dev-stack/run-stack.sh`](scripts/dev-stack/run-stack.sh)，Label：`com.digital-employee.dev-stack`。
+适合日常改 Go / 前端、希望栈常驻。脚本：[`scripts/dev-stack/run-stack.sh`](scripts/dev-stack/run-stack.sh)（**默认 `DE_STACK=monolith`**），Label：`com.digital-employee.dev-stack`。
 
-**重要：** 栈进程读取的是仓库内 **`backend/bin/de-*`**，不是 `/tmp` 临时编译产物。改控制面代码后必须重编再重启：
+**重要：** 栈进程读取的是仓库内 **`backend/bin/de-*`**。改控制面代码后必须重编再重启：
 
 ```bash
 cd backend
-go build -o bin/de-sys ./cmd/de-sys
-go build -o bin/de-collab ./cmd/de-collab
-go build -o bin/de-cap ./cmd/de-cap
-go build -o bin/de-workflow ./cmd/de-workflow
+make build   # 含 bin/de-app
 launchctl kickstart -k "gui/$(id -u)/com.digital-employee.dev-stack"
+# 回退四进程：DE_STACK=coarse launchctl kickstart -k "gui/$(id -u)/com.digital-employee.dev-stack"
 ```
 
-常用监听：gateway `8089`、collab `8101`、cap `8102`、vite `5173`。
+常用监听（monolith）：gateway `8089`、de-app `8100`、skill `8093`、vite `5173`。
 
 ### 5.5 前端
 
@@ -553,13 +557,13 @@ git diff --check
 |------|------|
 | 运营总览仍见演示金额/旧告警文案 | 确认已编到 `backend/bin` 并 `kickstart`；浏览器强刷；检查是否打到旧进程 |
 | 前端有数据但像 Mock | 确认 `VITE_USE_MOCK=false` 且 Vite 代理目标为 `:8089` |
-| `healthz` 失败 | 先起 PG/Redis 与 gateway；`lsof -iTCP:8089,8100,8101,8102,8103` 看监听 |
+| `healthz` 失败 | 先起 PG/Redis 与 gateway；monolith 看 `:8100/:8093`，coarse 看 `:8100–8103` |
 | Go 改了不生效 | 未写入 `backend/bin` 或未重启 LaunchAgent / compose 容器 |
 | 跨工作区资源 404 / scope 错 | 请求头是否带正确 `x-workspace-id` |
 
 ### 5.9 建议上手顺序
 
-1. `backend && make compose-up-coarse` → `curl :8089/healthz`  
+1. `backend && make compose-up-monolith` → `curl :8089/healthz`  
 2. `frontend && pnpm --filter web dev` → 用 `admin@` 登录  
 3. 走一遍：能力接入 → 数字工作伙伴上岗 → 专家协作 → 看运营总览  
 4. 日常开发可切 LaunchAgent；每次改 Go 走「build → kickstart」  

@@ -348,7 +348,7 @@ func (s *Server) skillRun(ctx toolRunContext, t *registeredTool, sk map[string]a
 	cmd := skillCommandFromArgs(call.Args)
 
 	track := func(ms int, ok bool, source string) {
-		s.recordSkillInvocation(ctx.WorkspaceID, sk, ms, ok, actor, source)
+		s.recordSkillInvocationWithRequest(ctx.Request, ctx.WorkspaceID, sk, ms, ok, actor, source)
 		if ctx.DigitalEmployee != "" {
 			s.recordEmployeeRuntime(ctx.DigitalEmployee, ms, ok)
 		}
@@ -415,13 +415,12 @@ func (s *Server) skillRun(ctx toolRunContext, t *registeredTool, sk map[string]a
 	govPolicy := s.ensureSkillGovernanceLocked(skillID)
 	pkgPayload := skillPackagePayload(sk2)
 	if dec.Blocked {
-		s.recordSkillInvocationLocked(ctx.WorkspaceID, sk2, int(time.Since(started).Milliseconds()), false, actor, "Copilot · 策略拦截")
+		ms := int(time.Since(started).Milliseconds())
 		s.Store.Unlock()
-		s.Store.Persist("skill_health")
-		s.Store.Persist("skill_extra")
+		s.recordSkillInvocationWithRequest(ctx.Request, ctx.WorkspaceID, sk2, ms, false, actor, "Copilot · 策略拦截")
 		return toolExecResult{
 			Status: "denied", Permission: "policy", Error: dec.Reason,
-			Output: "策略拦截：" + dec.Reason, DurationMs: int(time.Since(started).Milliseconds()),
+			Output: "策略拦截：" + dec.Reason, DurationMs: ms,
 		}
 	}
 	s.Store.Unlock()
@@ -516,11 +515,12 @@ func (s *Server) skillRunDocxBuiltin(
 	govPolicy := s.ensureSkillGovernanceLocked(skillID)
 	pkgPayload := skillPackagePayload(sk2)
 	if dec.Blocked {
-		s.recordSkillInvocationLocked(ctx.WorkspaceID, sk2, int(time.Since(started).Milliseconds()), false, "助手", "Copilot · 策略拦截")
+		ms := int(time.Since(started).Milliseconds())
 		s.Store.Unlock()
+		s.recordSkillInvocationWithRequest(ctx.Request, ctx.WorkspaceID, sk2, ms, false, "助手", "Copilot · 策略拦截")
 		return toolExecResult{
 			Status: "denied", Permission: "policy", Error: dec.Reason,
-			Output: "策略拦截：" + dec.Reason, DurationMs: int(time.Since(started).Milliseconds()),
+			Output: "策略拦截：" + dec.Reason, DurationMs: ms,
 		}
 	}
 	s.Store.Unlock()
