@@ -142,6 +142,19 @@ Replay **禁止**再调用模型或工具；只返回 snapshot + 已落盘 Loop/
 
 未纳入本切片：cn-east/south 双活集群、Slack inbound、会签工作流引擎、评测集独立服务。
 
+## R5 横切进程与副本（2026-08-19）
+
+Store 切开后允许把 Policy / Audit 从 de-sys **拆成独立二进制**（`:8104` / `:8105`），**不是** 16 微服务。默认 `make compose-up-coarse` 仍由 de-sys 吸收这两类路由，避免破坏 4 进程。
+
+| 项 | 实现 |
+|---|---|
+| Policy / Audit 进程 | `cmd/de-policy` · `cmd/de-audit`；`DE_CROSSCUTTING_SPLIT=1` 时 sys 丢弃对应 OwnsPath / collections |
+| Connect | `de.policy.v1` / `de.audit.v1` 挂在 policy、audit，以及吸收模式下的 sys |
+| 多活 | `DE_REPLICA_MODE=standby` 拒写；standby 用 `DE_DATABASE_REPLICA_URL`；启动探测 `pg_is_in_recovery()` 为真则强制 standby。`/readyz` 露出 `postgresRecovery` |
+| 隔离 | gVisor / Milvus 仍属 cap 后续层，**不阻塞** 本切片 |
+
+未纳入：K8s 多区域主动-主动、Milvus/gVisor 生产集群。
+
 ## 后果
 
 - 阶段 1 实现飞书 Session Routing、Snapshot 落盘、Replay API 时不得新增平行 DTO。

@@ -12,6 +12,7 @@ services:
       POSTGRES_PASSWORD: de
       POSTGRES_DB: digital_employee
       TZ: UTC
+    command: ["postgres", "-c", "wal_level=replica", "-c", "max_wal_senders=10", "-c", "hot_standby=on"]
     ports:
       - "5432:5432"
     volumes:
@@ -23,6 +24,42 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+    networks:
+      - de_net
+
+  # Optional streaming replica for DE_REPLICA_MODE=standby (not cn-east/south dual-active).
+  postgres-replica:
+    image: postgres:16-alpine
+    container_name: de-postgres-replica
+    restart: unless-stopped
+    profiles: ["replica"]
+    user: postgres
+    environment:
+      POSTGRES_USER: de
+      POSTGRES_PASSWORD: de
+      POSTGRES_DB: digital_employee
+      PGPASSWORD: de
+      TZ: UTC
+    ports:
+      - "5433:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        until pg_isready -h postgres -U de -d digital_employee; do sleep 1; done
+        rm -rf /var/lib/postgresql/data/*
+        pg_basebackup -h postgres -U de -D /var/lib/postgresql/data -Fp -Xs -P -R
+        echo "hot_standby = on" >> /var/lib/postgresql/data/postgresql.auto.conf
+        exec postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U de -d digital_employee && psql -U de -d digital_employee -tAc 'SELECT pg_is_in_recovery()' | grep -q t"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 20s
     networks:
       - de_net
 

@@ -1,4 +1,5 @@
-// Package apprun boots a coarse-grained control-plane process (de-sys / collab / cap / workflow).
+// Package apprun boots a coarse-grained control-plane process
+// (de-sys / collab / cap / workflow, plus optional de-policy / de-audit).
 package apprun
 
 import (
@@ -28,7 +29,7 @@ func Run(opts Options) error {
 	if opts.Mode == "" || opts.Mode == server.ModeAll {
 		// ModeAll is for unit tests only; deployment binaries must set ModeSys/Collab/Cap/Workflow.
 		if opts.Mode == server.ModeAll && os.Getenv("DE_ALLOW_MODE_ALL") != "1" {
-			return fmt.Errorf("refusing ModeAll deployment (set DE_SERVICE=sys|collab|cap|workflow); use make compose-up-coarse")
+			return fmt.Errorf("refusing ModeAll deployment (set DE_SERVICE=sys|collab|cap|workflow|policy|audit); use make compose-up-coarse")
 		}
 	}
 	if opts.Addr == "" {
@@ -39,6 +40,17 @@ func Run(opts Options) error {
 	pg, err := infra.OpenPostgres(ctx)
 	if err != nil {
 		return err
+	}
+	replicaForced := false
+	postgresRecovery := false
+	if pg != nil {
+		if rec, recErr := infra.PostgresInRecovery(ctx, pg); recErr != nil {
+			log.Printf("pg_is_in_recovery: %v", recErr)
+		} else if rec {
+			log.Printf("postgres in recovery: forcing replica=standby")
+			replicaForced = true
+			postgresRecovery = true
+		}
 	}
 	rdb, err := infra.OpenRedis(ctx)
 	if err != nil {
@@ -88,9 +100,8 @@ func Run(opts Options) error {
 	})
 	st.SetPersistHook(func(ctx context.Context, collection string, items []map[string]any) error {
 		if kernel.Owns(collection) {
-			if err := kernel.UpsertCollection(ctx, collection, items); err != nil {
-				return err
-			}
+			// R2 收尾：内核四表只写 typed PG，不再双写 kv_documents。
+			return kernel.UpsertCollection(ctx, collection, items)
 		}
 		// Multi-process safe default: upsert merge. Full replace only for shrink-heavy single-writer collections.
 		if store.ShouldReplaceOnPersist(collection) {
@@ -113,24 +124,50 @@ func Run(opts Options) error {
 				items = rows
 			}
 		}
-		if len(items) == 0 {
+		if len(items) == 0 && !kernel.Owns(coll) {
 			kvItems, err := kv.List(ctx, coll)
 			if err != nil {
 				log.Printf("hydrate %s: %v", coll, err)
 				continue
 			}
 			items = kvItems
+		} else if len(items) == 0 && kernel.Owns(coll) {
+			// One-time lift: empty typed table may still have pre-R2 kv rows.
+			kvItems, err := kv.List(ctx, coll)
+			if err != nil {
+				log.Printf("hydrate kv fallback %s: %v", coll, err)
+			} else if len(kvItems) > 0 {
+				items = kvItems
+				if err := kernel.UpsertCollection(ctx, coll, kvItems); err != nil {
+					log.Printf("kernel lift %s: %v", coll, err)
+				}
+			}
 		}
 		if len(items) > 0 {
 			st.HydrateFrom(coll, items)
 			hydrated++
 		}
 	}
-	if n, _ := kv.Count(ctx, store.SeedCollection(domain)); n == 0 {
-		if err := st.PersistNow(ctx); err != nil {
-			log.Printf("initial persist: %v", err)
+	if seed := store.SeedCollection(domain); seed != "" {
+		n := 0
+		if kernel.Owns(seed) {
+			rows, err := kernel.List(ctx, seed)
+			if err != nil {
+				log.Printf("kernel seed count %s: %v", seed, err)
+			} else {
+				n = len(rows)
+			}
 		} else {
-			log.Printf("seeded %s collections into postgres", domain)
+			n, _ = kv.Count(ctx, seed)
+		}
+		if n == 0 {
+			if err := st.PersistNow(ctx); err != nil {
+				log.Printf("initial persist: %v", err)
+			} else {
+				log.Printf("seeded %s collections into postgres", domain)
+			}
+		} else if hydrated > 0 {
+			log.Printf("hydrated %d durable collections from postgres [domain=%s]", hydrated, domain)
 		}
 	} else if hydrated > 0 {
 		log.Printf("hydrated %d durable collections from postgres [domain=%s]", hydrated, domain)
@@ -147,6 +184,9 @@ func Run(opts Options) error {
 	srv := server.New(st)
 	srv.Mode = opts.Mode
 	srv.PG = pg
+	srv.Kernel = kernel
+	srv.ReplicaForced = replicaForced
+	srv.PostgresRecovery = postgresRecovery
 	srv.Cache = &infra.Cache{RDB: rdb}
 	srv.AuditSink = auditSink
 	srv.UsageSink = &infra.UsageSink{Pool: pg}

@@ -115,6 +115,7 @@ async def run(request: Request) -> Any:
             user_input=user_input,
             provider=provider,
             chunks=chunk_text(str(llm), 24),
+            snapshot=snapshot,
         ):
             yield _sse(str(ev.get("type") or "message"), ev)
 

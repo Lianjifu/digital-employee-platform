@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -46,7 +47,8 @@ CREATE TABLE IF NOT EXISTS cap.channel_inbound (
 );
 `
 
-// KernelStore dual-writes Agent OS aggregate roots (sessions/messages/snapshots/inbound).
+// KernelStore is the unique writer for Agent OS aggregate roots
+// (sessions / messages / context_snapshots / channel_inbound).
 type KernelStore struct {
 	Pool *pgxpool.Pool
 }
@@ -276,6 +278,30 @@ func (k *KernelStore) listMessages(ctx context.Context) ([]map[string]any, error
 		})
 	}
 	return out, rows.Err()
+}
+
+// GetSnapshot returns the ContextSnapshot payload for Replay. Nil means miss.
+func (k *KernelStore) GetSnapshot(ctx context.Context, workspaceID, conversationID, correlationID string) (map[string]any, error) {
+	if !k.Available() || strings.TrimSpace(correlationID) == "" {
+		return nil, nil
+	}
+	row := k.Pool.QueryRow(ctx, `
+		SELECT payload FROM collab.context_snapshots
+		WHERE correlation_id = $1
+		  AND ($2 = '' OR workspace_id = $2)
+		  AND ($3 = '' OR conversation_id = $3 OR conversation_id = '')
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, correlationID, workspaceID, conversationID)
+	var raw []byte
+	if err := row.Scan(&raw); err != nil {
+		return nil, nil
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // FlattenMessageBuckets turns kv snapshots {id: conv, messages: [...]} into per-message rows.

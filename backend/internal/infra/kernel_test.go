@@ -1,6 +1,9 @@
 package infra
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestFlattenAndGroupMessageBuckets(t *testing.T) {
 	buckets := []map[string]any{
@@ -33,5 +36,13 @@ func TestKernelOwns(t *testing.T) {
 	k := &KernelStore{}
 	if !k.Owns("sessions") || !k.Owns("channel_inbound") || k.Owns("skills") {
 		t.Fatal("kernel ownership mismatch")
+	}
+}
+
+func TestGetSnapshotNilPool(t *testing.T) {
+	k := &KernelStore{}
+	got, err := k.GetSnapshot(context.Background(), "w1", "c1", "corr-1")
+	if err != nil || got != nil {
+		t.Fatalf("nil pool %v %v", got, err)
 	}
 }

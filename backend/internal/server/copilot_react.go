@@ -40,6 +40,8 @@ type reactTurnInput struct {
 	RiskLevel       string
 	RAGPrefetched   bool // 主路径已预检索知识并写入 system，跳过 bootstrap retrieve
 	SnapshotID      string
+	Binding         map[string]any
+	MemoryProvenance []map[string]any
 }
 
 type reactTurnResult struct {

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Iterator
 
+from app.tools import dispatch_tools
+
 
 def enabled_tools(payload: dict[str, Any]) -> list[str]:
     tools = payload.get("enabledTools") or []
@@ -24,39 +26,18 @@ def tool_events(
     corr: str,
     snap_id: str,
     user_input: str,
+    snapshot: dict[str, Any] | None = None,
+    retrieve=None,
 ) -> list[dict[str, Any]]:
-    """Emit tool LoopEvents matching Go bootstrap (knowledge.retrieve first)."""
-    events: list[dict[str, Any]] = []
-    if "knowledge.retrieve" in tools:
-        events.append(
-            {
-                "type": "tool",
-                "stage": "react",
-                "name": "knowledge.retrieve",
-                "status": "ok",
-                "id": "tc_bootstrap_kr",
-                "correlationId": corr,
-                "snapshotId": snap_id,
-                "args": {"query": user_input},
-                "hits": [],
-            }
-        )
-    for name in tools:
-        if name == "knowledge.retrieve":
-            continue
-        events.append(
-            {
-                "type": "tool",
-                "stage": "react",
-                "name": name,
-                "status": "skipped",
-                "id": f"tc_{name.replace('.', '_')}",
-                "correlationId": corr,
-                "snapshotId": snap_id,
-                "reason": "sidecar observes registry; execution stays on Go until remote dispatch is complete",
-            }
-        )
-    return events
+    kwargs: dict[str, Any] = {
+        "corr": corr,
+        "snap_id": snap_id,
+        "user_input": user_input,
+        "snapshot": snapshot,
+    }
+    if retrieve is not None:
+        kwargs["retrieve"] = retrieve
+    return dispatch_tools(tools, **kwargs)
 
 
 def iter_run_events(
@@ -69,6 +50,8 @@ def iter_run_events(
     user_input: str,
     provider: str,
     chunks: list[str],
+    snapshot: dict[str, Any] | None = None,
+    retrieve=None,
 ) -> Iterator[dict[str, Any]]:
     yield {
         "type": "stage",
@@ -79,7 +62,9 @@ def iter_run_events(
         "modelId": model_id,
         "runtimeMode": "remote",
     }
-    for ev in tool_events(tools, corr=corr, snap_id=snap_id, user_input=user_input):
+    for ev in tool_events(
+        tools, corr=corr, snap_id=snap_id, user_input=user_input, snapshot=snapshot, retrieve=retrieve
+    ):
         yield ev
     for chunk in chunks:
         yield {

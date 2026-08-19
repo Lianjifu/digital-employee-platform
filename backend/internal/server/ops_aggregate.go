@@ -121,7 +121,7 @@ func (s *Server) opsOverviewLive(r *http.Request) (any, error) {
 		"generatedAt":      time.Now().UTC().Format(time.RFC3339),
 		"source":           "live-aggregate",
 		"instanceId":       instanceID(),
-		"replicaRole":      replicaRole(),
+		"replicaRole":      s.replicaRole(),
 		"digitalEmployees": map[string]any{"active": activeDE, "pending": pendingDE},
 		"tasks":            map[string]any{"open": openTasks, "risk": riskTasks},
 		"channels":         map[string]any{"deadLetters": dlq},

@@ -1,8 +1,11 @@
 package store
 
-import "strings"
+import (
+	"os"
+	"strings"
+)
 
-// Domain is the coarse-grained write owner for durable collections (R1.2 / R3).
+// Domain is the coarse-grained write owner for durable collections (R1.2 / R3 / R5).
 type Domain string
 
 const (
@@ -11,6 +14,8 @@ const (
 	DomainCollab   Domain = "collab"
 	DomainCap      Domain = "cap"
 	DomainWorkflow Domain = "workflow"
+	DomainPolicy   Domain = "policy"
+	DomainAudit    Domain = "audit"
 )
 
 // KernelCollections are promoted off kv_documents into typed PG tables (R2).
@@ -22,9 +27,15 @@ var KernelCollections = []string{
 }
 
 var collectionDomain = map[string]Domain{
-	"workspaces":        DomainSys,
-	"backups":           DomainSys,
-	"release_approvals": DomainSys,
+	"workspaces": DomainSys,
+	"backups":    DomainSys,
+
+	"release_approvals": DomainPolicy,
+	"zt_policies":       DomainPolicy,
+	"access_grants":     DomainPolicy,
+	"access_reviews":    DomainPolicy,
+	"sod_rules":         DomainPolicy,
+	"temp_auths":        DomainPolicy,
 
 	"sessions":          DomainCollab,
 	"conversations":     DomainCollab,
@@ -66,6 +77,22 @@ var collectionDomain = map[string]Domain{
 	"workflow_skills": DomainWorkflow,
 }
 
+// AbsorbCrosscutting is the R5 default: de-sys still hydrates/serves policy+audit
+// so the 4-process coarse compose stays valid. Set DE_CROSSCUTTING_SPLIT=1 when
+// running independent de-policy / de-audit binaries so sys drops those collections.
+func AbsorbCrosscutting() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("DE_CROSSCUTTING_SPLIT")))
+	return v != "1" && v != "true" && v != "yes"
+}
+
+func ownsPolicy(d Domain) bool {
+	return d == DomainPolicy || (d == DomainSys && AbsorbCrosscutting())
+}
+
+func ownsAudit(d Domain) bool {
+	return d == DomainAudit || (d == DomainSys && AbsorbCrosscutting())
+}
+
 // DomainFromMode maps ServiceMode / process name to a write domain.
 func DomainFromMode(mode string) Domain {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
@@ -77,6 +104,10 @@ func DomainFromMode(mode string) Domain {
 		return DomainCap
 	case "workflow", "de-workflow":
 		return DomainWorkflow
+	case "policy", "de-policy":
+		return DomainPolicy
+	case "audit", "de-audit":
+		return DomainAudit
 	default:
 		return DomainAll
 	}
@@ -90,7 +121,7 @@ func CollectionDomain(collection string) Domain {
 	return DomainAll
 }
 
-// IsKernelCollection reports collections dual-written to typed PG tables.
+// IsKernelCollection reports collections stored only in typed PG tables (not kv_documents).
 func IsKernelCollection(collection string) bool {
 	for _, name := range KernelCollections {
 		if name == collection {
@@ -107,7 +138,8 @@ func CollectionsForDomain(d Domain) []string {
 	}
 	out := make([]string, 0, 16)
 	for _, name := range DurableCollections {
-		if CollectionDomain(name) == d {
+		owner := CollectionDomain(name)
+		if owner == d || (d == DomainSys && AbsorbCrosscutting() && (owner == DomainPolicy || owner == DomainAudit)) {
 			out = append(out, name)
 		}
 	}
@@ -123,6 +155,10 @@ func SeedCollection(d Domain) string {
 		return "skills"
 	case DomainWorkflow:
 		return "workflows"
+	case DomainPolicy:
+		return "release_approvals"
+	case DomainAudit:
+		return "" // audit.events in PG; no kv seed
 	default:
 		return "workspaces"
 	}
@@ -148,7 +184,13 @@ func (s *Store) CanWrite(collection string) bool {
 		return true
 	}
 	owner := CollectionDomain(collection)
-	return owner == DomainAll || owner == d
+	if owner == DomainAll || owner == d {
+		return true
+	}
+	if d == DomainSys && AbsorbCrosscutting() && (owner == DomainPolicy || owner == DomainAudit) {
+		return true
+	}
+	return false
 }
 
 // DropUnowned clears in-memory slices this process is not allowed to write (R1.2).
@@ -161,7 +203,18 @@ func (s *Store) DropUnowned(d Domain) {
 	if d != DomainSys {
 		s.Workspaces = nil
 		s.Backups = nil
+	}
+	if !ownsPolicy(d) {
 		s.ReleaseApprovals = nil
+		s.ZTPolicies = nil
+		s.TempAuths = nil
+		s.AccessGrants = nil
+		s.AccessReviews = nil
+		s.SodRules = nil
+		s.ZTEvents = nil
+	}
+	if !ownsAudit(d) {
+		s.Audits = nil
 	}
 	if d != DomainCollab {
 		s.Sessions = nil

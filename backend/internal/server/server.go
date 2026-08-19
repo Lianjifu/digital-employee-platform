@@ -43,6 +43,10 @@ type Server struct {
 	WeixinHTTP   *http.Client
 	RuntimeHTTP  *http.Client
 	PeerHTTP     *http.Client
+	Kernel       *infra.KernelStore
+	// ReplicaForced is set when Postgres is in recovery (pg_is_in_recovery).
+	ReplicaForced    bool
+	PostgresRecovery bool
 }
 
 func New(st *store.Store) *Server {
@@ -74,23 +78,25 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		status := map[string]any{
-			"status":   "ok",
-			"service":  mode.String(),
-			"mode":     string(mode),
-			"instance": instanceID(),
-			"replica":  replicaRole(),
+			"status":           "ok",
+			"service":          mode.String(),
+			"mode":             string(mode),
+			"instance":         instanceID(),
+			"replica":          s.replicaRole(),
+			"postgresRecovery": s.PostgresRecovery,
 		}
 		response.OK(w, status)
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		status := map[string]any{
-			"status":   "ready",
-			"service":  mode.String(),
-			"mode":     string(mode),
-			"instance": instanceID(),
-			"replica":  replicaRole(),
-			"postgres": s.PG != nil,
-			"redis":    s.Cache != nil && s.Cache.Available(),
+			"status":           "ready",
+			"service":          mode.String(),
+			"mode":             string(mode),
+			"instance":         instanceID(),
+			"replica":          s.replicaRole(),
+			"postgresRecovery": s.PostgresRecovery,
+			"postgres":         s.PG != nil,
+			"redis":            s.Cache != nil && s.Cache.Available(),
 		}
 		if s.PG != nil {
 			if err := s.PG.Ping(r.Context()); err != nil {
@@ -106,12 +112,11 @@ func (s *Server) Handler() http.Handler {
 		}
 		response.OK(w, status)
 	})
-	if mode == ModeAll || mode == ModeSys || mode == ModeCollab || mode == ModeCap {
+	if mode == ModeAll || mode == ModeSys || mode == ModeCollab || mode == ModeCap || mode == ModePolicy || mode == ModeAudit {
 		s.mountConnectRPCForMode(mux, mode)
 		mux.HandleFunc("/connect/", s.handleConnect)
 	}
-	if mode == ModeAll || mode == ModeSys {
-		// Local policy evaluate (absorbs former de-policy :8094)
+	if mode == ModeAll || mode == ModePolicy || (mode == ModeSys && sysAbsorbsCrosscutting()) {
 		mux.HandleFunc("/v1/evaluate", s.handleLocalPolicyEvaluate)
 	}
 	mux.HandleFunc("/metrics", s.metricsPrometheus)

@@ -1361,6 +1361,7 @@ export {
 export type {
   AgentOSErrorCode,
   ContextSnapshot,
+  EmployeeBinding,
   Envelope,
   InboundChannelKind,
   LoopMode,

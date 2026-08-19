@@ -221,6 +221,30 @@ func TestReplicaStandbyRejectsWrites(t *testing.T) {
 	}
 }
 
+func TestReplicaForcedRejectsWrites(t *testing.T) {
+	srv := server.New(store.New())
+	srv.ReplicaForced = true
+	srv.PostgresRecovery = true
+	h := srv.Handler()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"replica":"standby"`) || !strings.Contains(rr.Body.String(), `"postgresRecovery":true`) {
+		t.Fatalf("readyz %d %s", rr.Code, rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/workflows", bytes.NewBufferString(`{"name":"x"}`))
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code == 200 || !strings.Contains(rr.Body.String(), "E_REPLICA_STANDBY") {
+		t.Fatalf("recovery-forced standby must reject writes: %s", rr.Body.String())
+	}
+}
+
 func TestProductionRestrictedRoutingRequiresCountersign(t *testing.T) {
 	t.Setenv("DE_ENV", "production")
 	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "true")

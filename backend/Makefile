@@ -1,4 +1,4 @@
-.PHONY: run test tidy build compose-up compose-up-full compose-up-temporal compose-up-oidc compose-up-authentik compose-up-kafka compose-up-mtls compose-up-spiffe compose-up-coarse compose-up-milvus compose-up-opa compose-up-search compose-up-obs compose-up-staging compose-down compose-ps compose-logs infra-env smoke smoke-coarse test-python runtime rag skill de-workflow docker-engine buf-generate buf-lint worker certs certs-rotate run-sys run-collab run-cap run-workflow
+.PHONY: run test tidy build compose-up compose-up-full compose-up-temporal compose-up-oidc compose-up-authentik compose-up-kafka compose-up-mtls compose-up-spiffe compose-up-coarse compose-up-milvus compose-up-opa compose-up-search compose-up-obs compose-up-staging compose-up-replica compose-down compose-ps compose-logs infra-env smoke smoke-coarse test-python runtime rag skill de-workflow docker-engine buf-generate buf-lint worker certs certs-rotate run-sys run-collab run-cap run-workflow run-policy run-audit
 
 
 export DE_DATABASE_URL ?= postgres://de:de@127.0.0.1:5432/digital_employee?sslmode=disable
@@ -24,6 +24,12 @@ run-cap: infra-env
 run-workflow: infra-env
 	DE_WORKFLOW_HTTP=1 DE_WORKFLOW_WORKER=$${DE_WORKFLOW_WORKER:-0} $(GO) run ./cmd/de-workflow
 
+run-policy: infra-env
+	$(GO) run ./cmd/de-policy
+
+run-audit: infra-env
+	$(GO) run ./cmd/de-audit
+
 test:
 	# Isolate unit tests from a locally running FastAPI RAG on :8092.
 	DE_RAG_URL=http://127.0.0.1:1 $(GO) test ./...
@@ -36,6 +42,8 @@ build:
 	$(GO) build -o ./bin/de-collab ./cmd/de-collab
 	$(GO) build -o ./bin/de-cap ./cmd/de-cap
 	$(GO) build -o ./bin/de-workflow ./cmd/de-workflow
+	$(GO) build -o ./bin/de-policy ./cmd/de-policy
+	$(GO) build -o ./bin/de-audit ./cmd/de-audit
 	$(GO) build -o ./bin/de-local-llm ./cmd/de-local-llm
 
 # Local OpenAI-compatible chat (default :18080) for Copilot when no cloud key is set.
@@ -132,6 +140,25 @@ compose-up-milvus: docker-engine
 	done; \
 	echo "Milvus not healthy yet; check: docker logs de-milvus"; exit 1
 
+compose-up-replica: docker-engine
+	$(COMPOSE) --profile replica up -d
+	@echo "waiting for PG replica recovery..."
+	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do \
+		ok=$$(docker inspect -f '{{.State.Health.Status}}' de-postgres-replica 2>/dev/null || echo starting); \
+		echo "  try $$i: replica=$$ok"; \
+		if [ "$$ok" = "healthy" ]; then \
+			echo "PG replica ready: postgres://de:de@127.0.0.1:5433/digital_employee?sslmode=disable"; \
+			echo "  export DE_DATABASE_REPLICA_URL=postgres://de:de@127.0.0.1:5433/digital_employee?sslmode=disable"; \
+			echo "  export DE_REPLICA_MODE=standby"; \
+			exit 0; \
+		fi; \
+		sleep 3; \
+	done; \
+	echo "replica not healthy; existing PG volume may lack replication hba."; \
+	echo "  docker exec de-postgres sh -c 'echo \"host replication de all scram-sha-256\" >> \$$PGDATA/pg_hba.conf && psql -U de -c \"SELECT pg_reload_conf()\"'"; \
+	echo "  or recreate: $(COMPOSE) down -v && $(MAKE) compose-up-replica"; \
+	exit 1
+
 compose-up-opa: docker-engine
 	$(COMPOSE) --profile opa up -d
 	@echo "OPA: http://127.0.0.1:8181 — set DE_OPA_URL=http://127.0.0.1:8181"
@@ -152,7 +179,8 @@ compose-up-search: docker-engine
 	echo "OpenSearch not healthy yet; check: docker logs de-opensearch"; exit 1
 
 compose-up-policy compose-up-de-policy compose-up-audit compose-up-de-audit compose-up-apps compose-up-split:
-	@echo "retired: use make compose-up-coarse (de-sys absorbs policy/audit; no de-core)"
+	@echo "retired compose profile: coarse de-sys still absorbs policy/audit."
+	@echo "optional binaries: make run-policy (:8104) / make run-audit (:8105); set DE_CROSSCUTTING_SPLIT=1 on de-sys to drop those routes."
 	@exit 1
 
 # Staging: coarse + oidc + opa + search + obs
@@ -166,7 +194,7 @@ compose-up-staging: docker-engine
 	@echo "env file: deploy/.env.staging (override before make if needed)"
 
 compose-down:
-	$(COMPOSE) --profile full --profile temporal --profile oidc --profile authentik --profile kafka --profile mtls --profile spiffe --profile coarse --profile milvus --profile opa --profile search --profile obs down
+	$(COMPOSE) --profile full --profile temporal --profile oidc --profile authentik --profile kafka --profile mtls --profile spiffe --profile coarse --profile milvus --profile opa --profile search --profile obs --profile replica down
 
 buf-generate:
 	@command -v buf >/dev/null || { echo "install buf CLI into PATH"; exit 1; }

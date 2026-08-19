@@ -8,11 +8,14 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/digital-employee-platform/backend/gen/de/audit/v1/auditv1connect"
 	collabv1 "github.com/digital-employee-platform/backend/gen/de/collab/v1"
 	"github.com/digital-employee-platform/backend/gen/de/collab/v1/collabv1connect"
 	commonv1 "github.com/digital-employee-platform/backend/gen/de/common/v1"
 	employeev1 "github.com/digital-employee-platform/backend/gen/de/employee/v1"
 	"github.com/digital-employee-platform/backend/gen/de/employee/v1/employeev1connect"
+	"github.com/digital-employee-platform/backend/gen/de/platform/v1/platformv1connect"
+	"github.com/digital-employee-platform/backend/gen/de/policy/v1/policyv1connect"
 	ragv1 "github.com/digital-employee-platform/backend/gen/de/rag/v1"
 	"github.com/digital-employee-platform/backend/gen/de/rag/v1/ragv1connect"
 	runtimev1 "github.com/digital-employee-platform/backend/gen/de/runtime/v1"
@@ -39,6 +42,18 @@ func (s *Server) mountConnectRPCForMode(mux *http.ServeMux, mode ServiceMode) {
 		p, h := collabv1connect.NewCollabServiceHandler(&collabConnect{s})
 		mux.Handle(p, h)
 		p, h = employeev1connect.NewEmployeeServiceHandler(&employeeConnect{s})
+		mux.Handle(p, h)
+	}
+	if all || mode == ModePolicy || (mode == ModeSys && sysAbsorbsCrosscutting()) {
+		p, h := policyv1connect.NewPolicyServiceHandler(&policyConnect{s})
+		mux.Handle(p, h)
+	}
+	if all || mode == ModeAudit || (mode == ModeSys && sysAbsorbsCrosscutting()) {
+		p, h := auditv1connect.NewAuditServiceHandler(&auditConnect{s})
+		mux.Handle(p, h)
+	}
+	if all || mode == ModeSys {
+		p, h := platformv1connect.NewPlatformServiceHandler(&platformConnect{s})
 		mux.Handle(p, h)
 	}
 }
@@ -173,7 +188,7 @@ func (c *collabConnect) ReplayTurn(ctx context.Context, req *connect.Request[col
 	ws := c.s.workspaceID(r)
 	corr := req.Msg.GetCorrelationId()
 	cid := req.Msg.GetConversationId()
-	rec := c.s.lookupContextSnapshot(ws, cid, corr)
+	rec := c.s.lookupContextSnapshotCtx(ctx, ws, cid, corr)
 	if rec == nil {
 		return nil, connect.NewError(connect.CodeNotFound, apperr.NotFoundErr(apperr.ReplayNotFound, "回合快照不存在"))
 	}

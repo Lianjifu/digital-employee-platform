@@ -66,6 +66,22 @@ func TestClientEvaluate(t *testing.T) {
 	}
 }
 
+func TestClientEvaluateOKEnvelope(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"ok":true,"data":{"allow":true,"reason":"ok","policyId":"baseline","requireDualSign":false,"evaluatedAt":"t"}}`))
+	}))
+	defer ts.Close()
+	c := &Client{Base: ts.URL, HTTP: ts.Client()}
+	d, err := c.Evaluate(context.Background(), policy.Input{Action: "read", ActorRole: "admin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.Allow || d.PolicyID != "baseline" {
+		t.Fatalf("%+v", d)
+	}
+}
+
 func TestZTEvaluateUserPublish(t *testing.T) {
 	s := &Server{Engine: policy.New()}
 	rr := httptest.NewRecorder()

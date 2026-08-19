@@ -59,6 +59,18 @@ export interface MemoryProvenance {
   score: number;
 }
 
+export interface EmployeeBinding {
+  employeeId?: string;
+  modelId?: string;
+  modelRouteId?: string;
+  knowledgeIds?: string[];
+  skillIds?: string[];
+  channelIds?: string[];
+  memoryPolicyId?: string;
+  frozen?: boolean;
+  frozenAt?: string;
+}
+
 export interface ContextSnapshot {
   id: string;
   correlationId: string;
@@ -70,6 +82,7 @@ export interface ContextSnapshot {
   builtAt: string;
   employeeId: string;
   sessionMode: SessionMode;
+  employeeBinding?: EmployeeBinding;
 }
 
 export interface StreamEvent {

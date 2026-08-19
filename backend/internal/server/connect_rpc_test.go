@@ -9,9 +9,15 @@ import (
 	"testing"
 
 	"connectrpc.com/connect"
+	auditv1 "github.com/digital-employee-platform/backend/gen/de/audit/v1"
+	"github.com/digital-employee-platform/backend/gen/de/audit/v1/auditv1connect"
 	collabv1 "github.com/digital-employee-platform/backend/gen/de/collab/v1"
 	"github.com/digital-employee-platform/backend/gen/de/collab/v1/collabv1connect"
 	commonv1 "github.com/digital-employee-platform/backend/gen/de/common/v1"
+	platformv1 "github.com/digital-employee-platform/backend/gen/de/platform/v1"
+	"github.com/digital-employee-platform/backend/gen/de/platform/v1/platformv1connect"
+	policyv1 "github.com/digital-employee-platform/backend/gen/de/policy/v1"
+	"github.com/digital-employee-platform/backend/gen/de/policy/v1/policyv1connect"
 	ragv1 "github.com/digital-employee-platform/backend/gen/de/rag/v1"
 	"github.com/digital-employee-platform/backend/gen/de/rag/v1/ragv1connect"
 	runtimev1 "github.com/digital-employee-platform/backend/gen/de/runtime/v1"
@@ -72,6 +78,22 @@ func TestConnectJSONGatewayStillWorks(t *testing.T) {
 	h.ServeHTTP(rr, req)
 	if rr.Code != 200 {
 		t.Fatalf("%d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestConnectJSONGatewayPlatformListWorkspaces(t *testing.T) {
+	h := server.New(store.New()).Handler()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/connect/de.platform.v1.PlatformService/ListWorkspaces",
+		bytes.NewBufferString(`{}`))
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("%d %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"ok":true`) {
+		t.Fatalf("gateway envelope: %s", rr.Body.String())
 	}
 }
 
@@ -211,6 +233,76 @@ func TestConnectJSONGatewayRuntimeRun(t *testing.T) {
 	}
 	if !strings.Contains(body, `"runtimeMode":"local"`) {
 		t.Fatalf("want local runtimeMode: %s", body)
+	}
+}
+
+func TestConnectRPCPolicyEvaluate(t *testing.T) {
+	h := server.New(store.New()).Handler()
+	client := policyv1connect.NewPolicyServiceClient(&http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		req.Header.Set("Authorization", "Bearer mock-admin-token")
+		req.Header.Set("x-workspace-id", "w1")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr.Result(), nil
+	})}, "http://test")
+
+	gov, err := client.GetAccessGovernance(context.Background(), connect.NewRequest(&policyv1.GetAccessGovernanceRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gov.Msg.GetGrants()) == 0 {
+		t.Fatal("expected seeded grants")
+	}
+
+	res, err := client.EvaluateZeroTrust(context.Background(), connect.NewRequest(&policyv1.EvaluateZeroTrustRequest{
+		Resource: "session", Action: "read", CorrelationId: "corr-pol-1",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Msg.GetDecision() != "allow" || res.Msg.GetCorrelationId() != "corr-pol-1" {
+		t.Fatalf("got %#v", res.Msg)
+	}
+}
+
+func TestConnectRPCAuditList(t *testing.T) {
+	h := server.New(store.New()).Handler()
+	client := auditv1connect.NewAuditServiceClient(&http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		req.Header.Set("Authorization", "Bearer mock-admin-token")
+		req.Header.Set("x-workspace-id", "w1")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr.Result(), nil
+	})}, "http://test")
+
+	res, err := client.ListAuditCenter(context.Background(), connect.NewRequest(&auditv1.ListAuditCenterRequest{WorkspaceId: "w1"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Msg == nil {
+		t.Fatal("nil list")
+	}
+}
+
+func TestConnectRPCPlatformListWorkspaces(t *testing.T) {
+	h := server.New(store.New()).Handler()
+	client := platformv1connect.NewPlatformServiceClient(&http.Client{Transport: roundTripperFunc(func(req *http.Request) (*http.Response, error) {
+		req.Header.Set("Authorization", "Bearer mock-admin-token")
+		req.Header.Set("x-workspace-id", "w1")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr.Result(), nil
+	})}, "http://test")
+
+	res, err := client.ListWorkspaces(context.Background(), connect.NewRequest(&platformv1.ListWorkspacesRequest{}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Msg.GetItems()) == 0 {
+		t.Fatal("expected workspaces")
+	}
+	if res.Msg.GetItems()[0].GetId() == "" {
+		t.Fatalf("%#v", res.Msg.GetItems()[0])
 	}
 }
 

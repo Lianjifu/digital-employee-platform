@@ -1,6 +1,8 @@
 package server
 
 import (
+	"context"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -86,13 +88,26 @@ func (s *Server) persistContextSnapshot(rec map[string]any) {
 		}
 	}
 	s.Store.Unlock()
-	s.Store.Persist("context_snapshots")
+	if err := s.Store.PersistSync("context_snapshots"); err != nil {
+		log.Printf("persist context_snapshots: %v", err)
+	}
 }
 
 func (s *Server) lookupContextSnapshot(ws, conversationID, correlationID string) map[string]any {
+	return s.lookupContextSnapshotCtx(context.Background(), ws, conversationID, correlationID)
+}
+
+func (s *Server) lookupContextSnapshotCtx(ctx context.Context, ws, conversationID, correlationID string) map[string]any {
 	correlationID = strings.TrimSpace(correlationID)
 	if correlationID == "" {
 		return nil
+	}
+	if s != nil && s.Kernel != nil && s.Kernel.Available() {
+		rec, err := s.Kernel.GetSnapshot(ctx, ws, conversationID, correlationID)
+		if err != nil {
+			return nil
+		}
+		return rec
 	}
 	s.Store.RLock()
 	defer s.Store.RUnlock()
@@ -126,7 +141,7 @@ func (s *Server) replayCopilotTurn(r *http.Request) (any, error) {
 		return nil, apperr.BadReq(apperr.BadRequest, "缺少会话或 correlationId")
 	}
 	ws := s.workspaceID(r)
-	rec := s.lookupContextSnapshot(ws, rawID, corr)
+	rec := s.lookupContextSnapshotCtx(r.Context(), ws, rawID, corr)
 	if rec == nil {
 		return nil, apperr.NotFoundErr(apperr.ReplayNotFound, "回合快照不存在")
 	}
@@ -138,7 +153,7 @@ func (s *Server) replayCopilotTurn(r *http.Request) (any, error) {
 		"employeeId": rec["employeeId"], "sessionMode": rec["sessionMode"],
 		"riskLevel": rec["riskLevel"], "channel": rec["channel"],
 		"channelThreadId": rec["channelThreadId"], "envelope": rec["envelope"],
-		"runtimeMode": rec["runtimeMode"],
+		"runtimeMode": rec["runtimeMode"], "employeeBinding": rec["employeeBinding"],
 	}
 	return map[string]any{
 		"snapshot":      snapshot,
@@ -188,6 +203,7 @@ func buildContextSnapshotRecord(in map[string]any) map[string]any {
 		"runtimeMode":      coalesce(str(in["runtimeMode"]), runtimeMode()),
 		"envelope":         in["envelope"],
 		"events":           in["events"],
+		"employeeBinding":  in["employeeBinding"],
 	}
 	return rec
 }

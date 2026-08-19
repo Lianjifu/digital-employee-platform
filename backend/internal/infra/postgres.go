@@ -5,21 +5,53 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// OpenPostgres connects to Docker Compose Postgres via DE_DATABASE_URL.
-// Returns nil pool when URL is empty (tests / memory-only mode).
+// ReplicaStandbyFromEnv reports DE_REPLICA_MODE=standby|readonly|passive.
+func ReplicaStandbyFromEnv() bool {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("DE_REPLICA_MODE")))
+	return v == "standby" || v == "readonly" || v == "passive"
+}
+
+// ResolveDatabaseURL picks the primary URL, or DE_DATABASE_REPLICA_URL when
+// this process is explicitly standby. Empty means memory-only (tests).
+func ResolveDatabaseURL() string {
+	primary := strings.TrimSpace(os.Getenv("DE_DATABASE_URL"))
+	replica := strings.TrimSpace(os.Getenv("DE_DATABASE_REPLICA_URL"))
+	if ReplicaStandbyFromEnv() && replica != "" {
+		return replica
+	}
+	return primary
+}
+
+// PostgresInRecovery is the R5 min replica probe. A recovering primary
+// must not accept writes (standby until PG replica promotion).
+func PostgresInRecovery(ctx context.Context, pool *pgxpool.Pool) (bool, error) {
+	if pool == nil {
+		return false, nil
+	}
+	var inRecovery bool
+	err := pool.QueryRow(ctx, "SELECT pg_is_in_recovery()").Scan(&inRecovery)
+	if err != nil {
+		return false, err
+	}
+	return inRecovery, nil
+}
+
+// OpenPostgres connects via DE_DATABASE_URL, or DE_DATABASE_REPLICA_URL when
+// DE_REPLICA_MODE=standby. Returns nil pool when URL is empty (tests / memory-only).
 func OpenPostgres(ctx context.Context) (*pgxpool.Pool, error) {
-	url := os.Getenv("DE_DATABASE_URL")
+	url := ResolveDatabaseURL()
 	if url == "" {
 		return nil, nil
 	}
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
-		return nil, fmt.Errorf("parse DE_DATABASE_URL: %w", err)
+		return nil, fmt.Errorf("parse database url: %w", err)
 	}
 	cfg.MaxConns = 16
 	cfg.MinConns = 1

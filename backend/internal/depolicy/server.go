@@ -199,9 +199,9 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 // Client calls remote de-policy /v1/evaluate.
 type Client struct {
-	Base   string
-	Token  string
-	HTTP   *http.Client
+	Base  string
+	Token string
+	HTTP  *http.Client
 }
 
 func NewClientFromEnv() *Client {
@@ -245,6 +245,7 @@ func (c *Client) Evaluate(ctx context.Context, in policy.Input) (policy.Decision
 	}
 	var wrap struct {
 		Success bool `json:"success"`
+		OK      bool `json:"ok"`
 		Data    struct {
 			Allow           bool   `json:"allow"`
 			Reason          string `json:"reason"`

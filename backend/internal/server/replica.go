@@ -12,8 +12,15 @@ func replicaStandby() bool {
 	return v == "standby" || v == "readonly" || v == "passive"
 }
 
-func replicaRole() string {
-	if replicaStandby() {
+func (s *Server) isStandby() bool {
+	if s != nil && s.ReplicaForced {
+		return true
+	}
+	return replicaStandby()
+}
+
+func (s *Server) replicaRole() string {
+	if s.isStandby() {
 		return "standby"
 	}
 	return "active"

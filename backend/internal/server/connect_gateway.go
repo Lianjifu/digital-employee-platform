@@ -108,7 +108,7 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 	case "de.collab.v1.CollabService/ReplayTurn":
 		cid := coalesce(str(body["conversationId"]), str(body["conversation_id"]))
 		corr := coalesce(str(body["correlationId"]), str(body["correlation_id"]))
-		rec := s.lookupContextSnapshot(s.workspaceID(r), cid, corr)
+		rec := s.lookupContextSnapshotCtx(r.Context(), s.workspaceID(r), cid, corr)
 		if rec == nil {
 			writeErr(w, apperr.NotFoundErr(apperr.ReplayNotFound, "回合快照不存在"))
 			return
@@ -118,6 +118,26 @@ func (s *Server) handleConnect(w http.ResponseWriter, r *http.Request) {
 		}, nil)
 	case "de.employee.v1.EmployeeService/ResolveActive":
 		data, err := s.resolveActiveEmployee(r, coalesce(str(body["digitalEmployeeId"]), str(body["digital_employee_id"])))
+		writeConnect(w, data, err)
+	case "de.policy.v1.PolicyService/GetAccessGovernance":
+		data, err := s.accessGovernance(r)
+		writeConnect(w, data, err)
+	case "de.policy.v1.PolicyService/EvaluateZeroTrust":
+		id := identityFrom(r.Context())
+		data, err := s.evaluateZeroTrust(id, coalesce(str(body["resource"]), ""), coalesce(str(body["action"]), ""),
+			coalesce(str(body["classification"]), ""), body["external"] == true, corr)
+		writeConnect(w, data, err)
+	case "de.audit.v1.AuditService/ListAuditCenter":
+		data, err := s.auditCenter(r)
+		writeConnect(w, data, err)
+	case "de.audit.v1.AuditService/ExportAudit":
+		data, err := s.auditExport(r)
+		writeConnect(w, data, err)
+	case "de.platform.v1.PlatformService/ListWorkspaces":
+		data, err := s.listWorkspaces(r)
+		writeConnect(w, data, err)
+	case "de.platform.v1.PlatformService/CreateWorkspace":
+		data, err := s.createWorkspace(r)
 		writeConnect(w, data, err)
 	default:
 		writeErr(w, apperr.NotFoundErr(apperr.NotFound, "未知 Connect 方法: "+path))

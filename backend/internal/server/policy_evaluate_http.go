@@ -9,7 +9,7 @@ import (
 	"github.com/digital-employee-platform/backend/pkg/response"
 )
 
-// handleLocalPolicyEvaluate absorbs former de-policy POST /v1/evaluate onto de-sys.
+// handleLocalPolicyEvaluate serves POST /v1/evaluate on de-sys (default) or de-policy.
 func (s *Server) handleLocalPolicyEvaluate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

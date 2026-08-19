@@ -59,6 +59,11 @@ var DurableCollections = []string{
 	"channel_inbound",
 	"context_snapshots",
 	"release_approvals",
+	"zt_policies",
+	"access_grants",
+	"access_reviews",
+	"sod_rules",
+	"temp_auths",
 	"skills",
 	"skill_catalog",
 	"skill_health",
@@ -137,6 +142,23 @@ func (s *Store) Persist(collection string) {
 		return
 	}
 	s.PersistCollection(collection, items)
+}
+
+// PersistSync writes a collection through persistHook and waits (Replay / kernel tables).
+func (s *Store) PersistSync(collection string) error {
+	if !s.CanWrite(collection) {
+		panic(fmt.Sprintf("store write-guard: domain %s cannot persist %s", s.WriteDomain(), collection))
+	}
+	if s.persistHook == nil {
+		return nil
+	}
+	s.RLock()
+	items := s.snapshotLocked(collection)
+	s.RUnlock()
+	if items == nil {
+		return nil
+	}
+	return s.persistHook(context.Background(), collection, items)
 }
 
 func (s *Store) snapshotLocked(collection string) []map[string]any {
@@ -255,6 +277,16 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 		return s.ContextSnapshots
 	case "release_approvals":
 		return s.ReleaseApprovals
+	case "zt_policies":
+		return s.ZTPolicies
+	case "access_grants":
+		return s.AccessGrants
+	case "access_reviews":
+		return s.AccessReviews
+	case "sod_rules":
+		return s.SodRules
+	case "temp_auths":
+		return s.TempAuths
 	case "skills":
 		return s.Skills
 	case "skill_catalog":
@@ -308,7 +340,7 @@ func (s *Store) PersistNow(ctx context.Context) error {
 	s.RLock()
 	defer s.RUnlock()
 	for _, name := range CollectionsForDomain(s.writeDomain) {
-		if s.writeDomain != "" && s.writeDomain != DomainAll && CollectionDomain(name) != s.writeDomain && CollectionDomain(name) != DomainAll {
+		if !s.CanWrite(name) {
 			continue
 		}
 		items := s.snapshotLocked(name)
@@ -439,6 +471,16 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 		s.ContextSnapshots = items
 	case "release_approvals":
 		s.ReleaseApprovals = items
+	case "zt_policies":
+		s.ZTPolicies = items
+	case "access_grants":
+		s.AccessGrants = items
+	case "access_reviews":
+		s.AccessReviews = items
+	case "sod_rules":
+		s.SodRules = items
+	case "temp_auths":
+		s.TempAuths = items
 	case "skills":
 		s.Skills = dedupeMapsByID(items)
 	case "skill_catalog":

@@ -51,7 +51,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if replicaStandby() && !replicaWriteAllowedMethod(r.Method) {
+		if s.isStandby() && !replicaWriteAllowedMethod(r.Method) {
 			writeErr(w, apperr.Unavailable(apperr.ReplicaStandby, "当前实例为 standby，拒绝写入"))
 			return
 		}

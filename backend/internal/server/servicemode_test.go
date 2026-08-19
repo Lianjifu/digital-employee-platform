@@ -29,6 +29,18 @@ func TestServiceModeOwnsPath(t *testing.T) {
 		{ModeWorkflow, "/api/tasks", false},
 		{ModeSys, "/healthz", true},
 		{ModeCap, "/healthz", true},
+		{ModePolicy, "/v1/evaluate", true},
+		{ModePolicy, "/api/access/governance", true},
+		{ModePolicy, "/api/zero-trust/evaluate", true},
+		{ModePolicy, "/api/release-approvals", true},
+		{ModePolicy, "/api/workspaces", false},
+		{ModeAudit, "/api/audit-center", true},
+		{ModeAudit, "/api/audits", true},
+		{ModeAudit, "/v1/events", true},
+		{ModeAudit, "/api/workspaces", false},
+		{ModePolicy, "/de.policy.v1.PolicyService/EvaluateZeroTrust", true},
+		{ModeAudit, "/de.audit.v1.AuditService/ListAuditCenter", true},
+		{ModeCap, "/de.policy.v1.PolicyService/EvaluateZeroTrust", false},
 	}
 	for _, tc := range cases {
 		if got := tc.mode.OwnsPath(tc.path); got != tc.want {
@@ -46,5 +58,27 @@ func TestParseServiceMode(t *testing.T) {
 	}
 	if ParseServiceMode("all") != ModeAll {
 		t.Fatal("all")
+	}
+	if ParseServiceMode("de-policy") != ModePolicy {
+		t.Fatal("de-policy")
+	}
+	if ParseServiceMode("audit") != ModeAudit {
+		t.Fatal("audit")
+	}
+}
+
+func TestSysDropsPolicyWhenSplit(t *testing.T) {
+	t.Setenv("DE_CROSSCUTTING_SPLIT", "1")
+	if ModeSys.OwnsPath("/v1/evaluate") {
+		t.Fatal("split sys must not own evaluate")
+	}
+	if ModeSys.OwnsPath("/api/audit-center") {
+		t.Fatal("split sys must not own audit-center")
+	}
+	if !ModeSys.OwnsPath("/api/workspaces") {
+		t.Fatal("split sys still owns workspaces")
+	}
+	if !ModePolicy.OwnsPath("/v1/evaluate") || !ModeAudit.OwnsPath("/api/audit-center") {
+		t.Fatal("policy/audit binaries own split routes")
 	}
 }

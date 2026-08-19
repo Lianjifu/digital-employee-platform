@@ -47,3 +47,38 @@ func TestDurableCollectionsNonEmpty(t *testing.T) {
 		t.Fatal("inbound must upsert, not replace")
 	}
 }
+
+func TestKernelCollectionsSkipKVDualWrite(t *testing.T) {
+	for _, name := range KernelCollections {
+		if !IsKernelCollection(name) {
+			t.Fatalf("%s should be kernel", name)
+		}
+		if ShouldReplaceOnPersist(name) {
+			t.Fatalf("%s must not full-replace", name)
+		}
+	}
+}
+
+func TestPersistSyncWaitsForHook(t *testing.T) {
+	st := New()
+	st.ContextSnapshots = []map[string]any{{"id": "snap-sync", "correlationId": "c1"}}
+	done := make(chan struct{})
+	st.SetPersistHook(func(_ context.Context, collection string, items []map[string]any) error {
+		if collection != "context_snapshots" {
+			t.Errorf("collection %s", collection)
+		}
+		if len(items) != 1 || items[0]["id"] != "snap-sync" {
+			t.Errorf("items %#v", items)
+		}
+		close(done)
+		return nil
+	})
+	if err := st.PersistSync("context_snapshots"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	default:
+		t.Fatal("PersistSync must wait for persistHook")
+	}
+}

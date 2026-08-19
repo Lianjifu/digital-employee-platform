@@ -64,3 +64,56 @@ func TestCanWriteAllByDefault(t *testing.T) {
 		t.Fatal("DomainAll should write every collection")
 	}
 }
+
+func TestDomainPolicyCollectionsAndSysAbsorb(t *testing.T) {
+	pol := CollectionsForDomain(DomainPolicy)
+	seen := map[string]bool{}
+	for _, name := range pol {
+		seen[name] = true
+		if CollectionDomain(name) != DomainPolicy {
+			t.Fatalf("policy owns %s", name)
+		}
+	}
+	if !seen["release_approvals"] || !seen["zt_policies"] || seen["sessions"] {
+		t.Fatalf("policy collections %#v", seen)
+	}
+	sys := CollectionsForDomain(DomainSys)
+	sysSeen := map[string]bool{}
+	for _, name := range sys {
+		sysSeen[name] = true
+	}
+	if !sysSeen["workspaces"] || !sysSeen["release_approvals"] {
+		t.Fatalf("sys absorb should include policy collections: %#v", sysSeen)
+	}
+}
+
+func TestSysSplitDropsPolicyCollections(t *testing.T) {
+	t.Setenv("DE_CROSSCUTTING_SPLIT", "1")
+	sys := CollectionsForDomain(DomainSys)
+	for _, name := range sys {
+		if CollectionDomain(name) == DomainPolicy {
+			t.Fatalf("split sys must not hydrate %s", name)
+		}
+	}
+	st := New()
+	st.SetWriteDomain(DomainSys)
+	if st.CanWrite("release_approvals") {
+		t.Fatal("split sys must not write release_approvals")
+	}
+	pol := New()
+	pol.SetWriteDomain(DomainPolicy)
+	if !pol.CanWrite("release_approvals") || pol.CanWrite("workspaces") {
+		t.Fatal("policy domain write guard")
+	}
+}
+
+func TestDropUnownedPolicyKeepsZT(t *testing.T) {
+	st := New()
+	st.DropUnowned(DomainPolicy)
+	if len(st.ZTPolicies) == 0 || len(st.ReleaseApprovals) == 0 {
+		t.Fatal("policy should keep ZT/release")
+	}
+	if len(st.Workspaces) != 0 || len(st.Sessions) != 0 {
+		t.Fatal("policy should drop sys/collab slices")
+	}
+}

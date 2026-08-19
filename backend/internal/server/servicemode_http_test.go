@@ -64,3 +64,45 @@ func TestOwnsPathChannelAlias(t *testing.T) {
 		t.Fatal("sys should not own channel alias")
 	}
 }
+
+func TestModePolicyEvaluateAndRejectsWorkspaces(t *testing.T) {
+	srv := New(store.New())
+	srv.Mode = ModePolicy
+	h := srv.Handler()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/evaluate", strings.NewReader(`{"action":"read","actorRole":"admin"}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("evaluate %d %s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), `"allow"`) {
+		t.Fatalf("want allow field: %s", rr.Body.String())
+	}
+
+	req2 := httptest.NewRequest(http.MethodGet, "/api/workspaces", nil)
+	req2.Header.Set("Authorization", "Bearer mock-admin-token")
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, req2)
+	if !strings.Contains(rr2.Body.String(), "owned by other") {
+		t.Fatalf("policy must reject workspaces: %s", rr2.Body.String())
+	}
+}
+
+func TestModeAuditOwnsAuditCenter(t *testing.T) {
+	srv := New(store.New())
+	srv.Mode = ModeAudit
+	h := srv.Handler()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/audit-center", nil)
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if strings.Contains(rr.Body.String(), "owned by other") {
+		t.Fatalf("audit must own audit-center: %s", rr.Body.String())
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("audit-center %d %s", rr.Code, rr.Body.String())
+	}
+}

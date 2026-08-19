@@ -65,7 +65,7 @@ make compose-up-staging    # coarse + oidc + opa + search + obs
 | `DE_MILVUS_URI=http://127.0.0.1:19530` | Docker Milvus（`make compose-up-milvus`）；未设置则 RAG 用内存向量 |
 | `DE_OPA_URL=http://127.0.0.1:8181` | 远程 OPA evaluate；失败回退内嵌 baseline |
 | `DE_OPENSEARCH_URL=http://127.0.0.1:9200` | 审计写入/查询 OpenSearch |
-| `DE_POLICY_URL=http://127.0.0.1:8100` | collab/cap 调 de-sys `/v1/evaluate`；sys 留空 |
+| `DE_POLICY_URL=http://127.0.0.1:8100` | collab/cap 调 de-sys `/v1/evaluate`；sys 留空；切开后可改 `:8104` |
 | `DE_SKILL_RUN_SECRET` | 控制面与 de-skill-runtime 共享的 RunToken HMAC 密钥 |
 | `DE_BAN_MOCK_TOKEN=1` | 生产/预发禁用 `mock-*-token` |
 | `DE_FORCE_OIDC=1` | 拒绝密码登录，仅 OIDC |

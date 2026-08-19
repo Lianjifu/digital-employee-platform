@@ -611,6 +611,10 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	snapID := s.Store.ID("snap")
+	binding := captureEmployeeBinding(empMap, str(s.memoryPolicyFor(ws)["workspaceId"]))
+	if str(binding["memoryPolicyId"]) == "" {
+		binding["memoryPolicyId"] = ws
+	}
 	snapRec = buildContextSnapshotRecord(map[string]any{
 		"id": snapID, "workspaceId": ws, "conversationId": cid, "sessionId": rawID,
 		"correlationId": corr, "system": system, "historyTurns": len(chatMessages),
@@ -618,7 +622,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		"toolRegistry": enabledToolKeys(registry), "employeeId": resolvedDE,
 		"sessionMode": sessionMode, "riskLevel": riskLevel,
 		"channel": channel, "channelThreadId": channelThreadID,
-		"runtimeMode": runtimeMode(),
+		"runtimeMode": runtimeMode(), "employeeBinding": binding,
 		"envelope": map[string]any{
 			"tenantId": id.TenantID, "workspaceId": ws, "actorId": id.ID,
 			"channel": channel, "channelThreadId": channelThreadID,
@@ -646,7 +650,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		ConversationID: cid, CorrelationID: corr, DigitalEmployee: resolvedDE,
 		Viewer: id, Emit: emit, ModeHint: modeHint, ReflectHint: reflectHint,
 		SessionMode: sessionMode, RiskLevel: riskLevel, RAGPrefetched: ragCount > 0,
-		SnapshotID: snapID,
+		SnapshotID: snapID, Binding: binding, MemoryProvenance: memoryProvenanceMaps(memoryHits),
 	})
 	if reactOut.Err != nil {
 		fallback := ""

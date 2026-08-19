@@ -185,6 +185,7 @@ func runtimeLoopPayload(in reactTurnInput) map[string]any {
 			"id": in.SnapshotID, "correlationId": in.CorrelationID, "system": in.System,
 			"historyTurns": len(in.Messages), "toolRegistry": tools,
 			"employeeId": in.DigitalEmployee, "sessionMode": in.SessionMode,
+			"employeeBinding": in.Binding, "memoryProvenance": in.MemoryProvenance,
 		},
 	}
 }
