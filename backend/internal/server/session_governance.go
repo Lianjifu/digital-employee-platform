@@ -83,6 +83,20 @@ func applySessionGovernancePatch(sess map[string]any, body map[string]any, actor
 		mode := normalizeSessionMode(str(v))
 		sess["sessionMode"] = mode
 	}
+	if v, ok := body["runMode"]; ok {
+		rm := strings.ToLower(strings.TrimSpace(str(v)))
+		switch rm {
+		case "ask", "plan", "agent":
+			sess["runMode"] = rm
+		}
+	}
+	if v, ok := body["reasoningEffort"]; ok {
+		re := strings.ToLower(strings.TrimSpace(str(v)))
+		switch re {
+		case "off", "standard", "deep":
+			sess["reasoningEffort"] = re
+		}
+	}
 	if v, ok := body["riskLevel"]; ok {
 		sess["riskLevel"] = normalizeRiskLevelSession(str(v))
 	}
@@ -164,6 +178,12 @@ func filterRegistryBySessionMode(reg []registeredTool, mode string) []registered
 func defaultGovernanceOnCreate(session map[string]any) {
 	if str(session["sessionMode"]) == "" {
 		session["sessionMode"] = sessionModeInvestigate
+	}
+	if str(session["runMode"]) == "" {
+		session["runMode"] = "plan"
+	}
+	if str(session["reasoningEffort"]) == "" {
+		session["reasoningEffort"] = "standard"
 	}
 	if str(session["riskLevel"]) == "" {
 		session["riskLevel"] = "medium"

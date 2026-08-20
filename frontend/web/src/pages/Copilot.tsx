@@ -33,10 +33,10 @@ import {
   Link2, CheckCircle2, BarChart3, Volume2, Zap, Clock, Server, BellOff,
   Star, Share2, Settings, X, Pin, ChevronDown, ChevronLeft,
   Sparkles, Database, Code, Cpu, Users, Loader2, AlertCircle, AtSign,
-  Hash, Activity, Languages, BookOpenCheck, Brain, RotateCcw,
+  Hash, Activity, Languages, BookOpenCheck, RotateCcw,
   Paperclip, Send, ChevronRight, ThumbsUp, ThumbsDown,
   Copy, Trash2, Square, Plus, Archive, ArchiveRestore, FileDown, Lock, Eye, EyeOff, ArrowUp,
-  Archive as ArchiveIcon, MessageSquareWarning, ShieldAlert, Check, Hourglass, Plug, PlugZap, Pencil,
+  Archive as ArchiveIcon, MessageSquareWarning, ShieldAlert, Check, Plug, PlugZap, Pencil,
   BriefcaseBusiness,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
@@ -54,7 +54,24 @@ import { useT } from '@/i18n';
 import { Markdown } from '@/components/Markdown';
 import { deriveWorkbenchSummary, type WorkbenchContextTab } from '@/features/copilot/workbench';
 import { buildExpertSuggestions, type ExpertSuggestionIcon } from '@/features/copilot/expert-suggestions';
-import { approvalToolKeys, buildExpertTools, defaultEnabledToolKeys, isWriteExecutionIntent, toolsForExecuteMode } from '@/features/copilot/expert-tools';
+import { approvalToolKeys, buildExpertTools, defaultEnabledToolKeys, ensureDefaultSkillsEnabled, isWriteExecutionIntent, toolsForExecuteMode } from '@/features/copilot/expert-tools';
+import { ComposerRunModeMenu } from '@/features/copilot/composer-run-mode';
+import { ComposerReasoningMenu } from '@/features/copilot/composer-reasoning';
+import { ComposerContextUsage } from '@/features/copilot/composer-context-usage';
+import { ComposerInsertMenu } from '@/features/copilot/composer-insert';
+import { ThoughtPanel } from '@/features/copilot/thought-panel';
+import {
+  DEFAULT_RUN_MODE,
+  DEFAULT_REASONING_EFFORT,
+  deriveReasoningEffort,
+  deriveRunMode,
+  mapRunModeToDispatch,
+  parseReasoningEffort,
+  parseRunMode,
+  type ReasoningEffort,
+  type RunMode,
+} from '@/features/copilot/composer-mode';
+import { computeContextUsage } from '@/features/copilot/composer-context';
 import {
   MENTION_CATEGORIES,
   filterByQuery,
@@ -108,6 +125,8 @@ interface SessionItem {
   pinned?: boolean;
   unread?: number;
   sessionMode?: 'investigate' | 'execute' | string;
+  runMode?: 'ask' | 'plan' | 'agent' | string;
+  reasoningEffort?: 'off' | 'standard' | 'deep' | string;
   riskLevel?: 'low' | 'medium' | 'high' | string;
   handoff?: { active?: boolean; ownerId?: string; ownerName?: string; at?: string; note?: string };
   closeSummary?: string;
@@ -173,6 +192,9 @@ function toChatSession(session: SessionItem): ChatSession {
     createdAt: created,
     lastActiveAt: updated,
     sessionMode: session.sessionMode === 'execute' ? 'execute' : 'investigate',
+    // 列表项缺字段时勿用默认值覆盖本地已选；由 Composer 本地态 / merge 合并
+    runMode: parseRunMode(session.runMode) ?? undefined,
+    reasoningEffort: parseReasoningEffort(session.reasoningEffort) ?? undefined,
     riskLevel: session.riskLevel === 'high' || session.riskLevel === 'low' ? session.riskLevel : 'medium',
     handoff: session.handoff,
     closeSummary: session.closeSummary,
@@ -297,16 +319,16 @@ export default function Copilot() {
   const [mentionPane, setMentionPane] = useState<'root' | MentionKind>('root');
   const [mentionQuery, setMentionQuery] = useState('');
   const [showApproval, setShowApproval] = useState<{ messageId: string; signerIndex: number } | null>(null);
-  const [expandedThinking, setExpandedThinking] = useState<Record<string, boolean>>({});
   const [expandedArgs, setExpandedArgs] = useState<Record<string, boolean>>({});
-  const [expandedReasoning, setExpandedReasoning] = useState<Record<string, boolean>>({});
   const [expandedApproval, setExpandedApproval] = useState<Record<string, boolean>>({});
   const [focusedCitation, setFocusedCitation] = useState<any | null>(null);
   const [sessionsOpen, setSessionsOpen] = useState(() => typeof window !== 'undefined' && sessionHistoryPresentation(window.innerWidth) === 'pinned');
   // 右栏由消息上下文驱动：没有可追溯信息时保持隐藏，避免空面板占用工作区。
   const [contextSelection, setContextSelection] = useState<ContextSelection>({ open: false, scope: 'session', tab: 'overview', pinned: false });
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
-  // sessionMode 以会话对象为唯一数据源，避免与 hydrate/sync 双写打架
+  // Composer 协作控件：本地即时切换，避免 sessions 列表回灌冲掉选择
+  const [runMode, setRunMode] = useState<RunMode>(DEFAULT_RUN_MODE);
+  const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(DEFAULT_REASONING_EFFORT);
   const [riskLevel, setRiskLevel] = useState<'low' | 'medium' | 'high'>('medium');
   const [closeoutOpen, setCloseoutOpen] = useState(false);
   const [handoffOpen, setHandoffOpen] = useState(false);
@@ -464,7 +486,41 @@ export default function Copilot() {
   const sessionMode: 'investigate' | 'execute' = activeSession?.sessionMode === 'execute' ? 'execute' : 'investigate';
   const typingWasRef = useRef(false);
 
-  // 切会话时恢复会话级模型 / 工具配置
+  // 专家工具链：必须在任何引用它的 effect / 回调之前初始化，避免 TDZ
+  const activeEmployeeId = activeSession?.digitalEmployeeId ?? employeeIdFromQuery ?? undefined;
+  const activeEmployee = employees.find((item) => item.id === activeEmployeeId) ?? null;
+  const availableTools = useMemo(() => buildExpertTools(activeEmployee), [activeEmployee]);
+  const enabledToolCount = enabledTools.length;
+  const hasBoundExpert = Boolean(activeEmployee);
+  const employeeBoundModel = activeEmployee?.capabilities?.model ?? null;
+  const sendModelId = resolveSendModelId({
+    runModelId,
+    runKey: currentModelKey,
+    employeeBoundModel,
+    options: modelOptions,
+  });
+
+  // 切会话时从会话恢复 Composer 模式（仅在会话变更或服务端显式带回字段时）
+  useEffect(() => {
+    if (!activeSession) {
+      setRunMode(DEFAULT_RUN_MODE);
+      setReasoningEffort(DEFAULT_REASONING_EFFORT);
+      return;
+    }
+    setRunMode(deriveRunMode({
+      runMode: activeSession.runMode,
+      sessionMode: activeSession.sessionMode,
+    }));
+    setReasoningEffort(deriveReasoningEffort({
+      reasoningEffort: activeSession.reasoningEffort,
+      runMode: deriveRunMode({
+        runMode: activeSession.runMode,
+        sessionMode: activeSession.sessionMode,
+      }),
+    }));
+  }, [activeSession?.id]);
+
+  // 切会话时恢复会话级模型
   useEffect(() => {
     if (activeSession?.modelId) {
       const match = modelOptions.find(
@@ -472,10 +528,7 @@ export default function Copilot() {
       );
       setCurrentModelKey(match?.key ?? activeSession.modelId);
     }
-    if (activeSession?.enabledTools?.length) {
-      setEnabledTools(activeSession.enabledTools);
-    }
-  }, [activeSession?.id, activeSession?.modelId, activeSession?.enabledTools, modelOptions]);
+  }, [activeSession?.id, activeSession?.modelId, modelOptions]);
 
   const serverSession = useMemo(
     () => sessionHistory.find((item) => item.id === chat.state.activeId),
@@ -495,19 +548,6 @@ export default function Copilot() {
     { enabled: canFetchConversation, retry: false, staleTime: 0 },
   );
 
-  const activeEmployeeId = activeSession?.digitalEmployeeId ?? employeeIdFromQuery ?? undefined;
-  const activeEmployee = employees.find((item) => item.id === activeEmployeeId) ?? null;
-  const availableTools = useMemo(() => buildExpertTools(activeEmployee), [activeEmployee]);
-  const enabledToolCount = enabledTools.length;
-  const hasBoundExpert = Boolean(activeEmployee);
-  const employeeBoundModel = activeEmployee?.capabilities?.model ?? null;
-  const sendModelId = resolveSendModelId({
-    runModelId,
-    runKey: currentModelKey,
-    employeeBoundModel,
-    options: modelOptions,
-  });
-
   // 绑定专家后：若运行配置仍是演示别名，自动切到员工装配模型/路由
   useEffect(() => {
     const empKey = matchCopilotModelKey(modelOptions, employeeBoundModel);
@@ -517,15 +557,15 @@ export default function Copilot() {
     }
   }, [employeeBoundModel, modelOptions, activeSession?.id, activeSession?.modelId, currentModelKey]);
 
-  // 专家切换后重置工具链（保留会话已存工具中仍合法的项）
+  // 会话/专家工具目录变更时恢复工具链，并补齐默认应选中的已装配技能。
+  // 用 key 签名而非 availableTools 引用，避免 employees 刷新反复回填；也不依赖 enabledTools，以免覆盖用户取消勾选。
+  const availableToolKeySig = availableTools.map((t) => t.key).join('|');
   useEffect(() => {
-    const keys = new Set(availableTools.map((t) => t.key));
-    setEnabledTools((prev) => {
-      const kept = prev.filter((k) => keys.has(k));
-      if (kept.length > 0) return kept;
-      return defaultEnabledToolKeys(availableTools);
-    });
-  }, [availableTools]);
+    const seed = activeSession?.enabledTools?.length ? activeSession.enabledTools : [];
+    setEnabledTools(ensureDefaultSkillsEnabled(seed, availableTools));
+    // availableTools 与 signature 同步变化
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSession?.id, availableToolKeySig]);
 
   const persistRunConfig = useCallback((modelId: string, tools: string[]) => {
     const sess = chat.activeSession;
@@ -1108,8 +1148,24 @@ export default function Copilot() {
 
   const charCount = chat.state.draftInput.length;
   const MAX_CHARS = 4000;
-  const tokenEstimate = Math.round(charCount * 0.6);
-  const tokenPercent = (tokenEstimate / (MAX_CHARS * 0.6)) * 100;
+  const contextUsage = useMemo(() => {
+    const msgs = activeSession?.messages ?? [];
+    const lastAssistant = [...msgs].reverse().find((m) => m.role === 'assistant');
+    const promptTokens = lastAssistant?.metrics?.promptTokens;
+    const sessionTokens = msgs.reduce((sum, m) => {
+      const p = m.metrics?.promptTokens ?? 0;
+      const c = m.metrics?.completionTokens ?? 0;
+      return sum + p + c;
+    }, 0);
+    const historyChars = msgs.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
+    return computeContextUsage({
+      promptTokens,
+      sessionTokens: sessionTokens || null,
+      contextWindow: currentModel?.contextWindow,
+      draftChars: charCount,
+      historyChars,
+    });
+  }, [activeSession?.messages, charCount, currentModel?.contextWindow]);
 
   const mentionSkillItems = useMemo(
     () => availableTools.filter((t) => t.kind === 'skill' || t.kind === 'tool' || t.kind === 'workflow'),
@@ -1166,6 +1222,29 @@ export default function Copilot() {
     setMentionQuery('');
   };
 
+  const handleRunModeChange = (mode: RunMode) => {
+    if (isClosed || handoffActive) return;
+    const nextEffort = mode === 'ask' && reasoningEffort === 'deep' ? 'standard' : reasoningEffort;
+    setRunMode(mode);
+    setReasoningEffort(nextEffort);
+    const mapped = mapRunModeToDispatch(mode, availableTools, enabledTools);
+    setEnabledTools(mapped.enabledTools);
+    if (!activeSession) return;
+    void chat.setCollaborationMode(mapped.sessionMode, {
+      riskLevel,
+      enableApprovalTools: mapped.enableApprovalTools,
+      runMode: mode,
+      reasoningEffort: nextEffort,
+    }).catch((err) => toast.error(err instanceof Error ? err.message : '模式切换失败'));
+  };
+
+  const handleReasoningChange = (effort: ReasoningEffort) => {
+    if (isClosed || handoffActive) return;
+    setReasoningEffort(effort);
+    if (!activeSession) return;
+    void chat.persistSession({ ...activeSession, reasoningEffort: effort }).catch(() => undefined);
+  };
+
   const handleSend = () => {
     if (!canMutate) return;
     if (!chat.state.draftInput.trim() || chat.state.typing || isClosed || handoffActive) return;
@@ -1182,16 +1261,32 @@ export default function Copilot() {
     }
     // 无数字工作伙伴也可直接对话（通用助手 + 已选模型）；选专家为增强能力，非硬门槛
     const draft = chat.state.draftInput.trim();
-    const writeHint = sessionMode === 'investigate' && isWriteExecutionIntent(draft);
-    const baseTools = enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools);
-    let tools = mergeMentionedTools(baseTools, chat.state.draftInput, availableTools.map((t) => t.key));
-    const needsExecute = writeHint
-      || (tools.some((key) => availableTools.find((t) => t.key === key)?.requiresApproval) && sessionMode === 'investigate');
-    const mode: 'investigate' | 'execute' = needsExecute ? 'execute' : sessionMode;
-    const risk = riskLevel;
-    if (mode === 'execute') {
+    const mapped = mapRunModeToDispatch(runMode, availableTools, enabledTools);
+    let tools = mergeMentionedTools(mapped.enabledTools, chat.state.draftInput, availableTools.map((t) => t.key));
+
+    // Ask：禁止自动升到 execute；写意图仅提示
+    if (runMode === 'ask') {
+      if (isWriteExecutionIntent(draft) || tools.some((key) => availableTools.find((t) => t.key === key)?.requiresApproval)) {
+        toast.error('当前为问答模式，无法执行写操作。请切换到「方案」或「执行」。');
+        return;
+      }
+      tools = mapped.enabledTools;
+    } else if (runMode === 'plan') {
+      // 方案模式保持只读工具；写意图提示切换到执行
+      if (isWriteExecutionIntent(draft)) {
+        toast.error('当前为方案模式。如需直接执行，请切换到「执行」。');
+      }
+      tools = tools.filter((key) => {
+        const t = availableTools.find((x) => x.key === key);
+        return t && !t.requiresApproval;
+      });
+    } else {
       tools = toolsForExecuteMode(tools, availableTools);
     }
+
+    const mode = mapped.sessionMode;
+    const modeHint = mapped.modeHint;
+    const risk = riskLevel;
     const attachmentIds = attachments.map((a) => a.id).filter((id): id is string => Boolean(id));
     if (attachments.some((a) => a.uploading)) {
       toast.error('附件仍在上传，请稍候再发送');
@@ -1208,19 +1303,21 @@ export default function Copilot() {
       }
       // 仅补丁元数据，勿在 send 前用带 messages 的整表 sync
       persistRunConfig(sendModelId, tools);
+      const sendOpts = {
+        modelId: sendModelId,
+        enabledTools: tools,
+        sessionMode: mode,
+        runMode,
+        reasoningEffort,
+        modeHint,
+        riskLevel: risk,
+        attachmentIds: attachmentIds.length ? attachmentIds : undefined,
+      };
       if (editingMessageId) {
-        chat.replaceAndSend(editingMessageId, chat.state.draftInput, {
-          modelId: sendModelId, enabledTools: tools, sessionMode: mode, riskLevel: risk, attachmentIds,
-        });
+        chat.replaceAndSend(editingMessageId, chat.state.draftInput, sendOpts);
         setEditingMessageId(null);
       } else {
-        chat.send(chat.state.draftInput, {
-          modelId: sendModelId,
-          enabledTools: tools,
-          sessionMode: mode,
-          riskLevel: risk,
-          attachmentIds: attachmentIds.length ? attachmentIds : undefined,
-        });
+        chat.send(chat.state.draftInput, sendOpts);
       }
       setAttachments([]);
       setShowSlash(false);
@@ -1229,17 +1326,19 @@ export default function Copilot() {
       setMentionQuery('');
     };
 
-    if (mode !== sessionMode) {
+    if (mode !== sessionMode || activeSession?.runMode !== runMode) {
       void chat.setCollaborationMode(mode, {
         riskLevel: risk,
         enableApprovalTools: mode === 'execute' ? approvalToolKeys(availableTools) : undefined,
+        runMode,
+        reasoningEffort,
       })
         .then(() => {
           void queryClient.invalidateQueries({ queryKey: ['sessions'] });
           dispatchSend();
         })
         .catch((err) => {
-          toast.error(err instanceof Error ? err.message : '无法切换到受控执行');
+          toast.error(err instanceof Error ? err.message : '无法切换协作模式');
         });
       return;
     }
@@ -1250,6 +1349,8 @@ export default function Copilot() {
         void chat.setCollaborationMode('execute', {
           riskLevel: risk,
           enableApprovalTools: approvalKeys,
+          runMode,
+          reasoningEffort,
         }).catch(() => undefined);
       }
     }
@@ -1296,13 +1397,27 @@ export default function Copilot() {
         return base.includes(toolKey) ? base : [...base, toolKey];
       });
       const tool = availableTools.find((t) => t.key === toolKey);
-      if (tool?.requiresApproval && sessionMode === 'investigate') {
-        void chat.setCollaborationMode('execute', {
-          riskLevel,
-          enableApprovalTools: approvalToolKeys(availableTools),
-        }).catch((err) => {
-          toast.error(err instanceof Error ? err.message : '无法切换到受控执行');
-        });
+      if (tool?.requiresApproval && runMode !== 'agent') {
+        if (runMode === 'ask') {
+          toast.error('当前为问答模式，无法启用写工具。请切换到「执行」。');
+        } else {
+          void chat.setCollaborationMode('execute', {
+            riskLevel,
+            enableApprovalTools: approvalToolKeys(availableTools),
+            runMode: 'agent',
+            reasoningEffort,
+          })
+            .then(() => {
+              setEnabledTools((prev) => toolsForExecuteMode(
+                prev.length ? prev : defaultEnabledToolKeys(availableTools),
+                availableTools,
+              ));
+              void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+            })
+            .catch((err) => {
+              toast.error(err instanceof Error ? err.message : '无法切换到执行模式');
+            });
+        }
       }
       persistRunConfig(sendModelId, (() => {
         const base = enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools);
@@ -1607,7 +1722,7 @@ export default function Copilot() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [contextSelection.open, canOpenExpertContext]);
 
-  // 切回研判时卸下需审批的写工具，避免「模式显示研判、工具仍可写」
+  // 切回问答/方案（investigate）时卸下需审批的写工具，避免「模式只读、工具仍可写」
   useEffect(() => {
     if (sessionMode !== 'investigate') return;
     setEnabledTools((prev) => prev.filter((key) => !availableTools.find((tool) => tool.key === key)?.requiresApproval));
@@ -1792,11 +1907,13 @@ export default function Copilot() {
               ? { label: '人工交接', tone: 'warn' as const, text: `写操作已暂停，由 ${handoffOwner} 继续处置。` }
               : workbench.pendingApprovals
                 ? { label: '需审批', tone: 'warn' as const, text: `${workbench.pendingApprovals} 项写操作待人工审核 · 打开消息中的审批卡授权` }
-                : sessionMode === 'execute' && riskLevel === 'high'
-                  ? { label: '需审批', tone: 'warn' as const, text: '高风险受控执行 · 写操作需人工审核授权' }
-                  : sessionMode === 'execute'
-                    ? { label: '脱敏放行', tone: 'info' as const, text: '受控执行中 · 写操作进入审批与审计' }
-                    : { label: '允许研判', tone: 'success' as const, text: '可检索分析 · 变更请切换受控执行' };
+                : runMode === 'agent' && riskLevel === 'high'
+                  ? { label: '需审批', tone: 'warn' as const, text: '高风险执行 · 写操作需人工审核授权' }
+                  : runMode === 'agent'
+                    ? { label: '脱敏放行', tone: 'info' as const, text: '执行模式 · 写操作进入审批与审计' }
+                    : runMode === 'ask'
+                      ? { label: '仅问答', tone: 'success' as const, text: '只回答不改系统 · 需要变更请切换方案或执行' }
+                      : { label: '方案优先', tone: 'success' as const, text: '先出计划再确认 · 写操作请切换到执行' };
             const showCost = sessionUsage.tokens > 0;
             return (
               <>
@@ -1808,7 +1925,7 @@ export default function Copilot() {
               <div className="min-w-0">
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   <span className="copilot-work-title truncate font-semibold">{workbench.title}</span>
-                  <Badge tone={workbench.tone === 'warning' ? 'warn' : 'brand'} className="shrink-0 text-[10px]">{workbench.pendingApprovals ? '待处置' : sessionMode === 'execute' ? '受控执行' : '研判中'}</Badge>
+                  <Badge tone={workbench.tone === 'warning' ? 'warn' : 'brand'} className="shrink-0 text-[10px]">{workbench.pendingApprovals ? '待处置' : runMode === 'agent' ? '执行中' : runMode === 'ask' ? '问答中' : '方案中'}</Badge>
                   {riskLevel !== 'low' && <Badge tone={riskLevel === 'high' ? 'error' : 'warn'} className="shrink-0 text-[10px]">{riskLevel === 'high' ? '高风险' : '中风险'}</Badge>}
                 </div>
                 {(workbench.nextAction || handoffActive) && (
@@ -1821,43 +1938,6 @@ export default function Copilot() {
             </div>
 
             <div className="copilot-header__actions shrink-0">
-              <div className="copilot-mode-toggle hidden sm:inline-flex" role="group" aria-label="协作模式">
-                <button
-                  type="button"
-                  disabled={isClosed || handoffActive}
-                  title={isClosed ? '会话已结案' : handoffActive ? '人工交接中' : '切换到研判模式'}
-                  onClick={() => {
-                    void chat.setCollaborationMode('investigate', { riskLevel })
-                      .then(() => { void queryClient.invalidateQueries({ queryKey: ['sessions'] }); })
-                      .catch((err) => toast.error(err instanceof Error ? err.message : '模式切换失败'));
-                  }}
-                  className={cn('copilot-mode-toggle__btn', sessionMode === 'investigate' && 'is-active')}
-                >
-                  研判
-                </button>
-                <button
-                  type="button"
-                  disabled={isClosed || handoffActive}
-                  title={isClosed ? '会话已结案' : handoffActive ? '人工交接中' : '切换到受控执行'}
-                  onClick={() => {
-                    void chat.setCollaborationMode('execute', {
-                      riskLevel,
-                      enableApprovalTools: approvalToolKeys(availableTools),
-                    })
-                      .then(() => {
-                        setEnabledTools((prev) => toolsForExecuteMode(
-                          prev.length ? prev : defaultEnabledToolKeys(availableTools),
-                          availableTools,
-                        ));
-                        void queryClient.invalidateQueries({ queryKey: ['sessions'] });
-                      })
-                      .catch((err) => toast.error(err instanceof Error ? err.message : '模式切换失败'));
-                  }}
-                  className={cn('copilot-mode-toggle__btn', sessionMode === 'execute' && 'is-active is-execute')}
-                >
-                  受控执行
-                </button>
-              </div>
               <button type="button" onClick={openRebindExpertPicker} className="copilot-toolbar-btn copilot-toolbar-btn--expert hidden sm:inline-flex" title={hasBoundExpert ? '查看或改绑数字工作伙伴' : '选择数字工作伙伴（可选）'}>
                 <span className="copilot-toolbar-btn__icon relative !bg-transparent !p-0" style={{ boxShadow: 'none' }}>
                   <DigitalEmployeeAvatar
@@ -1963,12 +2043,8 @@ export default function Copilot() {
                     <MessageBubble
                       key={m.id}
                       m={m}
-                      expandedThinking={expandedThinking}
-                      setExpandedThinking={setExpandedThinking}
                       expandedArgs={expandedArgs}
                       setExpandedArgs={setExpandedArgs}
-                      expandedReasoning={expandedReasoning}
-                      setExpandedReasoning={setExpandedReasoning}
                       expandedApproval={expandedApproval}
                       setExpandedApproval={setExpandedApproval}
                       onApprove={(mid) => setShowApproval({ messageId: mid, signerIndex: 0 })}
@@ -2284,26 +2360,44 @@ export default function Copilot() {
             </div>
           )}
 
-          {/* 运行配置：不再重复挂专家条，专家身份已在工作头芯片 */}
-          <div className="mb-1.5 flex items-center justify-end gap-1.5" aria-label="会话运行配置">
+          {/* 附件 chip 区 */}
+          {attachments.length > 0 && (
+            <div className="copilot-composer__attachments flex flex-wrap gap-1.5 mb-2">
+              {attachments.map((a, i) => (
+                <div key={i} className="copilot-composer__attach-chip flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] pl-1.5 pr-1 py-1 text-[11px]">
+                  {a.type === 'image' ? <FileText className="h-3.5 w-3.5 text-[var(--info)]" /> : <Paperclip className="h-3.5 w-3.5 text-[var(--text-muted)]" />}
+                  <span className="font-mono text-[var(--text)] max-w-[160px] truncate">{a.name}</span>
+                  <span className="text-[10px] text-[var(--text-muted)] font-mono">{a.uploading ? '上传中…' : (a.error ?? a.size)}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeAttachment(i)}
+                    className="grid h-4 w-4 place-items-center rounded text-[var(--text-muted)] hover:text-[var(--danger)]"
+                    aria-label={`移除附件 ${a.name}`}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ))}
               <button
                 type="button"
-                onClick={() => { if (isAdmin) { setToolsOpen(false); setModelOpen((v) => !v); } }}
-                aria-haspopup={isAdmin ? 'menu' : undefined}
-                aria-expanded={isAdmin ? modelOpen : undefined}
-                className="copilot-composer__model-pill flex items-center gap-1.5 rounded-md bg-[var(--bg-elevated)] px-2 py-0.5 text-[10px] text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)] transition-colors"
-                title={isAdmin ? '调整本次会话的模型与工具链' : '由工作区策略分配的受控运行路由'}
+                onClick={() => addAttachments([])}
+                className="copilot-composer__attach-chip flex items-center gap-1 rounded-md border border-dashed border-[var(--border)] px-2 py-1 text-[10px] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]"
               >
-                <Settings className="h-3 w-3 text-[var(--text-muted)]" />
-                <span className="font-medium">{isAdmin ? '运行配置' : '受控运行路由'}</span>
-                <span className="font-mono text-[var(--text-muted)]">{isAdmin ? `${currentModel?.label ?? sendModelId} · ${enabledToolCount} 工具` : '由工作区策略分配'}</span>
-                {isAdmin && <ChevronDown className="h-3 w-3 opacity-60" />}
+                <Plus className="h-3 w-3" />添加
               </button>
-          </div>
+            </div>
+          )}
 
-          {/* 运行配置 popover */}
+          {/* 运行配置 / 工具链 popover（由脚注入口打开） */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={(e) => addAttachments(Array.from(e.target.files ?? []))}
+          />
           {isAdmin && modelOpen && (
-            <div role="menu" className="absolute right-3 bottom-full mb-2 w-72 max-h-[min(24rem,calc(100dvh-10rem))] flex flex-col rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl z-30 overflow-hidden">
+            <div role="menu" className="absolute right-3 bottom-[4.5rem] mb-2 w-72 max-h-[min(24rem,calc(100dvh-10rem))] flex flex-col rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl z-30 overflow-hidden">
               <div className="shrink-0 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)]">运行配置 · 模型</div>
               <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain p-1">
                 {modelOptions.length === 0 && (
@@ -2356,9 +2450,8 @@ export default function Copilot() {
             </div>
           )}
 
-          {/* 工具链 popover */}
-          {toolsOpen && (
-            <div role="menu" className="absolute right-3 bottom-full mb-2 w-72 max-h-[min(24rem,calc(100dvh-10rem))] flex flex-col rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl z-30 overflow-hidden">
+          {isAdmin && toolsOpen && (
+            <div role="menu" className="absolute right-3 bottom-[4.5rem] mb-2 w-72 max-h-[min(24rem,calc(100dvh-10rem))] flex flex-col rounded-lg border border-[var(--border)] bg-[var(--surface-1)] shadow-xl z-30 overflow-hidden">
               <div className="shrink-0 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-[var(--text-muted)] flex items-center gap-1.5">
                 <Wrench className="h-3 w-3" />本会话工具链
                 <button type="button" className="ml-auto text-[10px] text-[var(--text-secondary)] hover:underline" onClick={() => {
@@ -2382,7 +2475,7 @@ export default function Copilot() {
                   </div>
                 ) : availableTools.map((t) => {
                   const on = enabledTools.includes(t.key);
-                  const writeLocked = Boolean(t.requiresApproval && sessionMode === 'investigate');
+                  const writeLocked = Boolean(t.requiresApproval && runMode !== 'agent');
                   const unavailable = Boolean(t.unavailable);
                   return (
                     <button
@@ -2391,18 +2484,23 @@ export default function Copilot() {
                       onClick={() => {
                         if (unavailable) return;
                         if (writeLocked) {
+                          if (runMode === 'ask') {
+                            toast.error('当前为问答模式，无法启用写工具。请切换到「执行」。');
+                            return;
+                          }
                           void chat.setCollaborationMode('execute', {
                             riskLevel,
                             enableApprovalTools: approvalToolKeys(availableTools),
+                            runMode: 'agent',
+                            reasoningEffort,
                           })
                             .then(() => {
                               setEnabledTools((prev) => toolsForExecuteMode(
                                 prev.length ? prev : defaultEnabledToolKeys(availableTools),
                                 availableTools,
                               ));
-                              void queryClient.invalidateQueries({ queryKey: ['sessions'] });
                             })
-                            .catch((err) => toast.error(err instanceof Error ? err.message : '无法切换到受控执行'));
+                            .catch((err) => toast.error(err instanceof Error ? err.message : '无法切换到执行模式'));
                           setToolsOpen(false);
                           return;
                         }
@@ -2422,7 +2520,7 @@ export default function Copilot() {
                       <Plug className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                       <div className="flex-1 min-w-0">
                         <div className="text-xs font-mono font-semibold">{t.name}</div>
-                        <div className="text-[10px] text-[var(--text-muted)]">{unavailable ? '执行器未接入 · 不可启用' : writeLocked ? '研判模式不可用 · 点击切换到受控执行' : t.desc}</div>
+                        <div className="text-[10px] text-[var(--text-muted)]">{unavailable ? '执行器未接入 · 不可启用' : writeLocked ? (runMode === 'ask' ? '问答模式不可用 · 请切换到执行' : '方案模式不可用 · 点击切换到执行') : t.desc}</div>
                       </div>
                       {unavailable && <Badge tone="neutral" className="text-[9px]">未接入</Badge>}
                       {t.requiresApproval && !unavailable && <Badge tone="warn" className="text-[9px]">需审批</Badge>}
@@ -2433,40 +2531,12 @@ export default function Copilot() {
             </div>
           )}
 
-          {/* 附件 chip 区 */}
-          {attachments.length > 0 && (
-            <div className="copilot-composer__attachments flex flex-wrap gap-1.5 mb-2">
-              {attachments.map((a, i) => (
-                <div key={i} className="copilot-composer__attach-chip flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] pl-1.5 pr-1 py-1 text-[11px]">
-                  {a.type === 'image' ? <FileText className="h-3.5 w-3.5 text-[var(--info)]" /> : <Paperclip className="h-3.5 w-3.5 text-[var(--text-muted)]" />}
-                  <span className="font-mono text-[var(--text)] max-w-[160px] truncate">{a.name}</span>
-                  <span className="text-[10px] text-[var(--text-muted)] font-mono">{a.uploading ? '上传中…' : (a.error ?? a.size)}</span>
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(i)}
-                    className="grid h-4 w-4 place-items-center rounded text-[var(--text-muted)] hover:text-[var(--danger)]"
-                    aria-label={`移除附件 ${a.name}`}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-              ))}
-              <button
-                type="button"
-                onClick={() => addAttachments([])}
-                className="copilot-composer__attach-chip flex items-center gap-1 rounded-md border border-dashed border-[var(--border)] px-2 py-1 text-[10px] text-[var(--text-muted)] hover:border-[var(--border-strong)] hover:text-[var(--text)]"
-              >
-                <Plus className="h-3 w-3" />添加
-              </button>
-            </div>
-          )}
-
           {/* 编辑器卡片 */}
           <div className={cn(
             'copilot-composer__editor group relative rounded-xl bg-[var(--surface-1)] transition-all',
+            runMode === 'agent' && 'copilot-composer__editor--execute',
             isDragging && 'is-dragging',
           )}>
-            {/* 自动 @ token 渲染预览（输入含 @ 时显示） */}
             {/@[^\s]+/.test(chat.state.draftInput) && (
               <div className="copilot-composer__chips flex flex-wrap items-center gap-1 px-3 pt-2 text-[10px]">
                 {Array.from(new Set(chat.state.draftInput.match(/@[^\s]+/g) ?? [])).map((tok, i) => (
@@ -2484,77 +2554,57 @@ export default function Copilot() {
               onKeyDown={onTextareaKey}
               onPaste={onPaste}
               aria-label="输入会话消息"
-              placeholder={sessionMode === 'execute'
-                ? `向 ${expertName} 下达受控执行指令 · / 命令 · @ 资源`
-                : `向 ${expertName} 发起研判 · / 命令 · @ 资源`}
+              placeholder={
+                runMode === 'agent'
+                  ? `向 ${expertName} 下达执行指令 · / 命令 · @ 资源`
+                  : runMode === 'ask'
+                    ? `向 ${expertName} 提问 · / 命令 · @ 资源`
+                    : `向 ${expertName} 征求方案 · / 命令 · @ 资源`
+              }
               maxLength={MAX_CHARS}
               rows={2}
-              className="copilot-composer__textarea block w-full resize-none bg-transparent px-3.5 py-2.5 text-sm leading-relaxed outline-none placeholder:text-[var(--text-muted)]/80"
+              className="copilot-composer__textarea block w-full resize-none bg-transparent px-3.5 pt-3 pb-2 text-sm leading-relaxed outline-none placeholder:text-[var(--text-muted)]/80"
             />
 
-            {/* 操作栏：左工具 / 右字数+发送 */}
-            <div className="copilot-composer__footer flex items-center justify-between">
-              <div className="copilot-composer__tools flex items-center">
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => addAttachments(Array.from(e.target.files ?? []))}
+            {/* 底栏：协作分段 · 推理 · 插入 · 上下文 | 发送 */}
+            <div className="copilot-composer__footer flex items-center justify-between gap-2">
+              <div className="copilot-composer__controls flex min-w-0 flex-wrap items-center gap-1" role="group" aria-label="协作与推理">
+                <ComposerRunModeMenu
+                  value={runMode}
+                  disabled={isClosed || handoffActive || !canMutate}
+                  onChange={handleRunModeChange}
                 />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="copilot-composer__tool grid h-7 w-7 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
-                  title="附件（支持拖拽 / 粘贴）"
-                  aria-label="添加附件"
-                >
-                  <Paperclip className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={openMentionMenu}
-                  className="copilot-composer__tool grid h-7 w-7 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
-                  title="@ 提及技能 / 专家 / 文档"
-                  aria-label="@ 提及"
-                >
-                  <AtSign className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
+                <ComposerReasoningMenu
+                  value={reasoningEffort}
+                  disabled={isClosed || handoffActive || !canMutate}
+                  onChange={handleReasoningChange}
+                />
+                <span className="copilot-composer__controls-sep" aria-hidden="true" />
+                <ComposerInsertMenu
+                  disabled={isClosed || handoffActive || !canMutate}
+                  onAttach={() => fileInputRef.current?.click()}
+                  onMention={openMentionMenu}
+                  onSlash={() => {
                     const cur = chat.state.draftInput;
                     const next = cur.startsWith('/') ? cur : `${cur}${cur && !/\s$/.test(cur) ? ' ' : ''}/`;
                     onInputChange(next);
                     inputRef.current?.focus();
                   }}
-                  className="copilot-composer__tool grid h-7 w-7 place-items-center rounded-md text-[var(--text-muted)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
-                  title="/ 命令"
-                  aria-label="slash 命令"
-                >
-                  <Hash className="h-3.5 w-3.5" />
-                </button>
+                />
+                <ComposerContextUsage usage={contextUsage} />
                 {chat.state.typing ? (
                   <button
                     type="button"
                     onClick={chat.stop}
-                    className="copilot-composer__stop ml-1 flex items-center gap-1 rounded-md px-2 py-1 text-[10px]"
+                    className="copilot-composer__stop ml-0.5 flex items-center gap-1 rounded-md px-2 py-1 text-[10px]"
                     title="停止生成（Esc）"
                   >
                     <Square className="h-2.5 w-2.5 fill-current" />停止
                   </button>
-                ) : (
-                  <span className="copilot-composer__status" title="等待输入">
-                    <Hourglass className="h-2.5 w-2.5" />就绪
-                  </span>
-                )}
+                ) : null}
               </div>
 
-              <div className="copilot-composer__send flex items-center">
-                <span className={cn('copilot-composer__usage hidden sm:flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]', tokenPercent > 90 && 'copilot-composer__usage--danger', tokenPercent > 60 && tokenPercent <= 90 && 'copilot-composer__usage--warning')}>
-                  <span className="font-mono tabular-nums">{charCount}/{MAX_CHARS}</span>
-                  <div className="copilot-composer__usage-bar" aria-hidden="true"><div style={{ width: `${Math.min(100, tokenPercent)}%` }} /></div>
-                </span>
+              <div className="copilot-composer__send flex shrink-0 items-center">
                 <Button
                   onClick={handleSend}
                   disabled={!chat.state.draftInput.trim() || chat.state.typing || isClosed || handoffActive}
@@ -2568,20 +2618,49 @@ export default function Copilot() {
             </div>
           </div>
 
-          {/* 提示条：协作状态 + 快捷键 + 草稿用量 */}
+          {/* 脚注：协作对象 · 风险 · 运行配置入口（去重模式/占用） */}
           <div className="mt-1.5 px-1 flex items-center justify-between gap-3 text-[10px] text-[var(--text-muted)]">
             <span className="truncate min-w-0">
-              {isClosed ? '会话已结案 · 仅可查看和导出' : handoffActive ? `交接中 · ${handoffOwner}` : `与 ${expertName} 协作中`}
+              {isClosed
+                ? '会话已结案 · 仅可查看和导出'
+                : handoffActive
+                  ? `交接中 · ${handoffOwner}`
+                  : (
+                    <>
+                      与 {expertName} 协作中
+                      {riskLevel !== 'low' && (
+                        <span className={cn('ml-1.5', riskLevel === 'high' ? 'text-[var(--danger)]' : 'text-[var(--warning)]')}>
+                          · 风险{riskLevel === 'high' ? '高' : '中'}
+                        </span>
+                      )}
+                    </>
+                  )}
             </span>
-            <span className="hidden sm:inline-flex items-center gap-2 shrink-0 font-mono">
-              <span className="inline-flex items-center gap-1">
+            <span className="inline-flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  if (!isAdmin) {
+                    toast.error('运行路由由工作区策略分配，仅管理员可调整模型与工具链');
+                    return;
+                  }
+                  setToolsOpen(false);
+                  setModelOpen((v) => !v);
+                }}
+                className="copilot-composer__footnote-config inline-flex max-w-[16rem] items-center gap-1 truncate rounded-md px-1.5 py-0.5 font-mono hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+                title={isAdmin ? '调整模型与工具链' : '由工作区策略分配'}
+              >
+                <Cpu className="h-3 w-3 shrink-0 opacity-70" />
+                <span className="truncate">
+                  {(currentModel?.label ?? sendModelId) || '未选模型'}
+                  {isAdmin ? ` · ${enabledToolCount} 工具` : ' · 受控路由'}
+                </span>
+                {isAdmin && <ChevronDown className="h-3 w-3 shrink-0 opacity-60" />}
+              </button>
+              <span className="hidden sm:inline-flex items-center gap-1 text-[var(--text-muted)]">
                 <kbd className="px-1 py-0.5 rounded border border-[var(--border)] bg-[var(--surface-1)] text-[9px] font-sans">Enter</kbd>
-                <span>发送</span>
+                发送
               </span>
-              <span className="text-[var(--border-strong)]">·</span>
-              <span>{attachments.length} 附件</span>
-              <span className="text-[var(--border-strong)]">·</span>
-              <span>草稿约 {tokenEstimate} tok</span>
             </span>
           </div>
         </div>
@@ -2654,8 +2733,8 @@ export default function Copilot() {
               </div>
             </div>
             <div className="copilot-agent-details__status-row">
-              <span className={cn('copilot-agent-details__status-dot', handoffActive || sessionMode === 'execute' ? 'copilot-agent-details__status-dot--warning' : 'copilot-agent-details__status-dot--active')} aria-hidden="true" />
-              <Badge tone={handoffActive || sessionMode === 'execute' ? 'warn' : 'brand'} className="text-[10px]">{handoffActive ? '人工接管中' : sessionMode === 'execute' ? '受控执行中' : '研判进行中'}</Badge>
+              <span className={cn('copilot-agent-details__status-dot', handoffActive || runMode === 'agent' ? 'copilot-agent-details__status-dot--warning' : 'copilot-agent-details__status-dot--active')} aria-hidden="true" />
+              <Badge tone={handoffActive || runMode === 'agent' ? 'warn' : 'brand'} className="text-[10px]">{handoffActive ? '人工接管中' : runMode === 'agent' ? '执行中' : runMode === 'ask' ? '问答中' : '方案中'}</Badge>
               <span className={cn('copilot-agent-details__risk', riskLevel === 'high' ? 'copilot-agent-details__risk--high' : riskLevel === 'medium' ? 'copilot-agent-details__risk--medium' : 'copilot-agent-details__risk--low')}>
                 风险 {riskLevel === 'high' ? '高' : riskLevel === 'medium' ? '中' : '低'}
               </span>
@@ -2696,7 +2775,7 @@ export default function Copilot() {
             )}
             {contextTab === 'overview' && (
               <div className="copilot-context-stack">
-                <ContextOverview summary={contextSummary} sessionMode={sessionMode} riskLevel={riskLevel} handoffActive={handoffActive} onOpenTab={setContextTab} />
+                <ContextOverview summary={contextSummary} runMode={runMode} riskLevel={riskLevel} handoffActive={handoffActive} onOpenTab={setContextTab} />
 
                 <section className="copilot-agent-details__section">
                   <div className="copilot-details-card">
@@ -3374,19 +3453,15 @@ function SkillArtifactDownloadCard({
 
 // ============ 消息气泡 ============
 function MessageBubble({
-  m, expandedThinking, setExpandedThinking, expandedArgs, setExpandedArgs,
-  expandedReasoning, setExpandedReasoning, expandedApproval, setExpandedApproval,
+  m, expandedArgs, setExpandedArgs,
+  expandedApproval, setExpandedApproval,
   onApprove, onContinueRun, onCitation, onRetry, onCopy, onRegenerate, onDelete, onRetryMessage, onFeedback,
   onApproveSigner, onRequestReject, onEdit,
   hoverMsgId, setHoverMsgId, copiedId, agentName, expertRole, expert, onOpenContext, selectedContextMessageId, messageRef, currentUser,
 }: {
   m: ChatMessageEx;
-  expandedThinking: Record<string, boolean>;
-  setExpandedThinking: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   expandedArgs: Record<string, boolean>;
   setExpandedArgs: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
-  expandedReasoning: Record<string, boolean>;
-  setExpandedReasoning: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   expandedApproval: Record<string, boolean>;
   setExpandedApproval: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   onApprove: (msgId: string) => void;
@@ -3535,53 +3610,8 @@ function MessageBubble({
           </div>
         )}
 
-        {m.reasoningSteps && m.reasoningSteps.length > 0 && (
-          <div className="copilot-message__reasoning max-w-[920px] rounded-md border border-[var(--border)] bg-[var(--bg-elevated)]">
-            <button
-              onClick={() => setExpandedReasoning({ ...expandedReasoning, [m.id]: !expandedReasoning[m.id] })}
-              aria-expanded={!!expandedReasoning[m.id]}
-              aria-controls={`reasoning-${m.id}`}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text)]"
-            >
-              <Activity className="h-3 w-3" />
-              <span className="font-semibold">执行过程 · {m.reasoningSteps.length} 项</span>
-              {expandedReasoning[m.id] ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
-            </button>
-            {expandedReasoning[m.id] && (
-              <div id={`reasoning-${m.id}`} className="px-3 pb-2 space-y-1.5">
-                {m.reasoningSteps.map((s, i) => (
-                  <div key={s.id} className="flex items-start gap-2 text-[11px]">
-                    <span className="grid h-4 w-4 place-items-center rounded-full bg-[var(--brand-light)] text-[var(--brand)] text-[9px] font-mono shrink-0 mt-0.5">{i + 1}</span>
-                    <div className="min-w-0">
-                      <div className="font-semibold text-[var(--text-secondary)]">
-                        <span className="font-mono text-[9px] text-[var(--text-muted)] mr-1">[{s.kind}]</span>
-                        {s.title}
-                      </div>
-                      {s.detail && <div className="text-[var(--text-muted)]">{s.detail}</div>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
-        {m.thinking && m.thinking.length > 0 && (
-          <div className="copilot-message__thinking max-w-[920px] rounded-md border border-dashed border-[var(--border)] bg-[var(--bg-elevated)]">
-            <button
-              onClick={() => setExpandedThinking({ ...expandedThinking, [m.id]: !expandedThinking[m.id] })}
-              aria-expanded={!!expandedThinking[m.id]}
-              aria-controls={`thinking-${m.id}`}
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] text-[var(--text-muted)] hover:text-[var(--text)]"
-            >
-              <Brain className="h-3 w-3" />
-              <span className="font-semibold">分析摘要</span>
-              {expandedThinking[m.id] ? <ChevronDown className="h-3 w-3 ml-auto" /> : <ChevronRight className="h-3 w-3 ml-auto" />}
-            </button>
-            {expandedThinking[m.id] && (
-              <div id={`thinking-${m.id}`} className="px-3 pb-2 text-[11px] leading-relaxed text-[var(--text-muted)]">{m.thinking}</div>
-            )}
-          </div>
+        {!isUser && !isTool && (
+          <ThoughtPanel message={m} streaming={isStreaming} />
         )}
 
         {!isEmpty ? (
@@ -3976,15 +4006,15 @@ function ContextDrawerPanel({ tab, messages, onCitation, focusedCitation }: { ta
   return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4" />{meta.label}</div><div>{meta.hint}</div></div>{audit.length ? <div className="copilot-details-list">{audit.map((item) => <div key={item.id} className="copilot-context-item copilot-context-item--audit"><span className={cn('copilot-audit-dot', item.tone === 'error' ? 'copilot-audit-dot--error' : 'copilot-audit-dot--success')} /><div className="min-w-0"><div className="text-[11px] font-medium text-[var(--text)]">{item.text}</div><div className="mt-1 font-mono text-[10px] text-[var(--text-muted)]">{item.time.slice(11, 19)} · {item.id}</div></div></div>)}</div> : empty('审计事件')}</section>;
 }
 
-function ContextOverview({ summary, sessionMode, riskLevel, handoffActive, onOpenTab }: {
+function ContextOverview({ summary, runMode, riskLevel, handoffActive, onOpenTab }: {
   summary: ReturnType<typeof deriveWorkbenchSummary>;
-  sessionMode: 'investigate' | 'execute';
+  runMode: RunMode;
   riskLevel: 'low' | 'medium' | 'high';
   handoffActive: boolean;
   onOpenTab: (tab: WorkbenchContextTab) => void;
 }) {
-  const statusLabel = handoffActive ? '人工接管中' : sessionMode === 'execute' ? '受控执行中' : '研判进行中';
-  const statusTone = handoffActive ? 'warn' : sessionMode === 'execute' ? 'warn' : 'brand';
+  const statusLabel = handoffActive ? '人工接管中' : runMode === 'agent' ? '执行中' : runMode === 'ask' ? '问答中' : '方案中';
+  const statusTone = handoffActive ? 'warn' : runMode === 'agent' ? 'warn' : 'brand';
   const riskLabel = riskLevel === 'high' ? '高' : riskLevel === 'medium' ? '中' : '低';
   const cards: { tab: WorkbenchContextTab; label: string; value: number; icon: any; tone: string }[] = [
     { tab: 'tasks', label: '关联任务', value: summary.linkedTasks, icon: ListChecksIcon, tone: 'text-[var(--brand)] bg-[var(--brand-light)]' },

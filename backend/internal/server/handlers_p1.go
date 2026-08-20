@@ -94,19 +94,56 @@ func (s *Server) workflowByID(r *http.Request) (any, error) {
 	switch action {
 	case "versions":
 		if r.Method == http.MethodGet {
-			if vers := s.Store.WorkflowVersions[wid]; vers != nil {
-				return vers, nil
+			vers := s.Store.WorkflowVersions[wid]
+			if vers == nil && wid == "wf1" {
+				vers = s.Store.WorkflowVersions["wf-1"]
 			}
-			// 兼容旧种子键名
-			if wid == "wf1" {
-				return s.Store.WorkflowVersions["wf-1"], nil
+			if vers == nil && wid == "wf-1" {
+				vers = s.Store.WorkflowVersions["wf1"]
 			}
-			if wid == "wf-1" {
-				return s.Store.WorkflowVersions["wf1"], nil
+			if vers == nil {
+				return []map[string]any{}, nil
 			}
-			return []map[string]any{}, nil
+			out := make([]map[string]any, 0, len(vers))
+			for _, raw := range vers {
+				item := map[string]any{}
+				for k, v := range raw {
+					item[k] = v
+				}
+				if str(item["label"]) == "" {
+					ver := strings.TrimSpace(str(item["version"]))
+					switch {
+					case ver == "":
+						item["label"] = str(item["id"])
+					case strings.HasPrefix(ver, "v") || strings.HasPrefix(ver, "V"):
+						item["label"] = ver
+					default:
+						item["label"] = "v" + ver
+					}
+				}
+				if str(item["time"]) == "" && str(item["createdAt"]) != "" {
+					item["time"] = strings.ReplaceAll(strings.TrimSuffix(str(item["createdAt"]), "Z"), "T", " ")
+				}
+				out = append(out, item)
+			}
+			return out, nil
 		}
-		ver := map[string]any{"id": s.Store.ID("wfv"), "workflowId": wid, "version": coalesce(str(body["version"]), "0.1.0"), "status": "draft", "createdAt": time.Now().UTC().Format(time.RFC3339)}
+		verLabel := strings.TrimSpace(str(body["label"]))
+		if verLabel == "" {
+			verLabel = strings.TrimSpace(coalesce(str(body["version"]), "0.1.0"))
+		}
+		if verLabel != "" && !strings.HasPrefix(verLabel, "v") && !strings.HasPrefix(verLabel, "V") && str(body["label"]) == "" {
+			verLabel = "v" + verLabel
+		}
+		ver := map[string]any{
+			"id": s.Store.ID("wfv"), "workflowId": wid,
+			"version": coalesce(str(body["version"]), strings.TrimPrefix(verLabel, "v")),
+			"label": verLabel, "status": "draft",
+			"desc": coalesce(str(body["desc"]), "从当前画布另存的草稿版本"),
+			"time": "刚刚", "createdAt": time.Now().UTC().Format(time.RFC3339),
+			"nodes": body["nodes"], "edges": body["edges"],
+			"parentVersionId": body["parentVersionId"],
+		}
 		s.Store.WorkflowVersions[wid] = append([]map[string]any{ver}, s.Store.WorkflowVersions[wid]...)
 		return ver, nil
 	case "draft":

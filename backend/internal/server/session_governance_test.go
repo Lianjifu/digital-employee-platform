@@ -27,6 +27,40 @@ func TestNormalizeSessionModeAndFilter(t *testing.T) {
 	}
 }
 
+func TestApplySessionGovernanceRunMode(t *testing.T) {
+	sess := map[string]any{"sessionMode": sessionModeInvestigate}
+	applySessionGovernancePatch(sess, map[string]any{
+		"runMode":          "agent",
+		"reasoningEffort":  "deep",
+		"sessionMode":      sessionModeExecute,
+	}, nil, nowRFC3339())
+	if str(sess["runMode"]) != "agent" {
+		t.Fatalf("runMode=%v", sess["runMode"])
+	}
+	if str(sess["reasoningEffort"]) != "deep" {
+		t.Fatalf("reasoningEffort=%v", sess["reasoningEffort"])
+	}
+	if str(sess["sessionMode"]) != sessionModeExecute {
+		t.Fatalf("sessionMode=%v", sess["sessionMode"])
+	}
+	applySessionGovernancePatch(sess, map[string]any{"runMode": "nope", "reasoningEffort": "max"}, nil, nowRFC3339())
+	if str(sess["runMode"]) != "agent" || str(sess["reasoningEffort"]) != "deep" {
+		t.Fatalf("invalid values must be ignored")
+	}
+}
+
+func TestReasoningEffortGuidance(t *testing.T) {
+	if reasoningEffortGuidance("off") == "" {
+		t.Fatal("off should inject guidance")
+	}
+	if reasoningEffortGuidance("deep") == "" {
+		t.Fatal("deep should inject guidance")
+	}
+	if reasoningEffortGuidance("standard") != "" {
+		t.Fatal("standard keeps default prompt")
+	}
+}
+
 func TestContentSafetyRedact(t *testing.T) {
 	t.Setenv("DE_CONTENT_SAFETY", "redact")
 	r := applyContentSafety("联系我 13800138000")

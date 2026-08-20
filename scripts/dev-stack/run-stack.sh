@@ -29,6 +29,11 @@ export DE_ALLOW_RUNTIME_STUB="${DE_ALLOW_RUNTIME_STUB:-0}"
 export DE_MODEL_DISCOVER_FALLBACK="${DE_MODEL_DISCOVER_FALLBACK:-0}"
 export DE_EMBEDDED_CHAT="${DE_EMBEDDED_CHAT:-0}"
 export DE_DATABASE_URL="${DE_DATABASE_URL:-postgres://de:de@127.0.0.1:5432/digital_employee?sslmode=disable}"
+# Postgres must be Docker (de-postgres). Homebrew postgresql@N on :5432 steals host connections.
+if ! bash "$ROOT/scripts/dev-stack/ensure-docker-postgres.sh"; then
+  echo "$(date '+%F %T') ensure-docker-postgres failed" >>"$LOGDIR/keeper.log"
+  exit 1
+fi
 # Redis optional for local: only set when 6379 is listening (Docker Compose redis).
 if /usr/sbin/lsof -nP -iTCP:6379 -sTCP:LISTEN >/dev/null 2>&1; then
   export DE_REDIS_URL='redis://127.0.0.1:6379/0'

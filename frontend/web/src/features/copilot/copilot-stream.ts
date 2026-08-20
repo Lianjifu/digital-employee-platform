@@ -136,6 +136,8 @@ export type StreamTurnInput = {
   modeHint?: string;
   reflectHint?: string;
   sessionMode?: 'investigate' | 'execute';
+  runMode?: 'ask' | 'plan' | 'agent';
+  reasoningEffort?: 'off' | 'standard' | 'deep';
   riskLevel?: 'low' | 'medium' | 'high';
   attachmentIds?: string[];
   clientMsgId?: string;
@@ -171,6 +173,8 @@ export async function streamCopilotTurn(input: StreamTurnInput): Promise<void> {
         modeHint: input.modeHint,
         reflectHint: input.reflectHint,
         sessionMode: input.sessionMode,
+        runMode: input.runMode,
+        reasoningEffort: input.reasoningEffort,
         riskLevel: input.riskLevel,
         attachmentIds: input.attachmentIds,
         clientMsgId: input.clientMsgId,

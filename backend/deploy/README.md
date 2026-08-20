@@ -1,6 +1,16 @@
 # 本地基础设施（Docker）
 
-PostgreSQL 与 Redis **仅通过 Docker Compose** 提供，不在本机直接安装服务进程。
+PostgreSQL 与 Redis **仅通过 Docker Compose** 提供，**禁止**在本机直接安装并监听 `5432` / `6379`（例如 Homebrew `postgresql@17` 会抢占 Colima 映射，导致控制面连错库）。
+
+联调启动前请执行：
+
+```bash
+bash scripts/dev-stack/ensure-docker-postgres.sh
+# 或
+cd backend && make infra-env
+```
+
+脚本会停掉占用 5432 的本机 Postgres、拉起 `de-postgres`，并校验为 **16.x**。更多说明见 [`docs/环境与数据模式.md`](../../docs/环境与数据模式.md)。
 
 ## 前置
 

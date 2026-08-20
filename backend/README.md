@@ -4,7 +4,7 @@
 
 **本地默认**：**monolith**（`de-app:8100` + `de-skill:8093` + `de-gateway:8089`）。coarse 四进程保留用于规模化对照。
 
-环境与数据模式（`DE_ENV`、seed、硬删除、岗位包）见 [docs/环境与数据模式.md](../docs/环境与数据模式.md)。
+环境与数据模式（`DE_ENV`、seed、硬删除、岗位包、**Postgres 仅 Docker**）见 [docs/环境与数据模式.md](../docs/环境与数据模式.md)。本机联调前请 `make infra-env`（或 `scripts/dev-stack/ensure-docker-postgres.sh`），确保 `127.0.0.1:5432` 指向容器 `de-postgres`（16.x），勿使用 Homebrew Postgres。
 
 | 部署单元 | 端口 | 说明 |
 |----------|------|------|

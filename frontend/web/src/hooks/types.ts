@@ -279,8 +279,12 @@ export interface ChatSession {
   modelId?: string;
   /** 启用的工具链 */
   enabledTools?: string[];
-  /** 研判 / 受控执行 */
+  /** 研判 / 受控执行（由 runMode 派生，ABI 保留） */
   sessionMode?: 'investigate' | 'execute';
+  /** 产品协作模式：问答 / 方案 / 执行 */
+  runMode?: 'ask' | 'plan' | 'agent';
+  /** 推理强度：关 / 标准 / 深度 */
+  reasoningEffort?: 'off' | 'standard' | 'deep';
   /** 会话风险等级 */
   riskLevel?: 'low' | 'medium' | 'high';
   /** 人工交接 */
@@ -330,6 +334,10 @@ export interface SendMessageInput {
   reflectHint?: string;
   /** 研判 / 受控执行 */
   sessionMode?: 'investigate' | 'execute';
+  /** 产品协作模式 */
+  runMode?: 'ask' | 'plan' | 'agent';
+  /** 推理强度 */
+  reasoningEffort?: 'off' | 'standard' | 'deep';
   /** 风险等级 */
   riskLevel?: 'low' | 'medium' | 'high';
   /** 已上传附件 id */

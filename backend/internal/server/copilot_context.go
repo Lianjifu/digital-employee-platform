@@ -385,6 +385,23 @@ func scoreMemoryText(text string, tokens []string, layer string) float64 {
 }
 
 func buildCopilotSystemPrompt(emp map[string]any, ragHits any, memoryHits []memoryHit) string {
+	return buildCopilotSystemPromptWithEffort(emp, ragHits, memoryHits, "")
+}
+
+func reasoningEffortGuidance(effort string) string {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "off":
+		return "推理强度：直接给出结论，不要展开冗长链式思考；必要时用一两句说明依据即可。\n"
+	case "deep":
+		return "推理强度：请深入分析，必要时分步说明假设、证据与权衡，再给出可执行结论。\n"
+	case "standard", "":
+		return ""
+	default:
+		return ""
+	}
+}
+
+func buildCopilotSystemPromptWithEffort(emp map[string]any, ragHits any, memoryHits []memoryHit, reasoningEffort string) string {
 	var b strings.Builder
 	if emp != nil && emp["skipped"] != true && emp["active"] != false {
 		name := coalesce(str(emp["name"]), "工作伙伴")
@@ -422,6 +439,9 @@ func buildCopilotSystemPrompt(emp map[string]any, ragHits any, memoryHits []memo
 	} else {
 		b.WriteString("你是企业数字工作伙伴平台的协作助手。请用中文简洁、可执行地回答。\n")
 		b.WriteString("若用户使用「刚才/上面/之前」等指代，请结合对话历史与跨会话记忆作答。\n")
+	}
+	if g := reasoningEffortGuidance(reasoningEffort); g != "" {
+		b.WriteString(g)
 	}
 	if len(memoryHits) > 0 {
 		b.WriteString("\n跨会话记忆（按相关性，可修正；括号内为记忆 ID，便于审计追溯）：\n")

@@ -387,6 +387,12 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	modeHint := coalesce(str(body["modeHint"]), str(body["mode"]))
 	reflectHint := coalesce(str(body["reflectHint"]), str(body["feedback"]))
 	sessionMode := normalizeSessionMode(str(body["sessionMode"]))
+	reasoningEffort := strings.ToLower(strings.TrimSpace(str(body["reasoningEffort"])))
+	switch reasoningEffort {
+	case "off", "standard", "deep":
+	default:
+		reasoningEffort = ""
+	}
 	riskLevel := normalizeRiskLevelSession(str(body["riskLevel"]))
 	channel := coalesce(str(body["channel"]), contract.ChannelWeb)
 	channelThreadID := str(body["channelThreadId"])
@@ -439,6 +445,11 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		}
 		if rl := str(sess["riskLevel"]); rl != "" && str(body["riskLevel"]) == "" {
 			riskLevel = normalizeRiskLevelSession(rl)
+		}
+		if reasoningEffort == "" {
+			if re := strings.ToLower(strings.TrimSpace(str(sess["reasoningEffort"]))); re == "off" || re == "standard" || re == "deep" {
+				reasoningEffort = re
+			}
 		}
 		if err := assertSessionWritableLocked(sess); err != nil {
 			s.Store.RUnlock()
@@ -605,7 +616,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	system := buildCopilotSystemPrompt(empMap, ragHits, memoryHits)
+	system := buildCopilotSystemPromptWithEffort(empMap, ragHits, memoryHits, reasoningEffort)
 	if sessionMode == sessionModeInvestigate {
 		system += "\n当前会话为研判模式：禁止宣称已执行写操作；技能仅可 action=open/artifacts；需要变更时提示用户切换到受控执行。"
 	} else {

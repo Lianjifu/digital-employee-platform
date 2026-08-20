@@ -192,8 +192,29 @@ export function buildExpertTools(employee?: ExpertToolSource | null): CopilotToo
   return out;
 }
 
+/** 新会话默认启用：平台内置 + 已接入工具 + 已装配技能；流程/未接入/需审批项除外。 */
 export function defaultEnabledToolKeys(tools: CopilotToolDef[]): string[] {
-  return tools.filter((t) => !t.requiresApproval && !t.unavailable).map((t) => t.key);
+  return tools
+    .filter((t) => !t.requiresApproval && !t.unavailable && t.kind !== 'workflow')
+    .map((t) => t.key);
+}
+
+/** 已装配且默认可启用的技能（不含需审批 / 未接入）。 */
+export function defaultAssembledSkillKeys(tools: CopilotToolDef[]): string[] {
+  return tools
+    .filter((t) => t.kind === 'skill' && !t.requiresApproval && !t.unavailable)
+    .map((t) => t.key);
+}
+
+/**
+ * 保留当前勾选中仍合法的项，并补齐默认应选中的已装配技能。
+ * 解决历史会话只勾了部分 office 技能、或从问答模式切回后技能被掏空的问题。
+ */
+export function ensureDefaultSkillsEnabled(enabled: string[], available: CopilotToolDef[]): string[] {
+  const keys = new Set(available.map((t) => t.key));
+  const kept = enabled.filter((k) => keys.has(k));
+  if (kept.length === 0) return defaultEnabledToolKeys(available);
+  return Array.from(new Set([...kept, ...defaultAssembledSkillKeys(available)]));
 }
 
 export function isOfficeDocumentTool(tool: CopilotToolDef): boolean {
@@ -202,7 +223,7 @@ export function isOfficeDocumentTool(tool: CopilotToolDef): boolean {
 
 export function toolsForExecuteMode(base: string[], available: CopilotToolDef[]): string[] {
   const extras = available
-    .filter((t) => !t.unavailable && (t.requiresApproval || isOfficeDocumentTool(t)))
+    .filter((t) => !t.unavailable && t.requiresApproval)
     .map((t) => t.key);
   return Array.from(new Set([...base, ...extras]));
 }
@@ -213,8 +234,9 @@ export function isWriteExecutionIntent(text: string): boolean {
     || /\b(pptx?|docx?|xlsx?)\b/i.test(text);
 }
 
+/** 进入执行模式时可一并解锁的审批类工具（不含普通已装配技能）。 */
 export function approvalToolKeys(available: CopilotToolDef[]): string[] {
   return available
-    .filter((t) => !t.unavailable && (t.requiresApproval || isOfficeDocumentTool(t)))
+    .filter((t) => !t.unavailable && t.requiresApproval)
     .map((t) => t.key);
 }

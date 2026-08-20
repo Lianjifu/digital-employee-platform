@@ -228,6 +228,11 @@ function reducer(s: State, a: Action): State {
           ...existing,
           ...session,
           messages: keepMessages,
+          // 列表投影常缺 runMode / reasoningEffort，勿用 undefined 冲掉本地已选
+          runMode: session.runMode ?? existing.runMode,
+          reasoningEffort: session.reasoningEffort ?? existing.reasoningEffort,
+          sessionMode: session.sessionMode ?? existing.sessionMode,
+          riskLevel: session.riskLevel ?? existing.riskLevel,
         };
         if (
           next.title !== existing.title
@@ -237,6 +242,8 @@ function reducer(s: State, a: Action): State {
           || next.conversationId !== existing.conversationId
           || next.workspaceId !== existing.workspaceId
           || next.sessionMode !== existing.sessionMode
+          || next.runMode !== existing.runMode
+          || next.reasoningEffort !== existing.reasoningEffort
           || next.riskLevel !== existing.riskLevel
           || next.digitalEmployeeId !== existing.digitalEmployeeId
           || next.pinned !== existing.pinned
@@ -291,6 +298,8 @@ function reducer(s: State, a: Action): State {
         ? {
             ...merged,
             sessionMode: existing.sessionMode,
+            runMode: existing.runMode,
+            reasoningEffort: existing.reasoningEffort,
             riskLevel: existing.riskLevel,
             handoff: existing.handoff,
             closeSummary: existing.closeSummary,
@@ -1036,7 +1045,7 @@ export function useChat(agentMeta?: { name: string }) {
       ctrl: AbortController,
       correlationIdStr: string,
       digitalEmployeeId?: string,
-      opts?: { skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string; sessionMode?: 'investigate' | 'execute'; riskLevel?: 'low' | 'medium' | 'high'; attachmentIds?: string[]; clientMsgId?: string },
+      opts?: { skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string; sessionMode?: 'investigate' | 'execute'; runMode?: 'ask' | 'plan' | 'agent'; reasoningEffort?: 'off' | 'standard' | 'deep'; riskLevel?: 'low' | 'medium' | 'high'; attachmentIds?: string[]; clientMsgId?: string },
     ) => {
       const agentName = opts?.agentName ?? '岗位专家';
       const modelId = opts?.modelId ?? '';
@@ -1419,6 +1428,8 @@ export function useChat(agentMeta?: { name: string }) {
         modeHint: opts?.modeHint,
         reflectHint: opts?.reflectHint,
         sessionMode: opts?.sessionMode,
+        runMode: opts?.runMode,
+        reasoningEffort: opts?.reasoningEffort,
         riskLevel: opts?.riskLevel,
         attachmentIds: opts?.attachmentIds,
         clientMsgId: opts?.clientMsgId,
@@ -1447,7 +1458,7 @@ export function useChat(agentMeta?: { name: string }) {
       ctrl: AbortController,
       corr: string,
       digitalEmployeeId?: string,
-      opts?: { replyId?: string; skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string; sessionMode?: 'investigate' | 'execute'; riskLevel?: 'low' | 'medium' | 'high'; attachmentIds?: string[]; clientMsgId?: string },
+      opts?: { replyId?: string; skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string; sessionMode?: 'investigate' | 'execute'; runMode?: 'ask' | 'plan' | 'agent'; reasoningEffort?: 'off' | 'standard' | 'deep'; riskLevel?: 'low' | 'medium' | 'high'; attachmentIds?: string[]; clientMsgId?: string },
     ) => {
       const replyId = opts?.replyId ?? uid('m_');
       if (isMockChatMode()) {
@@ -1463,6 +1474,8 @@ export function useChat(agentMeta?: { name: string }) {
           modeHint: opts?.modeHint,
           reflectHint: opts?.reflectHint,
           sessionMode: opts?.sessionMode,
+          runMode: opts?.runMode,
+          reasoningEffort: opts?.reasoningEffort,
           riskLevel: opts?.riskLevel,
           attachmentIds: opts?.attachmentIds,
           clientMsgId: opts?.clientMsgId,
@@ -1505,6 +1518,8 @@ export function useChat(agentMeta?: { name: string }) {
       modelId,
       enabledTools: opts?.enabledTools,
       sessionMode: 'investigate',
+      runMode: 'plan',
+      reasoningEffort: 'standard',
       riskLevel: 'medium',
     });
 
@@ -1598,6 +1613,8 @@ export function useChat(agentMeta?: { name: string }) {
       pinned: session.pinned,
       starred: session.starred,
       sessionMode: session.sessionMode,
+      runMode: session.runMode,
+      reasoningEffort: session.reasoningEffort,
       riskLevel: session.riskLevel,
       handoff: session.handoff,
       closeSummary: session.closeSummary,
@@ -1619,6 +1636,8 @@ export function useChat(agentMeta?: { name: string }) {
           pinned: Boolean(session.pinned),
           starred: Boolean(session.starred),
           sessionMode: session.sessionMode,
+          runMode: session.runMode,
+          reasoningEffort: session.reasoningEffort,
           riskLevel: session.riskLevel,
           handoff: session.handoff,
           closeSummary: session.closeSummary,
@@ -1632,7 +1651,7 @@ export function useChat(agentMeta?: { name: string }) {
   /** 研判 / 受控执行：乐观更新 + PATCH；失败回滚。 */
   const setCollaborationMode = useCallback(async (
     mode: 'investigate' | 'execute',
-    opts?: { riskLevel?: 'low' | 'medium' | 'high'; enableApprovalTools?: string[] },
+    opts?: { riskLevel?: 'low' | 'medium' | 'high'; enableApprovalTools?: string[]; runMode?: 'ask' | 'plan' | 'agent'; reasoningEffort?: 'off' | 'standard' | 'deep' },
   ) => {
     const sid = state.activeId;
     if (!sid) return;
@@ -1647,19 +1666,36 @@ export function useChat(agentMeta?: { name: string }) {
     const prevMode = session.sessionMode === 'execute' ? 'execute' : 'investigate';
     const prevRisk = session.riskLevel;
     const prevTools = session.enabledTools;
+    const prevRun = session.runMode;
+    const prevEffort = session.reasoningEffort;
     const riskLevel = opts?.riskLevel ?? session.riskLevel ?? 'medium';
     const enabledTools = mode === 'execute' && opts?.enableApprovalTools?.length
       ? Array.from(new Set([...(session.enabledTools ?? []), ...opts.enableApprovalTools]))
       : session.enabledTools;
-    patchSessionLocal(sid, { sessionMode: mode, riskLevel, enabledTools });
+    const patch: Partial<ChatSession> = { sessionMode: mode, riskLevel, enabledTools };
+    if (opts?.runMode) patch.runMode = opts.runMode;
+    if (opts?.reasoningEffort) patch.reasoningEffort = opts.reasoningEffort;
+    patchSessionLocal(sid, patch);
     try {
       if (/^s_/.test(sid) || isMockChatMode()) return;
       await getApiClient().request(`/api/sessions/${encodeURIComponent(sid)}`, {
         method: 'PATCH',
-        body: { sessionMode: mode, riskLevel, enabledTools },
+        body: {
+          sessionMode: mode,
+          riskLevel,
+          enabledTools,
+          ...(opts?.runMode ? { runMode: opts.runMode } : {}),
+          ...(opts?.reasoningEffort ? { reasoningEffort: opts.reasoningEffort } : {}),
+        },
       });
     } catch (err) {
-      patchSessionLocal(sid, { sessionMode: prevMode, riskLevel: prevRisk, enabledTools: prevTools });
+      patchSessionLocal(sid, {
+        sessionMode: prevMode,
+        riskLevel: prevRisk,
+        enabledTools: prevTools,
+        runMode: prevRun,
+        reasoningEffort: prevEffort,
+      });
       throw err instanceof Error ? err : new Error('模式切换失败，请重试');
     }
   }, [state.activeId, state.sessions, patchSessionLocal]);
@@ -1764,11 +1800,13 @@ export function useChat(agentMeta?: { name: string }) {
     const modelId = opts?.modelId ?? opts?.model ?? sess?.modelId;
     const enabledTools = opts?.enabledTools ?? sess?.enabledTools;
     // 仅打元数据补丁，禁止 sync 整表（否则会用 append 前的 stale messages 冲掉刚插入的用户气泡）
-    if (sess && (opts?.modelId || opts?.enabledTools || opts?.sessionMode || opts?.riskLevel)) {
+    if (sess && (opts?.modelId || opts?.enabledTools || opts?.sessionMode || opts?.riskLevel || opts?.runMode || opts?.reasoningEffort)) {
       const patch: Partial<ChatSession> = {};
       if (opts?.modelId || opts?.model) patch.modelId = modelId ?? sess.modelId;
       if (opts?.enabledTools) patch.enabledTools = enabledTools ?? sess.enabledTools;
       if (opts?.sessionMode) patch.sessionMode = opts.sessionMode;
+      if (opts?.runMode) patch.runMode = opts.runMode;
+      if (opts?.reasoningEffort) patch.reasoningEffort = opts.reasoningEffort;
       if (opts?.riskLevel) patch.riskLevel = opts.riskLevel;
       dispatch({ type: 'update_session', sid: state.activeId, patch });
     }
@@ -1781,6 +1819,8 @@ export function useChat(agentMeta?: { name: string }) {
         modeHint: opts?.modeHint,
         reflectHint: opts?.reflectHint,
         sessionMode: opts?.sessionMode ?? sess?.sessionMode,
+        runMode: opts?.runMode ?? sess?.runMode,
+        reasoningEffort: opts?.reasoningEffort ?? sess?.reasoningEffort,
         riskLevel: opts?.riskLevel ?? sess?.riskLevel,
         attachmentIds: opts?.attachmentIds,
         clientMsgId: userMsg.clientMsgId,
@@ -1813,6 +1853,8 @@ export function useChat(agentMeta?: { name: string }) {
           ? (sess.digitalEmployeeName ?? sess.agent ?? '岗位专家')
           : '助手',
         sessionMode: opts?.sessionMode ?? sess.sessionMode,
+        runMode: opts?.runMode ?? sess.runMode,
+        reasoningEffort: opts?.reasoningEffort ?? sess.reasoningEffort,
         riskLevel: opts?.riskLevel ?? sess.riskLevel,
         attachmentIds: opts?.attachmentIds,
         clientMsgId: userMsg.clientMsgId,
@@ -1820,7 +1862,7 @@ export function useChat(agentMeta?: { name: string }) {
     }, isMockChatMode() ? 200 : 0);
   }, [state.activeId, state.sessions, state.typing, launchReply]);
 
-  const regenerate = useCallback((mid: string, opts?: { modelId?: string; enabledTools?: string[]; modeHint?: string; reflectHint?: string }) => {
+  const regenerate = useCallback((mid: string, opts?: { modelId?: string; enabledTools?: string[]; modeHint?: string; reflectHint?: string; sessionMode?: 'investigate' | 'execute'; runMode?: 'ask' | 'plan' | 'agent'; reasoningEffort?: 'off' | 'standard' | 'deep' }) => {
     const sess = state.sessions[state.activeId];
     if (!sess) return;
     const idx = sess.messages.findIndex((m) => m.id === mid);
@@ -1869,6 +1911,9 @@ export function useChat(agentMeta?: { name: string }) {
         conversationId: sess.conversationId ?? state.activeId,
         modeHint: opts?.modeHint,
         reflectHint: opts?.reflectHint,
+        sessionMode: opts?.sessionMode ?? sess.sessionMode,
+        runMode: opts?.runMode ?? sess.runMode,
+        reasoningEffort: opts?.reasoningEffort ?? sess.reasoningEffort,
       });
     }, isMockChatMode() ? 200 : 0);
   }, [state.activeId, state.sessions, launchReply]);

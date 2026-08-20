@@ -96,12 +96,33 @@
 
 平台功能按「**装配 → 协同 → 供给 → 度量 → 治理**」组织：每一步都回答「这位数字工作伙伴能不能干、怎么干、干得怎样、是否可信」。
 
+### 2.0 产品截图
+
+本地联调（`http://127.0.0.1:5173`，经网关 `:8089`）下的控制台界面示意：
+
+| 运营总览 | 专家协作 |
+|:-------:|:-------:|
+| ![运营总览](docs/images/product/ops-home.png) | ![专家协作](docs/images/product/copilot.png) |
+| KPI、需关注与工作记录的直播聚合 | 会话流式协同；问答 / 方案 / 执行与推理档位 |
+
+| 工作伙伴 | 工作流程 |
+|:-------:|:-------:|
+| ![工作伙伴](docs/images/product/partners.png) | ![工作流程](docs/images/product/workflows.png) |
+| 岗位目录、能力装配与上岗发布 | 可视化编排、版本与发布为流程技能 |
+
+| 技能中心 |
+|:-------:|
+| ![技能中心](docs/images/product/skills.png) |
+| 技能 / MCP / 平台工具清单与商店安装 |
+
+截图原图见 [`docs/images/product/`](docs/images/product/)。
+
 ### 2.1 能力地图
 
 | 阶段 | 用户在做什么 | 核心能力 | 成熟度 |
 |------|--------------|----------|--------|
 | **装配上岗** | 定义岗位、绑定能力、评测后上岗 | 岗位档案、能力装配、上岗门禁、模板采用 | 控制面可用；上岗门禁与可信画像持续加深 |
-| **人机协同** | 与在岗伙伴对话、处置、交接 | 专家协作、研判/受控执行、人工审核、结案交接 | 单人审核与 SSE 流式已通；多人会签深化中 |
+| **人机协同** | 与在岗伙伴对话、处置、交接 | 专家协作（问答/方案/执行）、人工审核、结案交接 | 单人审核与 SSE 流式已通；多人会签深化中 |
 | **任务与流程** | 把处置沉淀为任务或确定性流程 | 任务生命周期、SLA/复核、工作流画布与版本、发布为流程技能 | 任务受控路径可用；流程技能发布可用 |
 | **能力供给** | 为伙伴准备可引用的已发布资产 | 模型路由、知识检索、技能/MCP、分层记忆、消息渠道 | 五中心控制面可用；组织/个人作用域统一待落地 |
 | **运营度量** | 看在岗、待办、成本与产出 | 运营总览直播聚合、UsageMeters、工作记录 | KPI/告警已实聚合；持久计量与 ROI 闭环待补 |
@@ -121,7 +142,7 @@
 业务人员与在岗伙伴在同一工作现场协作，而不是把问题丢给裸模型：
 
 - **专家协作**：会话流式输出、岗位改绑、附件与分享、GFM 可读渲染  
-- **双模式**：研判（建议与证据）与受控执行（写操作受策略与审核约束）  
+- **运行档位**：产品层问答 / 方案 / 执行（ABI 仍为研判 `investigate` 与受控执行 `execute`）；推理深度可调；写操作受策略与审核约束  
 - **会话治理**：模式 / 风险等级 / 交接 / 结案；结案后拒绝写入；工具按模式过滤  
 - **人工审核**：高风险动作待审 → 授权事件 → 批准后执行（当前以单人审核为主，发起人不可自批）  
 - **任务中心**：对话与事件任务化，支持复核、SLA 风险与受控状态流转  
@@ -429,11 +450,21 @@ digital-employee-platform/
 
 | 依赖 | 版本 / 说明 |
 |------|-------------|
-| Docker 或 Colima | 拉起 PostgreSQL / Redis 与 compose 拓扑 |
+| Docker 或 Colima | **唯一**提供 PostgreSQL / Redis；本机勿再跑 Homebrew Postgres |
 | Go | 1.24+（可用 `backend/.tools` 引导） |
 | Node.js | 20+ |
 | pnpm | 11+ |
 | macOS（可选） | LaunchAgent 常驻联调时需要 |
+
+Postgres **必须**是 Compose 容器 `de-postgres`（`postgres:16-alpine`，主机 `127.0.0.1:5432`）。启动前建议：
+
+```bash
+bash scripts/dev-stack/ensure-docker-postgres.sh
+# 或
+cd backend && make infra-env
+```
+
+若本机 Homebrew `postgresql@17` 等占用了 5432，会抢掉 Colima 端口映射，导致 de-app 连到错误的空库/旧库。详见 [`docs/环境与数据模式.md`](docs/环境与数据模式.md)。
 
 ### 5.2 端口一览
 
@@ -491,7 +522,7 @@ make skill          # :8093 沙箱
 
 ### 5.4 路径 B：本机 LaunchAgent（常驻联调）
 
-适合日常改 Go / 前端、希望栈常驻。脚本：[`scripts/dev-stack/run-stack.sh`](scripts/dev-stack/run-stack.sh)（**默认 `DE_STACK=monolith`，`DE_ENV=development`**），Label：`com.digital-employee.dev-stack`。
+适合日常改 Go / 前端、希望栈常驻。脚本：[`scripts/dev-stack/run-stack.sh`](scripts/dev-stack/run-stack.sh)（**默认 `DE_STACK=monolith`，`DE_ENV=development`**），Label：`com.digital-employee.dev-stack`。启动时会经 `ensure-docker-postgres.sh` 校验 **Docker Postgres 16**（禁止本机 Homebrew 抢占 5432）。
 
 **重要：** 栈进程读取的是仓库内 **`backend/bin/de-*`**。改控制面代码后必须重编再重启：
 
@@ -561,6 +592,7 @@ git diff --check
 | 运营总览仍见演示金额/旧告警文案 | 确认已编到 `backend/bin` 并 `kickstart`；浏览器强刷；检查是否打到旧进程 |
 | 前端有数据但像 Mock | 确认 `VITE_USE_MOCK=false` 且 Vite 代理目标为 `:8089` |
 | 列表里既有 ACME 演示又有真实数据 | 历史 seed 残留在 PG；执行 `backend/scripts/purge-demo-seed-ids.sql` 后重启栈（见环境文档） |
+| 数据「像空库」或与预期不一致 | 检查 `127.0.0.1:5432` 是否为 Docker `de-postgres`（`SELECT version()` 应为 16.x）；执行 `ensure-docker-postgres.sh` / `make infra-env`，停掉 Homebrew Postgres |
 | Network 里同一 API 打两次 | 开发态 React StrictMode 双挂载，仍是同一真实网关 |
 | 删会话/文档重启又回来 | 确认硬删走了 `PersistDeleteSync`；已修路径含 sessions/messages/snapshots/知识/技能等 |
 | 岗位包 toast 已装但按钮仍「安装」 | 刷新页面（现按工作区 `installed` 展示）；确认当前工作区头 `x-workspace-id` |

@@ -445,10 +445,17 @@ func (s *Store) seed() {
 	}
 
 	s.Workflows = []map[string]any{
-		{"id": "wf1", "workspaceId": "w1", "name": "故障自愈", "status": "active", "lifecycleStatus": "published", "version": "1.2.0", "ownerId": "u1", "environment": "production", "updatedAt": "2026-07-19T12:00:00Z", "nodes": []map[string]any{{"id": "n1", "type": "start"}, {"id": "n2", "type": "action"}}, "edges": []map[string]any{}},
+		{"id": "wf1", "workspaceId": "w1", "name": "故障自愈", "status": "active", "lifecycleStatus": "published", "version": "1.2.0", "ownerId": "u1", "environment": "production", "updatedAt": "2026-07-19T12:00:00Z", "nodes": []map[string]any{{"id": "n1", "kind": "trigger", "label": "Webhook 触发", "type": "start"}, {"id": "n2", "kind": "execute", "label": "受控处置", "type": "action"}}, "edges": []map[string]any{{"id": "e1", "source": "n1", "target": "n2"}}},
 	}
 	s.WorkflowVersions["wf1"] = []map[string]any{
-		{"id": "wfv-1", "workflowId": "wf1", "version": "1.2.0", "status": "published", "createdAt": "2026-07-19T12:00:00Z"},
+		{
+			"id": "wfv-1", "workflowId": "wf1", "version": "1.2.0", "label": "v1.2.0",
+			"status": "published", "desc": "当前已发布版本", "time": "2026-07-19 12:00",
+			"createdAt": "2026-07-19T12:00:00Z", "publishedAt": "2026-07-19T12:00:00Z",
+			"nodes": []map[string]any{{"id": "n1", "kind": "trigger", "label": "开始", "type": "start"}, {"id": "n2", "kind": "execute", "label": "处置动作", "type": "action"}},
+			"edges": []map[string]any{{"id": "e1", "source": "n1", "target": "n2"}},
+			"nodeCount": 2, "edgeCount": 1, "evidenceMode": "recorded",
+		},
 	}
 	s.WorkflowGens = []map[string]any{}
 	s.WorkflowTpls = []map[string]any{

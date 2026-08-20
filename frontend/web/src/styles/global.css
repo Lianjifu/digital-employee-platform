@@ -3125,7 +3125,7 @@ a:focus-visible,
 .copilot-empty-state h2 { letter-spacing: -.02em; }
 .copilot-suggestion-card { min-height: 76px; box-shadow: 0 1px 2px rgba(15,23,42,.025); transition: transform .16s ease, border-color .16s ease, box-shadow .16s ease, background-color .16s ease; }
 .copilot-suggestion-card:hover, .copilot-suggestion-card:focus-visible { transform: translateY(-1px); box-shadow: var(--shadow-sm); }
-.copilot-composer { min-width: 0; font-size: 12px; }
+.copilot-composer { min-width: 0; font-size: 12px; overflow: visible; }
 .copilot-composer > :not(.absolute) { width: min(100%, 1280px); margin-inline: auto; }
 .copilot-composer__context {
   display: flex;
@@ -3149,7 +3149,7 @@ a:focus-visible,
 .copilot-composer__usage-bar > div { height: 100%; border-radius: inherit; background: var(--success); transition: width 0.15s ease, background-color 0.15s ease; }
 .copilot-composer__usage--warning .copilot-composer__usage-bar > div { background: var(--warning); }
 .copilot-composer__usage--danger .copilot-composer__usage-bar > div { background: var(--danger); }
-.copilot-composer__editor { min-width: 0; overflow: hidden; }
+.copilot-composer__editor { min-width: 0; overflow: visible; }
 .copilot-composer__textarea { display: block; min-height: 74px; max-height: 180px; overflow-y: auto; font-size: 13px; line-height: 1.55; }
 .copilot-composer__editor {
   border: 0 !important;
@@ -3170,12 +3170,89 @@ a:focus-visible,
   box-shadow: none !important;
 }
 .copilot-composer__footer {
+  position: relative;
+  z-index: 30;
+  overflow: visible;
   min-width: 0;
   gap: 10px;
   padding: 6px 8px 6px 6px;
   border-top: 0 !important;
   background: color-mix(in srgb, var(--bg-elevated) 40%, transparent);
   box-shadow: var(--saas-divider);
+}
+.copilot-composer__segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+}
+.copilot-composer__segment--execute {
+  border-color: color-mix(in srgb, var(--warning) 35%, var(--border));
+  background: color-mix(in srgb, var(--warning-bg) 55%, var(--bg-elevated));
+}
+.copilot-composer__segment-btn {
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background-color .12s ease, color .12s ease;
+}
+.copilot-composer__segment-btn:hover:not(:disabled):not(.is-active) {
+  color: var(--text);
+  background: color-mix(in srgb, var(--bg-hover) 80%, transparent);
+}
+.copilot-composer__segment-btn.is-active {
+  background: var(--surface-1);
+  color: var(--brand);
+  font-weight: 650;
+  box-shadow: var(--saas-ring);
+}
+.copilot-composer__segment-btn.is-active.is-execute {
+  color: var(--warning);
+}
+.copilot-composer__segment-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.copilot-composer__mode-btn {
+  border: 1px solid transparent;
+}
+.copilot-composer__mode-btn--execute {
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning-bg) 70%, transparent);
+  border-color: color-mix(in srgb, var(--warning) 28%, transparent);
+}
+.copilot-composer__mode-btn--execute:hover:not(:disabled) {
+  color: var(--warning);
+  background: var(--warning-bg);
+}
+.copilot-composer__controls-sep {
+  width: 1px;
+  height: 16px;
+  margin: 0 2px;
+  background: var(--border);
+}
+.copilot-composer__menu {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-1);
+  box-shadow: var(--shadow-lg);
+}
+.copilot-composer__editor--execute {
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--warning) 28%, transparent), var(--saas-elev-2) !important;
+}
+.copilot-composer__footnote-config {
+  max-width: min(16rem, 42vw);
 }
 .copilot-composer__tools,
 .copilot-composer__send { min-width: 0; }

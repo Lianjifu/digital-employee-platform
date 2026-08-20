@@ -201,7 +201,11 @@ function draftToFlow(draft: { nodes?: any[]; edges?: any[] } | null | undefined)
     if (n?.type === 'custom' && n.position && n.data) {
       return { id: n.id, type: 'custom', position: n.position, data: { ...n.data } };
     }
-    const kind = (n.kind ?? n.data?.kind ?? 'task') as WorkflowNodeKind;
+    const typeAsKind: Record<string, WorkflowNodeKind> = {
+      start: 'trigger', trigger: 'trigger', action: 'execute', execute: 'execute',
+      end: 'notify', task: 'task',
+    };
+    const kind = (n.kind ?? n.data?.kind ?? typeAsKind[String(n.type ?? '').toLowerCase()] ?? 'task') as WorkflowNodeKind;
     const position = n.position ?? { x: 60 + (i % 6) * 220, y: 80 + Math.floor(i / 6) * 120 };
     return {
       id: n.id,
@@ -652,19 +656,33 @@ type VersionSnapshot = Snapshot & {
   publishedAt?: string;
 };
 
+function formatWorkflowVersionLabel(version: {
+  id?: string;
+  label?: string;
+  version?: string;
+}): string {
+  const explicit = String(version.label ?? '').trim();
+  if (explicit) return explicit;
+  const raw = String(version.version ?? '').trim();
+  if (raw) return raw.startsWith('v') || raw.startsWith('V') ? raw : `v${raw}`;
+  const id = String(version.id ?? '').trim();
+  return id || '未命名版本';
+}
+
 function mapRemoteVersion(version: {
-  id: string; label: string; time: string; desc: string;
+  id: string; label?: string; version?: string; time?: string; desc?: string; createdAt?: string;
   status?: 'draft' | 'published'; evidenceMode?: 'recorded' | 'synthetic';
   nodeCount?: number; edgeCount?: number; parentVersionId?: string; publishedAt?: string;
   nodes?: any[]; edges?: any[];
 }): VersionSnapshot {
   const flow = draftToFlow({ nodes: version.nodes, edges: version.edges });
   const hasGraph = Boolean(version.nodes?.length);
+  const createdAt = version.createdAt ? String(version.createdAt) : '';
   return {
     id: version.id,
-    label: version.label,
-    time: version.time,
-    desc: version.desc,
+    label: formatWorkflowVersionLabel(version),
+    time: version.time || (createdAt ? createdAt.replace('T', ' ').replace(/Z$/, '') : '—'),
+    desc: version.desc || (version.status === 'published' ? '已发布版本' : '草稿版本'),
     status: version.status ?? 'draft',
     evidenceMode: version.evidenceMode ?? (hasGraph ? 'recorded' : 'synthetic'),
     nodeCount: version.nodeCount ?? flow.nodes.length,
@@ -758,7 +776,7 @@ export default function Workflows() {
   const [webhookEnabled, setWebhookEnabled] = useState(true);
 
   // 版本选择
-  const [activeVersion, setActiveVersion] = useState('v4');
+  const [activeVersion, setActiveVersion] = useState('');
   const [versionMenuOpen, setVersionMenuOpen] = useState(false);
   const [versionDiffOpen, setVersionDiffOpen] = useState(false);
   const [versions, setVersions] = useState<VersionSnapshot[]>([]);
@@ -781,7 +799,7 @@ export default function Workflows() {
   const { data: templateAssetsData } = useApiQuery<Array<Partial<WorkflowTemplateAsset> & { id: string; name: string }>>(['workflow-templates'], '/api/workflow-templates');
   const templateAssets = templateAssetsData ?? [];
   const { data: workflowListData } = useApiQuery<Array<Pick<Workflow, 'id'>>>(['workflows', currentWorkspaceId], '/api/workflows');
-  const workflowList = workflowListData ?? [];
+  const workflowList = Array.isArray(workflowListData) ? workflowListData : [];
   const workflowId = workflowList[0]?.id ?? '';
   const { data: workflowDraft } = useApiQuery<Workflow>(
     ['workflow-draft', currentWorkspaceId, workflowId],
@@ -795,8 +813,9 @@ export default function Workflows() {
     undefined,
     { enabled: Boolean(workflowId) },
   );
-  const remoteVersions = remoteVersionsData ?? [];
+  const remoteVersions = Array.isArray(remoteVersionsData) ? remoteVersionsData : [];
   const draftHydratedRef = useRef(false);
+  const [cleanBaseline, setCleanBaseline] = useState(() => JSON.stringify({ nodes: EMPTY_NODES, edges: EMPTY_EDGES }));
   const [draftGate, setDraftGate] = useState<DraftGate | null>(null);
   const [preflightOpen, setPreflightOpen] = useState(false);
   const [preflightResult, setPreflightResult] = useState<WorkflowValidation | null>(null);
@@ -946,7 +965,7 @@ export default function Workflows() {
   );
   const [skillName, setSkillName] = useState('生产故障处置流程技能');
   const [skillDesc, setSkillDesc] = useState('由工作流程发布的标准作业能力，可供数字工作伙伴在能力装配中引用。');
-  const [skillSourceVersion, setSkillSourceVersion] = useState('v4');
+  const [skillSourceVersion, setSkillSourceVersion] = useState('');
   const [skillRiskLevel, setSkillRiskLevel] = useState<WorkflowSkill['riskLevel']>('mid');
   useEffect(() => {
     if (tab === 'publishSkill') setSkillSourceVersion(activeVersion);
@@ -974,9 +993,15 @@ export default function Workflows() {
     if (!remoteVersions.length) return;
     const mapped = remoteVersions.map(mapRemoteVersion);
     setVersions(mapped);
+    setActiveVersion((prev) => (prev && mapped.some((item) => item.id === prev) ? prev : (mapped[0]?.id ?? '')));
+    setSkillSourceVersion((prev) => (prev && mapped.some((item) => item.id === prev) ? prev : (mapped[0]?.id ?? '')));
     setVersionCenterSelectedId((prev) => prev && mapped.some((item) => item.id === prev) ? prev : (mapped[0]?.id ?? ''));
     setDiffBaseId((prev) => prev && mapped.some((item) => item.id === prev) ? prev : (mapped.find((item) => item.id !== mapped[0]?.id)?.id ?? mapped[0]?.id ?? ''));
   }, [remoteVersions]);
+
+  useEffect(() => {
+    draftHydratedRef.current = false;
+  }, [workflowId]);
 
   useEffect(() => {
     if (!workflowDraft || draftHydratedRef.current) return;
@@ -987,8 +1012,8 @@ export default function Workflows() {
     setEdges(snapshot.edges);
     historyRef.current = { stack: [snapshot], idx: 0 };
     setSelectedNodeId(null);
-    if (remoteVersions[0]?.id) setActiveVersion(remoteVersions[0].id);
-  }, [workflowDraft, remoteVersions]);
+    setCleanBaseline(JSON.stringify({ nodes: snapshot.nodes, edges: snapshot.edges }));
+  }, [workflowDraft, workflowId]);
   const pushHistory = useCallback((next: Snapshot) => {
     const h = historyRef.current;
     h.stack = h.stack.slice(0, h.idx + 1);
@@ -1258,6 +1283,7 @@ export default function Workflows() {
       version: id,
       desc: '保存当前本地草稿',
     }, { onSuccess: () => refetchVersions() });
+    setCleanBaseline(JSON.stringify({ nodes: snapshot.nodes, edges: snapshot.edges }));
     showToast(`已保存 ${version?.label ?? id}（工作流草稿）`, 'success');
   }, [activeVersion, canWrite, edges, nodes, refetchVersions, saveWorkflowApi, showToast, versions, workflowId]);
 
@@ -1279,8 +1305,10 @@ export default function Workflows() {
     setNodes(next.nodes);
     setEdges(next.edges);
     setActiveVersion(versionId);
+    setSkillSourceVersion(versionId);
     setSelectedNodeId(next.nodes[0]?.id ?? null);
     pushHistory(next);
+    setCleanBaseline(JSON.stringify({ nodes: next.nodes, edges: next.edges }));
   }, [pushHistory]);
 
   const runWorkflow = useCallback(() => {
@@ -1486,9 +1514,15 @@ export default function Workflows() {
   const filteredNodes = nodes; // 留作以后按筛选条件过滤
   const activeSnapshot = versions.find((version) => version.id === activeVersion);
   const isDirty = useMemo(() => {
-    if (!activeSnapshot) return true;
-    return JSON.stringify({ nodes, edges }) !== JSON.stringify({ nodes: activeSnapshot.nodes, edges: activeSnapshot.edges });
-  }, [activeSnapshot, edges, nodes]);
+    const current = JSON.stringify({ nodes, edges });
+    if (cleanBaseline) return current !== cleanBaseline;
+    // 后端版本常无图快照：无基线时不以“找不到 v4”误判为脏
+    if (!activeSnapshot) return false;
+    if (!activeSnapshot.nodes.length && !activeSnapshot.edges.length && activeSnapshot.evidenceMode === 'synthetic') {
+      return false;
+    }
+    return current !== JSON.stringify({ nodes: activeSnapshot.nodes, edges: activeSnapshot.edges });
+  }, [activeSnapshot, cleanBaseline, edges, nodes]);
   useEffect(() => {
     if (!isDirty) return;
     setPreflightResult(null);
@@ -2570,7 +2604,7 @@ function CanvasView(props: {
         <Button size="sm" variant="outline" className="rounded-lg border-transparent bg-[var(--brand-light)] px-2.5 text-[var(--brand)] shadow-none hover:border-transparent hover:bg-[var(--brand-light)]" onClick={() => setVersionMenuOpen(true)} aria-label="切换或管理当前画布版本">
           <HistoryIcon className="h-3.5 w-3.5" />
           <span className="text-[10px] font-semibold opacity-80">当前版本</span>
-          <span className="font-mono">{versions.find((version) => version.id === activeVersion)?.label ?? activeVersion}</span>
+          <span className="font-mono">{versions.find((version) => version.id === activeVersion)?.label || activeVersion || '—'}</span>
           <ChevronRight className="h-3.5 w-3.5 rotate-90" />
         </Button>
         <div className="mx-1 h-5 w-px bg-[var(--border)]" aria-hidden="true" />
@@ -2607,7 +2641,7 @@ function CanvasView(props: {
           <span className="ml-2 text-[var(--warning)]">结构门禁：{structureIssues.filter((item) => item.severity === 'failed').map((item) => item.message).join('；')}</span>
         )}
       </div>
-      <Drawer open={versionMenuOpen} onClose={() => setVersionMenuOpen(false)} width={520} title="当前版本" description={`画布 ${activeVersion} · 切换仅影响草稿；另存 / 发布 / 回滚请在版本中心完成`} footer={<div className="flex w-full gap-2"><Button size="sm" variant="outline" className="flex-1" onClick={onOpenVersionCenter}>打开版本中心</Button><Button size="sm" variant="outline" className="flex-1" onClick={() => setVersionDiffOpen(true)}>查看差异</Button><Button size="sm" variant="primary" className="flex-1" onClick={publishVersion} loading={publishing} disabled={!canWrite || isDirty || !!draftGate?.blocked}>{publishLabel}</Button></div>}>
+      <Drawer open={versionMenuOpen} onClose={() => setVersionMenuOpen(false)} width={520} title="当前版本" description={`画布 ${versions.find((version) => version.id === activeVersion)?.label || activeVersion || '—'} · 切换仅影响草稿；另存 / 发布 / 回滚请在版本中心完成`} footer={<div className="flex w-full gap-2"><Button size="sm" variant="outline" className="flex-1" onClick={onOpenVersionCenter}>打开版本中心</Button><Button size="sm" variant="outline" className="flex-1" onClick={() => setVersionDiffOpen(true)}>查看差异</Button><Button size="sm" variant="primary" className="flex-1" onClick={publishVersion} loading={publishing} disabled={!canWrite || isDirty || !!draftGate?.blocked}>{publishLabel}</Button></div>}>
         <div className="space-y-2">
           {versions.map((version) => (
             <button

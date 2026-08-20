@@ -31,9 +31,10 @@ run-app: infra-env
 	$(GO) run ./cmd/de-app
 
 db-reset-dev: docker-engine
-	@echo "WARNING: drops application schemas in $(DE_DATABASE_URL)"
-	@$(COMPOSE) exec -T postgres psql -U de -d digital_employee -c "DROP SCHEMA IF EXISTS platform CASCADE; DROP SCHEMA IF EXISTS audit CASCADE;" || true
-	@echo "Restart de-app with DE_ENV=development to re-ensure kernel schema (empty durable store)."
+	@bash ../scripts/dev-stack/ensure-docker-postgres.sh
+	@echo "WARNING: drops application schemas in Docker Postgres ($(DE_DATABASE_URL))"
+	@$(COMPOSE) exec -T postgres psql -U de -d digital_employee -c "DROP SCHEMA IF EXISTS platform CASCADE; DROP SCHEMA IF EXISTS audit CASCADE; DROP SCHEMA IF EXISTS policy CASCADE; DROP SCHEMA IF EXISTS collab CASCADE; DROP SCHEMA IF EXISTS cap CASCADE;" || true
+	@echo "Restart de-app with DE_ENV=development to re-apply migrations / empty durable store."
 
 run-collab: infra-env
 	DE_CAP_URL=$${DE_CAP_URL:-http://127.0.0.1:8102} DE_WORKFLOW_URL=$${DE_WORKFLOW_URL:-http://127.0.0.1:8103} $(GO) run ./cmd/de-collab
@@ -256,6 +257,7 @@ compose-logs:
 
 infra-env:
 	@test -f deploy/.env || cp deploy/.env.example deploy/.env
+	@bash ../scripts/dev-stack/ensure-docker-postgres.sh
 	@echo "using DE_DATABASE_URL=$(DE_DATABASE_URL)"
 	@echo "using DE_REDIS_URL=$(DE_REDIS_URL)"
 
