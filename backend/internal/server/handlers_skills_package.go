@@ -73,8 +73,12 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 	s.Store.Lock()
 	// replace same-name package skill in workspace
 	kept := make([]map[string]any, 0, len(s.Store.Skills)+1)
+	removedSkillIDs := make([]string, 0)
 	for _, sk := range s.Store.Skills {
 		if str(sk["workspaceId"]) == ws && str(sk["name"]) == meta.Name && str(sk["source"]) == "package" {
+			if oid := str(sk["id"]); oid != "" && oid != skillID {
+				removedSkillIDs = append(removedSkillIDs, oid)
+			}
 			oldPath := str(sk["packagePath"])
 			if oldPath != "" && oldPath != dest {
 				_ = os.RemoveAll(oldPath)
@@ -82,6 +86,24 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 			continue
 		}
 		kept = append(kept, sk)
+	}
+	removedHealthIDs := make([]string, 0)
+	if len(removedSkillIDs) > 0 {
+		drop := map[string]struct{}{}
+		for _, id := range removedSkillIDs {
+			drop[id] = struct{}{}
+		}
+		healthKept := make([]map[string]any, 0, len(s.Store.SkillHealth))
+		for _, h := range s.Store.SkillHealth {
+			if _, gone := drop[str(h["skillId"])]; gone {
+				if hid := str(h["id"]); hid != "" {
+					removedHealthIDs = append(removedHealthIDs, hid)
+				}
+				continue
+			}
+			healthKept = append(healthKept, h)
+		}
+		s.Store.SkillHealth = healthKept
 	}
 	s.Store.Skills = append([]map[string]any{item}, kept...)
 	s.ensureSkillHealthLocked(item)
@@ -101,6 +123,12 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 	}}, s.Store.SkillIntegrations...)
 	s.Store.AppendAudit(ws, id.Name, "导入技能包", meta.Name+"@"+meta.Version, "success", "sha256="+meta.SHA256+";scripts="+itoaPolicy(len(meta.Scripts)))
 	s.Store.Unlock()
+	if len(removedSkillIDs) > 0 {
+		s.Store.PersistDelete("skills", removedSkillIDs...)
+	}
+	if len(removedHealthIDs) > 0 {
+		s.Store.PersistDelete("skill_health", removedHealthIDs...)
+	}
 	s.persistSkills()
 	go s.persistSkillExtra()
 

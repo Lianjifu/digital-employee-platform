@@ -1,6 +1,6 @@
 # de-skill-runtime
 
-FastAPI skill sandbox on port **8093**. RunToken HMAC verification and package script execution.
+FastAPI skill sandbox on port **8093**. **Monolith 与 coarse 均必须独立部署**（不可并入 de-app）。RunToken HMAC verification and package script execution.
 
 ## Endpoints
 

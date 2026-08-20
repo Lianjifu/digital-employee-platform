@@ -64,6 +64,8 @@ var DurableCollections = []string{
 	"access_reviews",
 	"sod_rules",
 	"temp_auths",
+	"template_adoptions",
+	"config_versions",
 	"skills",
 	"skill_catalog",
 	"skill_health",
@@ -91,6 +93,30 @@ func (s *Store) PersistDelete(collection string, ids ...string) {
 	if s.deleteHook == nil || len(ids) == 0 {
 		return
 	}
+	clean := normalizeDeleteIDs(ids)
+	if len(clean) == 0 {
+		return
+	}
+	go func() {
+		if err := s.deleteHook(context.Background(), collection, clean); err != nil {
+			log.Printf("persist-delete %s: %v", collection, err)
+		}
+	}()
+}
+
+// PersistDeleteSync removes documents and waits (session delete must survive process restart).
+func (s *Store) PersistDeleteSync(collection string, ids ...string) error {
+	if s.deleteHook == nil || len(ids) == 0 {
+		return nil
+	}
+	clean := normalizeDeleteIDs(ids)
+	if len(clean) == 0 {
+		return nil
+	}
+	return s.deleteHook(context.Background(), collection, clean)
+}
+
+func normalizeDeleteIDs(ids []string) []string {
 	clean := make([]string, 0, len(ids))
 	seen := map[string]struct{}{}
 	for _, id := range ids {
@@ -103,14 +129,7 @@ func (s *Store) PersistDelete(collection string, ids ...string) {
 		seen[id] = struct{}{}
 		clean = append(clean, id)
 	}
-	if len(clean) == 0 {
-		return
-	}
-	go func() {
-		if err := s.deleteHook(context.Background(), collection, clean); err != nil {
-			log.Printf("persist-delete %s: %v", collection, err)
-		}
-	}()
+	return clean
 }
 
 // PersistCollection snapshots a collection asynchronously (caller should hold Lock or own slice).
@@ -159,6 +178,11 @@ func (s *Store) PersistSync(collection string) error {
 		return nil
 	}
 	return s.persistHook(context.Background(), collection, items)
+}
+
+// SnapshotUnderLock returns a persistable snapshot; caller must hold Store.Lock or RLock.
+func (s *Store) SnapshotUnderLock(collection string) []map[string]any {
+	return s.snapshotLocked(collection)
 }
 
 func (s *Store) snapshotLocked(collection string) []map[string]any {
@@ -299,6 +323,10 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 		return []map[string]any{{"id": "skill_extra", "workspaceId": "*", "payload": s.SkillExtra}}
 	case "workflow_skills":
 		return s.WorkflowSkills
+	case "template_adoptions":
+		return s.TemplateAdoptions
+	case "config_versions":
+		return s.ConfigVersions
 	default:
 		return nil
 	}
@@ -502,5 +530,9 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 		}
 	case "workflow_skills":
 		s.WorkflowSkills = items
+	case "template_adoptions":
+		s.TemplateAdoptions = items
+	case "config_versions":
+		s.ConfigVersions = items
 	}
 }

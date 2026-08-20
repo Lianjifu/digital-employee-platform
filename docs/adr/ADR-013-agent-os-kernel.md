@@ -7,7 +7,7 @@
 
 ## 背景
 
-现仓专家协作主路径跑在 `de-core` 单体（`copilotStream`）。图上 11 层能力已有代码切片，但 **ABI 未冻结**：Runtime IDL 仅为 `Invoke` 占位，入站渠道无统一 Envelope，Context 无法按 `correlationId` 重建，SSE 事件形状与 Connect 流式不完全一致。
+现仓专家协作主路径跑在 **de-app monolith**（`ModeApp`，`:8100`）或 coarse 下的 **de-collab**（`copilotStream`）。历史上曾用 `de-core` 单体，已退役。图上 11 层能力已有代码切片，但 **ABI 未冻结**：Runtime IDL 仅为 `Invoke` 占位，入站渠道无统一 Envelope，Context 无法按 `correlationId` 重建，SSE 事件形状与 Connect 流式不完全一致。
 
 阶段 0 冻结内核契约，使阶段 1（Session Routing / Snapshot / Replay）与阶段 2（拆 `de-agent-runtime`）共用同一套类型，禁止再长 REST 方言。
 
@@ -76,8 +76,11 @@ Replay **禁止**再调用模型或工具；只返回 snapshot + 已落盘 Loop/
 
 1. `DE_ALLOW_MOCK_IDENTITY=true` 逃生舱（仅联调）
 2. `DE_ALLOW_MOCK_IDENTITY=false` 强制关闭
-3. `DE_BAN_MOCK_TOKEN` 或 `DE_ENV`/`GO_ENV` 为 `production|prod|staging` → 关闭
-4. 其余本地默认允许
+3. `DE_ENV` 为 `staging|production` → 双人审批等生产治理；`DE_BAN_MOCK_TOKEN` 仅禁用演示 token，不再单独触发生产审批
+4. `DE_ENV=development`（默认）→ PG 真源、空库不灌 ACME seed；硬删须 `PersistDelete`（含 kernel sessions/messages/snapshots）
+5. 其余本地默认允许演示身份（仅 `DE_ENV=demo` 或显式 `DE_ALLOW_DEMO_TOKEN`）
+
+数据模式全文见 `docs/环境与数据模式.md`。
 
 缺失有效身份 → `E_UNAUTHORIZED`。生产路径同时禁用 runtime stub（`DE_ALLOW_RUNTIME_STUB` 在生产信号下无效）。
 
@@ -144,7 +147,7 @@ Replay **禁止**再调用模型或工具；只返回 snapshot + 已落盘 Loop/
 
 ## R5 横切进程与副本（2026-08-19）
 
-Store 切开后允许把 Policy / Audit 从 de-sys **拆成独立二进制**（`:8104` / `:8105`），**不是** 16 微服务。默认 `make compose-up-coarse` 仍由 de-sys 吸收这两类路由，避免破坏 4 进程。
+Store 切开后允许把 Policy / Audit 从 sys 域 **拆成独立二进制**（`:8104` / `:8105`），**不是** 16 微服务。默认 monolith（de-app）与 coarse（de-sys）均在进程内吸收这两类路由；`DE_CROSSCUTTING_SPLIT=1` 时可拆开。
 
 | 项 | 实现 |
 |---|---|

@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -366,7 +367,7 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 				if str(v["id"]) != sub {
 					continue
 				}
-				if str(v["updatedById"]) == id.ID {
+				if !actorIsAdmin(id) && str(v["updatedById"]) == id.ID {
 					return nil, apperr.Forbidden(apperr.SODSelfApproval, "配置提交人不能批准自己的受控变更")
 				}
 				v["status"] = "current"
@@ -414,6 +415,7 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 		empSnap := make([]map[string]any, len(s.Store.Employees))
 		copy(empSnap, s.Store.Employees)
 		s.Store.PersistCollection("employees", empSnap)
+		s.afterWriteLocked("config_versions")
 		return ver, nil
 	}
 
@@ -586,7 +588,7 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 			"countersigner": relMap["countersigner"], "countersignerId": relMap["countersignerId"],
 		}
 	case "reject":
-		if str(emp["ownerId"]) == id.ID {
+		if !actorIsAdmin(id) && str(emp["ownerId"]) == id.ID {
 			return nil, apperr.Forbidden(apperr.SODSelfApproval, "创建者不能审批自己的生产发布")
 		}
 		emp["lifecycle"] = "draft"
@@ -606,6 +608,7 @@ func (s *Server) digitalEmployeeRoute(r *http.Request) (any, error) {
 	}
 	emp["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
 	s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "数字工作伙伴:"+coalesce(action, "更新"), str(emp["name"]), "success", "")
+	s.persistEmployeesLocked()
 	return emp, nil
 }
 
@@ -728,6 +731,7 @@ func (s *Server) adoptTemplate(r *http.Request) (any, error) {
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
 	}}, s.Store.TemplateAdoptions...)
 	s.Store.AppendAudit(ws, id.Name, "采用岗位模板", str(tpl["name"]), "success", "")
+	s.afterWriteLocked("employees", "template_adoptions")
 	return emp, nil
 }
 
@@ -910,15 +914,26 @@ func (s *Server) deleteSession(r *http.Request) (any, error) {
 	if s.Store.CanWrite("memory_records") {
 		s.Store.Persist("memory_records")
 		if len(memDeleted) > 0 {
-			s.Store.PersistDelete("memory_records", memDeleted...)
+			if err := s.Store.PersistDeleteSync("memory_records", memDeleted...); err != nil {
+				log.Printf("persist-delete memory_records: %v", err)
+			}
 		}
 	} else if convID != "" {
 		go s.delegatePurgeConversationMemory(r, sessWS, convID)
 	}
-	s.Store.PersistDelete("sessions", sessID)
+	if err := s.Store.PersistDeleteSync("sessions", sessID); err != nil {
+		log.Printf("persist-delete sessions %s: %v", sessID, err)
+	}
 	if convID != "" {
-		s.Store.PersistDelete("conversations", convID)
-		s.Store.PersistDelete("messages", convID)
+		if err := s.Store.PersistDeleteSync("conversations", convID); err != nil {
+			log.Printf("persist-delete conversations %s: %v", convID, err)
+		}
+		if err := s.Store.PersistDeleteSync("messages", convID); err != nil {
+			log.Printf("persist-delete messages %s: %v", convID, err)
+		}
+		if err := s.Store.PersistDeleteSync("context_snapshots", convID); err != nil {
+			log.Printf("persist-delete context_snapshots %s: %v", convID, err)
+		}
 	}
 	return map[string]any{"ok": true, "id": sessID, "conversationId": convID}, nil
 }
@@ -1048,15 +1063,26 @@ func (s *Server) deleteConversation(r *http.Request) (any, error) {
 	if s.Store.CanWrite("memory_records") {
 		s.Store.Persist("memory_records")
 		if len(memDeleted) > 0 {
-			s.Store.PersistDelete("memory_records", memDeleted...)
+			if err := s.Store.PersistDeleteSync("memory_records", memDeleted...); err != nil {
+				log.Printf("persist-delete memory_records: %v", err)
+			}
 		}
 	} else {
 		go s.delegatePurgeConversationMemory(r, foundWS, cid)
 	}
-	s.Store.PersistDelete("conversations", cid)
-	s.Store.PersistDelete("messages", cid)
+	if err := s.Store.PersistDeleteSync("conversations", cid); err != nil {
+		log.Printf("persist-delete conversations %s: %v", cid, err)
+	}
+	if err := s.Store.PersistDeleteSync("messages", cid); err != nil {
+		log.Printf("persist-delete messages %s: %v", cid, err)
+	}
+	if err := s.Store.PersistDeleteSync("context_snapshots", cid); err != nil {
+		log.Printf("persist-delete context_snapshots %s: %v", cid, err)
+	}
 	if len(removedSess) > 0 {
-		s.Store.PersistDelete("sessions", removedSess...)
+		if err := s.Store.PersistDeleteSync("sessions", removedSess...); err != nil {
+			log.Printf("persist-delete sessions: %v", err)
+		}
 	}
 	return map[string]any{"ok": true, "id": cid}, nil
 }

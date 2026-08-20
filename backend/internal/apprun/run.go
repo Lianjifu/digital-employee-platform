@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/infra"
+	"github.com/digital-employee-platform/backend/internal/runtimeenv"
 	"github.com/digital-employee-platform/backend/internal/server"
 	"github.com/digital-employee-platform/backend/internal/store"
 )
@@ -27,17 +28,59 @@ func Run(opts Options) error {
 		opts.Mode = server.ParseServiceMode(os.Getenv("DE_SERVICE"))
 	}
 	if opts.Mode == server.ModeAll && os.Getenv("DE_ALLOW_MODE_ALL") != "1" {
-		// ModeAll is for unit tests only; production monolith uses ModeApp (de-app).
 		return fmt.Errorf("refusing ModeAll deployment (set DE_SERVICE=app for monolith or sys|collab|cap|workflow); use make compose-up-monolith or compose-up-coarse")
 	}
 	if opts.Addr == "" {
 		opts.Addr = env("DE_LISTEN_ADDR", ":8080")
 	}
-	ctx := context.Background()
 
+	rt := runtimeenv.FromEnv()
+	log.Printf("runtimeenv DE_ENV=%s persist=%v seed=%v", rt, rt.PersistEnabled(), rt.AllowsSeed())
+
+	ctx := context.Background()
+	domain := store.DomainFromMode(opts.Mode.String())
+
+	if rt.IsDemo() {
+		return runDemo(ctx, opts, domain)
+	}
+	return runDurable(ctx, opts, domain, rt)
+}
+
+func runDemo(ctx context.Context, opts Options, domain store.Domain) error {
+	st := store.NewDemo()
+	st.SetWriteDomain(domain)
+	st.DropUnowned(domain)
+	if domain == store.DomainAll || domain == store.DomainCap {
+		st.EnsureDocxSkillReady()
+		server.New(st).EnsureBuiltinSkillsReady()
+	}
+	if domain == store.DomainAll || domain == store.DomainCollab {
+		st.EnsureGeneralEmployee()
+	}
+	srv := server.New(st)
+	srv.Mode = opts.Mode
+	if opts.Mode == server.ModeCap || opts.Mode == server.ModeCollab || opts.Mode.IsUnified() {
+		srv.StartMemoryMaintenance()
+	}
+	httpServer := &http.Server{
+		Addr:              opts.Addr,
+		Handler:           srv.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	log.Printf("%s listening on %s [mode=%s env=demo memory-only]", opts.Mode.String(), opts.Addr, opts.Mode)
+	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		return err
+	}
+	return nil
+}
+
+func runDurable(ctx context.Context, opts Options, domain store.Domain, rt runtimeenv.Mode) error {
 	pg, err := infra.OpenPostgres(ctx)
 	if err != nil {
 		return err
+	}
+	if pg == nil && rt.RequiresPostgres() {
+		return fmt.Errorf("DE_ENV=%s requires Postgres (set DE_DATABASE_URL)", rt)
 	}
 	replicaForced := false
 	postgresRecovery := false
@@ -55,8 +98,7 @@ func Run(opts Options) error {
 		return err
 	}
 
-	st := store.New()
-	domain := store.DomainFromMode(opts.Mode.String())
+	st := store.NewEmpty()
 	st.SetWriteDomain(domain)
 	auditSink := &infra.AuditSink{Pool: pg}
 	auditBus := infra.NewAuditBus(rdb)
@@ -96,20 +138,29 @@ func Run(opts Options) error {
 			server.IncAuditWriteFailure()
 		}
 	})
-	st.SetPersistHook(func(ctx context.Context, collection string, items []map[string]any) error {
-		if kernel.Owns(collection) {
-			// R2 收尾：内核四表只写 typed PG，不再双写 kv_documents。
-			return kernel.UpsertCollection(ctx, collection, items)
-		}
-		// Multi-process safe default: upsert merge. Full replace only for shrink-heavy single-writer collections.
-		if store.ShouldReplaceOnPersist(collection) {
-			return kv.ReplaceCollection(ctx, collection, items)
-		}
-		return kv.UpsertMany(ctx, collection, items)
-	})
-	st.SetDeleteHook(func(ctx context.Context, collection string, ids []string) error {
-		return kv.DeleteMany(ctx, collection, ids)
-	})
+
+	if rt.PersistEnabled() && pg != nil {
+		st.SetPersistHook(func(ctx context.Context, collection string, items []map[string]any) error {
+			if kernel.Owns(collection) {
+				return kernel.UpsertCollection(ctx, collection, items)
+			}
+			if store.ShouldReplaceOnPersist(collection) {
+				return kv.ReplaceCollection(ctx, collection, items)
+			}
+			return kv.UpsertMany(ctx, collection, items)
+		})
+		st.SetDeleteHook(func(ctx context.Context, collection string, ids []string) error {
+			if kernel.Owns(collection) {
+				if err := kernel.DeleteMany(ctx, collection, ids); err != nil {
+					return err
+				}
+				// Also clear any legacy kv copies lifted during hydrate fallback.
+				_ = kv.DeleteMany(ctx, collection, ids)
+				return nil
+			}
+			return kv.DeleteMany(ctx, collection, ids)
+		})
+	}
 
 	hydrated := 0
 	for _, coll := range store.CollectionsForDomain(domain) {
@@ -130,7 +181,6 @@ func Run(opts Options) error {
 			}
 			items = kvItems
 		} else if len(items) == 0 && kernel.Owns(coll) {
-			// One-time lift: empty typed table may still have pre-R2 kv rows.
 			kvItems, err := kv.List(ctx, coll)
 			if err != nil {
 				log.Printf("hydrate kv fallback %s: %v", coll, err)
@@ -146,41 +196,24 @@ func Run(opts Options) error {
 			hydrated++
 		}
 	}
-	if seed := store.SeedCollection(domain); seed != "" {
-		n := 0
-		if kernel.Owns(seed) {
-			rows, err := kernel.List(ctx, seed)
-			if err != nil {
-				log.Printf("kernel seed count %s: %v", seed, err)
-			} else {
-				n = len(rows)
-			}
-		} else {
-			n, _ = kv.Count(ctx, seed)
-		}
-		if n == 0 {
-			if err := st.PersistNow(ctx); err != nil {
-				log.Printf("initial persist: %v", err)
-			} else {
-				log.Printf("seeded %s collections into postgres", domain)
-			}
-		} else if hydrated > 0 {
-			log.Printf("hydrated %d durable collections from postgres [domain=%s]", hydrated, domain)
-		}
-	} else if hydrated > 0 {
-		log.Printf("hydrated %d durable collections from postgres [domain=%s]", hydrated, domain)
+	if hydrated > 0 {
+		log.Printf("hydrated %d durable collections from postgres [domain=%s env=%s]", hydrated, domain, rt)
+	} else {
+		log.Printf("empty durable store [domain=%s env=%s] — no demonstration seed will be written", domain, rt)
 	}
+	// Intentionally NO PersistNow(seed) on empty DB — that polluted production with ACME demo data.
+
 	st.DropUnowned(domain)
 	if domain == store.DomainAll || domain == store.DomainCap {
 		st.EnsureDocxSkillReady()
 		server.New(st).EnsureBuiltinSkillsReady()
-		if st.CanWrite("skills") {
+		if rt.PersistEnabled() && st.CanWrite("skills") {
 			st.Persist("skills")
 		}
 	}
-	if domain == store.DomainAll || domain == store.DomainCollab {
+	if (domain == store.DomainAll || domain == store.DomainCollab) && rt.EnsureGeneralEmployeeAllowed() {
 		st.EnsureGeneralEmployee()
-		if st.CanWrite("employees") {
+		if rt.PersistEnabled() && st.CanWrite("employees") {
 			st.Persist("employees")
 		}
 	}
@@ -205,7 +238,7 @@ func Run(opts Options) error {
 		Handler:           srv.Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	log.Printf("%s listening on %s [mode=%s]", opts.Mode.String(), opts.Addr, opts.Mode)
+	log.Printf("%s listening on %s [mode=%s env=%s]", opts.Mode.String(), opts.Addr, opts.Mode, rt)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}

@@ -15,4 +15,4 @@ Committed outputs:
 - `de/*/v1/*.pb.go`
 - `de/*/v1/*connect/*.connect.go`
 
-`de-sys` / `de-collab` / `de-cap` mount these handlers at `/de.*.Service/*` and `/connect/de.*.Service/*`（按 ServiceMode）。
+`de-app`（monolith）或 `de-sys` / `de-collab` / `de-cap`（coarse）按 ServiceMode 挂载 handlers，路径为 `/de.*.Service/*` 与 `/connect/de.*.Service/*`。

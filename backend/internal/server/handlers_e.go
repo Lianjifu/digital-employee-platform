@@ -189,7 +189,7 @@ func (s *Server) backupAction(r *http.Request) (any, error) {
 		if str(b["id"]) != bid {
 			continue
 		}
-		if str(b["requestedBy"]) == id.Name && (action == "approve" || action == "restore-drill") {
+		if !actorIsAdmin(id) && str(b["requestedBy"]) == id.Name && (action == "approve" || action == "restore-drill") {
 			return nil, apperr.Forbidden(apperr.SODSelfApproval, "申请人不能审批/演练自己的备份")
 		}
 		switch action {

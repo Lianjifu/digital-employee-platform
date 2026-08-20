@@ -9,22 +9,22 @@ import 'reactflow/dist/style.css';
 import { setApiClient, ApiClient, mockHandler } from '@de/web-api';
 import { useWorkspaceStore } from './stores/workspaceStore';
 import { useAuthStore } from './stores/authStore';
-import { apiBaseURL, isMockApiMode } from './lib/api-mode';
+import { apiBaseURL, isDemoApiMode } from './lib/api-mode';
 
 function installApiClient() {
-  // 默认真实 API；开发态走同源 /api（Vite proxy → :8089）。仅 VITE_USE_MOCK=true 时注入 Mock。
+  // 默认真实 API；仅演示模式注入本地 Handler。
   setApiClient(
     new ApiClient(
       apiBaseURL(),
       () => localStorage.getItem('token'),
-      isMockApiMode() ? mockHandler : undefined,
+      isDemoApiMode() ? mockHandler : undefined,
       () => {
         const user = useAuthStore.getState().user;
         return {
           'x-workspace-id': useWorkspaceStore.getState().currentWorkspaceId ?? user?.workspaceId ?? 'w1',
           ...(user ? {
             'x-tenant-id': user.tenantId,
-            ...(isMockApiMode() ? {
+            ...(isDemoApiMode() ? {
               'x-mock-role': user.role,
               'x-mock-actor': user.name,
               'x-mock-user-id': user.id,

@@ -1,7 +1,8 @@
-# 契约缺口对照（Mock vs de-core）
+# 契约缺口对照（Mock vs 控制面）
 
 真相源：`frontend/packages/api/src/mock.ts` + 页面 `useApiQuery` 路径。  
-目标：`VITE_USE_MOCK=false` 时首屏 GET 非 404，关键写路径语义与 Mock 一致。
+目标：`VITE_USE_MOCK=false` 时首屏 GET 非 404，关键写路径语义与 Mock 一致。  
+默认后端：**de-gateway :8089 → de-app :8100**（monolith）；coarse 模式下路由拆到 sys/collab/cap。
 
 ## P0（控制台主路径）— 已对齐
 

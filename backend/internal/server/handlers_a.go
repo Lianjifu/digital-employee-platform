@@ -276,6 +276,7 @@ func (s *Server) createGrant(r *http.Request) (any, error) {
 	defer s.Store.Unlock()
 	s.Store.AccessGrants = append([]map[string]any{grant}, s.Store.AccessGrants...)
 	s.Store.AppendAudit(wsIDs[0], id.Name, "授予访问范围", str(grant["subjectName"])+" · "+str(grant["role"]), "success", "")
+	s.afterWriteLocked("access_grants")
 	return grant, nil
 }
 
@@ -322,6 +323,7 @@ func (s *Server) grantAction(r *http.Request) (any, error) {
 		label = "回收访问范围"
 	}
 	s.Store.AppendAudit(wsID, id.Name, label, str(grant["subjectName"])+" · "+str(grant["role"]), "success", "")
+	s.afterWriteLocked("access_grants")
 	return grant, nil
 }
 
@@ -338,6 +340,7 @@ func (s *Server) completeReview(r *http.Request) (any, error) {
 			rev["reviewed"] = rev["total"]
 			rev["status"] = "completed"
 			s.Store.AppendAudit("w1", id.Name, "完成权限复核", str(rev["title"]), "success", "")
+			s.afterWriteLocked("access_reviews")
 			return rev, nil
 		}
 	}
@@ -406,6 +409,7 @@ func (s *Server) createZTPolicy(r *http.Request) (any, error) {
 	defer s.Store.Unlock()
 	s.Store.ZTPolicies = append([]map[string]any{p}, s.Store.ZTPolicies...)
 	s.Store.AppendAudit(s.workspaceID(r), id.Name, "创建零信任策略", str(p["name"]), "success", "")
+	s.afterWriteLocked("zt_policies")
 	return p, nil
 }
 
@@ -431,6 +435,7 @@ func (s *Server) patchZTPolicy(r *http.Request) (any, error) {
 		p["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
 		p["updatedBy"] = id.Name
 		s.Store.AppendAudit(s.workspaceID(r), id.Name, "更新零信任策略", str(p["name"]), "success", "")
+		s.afterWriteLocked("zt_policies")
 		return p, nil
 	}
 	return nil, apperr.NotFoundErr(apperr.ZeroTrustPolicyNotFound, "策略不存在")
@@ -561,6 +566,7 @@ func (s *Server) createTempAuth(r *http.Request) (any, error) {
 	defer s.Store.Unlock()
 	s.Store.TempAuths = append([]map[string]any{authz}, s.Store.TempAuths...)
 	s.Store.AppendAudit(str(body["workspaceId"]), id.Name, "授予临时零信任授权", str(authz["subjectName"]), "success", "")
+	s.afterWriteLocked("temp_auths")
 	return authz, nil
 }
 
@@ -580,6 +586,7 @@ func (s *Server) revokeTempAuth(r *http.Request) (any, error) {
 		if str(a["id"]) == aid {
 			a["status"] = "revoked"
 			s.Store.AppendAudit(str(a["workspaceId"]), id.Name, "回收临时零信任授权", str(a["subjectName"]), "success", "")
+			s.afterWriteLocked("temp_auths")
 			return a, nil
 		}
 	}
@@ -632,6 +639,7 @@ func (s *Server) createRelease(r *http.Request) (any, error) {
 	defer s.Store.Unlock()
 	s.Store.ReleaseApprovals = append([]map[string]any{approval}, s.Store.ReleaseApprovals...)
 	s.Store.AppendAudit(wsID, id.Name, "提交生产发布申请", str(approval["resourceName"]), "success", "")
+	s.afterWriteLocked("release_approvals")
 	return approval, nil
 }
 
@@ -656,7 +664,7 @@ func (s *Server) releaseAction(r *http.Request) (any, error) {
 		if str(a["id"]) != aid {
 			continue
 		}
-		if str(a["submittedById"]) == id.ID {
+		if !actorIsAdmin(id) && str(a["submittedById"]) == id.ID {
 			return nil, apperr.Forbidden(apperr.SODSelfApproval, "创建者不能审批自己的生产发布")
 		}
 		if action == "approve" {
@@ -669,6 +677,7 @@ func (s *Server) releaseAction(r *http.Request) (any, error) {
 			label = "审批生产发布"
 		}
 		s.Store.AppendAudit(str(a["workspaceId"]), id.Name, label, str(a["resourceName"]), "success", "")
+		s.afterWriteLocked("release_approvals")
 		return a, nil
 	}
 	return nil, apperr.NotFoundErr(apperr.ReleaseNotFound, "发布单不存在")

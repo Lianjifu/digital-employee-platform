@@ -43,7 +43,9 @@ var collectionDomain = map[string]Domain{
 	"context_snapshots": DomainCollab,
 	"tasks":             DomainCollab,
 	"actions":           DomainCollab,
-	"employees":         DomainCollab,
+	"employees":          DomainCollab,
+	"template_adoptions": DomainCollab,
+	"config_versions":    DomainCollab,
 
 	"model_providers":          DomainCap,
 	"routing_policies":         DomainCap,

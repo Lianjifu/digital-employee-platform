@@ -186,8 +186,8 @@ func (s *Server) resolveVault(r *http.Request, credRef string) string {
 
 func (s *Server) appendChannelInbound(ws, deployName string, inbound map[string]any) {
 	s.Store.Lock()
-	defer s.Store.Unlock()
 	s.Store.ChannelInbound = append([]map[string]any{inbound}, s.Store.ChannelInbound...)
+	dropped := idsBeyondKeep(s.Store.ChannelInbound, 500)
 	if len(s.Store.ChannelInbound) > 500 {
 		s.Store.ChannelInbound = s.Store.ChannelInbound[:500]
 	}
@@ -198,6 +198,10 @@ func (s *Server) appendChannelInbound(ws, deployName string, inbound map[string]
 		target = truncateRunes(t, 32)
 	}
 	s.appendChannelAuditLocked(ws, str(inbound["provider"])+"-webhook", action, target, "success", str(inbound["eventType"]), str(inbound["messageId"]))
+	s.Store.Unlock()
+	if len(dropped) > 0 {
+		s.durableDeleteSync("channel_inbound", dropped...)
+	}
 	go s.persistChannel()
 }
 

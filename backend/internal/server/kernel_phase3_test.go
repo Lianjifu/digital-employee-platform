@@ -104,6 +104,7 @@ func TestProductionRoutingPublishPendingThenSoD(t *testing.T) {
 	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "true")
 	h := server.New(store.New()).Handler()
 
+	// Admin publish: no second admin required — goes live immediately.
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/rp-draft/validate", bytes.NewBufferString(`{}`))
 	req.Header.Set("Authorization", "Bearer mock-admin-token")
@@ -121,23 +122,42 @@ func TestProductionRoutingPublishPendingThenSoD(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(rr, req)
 	if rr.Code != 200 {
-		t.Fatalf("first publish %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("admin publish %d %s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), `"status":"pending_approval"`) {
-		t.Fatalf("want pending_approval: %s", rr.Body.String())
+	if strings.Contains(rr.Body.String(), `"status":"pending_approval"`) {
+		t.Fatalf("admin must not wait for peer approval: %s", rr.Body.String())
 	}
+	if !strings.Contains(rr.Body.String(), `"policyId":"rp-draft"`) && !strings.Contains(rr.Body.String(), `"publishedBy"`) {
+		t.Fatalf("want published version: %s", rr.Body.String())
+	}
+}
 
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/rp-draft/publish", bytes.NewBufferString(`{}`))
+func TestProductionUserRoutingPublishNeedsAdmin(t *testing.T) {
+	t.Setenv("DE_ENV", "production")
+	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "true")
+	st := store.New()
+	st.Lock()
+	for _, p := range st.RoutingPolicies {
+		if strAny(p["id"]) != "rp-draft" {
+			continue
+		}
+		p["status"] = "pending_approval"
+		p["requestedBy"] = "业务构建者"
+		p["requestedById"] = "u2"
+		p["primaryModelId"] = "mdl-gpt4"
+		p["validationIssues"] = []string{}
+	}
+	st.Unlock()
+	h := server.New(st).Handler()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/rp-draft/publish", bytes.NewBufferString(`{}`))
 	req.Header.Set("Authorization", "Bearer mock-admin-token")
 	req.Header.Set("X-Workspace-Id", "w1")
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(rr, req)
-	if rr.Code == 200 {
-		t.Fatalf("self publish must fail: %s", rr.Body.String())
-	}
-	if !strings.Contains(rr.Body.String(), "E_SOD_SELF_APPROVAL") {
-		t.Fatalf("want E_SOD_SELF_APPROVAL: %s", rr.Body.String())
+	if rr.Code != 200 {
+		t.Fatalf("admin approve user routing %d %s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -253,6 +273,7 @@ func TestProductionKnowledgePublishPendingThenSoD(t *testing.T) {
 	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "true")
 	h := server.New(store.New()).Handler()
 
+	// Admin publish knowledge: immediate, no peer wait.
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/knowledge/packages/pkg-ops/publish", bytes.NewBufferString(`{}`))
 	req.Header.Set("Authorization", "Bearer mock-admin-token")
@@ -260,11 +281,26 @@ func TestProductionKnowledgePublishPendingThenSoD(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(rr, req)
 	if rr.Code != 200 {
-		t.Fatalf("first publish %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("admin publish %d %s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), `"status":"pending_approval"`) {
-		t.Fatalf("want pending_approval: %s", rr.Body.String())
+	if strings.Contains(rr.Body.String(), `"status":"pending_approval"`) {
+		t.Fatalf("admin must not wait for peer approval: %s", rr.Body.String())
 	}
+
+	// User-submitted pending package → admin approves.
+	st := store.New()
+	st.Lock()
+	pkgs := knowledgeSliceMapsForTest(st.KnowledgeExtra["packages"])
+	for _, p := range pkgs {
+		if strAny(p["id"]) == "pkg-ops" {
+			p["status"] = "pending_approval"
+			p["requestedBy"] = "业务构建者"
+			p["requestedById"] = "u2"
+		}
+	}
+	st.KnowledgeExtra["packages"] = pkgs
+	st.Unlock()
+	h = server.New(st).Handler()
 
 	rr = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/api/knowledge/packages/pkg-ops/publish", bytes.NewBufferString(`{}`))
@@ -272,11 +308,25 @@ func TestProductionKnowledgePublishPendingThenSoD(t *testing.T) {
 	req.Header.Set("X-Workspace-Id", "w1")
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(rr, req)
-	if rr.Code == 200 {
-		t.Fatalf("self publish must fail: %s", rr.Body.String())
+	if rr.Code != 200 {
+		t.Fatalf("admin approve user knowledge %d %s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "E_SOD_SELF_APPROVAL") {
-		t.Fatalf("want E_SOD_SELF_APPROVAL: %s", rr.Body.String())
+}
+
+func knowledgeSliceMapsForTest(v any) []map[string]any {
+	switch t := v.(type) {
+	case []map[string]any:
+		return t
+	case []any:
+		out := make([]map[string]any, 0, len(t))
+		for _, x := range t {
+			if m, ok := x.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	default:
+		return nil
 	}
 }
 

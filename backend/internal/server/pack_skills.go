@@ -54,18 +54,65 @@ func skillInAnyPack(m builtinManifest, dirName string) []string {
 	return packs
 }
 
-func (s *Server) listSkillPacks(_ *http.Request) (any, error) {
+func (s *Server) listSkillPacks(r *http.Request) (any, error) {
 	m := loadBuiltinManifest()
 	packs := m.normalizePacks()
+	ws := s.workspaceID(r)
+	installedNames := map[string]struct{}{}
+	s.Store.RLock()
+	for _, sk := range s.Store.Skills {
+		if str(sk["workspaceId"]) != ws {
+			continue
+		}
+		if bn := strings.TrimSpace(str(sk["builtinSkillName"])); bn != "" {
+			installedNames[bn] = struct{}{}
+			installedNames[strings.ToLower(bn)] = struct{}{}
+		}
+		if n := strings.TrimSpace(str(sk["name"])); n != "" {
+			installedNames[strings.ToLower(n)] = struct{}{}
+		}
+	}
+	s.Store.RUnlock()
+
 	out := make([]map[string]any, 0, len(packs))
 	for id, p := range packs {
+		missing := make([]string, 0)
+		present := 0
+		for _, name := range p.Skills {
+			name = strings.TrimSpace(name)
+			_, hit := installedNames[name]
+			if !hit {
+				_, hit = installedNames[strings.ToLower(name)]
+			}
+			if hit {
+				present++
+				continue
+			}
+			missing = append(missing, name)
+		}
+		installed := len(p.Skills) > 0 && present == len(p.Skills)
 		out = append(out, map[string]any{
 			"packId": id, "packName": p.PackName, "phase": p.Phase,
 			"autoInstall": p.AutoInstall, "requiresApproval": p.RequiresApproval,
 			"skillCount": len(p.Skills), "skills": p.Skills,
+			"workspaceId": ws, "installedCount": present, "installed": installed,
+			"missingSkills": missing,
 		})
 	}
-	return map[string]any{"packs": out}, nil
+
+	platformTools := make([]map[string]any, 0, len(m.PlatformTools))
+	for _, t := range m.PlatformTools {
+		platformTools = append(platformTools, map[string]any{
+			"name": str(t["name"]), "description": str(t["description"]),
+			"mode": coalesce(str(t["mode"]), "execute"), "phase": coalesce(str(t["phase"]), "P0"),
+			"kind": "platform", "installRequired": false, "alwaysOn": true,
+		})
+	}
+	return map[string]any{
+		"packs": out, "workspaceId": ws,
+		"platformTools": platformTools,
+		"platformToolsNote": "平台工具由 Go Harness 内置，冷启动即用，无需岗位包安装。",
+	}, nil
 }
 
 func (s *Server) applySkillPack(r *http.Request) (any, error) {
@@ -98,7 +145,7 @@ func (s *Server) applySkillPack(r *http.Request) (any, error) {
 		s.ensureOneBuiltinInstalledLocked(ws, skillName, manifest, packID)
 	}
 	s.Store.Unlock()
-	go s.persistSkills()
+	s.persistSkills()
 	return map[string]any{
 		"packId": packID, "packName": pack.PackName, "phase": pack.Phase,
 		"skills": pack.Skills, "workspaceId": ws, "installed": len(pack.Skills),

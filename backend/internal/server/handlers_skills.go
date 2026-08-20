@@ -930,9 +930,14 @@ func (s *Server) skillUninstall(r *http.Request, id *auth.Identity, ws, skillID 
 	}
 	s.Store.Skills = append(s.Store.Skills[:idx], s.Store.Skills[idx+1:]...)
 	health := make([]map[string]any, 0, len(s.Store.SkillHealth))
+	healthDeleted := make([]string, 0, 1)
 	for _, h := range s.Store.SkillHealth {
 		if str(h["skillId"]) != skillID {
 			health = append(health, h)
+			continue
+		}
+		if hid := str(h["id"]); hid != "" {
+			healthDeleted = append(healthDeleted, hid)
 		}
 	}
 	s.Store.SkillHealth = health
@@ -946,6 +951,12 @@ func (s *Server) skillUninstall(r *http.Request, id *auth.Identity, ws, skillID 
 	s.Store.SkillExtra["bindings"] = bindings
 	s.Store.AppendAudit(ws, id.Name, ternary(force, "强制卸载技能", "卸载技能"), str(sk["name"]), "success", "")
 	go s.persistSkills()
+	s.durableDeleteSync("skills", skillID)
+	if len(healthDeleted) > 0 {
+		s.durableDeleteSync("skill_health", healthDeleted...)
+	} else {
+		s.durableDeleteSync("skill_health", "sh-"+skillID)
+	}
 	return map[string]any{"id": skillID, "status": "uninstalled", "impact": impact}, nil
 }
 

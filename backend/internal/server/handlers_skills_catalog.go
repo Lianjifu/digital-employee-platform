@@ -159,8 +159,9 @@ func (s *Server) publishSkillToCatalog(r *http.Request) (any, error) {
 	}
 	candidate := cloneMap(sk)
 	if candidate["signed"] == nil {
-		// package/import skills are unsigned unless marked
-		candidate["signed"] = str(sk["source"]) == "market" || boolFrom(sk["signed"])
+		// builtin/market are trusted signed; import/package stay unsigned until marked
+		src := str(sk["source"])
+		candidate["signed"] = src == "market" || src == "builtin" || boolFrom(sk["signed"])
 	}
 	decision, reason, checks := skillSupplyChainGate(candidate)
 	risk := normalizeRiskLevel(sk["riskLevel"])
@@ -168,7 +169,8 @@ func (s *Server) publishSkillToCatalog(r *http.Request) (any, error) {
 	if decision == "blocked" {
 		return nil, apperr.BadReq(apperr.BadRequest, reason)
 	}
-	if needsApproval && ticket == "" {
+	// 管理员上架免审批单；普通用户高风险/全局可见仍须审批单号。
+	if needsApproval && ticket == "" && !actorIsAdmin(id) {
 		return nil, apperr.Forbidden(apperr.ReleaseRequestRequired, "E_APPROVAL_REQUIRED: 晋升上架需要审批单号（高风险/全局可见/需复核）")
 	}
 	if id.Role != "admin" && (scope == "global" || scope == "org") {
@@ -179,10 +181,14 @@ func (s *Server) publishSkillToCatalog(r *http.Request) (any, error) {
 	version := coalesce(str(sk["version"]), "0.1.0")
 	// replace same name+version+scope in catalog
 	kept := make([]map[string]any, 0, len(s.Store.SkillCatalog)+1)
+	removedCatalogIDs := make([]string, 0)
 	for _, item := range s.Store.SkillCatalog {
 		same := str(item["name"]) == name && str(item["version"]) == version &&
 			normalizeVisibilityScope(str(item["visibilityScope"])) == scope
 		if same && (scope == "workspace" && str(item["workspaceId"]) == ws || scope != "workspace") {
+			if oid := str(item["id"]); oid != "" {
+				removedCatalogIDs = append(removedCatalogIDs, oid)
+			}
 			continue
 		}
 		kept = append(kept, item)
@@ -212,6 +218,9 @@ func (s *Server) publishSkillToCatalog(r *http.Request) (any, error) {
 	s.Store.SkillCatalog = append([]map[string]any{entry}, kept...)
 	s.Store.AppendAudit(ws, id.Name, "晋升技能上架", name+"@"+version, "success", "scope="+scope+";channel="+release+";ticket="+ticket)
 	go s.persistSkills()
+	if len(removedCatalogIDs) > 0 {
+		s.Store.PersistDelete("skill_catalog", removedCatalogIDs...)
+	}
 	return normalizeCatalogItem(entry), nil
 }
 
@@ -268,6 +277,7 @@ func (s *Server) syncSkillCatalog(r *http.Request) (any, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	accepted := make([]map[string]any, 0)
 	rejected := make([]map[string]any, 0)
+	removedCatalogIDs := make([]string, 0)
 
 	s.Store.Lock()
 	defer s.Store.Unlock()
@@ -299,6 +309,9 @@ func (s *Server) syncSkillCatalog(r *http.Request) (any, error) {
 			if str(item["name"]) == name && str(item["version"]) == version &&
 				normalizeCatalogChannel(str(item["channel"])) == "registry" &&
 				normalizeVisibilityScope(str(item["visibilityScope"])) == scope {
+				if oid := str(item["id"]); oid != "" {
+					removedCatalogIDs = append(removedCatalogIDs, oid)
+				}
 				continue
 			}
 			kept = append(kept, item)
@@ -330,6 +343,9 @@ func (s *Server) syncSkillCatalog(r *http.Request) (any, error) {
 	}
 	s.Store.AppendAudit(ws, id.Name, "同步技能商店 Registry", strconv.Itoa(len(accepted))+" 接受/"+strconv.Itoa(len(rejected))+" 拒绝", "success", "")
 	go s.persistSkills()
+	if len(removedCatalogIDs) > 0 {
+		s.Store.PersistDelete("skill_catalog", removedCatalogIDs...)
+	}
 	return map[string]any{
 		"accepted": accepted, "rejected": rejected,
 		"syncedAt": now, "acceptedCount": len(accepted), "rejectedCount": len(rejected),

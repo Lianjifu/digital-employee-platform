@@ -1,6 +1,7 @@
 package server
 
 import (
+	"log"
 	"net/http"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
@@ -202,10 +203,12 @@ func (s *Server) purgeConversationMemoryAPI(r *http.Request) (any, error) {
 	deleted := s.removeMemoryForConversationLocked(ws, convID)
 	s.Store.Unlock()
 	if s.Store.CanWrite("memory_records") {
-		s.Store.Persist("memory_records")
 		if len(deleted) > 0 {
-			s.Store.PersistDelete("memory_records", deleted...)
+			if err := s.Store.PersistDeleteSync("memory_records", deleted...); err != nil {
+				log.Printf("persist-delete memory_records: %v", err)
+			}
 		}
+		s.Store.Persist("memory_records")
 	}
 	return map[string]any{"deleted": len(deleted), "conversationId": convID}, nil
 }

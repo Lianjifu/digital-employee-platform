@@ -123,6 +123,7 @@ func (s *Server) handleFeishuWebhook(w http.ResponseWriter, r *http.Request) {
 
 	s.Store.Lock()
 	s.Store.ChannelInbound = append([]map[string]any{inbound}, s.Store.ChannelInbound...)
+	dropped := idsBeyondKeep(s.Store.ChannelInbound, 500)
 	if len(s.Store.ChannelInbound) > 500 {
 		s.Store.ChannelInbound = s.Store.ChannelInbound[:500]
 	}
@@ -134,6 +135,9 @@ func (s *Server) handleFeishuWebhook(w http.ResponseWriter, r *http.Request) {
 	}
 	s.appendChannelAuditLocked(ws, "feishu-webhook", action, target, "success", str(inbound["eventType"]), str(inbound["eventId"]))
 	s.Store.Unlock()
+	if len(dropped) > 0 {
+		s.durableDeleteSync("channel_inbound", dropped...)
+	}
 	go s.persistChannel()
 
 	if msg != nil && strings.TrimSpace(msg.Text) != "" && strings.TrimSpace(msg.ChatID) != "" {

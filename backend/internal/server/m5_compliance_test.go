@@ -38,25 +38,16 @@ func TestBackupDualSignAndRestoreDrill(t *testing.T) {
 	st := store.New()
 	h := server.New(st).Handler()
 
-	// Applicant cannot approve own backup (SoD).
+	// Admin may approve own backup request (no second admin required).
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/backups/bk-1/approve", nil)
 	req.Header.Set("Authorization", "Bearer mock-admin-token")
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("self-approve want 403, got %d %s", rr.Code, rr.Body.String())
-	}
-	var errEnv struct {
-		Error struct {
-			Code string `json:"code"`
-		} `json:"error"`
-	}
-	_ = json.Unmarshal(rr.Body.Bytes(), &errEnv)
-	if errEnv.Error.Code != "E_SOD_SELF_APPROVAL" {
-		t.Fatalf("code %s body=%s", errEnv.Error.Code, rr.Body.String())
+	if rr.Code != 200 {
+		t.Fatalf("admin self-approve allowed %d %s", rr.Code, rr.Body.String())
 	}
 
-	// Different requester → admin may approve then restore-drill.
+	// Non-admin requester → admin may approve then restore-drill.
 	st.Lock()
 	st.Backups = append([]map[string]any{{
 		"id": "bk-drill", "workspaceId": "w1", "status": "pending_approval",

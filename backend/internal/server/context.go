@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
+	"github.com/digital-employee-platform/backend/internal/runtimeenv"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
@@ -130,8 +131,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 }
 
 func banMockToken() bool {
-	v := strings.TrimSpace(os.Getenv("DE_BAN_MOCK_TOKEN"))
-	return v == "1" || strings.EqualFold(v, "true")
+	return runtimeenv.BanDemoToken()
 }
 
 func envFlagTrue(key string) bool {
@@ -145,34 +145,14 @@ func envFlagFalse(key string) bool {
 }
 
 func productionLikeEnv() bool {
-	if banMockToken() {
-		return true
-	}
-	env := strings.ToLower(strings.TrimSpace(os.Getenv("DE_ENV")))
-	if env == "" {
-		env = strings.ToLower(strings.TrimSpace(os.Getenv("GO_ENV")))
-	}
-	switch env {
-	case "production", "prod", "staging":
-		return true
-	default:
-		return false
-	}
+	// Dual-approval / production governance: DE_ENV=staging|production only.
+	// DE_BAN_MOCK_TOKEN no longer implies production-like behavior.
+	return runtimeenv.FromEnv().DualApproval()
 }
 
-// allowMockIdentity 仅本地/联调可伪造身份。生产信号：DE_BAN_MOCK_TOKEN、DE_ENV=production|staging。
-// 显式 DE_ALLOW_MOCK_IDENTITY=true 作为逃生舱。
+// allowMockIdentity 仅演示/本机可伪造身份。生产/预发默认关闭。
 func allowMockIdentity() bool {
-	if envFlagTrue("DE_ALLOW_MOCK_IDENTITY") {
-		return true
-	}
-	if envFlagFalse("DE_ALLOW_MOCK_IDENTITY") {
-		return false
-	}
-	if productionLikeEnv() {
-		return false
-	}
-	return true
+	return runtimeenv.FromEnv().AllowsDemoIdentityHeaders()
 }
 
 func hasMockIdentityHeaders(r *http.Request) bool {

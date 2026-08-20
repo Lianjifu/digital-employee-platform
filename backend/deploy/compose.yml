@@ -496,6 +496,8 @@ services:
       DE_SKILL_RUN_SECRET: ${DE_SKILL_RUN_SECRET:-de-skill-run-dev}
       DE_WORKFLOW_URL: ${DE_WORKFLOW_URL:-}
       DE_BAN_MOCK_TOKEN: ${DE_BAN_MOCK_TOKEN:-0}
+      DE_BAN_DEMO_TOKEN: ${DE_BAN_DEMO_TOKEN:-${DE_BAN_MOCK_TOKEN:-0}}
+      DE_ENV: ${DE_ENV:-development}
       DE_JWT_SECRET: ${DE_JWT_SECRET:-}
       DE_PUBLIC_BASE_URL: ${DE_PUBLIC_BASE_URL:-http://127.0.0.1:8089}
       DE_LLM_BASE_URL: ${DE_LLM_BASE_URL:-}
@@ -552,7 +554,9 @@ services:
       DE_SERVICE: sys
       DE_DATABASE_URL: postgres://de:de@postgres:5432/digital_employee?sslmode=disable
       DE_REDIS_URL: redis://redis:6379/0
+      DE_ENV: ${DE_ENV:-development}
       DE_BAN_MOCK_TOKEN: ${DE_BAN_MOCK_TOKEN:-0}
+      DE_BAN_DEMO_TOKEN: ${DE_BAN_DEMO_TOKEN:-${DE_BAN_MOCK_TOKEN:-0}}
       DE_OPA_URL: ${DE_OPA_URL:-}
       DE_OPENSEARCH_URL: ${DE_OPENSEARCH_URL:-}
       DE_KAFKA_BROKERS: ${DE_KAFKA_BROKERS:-}
@@ -599,7 +603,9 @@ services:
       DE_SKILL_RUNTIME_URL: http://de-skill-runtime:8093
       DE_CAP_URL: ${DE_CAP_URL:-http://de-cap:8102}
       DE_WORKFLOW_URL: ${DE_WORKFLOW_URL:-http://de-workflow:8103}
+      DE_ENV: ${DE_ENV:-development}
       DE_BAN_MOCK_TOKEN: ${DE_BAN_MOCK_TOKEN:-0}
+      DE_BAN_DEMO_TOKEN: ${DE_BAN_DEMO_TOKEN:-${DE_BAN_MOCK_TOKEN:-0}}
       DE_POLICY_URL: ${DE_COLLAB_POLICY_URL:-http://de-sys:8100}
       DE_SKILL_RUN_SECRET: ${DE_SKILL_RUN_SECRET:-de-skill-run-dev}
       DE_JWT_SECRET: ${DE_JWT_SECRET:-}
@@ -640,7 +646,9 @@ services:
       DE_REDIS_URL: redis://redis:6379/0
       DE_RAG_URL: http://de-rag:8092
       DE_SKILL_RUNTIME_URL: http://de-skill-runtime:8093
+      DE_ENV: ${DE_ENV:-development}
       DE_BAN_MOCK_TOKEN: ${DE_BAN_MOCK_TOKEN:-0}
+      DE_BAN_DEMO_TOKEN: ${DE_BAN_DEMO_TOKEN:-${DE_BAN_MOCK_TOKEN:-0}}
       DE_VAULT_ADDR: ${DE_VAULT_ADDR:-}
       DE_VAULT_TOKEN: ${DE_VAULT_TOKEN:-}
       DE_SKILL_RUN_SECRET: ${DE_SKILL_RUN_SECRET:-de-skill-run-dev}
@@ -785,6 +793,8 @@ services:
       DE_AGENT_RUNTIME_URL: http://de-agent-runtime:8091
       DE_RAG_URL: http://de-rag:8092
       DE_BAN_MOCK_TOKEN: ${DE_BAN_MOCK_TOKEN:-0}
+      DE_BAN_DEMO_TOKEN: ${DE_BAN_DEMO_TOKEN:-${DE_BAN_MOCK_TOKEN:-0}}
+      DE_ENV: ${DE_ENV:-development}
       DE_JWT_SECRET: ${DE_JWT_SECRET:-}
       DE_SERVICE: workflow
     ports:

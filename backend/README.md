@@ -1,6 +1,10 @@
-# Backend（粗粒度控制面）
+# Backend（控制面）
 
 按 [docs/后端架构规划.md](../docs/后端架构规划.md) 与 [docs/后端微服务重构方案.md](../docs/后端微服务重构方案.md) 落地。
+
+**本地默认**：**monolith**（`de-app:8100` + `de-skill:8093` + `de-gateway:8089`）。coarse 四进程保留用于规模化对照。
+
+环境与数据模式（`DE_ENV`、seed、硬删除、岗位包）见 [docs/环境与数据模式.md](../docs/环境与数据模式.md)。
 
 | 部署单元 | 端口 | 说明 |
 |----------|------|------|
@@ -33,7 +37,8 @@ make smoke-coarse
 本机单进程调试：
 
 ```bash
-make run-app       # :8100 monolith
+make run-app       # :8100 monolith · DE_ENV=development
+make run-demo      # 内存 ACME seed，不写 PG
 make run-sys       # :8100 sys only
 make run-collab    # :8101
 make run-cap       # :8102
@@ -49,11 +54,13 @@ VITE_API_BASE=
 # Vite 默认代理 → http://127.0.0.1:8089
 ```
 
-| 邮箱前缀 | 角色 | token（`DE_BAN_MOCK_TOKEN=0`） |
+| 邮箱前缀 | 角色 | token（需 `DE_BAN_MOCK_TOKEN=0` 或 `DE_ALLOW_DEMO_TOKEN=1`） |
 |---------|------|--------------------------------|
-| `admin@` | admin | `mock-admin-token` |
+| `admin@` | admin | `mock-admin-token`（上架/上岗可自批） |
 | `audit@` | auditor | `mock-auditor-token` |
-| 其他 | user | `mock-user-token` |
+| 其他 | user | `mock-user-token`（写操作须管理员审批） |
+
+LaunchAgent 默认 `DE_BAN_MOCK_TOKEN=1`，禁止上述 mock token。
 
 ## 结构
 
@@ -63,7 +70,8 @@ backend/
 ├── services/           # Dockerfile · SERVICE.md · FastAPI · 六边形骨架
 ├── infra/ · obs/
 ├── libs/hexkit/
-├── internal/           # apprun · server(ServiceMode) · store …
+├── internal/           # apprun · runtimeenv · server · store …
+├── scripts/            # purge-demo-seed-ids.sql 等
 ├── runtimes/           # 测试辅助（非部署入口）
 ├── deploy/             # compose · envoy.coarse.yaml
 └── Makefile
@@ -86,11 +94,34 @@ make test && make test-python && make smoke-monolith
 
 网络：[`deploy/networks.md`](deploy/networks.md) · 拓扑：[`deploy/topology-split.md`](deploy/topology-split.md)
 
+## 持久化与硬删除
+
+| 模式 | 行为 |
+|------|------|
+| `DE_ENV=demo` | 内存 store，不 Persist |
+| `development`+ | PG hydrate；Upsert 写回；**硬删必须 `PersistDelete(Sync)`** |
+
+会话 / 消息 / 快照在 kernel 表（`collab.*`）；删除会话需 Sync 删 sessions + conversations + messages + context_snapshots。知识文档、模型供应商、渠道部署、技能卸载、岗位包替换旧 id 等同理。残留 ACME seed：
+
+```bash
+psql "$DE_DATABASE_URL" -f scripts/purge-demo-seed-ids.sql
+```
+
+## 技能岗位包
+
+| API | 说明 |
+|-----|------|
+| `GET /api/skills/packs` | 岗位包列表 + 当前工作区 `installed*` + `platformTools` |
+| `POST /api/skills/apply-pack/:id` | 安装到当前工作区；`heavy-optin` 须审批单 |
+| 冷启动 | `EnsureBuiltinSkillsReady` 为**各工作区**装通用包 |
+
+平台工具（`knowledge.retrieve` 等）为 Harness 内置，不经岗位包安装。
+
 ## 专家协作（de-collab）要点
 
 | 能力 | 路由 / 行为 |
 |------|-------------|
-| 会话 CRUD | `GET/POST/PATCH/DELETE /api/sessions`；非 admin 仅见本人 `ownerId` |
+| 会话 CRUD | `GET/POST/PATCH/DELETE /api/sessions`；非 admin 仅见本人 `ownerId`；DELETE 同步 PersistDelete |
 | 对话详情 | `GET /api/conversations/:id`（消息桶按 `conversationId`） |
 | 流式回合 | `POST …/stream`；研判模式过滤写工具；结案/交接中拒绝写入 |
 | 模式切换 | `PATCH /api/sessions/:id` 写 `sessionMode`；前端乐观更新，失败回滚 |
@@ -103,6 +134,9 @@ make test && make test-python && make smoke-monolith
 
 | 变量 | 说明 |
 |------|------|
+| `DE_ENV` | `demo` \| `development`（默认）\| `staging` \| `production` |
+| `DE_BAN_MOCK_TOKEN` / `DE_BAN_DEMO_TOKEN` | 禁止 mock token；**不**触发双人审批 |
+| `DE_ALLOW_DEMO_TOKEN` | `development` 下显式允许演示 token |
 | `DE_DATABASE_URL` / `DE_REDIS_URL` | PG / Redis |
 | `DE_SYS_ADDR` / `DE_COLLAB_ADDR` / `DE_CAP_ADDR` / `DE_WORKFLOW_ADDR` / `DE_POLICY_ADDR` / `DE_AUDIT_ADDR` | 监听 |
 | `DE_SERVICE` | `sys` / `collab` / `cap` / `workflow`；可选 `policy` / `audit` |
@@ -121,3 +155,4 @@ make test && make test-python && make smoke-monolith
 | `DE_INSTANCE_ID` | 实例标识；默认主机名 |
 | `DE_EVAL_RECALL_MIN` | 生产知识评测召回门禁，默认 `0.7` |
 | `DE_EVAL_SCORE_MIN` | 生产上岗评测分门禁，默认 `80` |
+| `DE_ENSURE_GENERAL` | `1` 时非 demo 也可补通用员工 |

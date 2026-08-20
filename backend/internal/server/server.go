@@ -13,6 +13,7 @@ import (
 	"github.com/digital-employee-platform/backend/internal/infra"
 	"github.com/digital-employee-platform/backend/internal/modelprov"
 	"github.com/digital-employee-platform/backend/internal/policy"
+	"github.com/digital-employee-platform/backend/internal/runtimeenv"
 	"github.com/digital-employee-platform/backend/internal/store"
 	"github.com/digital-employee-platform/backend/internal/vault"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
@@ -50,7 +51,7 @@ type Server struct {
 }
 
 func New(st *store.Store) *Server {
-	return &Server{
+	s := &Server{
 		Store:      st,
 		Mode:       ModeAll,
 		RuntimeURL: envOr("DE_AGENT_RUNTIME_URL", "http://127.0.0.1:8091"),
@@ -60,6 +61,25 @@ func New(st *store.Store) *Server {
 		OIDC:       auth.LoadOIDC(),
 		Workflows:  deworkflow.New(),
 		ModelProbe: modelprov.NewClient(),
+	}
+	if !vaultRequiredForCredentials() {
+		s.hydrateVaultFromSecrets()
+	}
+	return s
+}
+
+// hydrateVaultFromSecrets reloads durable local secrets into the in-memory Vault stub
+// so credentials survive process restart when HashiCorp Vault is not configured.
+func (s *Server) hydrateVaultFromSecrets() {
+	if s == nil || s.Vault == nil || s.Store == nil {
+		return
+	}
+	s.Store.RLock()
+	defer s.Store.RUnlock()
+	for ref, val := range s.Store.ModelSecrets {
+		if ref != "" && val != "" {
+			s.Vault.PutStub(ref, val)
+		}
 	}
 }
 
@@ -689,8 +709,7 @@ func (s *Server) login(r *http.Request) (any, error) {
 }
 
 func banMockTokenEnv() bool {
-	v := strings.TrimSpace(os.Getenv("DE_BAN_MOCK_TOKEN"))
-	return v == "1" || strings.EqualFold(v, "true")
+	return runtimeenv.BanDemoToken()
 }
 
 // forceOIDCLogin disables password login when DE_FORCE_OIDC=1, or when

@@ -8,8 +8,20 @@ import (
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
-// requireProductionDualApproval enforces SoD on production writes (上岗/路由/知识/恢复).
-// Non-production keeps the existing single-actor path for local DX.
+func actorIsAdmin(actor *auth.Identity) bool {
+	return actor != nil && actor.Role == "admin"
+}
+
+// requiresPeerApprovalGate is true when a non-admin must wait for admin approval.
+// Admin applicants skip pending peer gates and may complete their own publish/release.
+func requiresPeerApprovalGate(actor *auth.Identity) bool {
+	return productionLikeEnv() && !actorIsAdmin(actor)
+}
+
+// requireProductionDualApproval enforces peer approval on production writes
+// (上岗/路由/知识/流程技能/自进化等).
+// Rule: only non-admin applicants need a distinct approver; admins may approve
+// any request including their own (no second admin required).
 func requireProductionDualApproval(submitterID, submitterName string, actor *auth.Identity, verb string) error {
 	if !productionLikeEnv() {
 		return nil
@@ -17,17 +29,17 @@ func requireProductionDualApproval(submitterID, submitterName string, actor *aut
 	if actor == nil {
 		return apperr.UnauthorizedErr("未登录")
 	}
-	if actor.Role == "admin" {
+	if actorIsAdmin(actor) {
 		return nil
 	}
 	if submitterID == "" && submitterName == "" {
 		return nil
 	}
 	if submitterID != "" && submitterID == actor.ID {
-		return apperr.Forbidden(apperr.SODSelfApproval, "生产"+verb+"须双人审批，申请人不能自批")
+		return apperr.Forbidden(apperr.SODSelfApproval, "生产"+verb+"须管理员审批，申请人不能自批")
 	}
 	if submitterName != "" && submitterName == actor.Name {
-		return apperr.Forbidden(apperr.SODSelfApproval, "生产"+verb+"须双人审批，申请人不能自批")
+		return apperr.Forbidden(apperr.SODSelfApproval, "生产"+verb+"须管理员审批，申请人不能自批")
 	}
 	return nil
 }
@@ -46,8 +58,14 @@ func highRiskNeedsCountersign(riskOrClass string) bool {
 
 // maybeHoldForCountersign records the first high-risk approver and returns hold=true
 // until a second distinct signer arrives. entity is a release/package/policy map.
+// Admin completing their own / direct publish skips countersign (no second admin).
+// Admin approving a non-admin high-risk request still requires a second signer.
 func maybeHoldForCountersign(entity map[string]any, actor *auth.Identity, risk, verb string) (hold bool, err error) {
 	if entity == nil || actor == nil || !highRiskNeedsCountersign(risk) {
+		return false, nil
+	}
+	submitterID := str(entity["requestedById"])
+	if actorIsAdmin(actor) && (submitterID == "" || submitterID == actor.ID) {
 		return false, nil
 	}
 	if str(entity["status"]) == "pending_countersign" {

@@ -1,8 +1,9 @@
-.PHONY: run test tidy build compose-up compose-up-full compose-up-temporal compose-up-oidc compose-up-authentik compose-up-kafka compose-up-mtls compose-up-spiffe compose-up-coarse compose-up-monolith compose-up-monolith-workflow compose-up-milvus compose-up-opa compose-up-search compose-up-obs compose-up-staging compose-up-replica compose-down compose-ps compose-logs infra-env smoke smoke-coarse smoke-monolith test-python runtime rag skill sync-builtin-skills de-workflow docker-engine buf-generate buf-lint worker certs certs-rotate run-sys run-collab run-cap run-app run-workflow run-policy run-audit
+.PHONY: run test tidy build compose-up compose-up-full compose-up-temporal compose-up-oidc compose-up-authentik compose-up-kafka compose-up-mtls compose-up-spiffe compose-up-coarse compose-up-monolith compose-up-monolith-workflow compose-up-milvus compose-up-opa compose-up-search compose-up-obs compose-up-staging compose-up-replica compose-down compose-ps compose-logs infra-env smoke smoke-coarse smoke-monolith test-python runtime rag skill sync-builtin-skills de-workflow docker-engine buf-generate buf-lint worker certs certs-rotate run-sys run-collab run-cap run-app run-workflow run-policy run-audit run-demo run-dev db-reset-dev
 
 
 export DE_DATABASE_URL ?= postgres://de:de@127.0.0.1:5432/digital_employee?sslmode=disable
 export DE_REDIS_URL ?= redis://127.0.0.1:6379/0
+export DE_ENV ?= development
 export PATH := /opt/homebrew/bin:$(HOME)/go/bin:$(PATH)
 
 # Prefer backend/.tools/go when present (toolchain bootstrap; not a source tree).
@@ -10,15 +11,29 @@ GO ?= $(shell if [ -x "$(CURDIR)/.tools/go/bin/go" ]; then echo "$(CURDIR)/.tool
 COMPOSE := docker compose -f deploy/compose.yml
 
 # Primary local entry: monolith stack (gateway :8089 → de-app :8100 + de-skill :8093).
+# Data mode: DE_ENV=development (production-shaped persist, no demo seed on empty DB).
 run: compose-up-monolith
+
+# 演示环境：内存 + ACME seed，不写 Postgres。
+run-demo:
+	DE_ENV=demo DE_SERVICE=app DE_LISTEN_ADDR=:8100 $(GO) run ./cmd/de-app
+
+# 本机生产数据模式：需 PG；空库不灌演示 seed。
+run-dev: infra-env run-app
 
 run-sys: infra-env
 	$(GO) run ./cmd/de-sys
 
 run-app: infra-env
+	DE_ENV=$${DE_ENV:-development} \
 	DE_RUNTIME_MODE=local \
 	DE_SKILL_RUNTIME_URL=$${DE_SKILL_RUNTIME_URL:-http://127.0.0.1:8093} \
 	$(GO) run ./cmd/de-app
+
+db-reset-dev: docker-engine
+	@echo "WARNING: drops application schemas in $(DE_DATABASE_URL)"
+	@$(COMPOSE) exec -T postgres psql -U de -d digital_employee -c "DROP SCHEMA IF EXISTS platform CASCADE; DROP SCHEMA IF EXISTS audit CASCADE;" || true
+	@echo "Restart de-app with DE_ENV=development to re-ensure kernel schema (empty durable store)."
 
 run-collab: infra-env
 	DE_CAP_URL=$${DE_CAP_URL:-http://127.0.0.1:8102} DE_WORKFLOW_URL=$${DE_WORKFLOW_URL:-http://127.0.0.1:8103} $(GO) run ./cmd/de-collab

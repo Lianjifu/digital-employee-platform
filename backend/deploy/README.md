@@ -60,7 +60,7 @@ make compose-up-staging    # coarse + oidc + opa + search + obs
 
 | 变量 | 说明 |
 |------|------|
-| `DE_OIDC_ISSUER=http://127.0.0.1:5556/dex` 等 | Dex：`CLIENT_ID=de-core` / `SECRET=de-core-secret` / `AUTH_PATH=/auth`；账号 `admin@acme.com` / `password` |
+| `DE_OIDC_ISSUER=http://127.0.0.1:5556/dex` 等 | Dex：历史 `CLIENT_ID=de-core`（可用 `de-platform`）；`SECRET=de-core-secret`；账号 `admin@acme.com` / `password` |
 | Authentik issuer | `http://127.0.0.1:9000/application/o/de/`（discovery 自动解析端点） |
 | `DE_VAULT_ADDR` / `DE_VAULT_TOKEN` | KV v2 Put/Resolve；供应商 test 会 Resolve `credentialRef` |
 | `DE_TEMPORAL_HOST` | Temporal SDK 提交试运行；需 `make worker` |
@@ -70,7 +70,8 @@ make compose-up-staging    # coarse + oidc + opa + search + obs
 | `DE_OPENSEARCH_URL=http://127.0.0.1:9200` | 审计写入/查询 OpenSearch |
 | `DE_POLICY_URL=http://127.0.0.1:8100` | collab/cap 调 de-sys `/v1/evaluate`；sys 留空；切开后可改 `:8104` |
 | `DE_SKILL_RUN_SECRET` | 控制面与 de-skill-runtime 共享的 RunToken HMAC 密钥 |
-| `DE_BAN_MOCK_TOKEN=1` | 生产/预发禁用 `mock-*-token` |
+| `DE_ENV` | `demo` \| `development`（默认）\| `staging` \| `production`；见 [环境与数据模式](../../docs/环境与数据模式.md) |
+| `DE_BAN_MOCK_TOKEN=1` | 仅禁用 `mock-*-token`，**不**触发双人审批 |
 | `DE_FORCE_OIDC=1` | 拒绝密码登录，仅 OIDC |
 
 ### Staging（硬化预发）
@@ -127,4 +128,6 @@ make compose-up-coarse
 # FastAPI: 8091 / 8092 / 8093
 ```
 
-生产建议：`DE_BAN_MOCK_TOKEN=1` 或 `DE_FORCE_OIDC=1`。
+生产/预发：`DE_ENV=staging|production`（双人审批 + Vault 门禁）；另设 `DE_BAN_MOCK_TOKEN=1` 或 `DE_FORCE_OIDC=1`。
+本机联调默认 `DE_ENV=development`（持久化、空库不灌演示 seed；硬删须 PersistDelete）。演示内存：`DE_ENV=demo` / `make run-demo`。
+清理历史 ACME 残留：`psql "$DE_DATABASE_URL" -f ../scripts/purge-demo-seed-ids.sql`（详见 [环境与数据模式](../../docs/环境与数据模式.md)）。

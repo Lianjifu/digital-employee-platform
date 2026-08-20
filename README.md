@@ -2,9 +2,11 @@
 
 企业级 **岗位数字工作伙伴** 编排与治理控制台：把大模型、企业知识、技能/工具与工作流装配为可上岗的数字工作伙伴，在受控边界内完成协作、执行与审计。
 
-**默认联调真实 API**（`VITE_USE_MOCK=false`，Vite 代理 → `de-gateway :8089`）。仅本地无后端时才开启 Mock。
+**默认联调真实 API**（`VITE_USE_DEMO=false` / `VITE_USE_MOCK=false`，Vite 代理 → `de-gateway :8089`）。纯前端演示见 `npm run dev:demo`。
 
-配套文档：[`docs/数字工作伙伴平台-架构文档.md`](docs/数字工作伙伴平台-架构文档.md) · [`docs/数字工作伙伴平台-功能模块文档.md`](docs/数字工作伙伴平台-功能模块文档.md) · [`docs/后端架构规划.md`](docs/后端架构规划.md) · [`docs/视觉设计规范.md`](docs/视觉设计规范.md)
+环境矩阵、硬删除持久化、seed 清理、岗位包与平台工具说明见 [`docs/环境与数据模式.md`](docs/环境与数据模式.md)。
+
+配套文档：[`docs/数字工作伙伴平台-架构文档.md`](docs/数字工作伙伴平台-架构文档.md) · [`docs/数字工作伙伴平台-功能模块文档.md`](docs/数字工作伙伴平台-功能模块文档.md) · [`docs/后端架构规划.md`](docs/后端架构规划.md) · [`docs/后端微服务重构方案.md`](docs/后端微服务重构方案.md) · [`backend/deploy/topology-split.md`](backend/deploy/topology-split.md) · [`docs/视觉设计规范.md`](docs/视觉设计规范.md)
 
 ---
 
@@ -185,9 +187,9 @@
 
 | 原则 | 含义 |
 |------|------|
-| **粗粒度部署** | 一类能力 = 一个进程 = 一个端口；逻辑模块可细，进程不拆碎 |
+| **粗粒度部署** | 本地默认 **monolith**（de-app 合一）；coarse 四进程保留用于规模化对照 |
 | **双栈分工** | Go 承担控制面（身份、策略、审计、资源编排）；Python 承担执行面（Agent / RAG / Skill） |
-| **网关统一入口** | 浏览器只认 `:8089`；后端按路径切到 sys / collab / cap / workflow |
+| **网关统一入口** | 浏览器只认 `:8089`；monolith 全量路由 → de-app:8100 |
 | **工作区硬隔离** | 请求带 `x-workspace-id`；跨工作区引用拒绝 |
 | **执行面不混部** | agent-runtime / rag / skill-runtime 独立端口，隔离要求不同 |
 | **可观测默认开** | `/metrics`（含 `service` label）+ 可选 Prometheus / Grafana |
@@ -196,7 +198,7 @@
 
 | 层 | 含义 | 现状 |
 |----|------|------|
-| **L0 控制面** | IA、模块能力、角色与治理闭环 | React 控制台 + 粗粒度 Go/Python 联调 |
+| **L0 控制面** | IA、模块能力、角色与治理闭环 | React 控制台 + monolith 联调（de-app + skill-runtime） |
 | **L1 领域契约** | 工作区、权限、审核、零信任、审计事件 | 契约已落地；部分企业写路径仍硬化中 |
 | **L2 运行时底座** | Temporal、Milvus、真沙箱、K8s、SPIRE 等 | 选型锁定，按阶段补齐 |
 
@@ -250,7 +252,7 @@
 | **de-skill-runtime** | 8093 | 技能沙箱执行（必须） | skill-runtime |
 | **执行面** | 8091–8092 | coarse 或按需：推理、RAG | agent-runtime · rag |
 
-> 已退役：`de-core:8080`、细端口 `de-policy:8094` / `de-audit:8095`（能力并入 de-sys）。
+> 已退役：`de-core:8080`、细端口 `de-policy:8094` / `de-audit:8095`（能力现由 de-app / de-sys 吸收）。
 
 ### 3.5 关键契约（实现要点）
 
@@ -288,10 +290,11 @@ digital-employee-platform/
 
 | 已成立 | 仍在路上 |
 |--------|----------|
-| 粗粒度四 Go + 三 Python + gateway 主路径 | 个人/组织/工作区统一作用域 |
+| **monolith 默认**（de-app + de-skill + gateway） | 个人/组织/工作区统一作用域 |
 | 控制台默认打真实网关 | 企业写操作全量实装、真 gVisor 沙箱 |
 | 工作区隔离与直播运营聚合 | LangGraph 全图、SPIRE SDS、CI 工作流入库 |
-| 策略评估 / 审计写入走 de-sys | Handler 按六边形迁包 |
+| 内置技能包与 PilotDeck 工具链 | Handler 按六边形物理迁包 |
+| coarse 四进程可对照部署 | Temporal / Milvus 生产化 |
 
 ---
 
@@ -323,23 +326,23 @@ digital-employee-platform/
 
 ### 4.2 模块一览
 
-| ID | 模块 | 路由 | 分组 | 一句话 | 后端归属 |
-|----|------|------|------|--------|----------|
-| M01 | 运营总览 | `/home` | 运营 | 直播 KPI、需关注、投入产出、工作记录 | de-sys（ops 聚合） |
-| M02 | 专家协作 | `/copilot` | 协作 | 与在岗伙伴会话；研判/受控执行、审核、交接 | de-collab + 执行面 |
-| M03 | 任务中心 | `/tasks` | 协作 | 任务生命周期、复核与 SLA | de-collab |
-| M04 | 工作区 | `/workspaces` | 账号 | 业务域隔离、环境与配额 | de-sys |
-| M05 | 数字工作伙伴 | `/partners` | 编排 | 岗位配置、能力装配、上岗与运营 | de-collab |
-| M06 | 工作流程 | `/workflows` | 编排 | 模板/画布/版本；发布为流程技能 | de-workflow |
-| M07 | 模型服务 | `/models` | 能力 | 供应商、路由、治理、审计 | de-cap |
-| M08 | 知识中心 | `/knowledge` | 能力 | 资产、加工、检索评测、图谱与引用 | de-cap + RAG |
-| M09 | 技能中心 | `/skills` | 能力 | 清单、商店、集成、运行治理 | de-cap + skill-runtime |
-| M10 | 记忆中心 | `/memory` | 能力 | 三层记忆、晋升候选、策略审计 | de-cap |
-| M11 | 消息渠道 | `/channels` | 能力 | 接入、投递、健康、死信、审计 | de-cap |
-| M12 | 平台设置 | `/settings` | 账号 | 租户组织壳与运营设置 | de-sys |
-| M13 | 访问控制 | settings / 独立 | 治理 | 授权、发布审批、SoD | de-sys |
-| M14 | 持续验证 | settings / 独立 | 治理 | 零信任策略与临时授权 | de-sys |
-| M15 | 审计中心 | settings / 独立 | 治理 | 只读追溯与脱敏导出 | de-sys |
+| ID | 模块 | 路由 | 分组 | 一句话 | 后端归属（monolith） |
+|----|------|------|------|--------|----------------------|
+| M01 | 运营总览 | `/home` | 运营 | 直播 KPI、需关注、投入产出、工作记录 | de-app · ops |
+| M02 | 专家协作 | `/copilot` | 协作 | 与在岗伙伴会话；研判/受控执行、审核、交接 | de-app · collab + skill-runtime |
+| M03 | 任务中心 | `/tasks` | 协作 | 任务生命周期、复核与 SLA | de-app · collab |
+| M04 | 工作区 | `/workspaces` | 账号 | 业务域隔离、环境与配额 | de-app · sys |
+| M05 | 数字工作伙伴 | `/partners` | 编排 | 岗位配置、能力装配、上岗与运营 | de-app · collab |
+| M06 | 工作流程 | `/workflows` | 编排 | 模板/画布/版本；发布为流程技能 | de-workflow（可选） |
+| M07 | 模型服务 | `/models` | 能力 | 供应商、路由、治理、审计 | de-app · cap |
+| M08 | 知识中心 | `/knowledge` | 能力 | 资产、加工、检索评测、图谱与引用 | de-app · cap（+ RAG 按需） |
+| M09 | 技能中心 | `/skills` | 能力 | 清单、商店、集成、运行治理 | de-app · cap + skill-runtime |
+| M10 | 记忆中心 | `/memory` | 能力 | 三层记忆、晋升候选、策略审计 | de-app · cap |
+| M11 | 消息渠道 | `/channels` | 能力 | 接入、投递、健康、死信、审计 | de-app · cap |
+| M12 | 平台设置 | `/settings` | 账号 | 租户组织壳与运营设置 | de-app · sys |
+| M13 | 访问控制 | settings / 独立 | 治理 | 授权、发布审批、SoD | de-app · sys/policy |
+| M14 | 持续验证 | settings / 独立 | 治理 | 零信任策略与临时授权 | de-app · sys/policy |
+| M15 | 审计中心 | settings / 独立 | 治理 | 只读追溯与脱敏导出 | de-app · sys/audit |
 
 ### 4.3 分组说明
 
@@ -488,7 +491,7 @@ make skill          # :8093 沙箱
 
 ### 5.4 路径 B：本机 LaunchAgent（常驻联调）
 
-适合日常改 Go / 前端、希望栈常驻。脚本：[`scripts/dev-stack/run-stack.sh`](scripts/dev-stack/run-stack.sh)（**默认 `DE_STACK=monolith`**），Label：`com.digital-employee.dev-stack`。
+适合日常改 Go / 前端、希望栈常驻。脚本：[`scripts/dev-stack/run-stack.sh`](scripts/dev-stack/run-stack.sh)（**默认 `DE_STACK=monolith`，`DE_ENV=development`**），Label：`com.digital-employee.dev-stack`。
 
 **重要：** 栈进程读取的是仓库内 **`backend/bin/de-*`**。改控制面代码后必须重编再重启：
 
@@ -499,7 +502,7 @@ launchctl kickstart -k "gui/$(id -u)/com.digital-employee.dev-stack"
 # 回退四进程：DE_STACK=coarse launchctl kickstart -k "gui/$(id -u)/com.digital-employee.dev-stack"
 ```
 
-常用监听（monolith）：gateway `8089`、de-app `8100`、skill `8093`、vite `5173`。
+常用监听（monolith）：gateway `8089`、de-app `8100`、skill `8093`、vite `5173`。数据模式细节见 [`docs/环境与数据模式.md`](docs/环境与数据模式.md)。
 
 ### 5.5 前端
 
@@ -513,7 +516,7 @@ pnpm --filter web dev
 
 | 变量 | 推荐值 | 说明 |
 |------|--------|------|
-| `VITE_USE_MOCK` | `false` | 打真实网关；仅无后端时才设 `true` |
+| `VITE_USE_DEMO` / `VITE_USE_MOCK` | `false` | 打真实网关；纯前端演示用 `npm run dev:demo` |
 | `VITE_API_BASE` | 空 | 开发态走同源 `/api`，由 Vite 代理到 `:8089` |
 | `VITE_API_DIRECT` | 可选 | `true` 时配合 `VITE_API_BASE=http://127.0.0.1:8089` 直连 |
 
@@ -526,15 +529,15 @@ VITE_API_BASE=
 
 ### 5.6 演示登录
 
-密码任意非空即可。`DE_BAN_MOCK_TOKEN=0` 时可用固定 mock token（见 backend README）。
+密码任意非空即可。默认 `DE_BAN_MOCK_TOKEN=1` 时禁止 `mock-*-token`；联调需开 mock 身份时设 `DE_ALLOW_DEMO_TOKEN=1` 或 `DE_BAN_MOCK_TOKEN=0`（见 backend README）。
 
 | 邮箱前缀 | 角色 | 说明 |
 |---------|------|------|
-| `admin@` | admin | 工作区全量会话与写权限（含模型/渠道等） |
+| `admin@` | admin | 工作区全量会话与写权限；**上架/上岗申请可自批直通** |
 | `audit@` | auditor | 治理 / 审计只读视角 |
-| 其他 | user | 协作与任务；会话按 `ownerId` 隔离 |
+| 其他 | user | 协作与任务；会话按 `ownerId` 隔离；**写操作须管理员审批** |
 
-登录后注意当前**工作区**：空工作区运营总览为真实 0 / `—`；有种子任务的工作区「需关注」来自任务状态。
+登录后注意当前**工作区**：岗位包安装、会话列表均按 `x-workspace-id` 隔离。空工作区运营总览为真实 0 / `—`。
 
 ### 5.7 验证与冒烟
 
@@ -543,13 +546,13 @@ VITE_API_BASE=
 cd frontend && pnpm --filter web typecheck && pnpm --filter web test
 
 # 后端
-cd ../backend && make test && make test-python && make smoke
+cd ../backend && make test && make test-python && make smoke-monolith
 
 # 文案/空白
 git diff --check
 ```
 
-`make smoke` 经 `:8089` 探测粗粒度主路径是否可达。
+`make smoke-monolith` 经 `:8089` 探测 monolith 主路径（workspaces / skills / sessions / evaluate）。
 
 ### 5.8 常见问题
 
@@ -557,9 +560,15 @@ git diff --check
 |------|------|
 | 运营总览仍见演示金额/旧告警文案 | 确认已编到 `backend/bin` 并 `kickstart`；浏览器强刷；检查是否打到旧进程 |
 | 前端有数据但像 Mock | 确认 `VITE_USE_MOCK=false` 且 Vite 代理目标为 `:8089` |
+| 列表里既有 ACME 演示又有真实数据 | 历史 seed 残留在 PG；执行 `backend/scripts/purge-demo-seed-ids.sql` 后重启栈（见环境文档） |
+| Network 里同一 API 打两次 | 开发态 React StrictMode 双挂载，仍是同一真实网关 |
+| 删会话/文档重启又回来 | 确认硬删走了 `PersistDeleteSync`；已修路径含 sessions/messages/snapshots/知识/技能等 |
+| 岗位包 toast 已装但按钮仍「安装」 | 刷新页面（现按工作区 `installed` 展示）；确认当前工作区头 `x-workspace-id` |
+| 平台工具不在岗位包里 | 正常：Harness 内置，见岗位包页「平台工具（启动即用）」 |
 | `healthz` 失败 | 先起 PG/Redis 与 gateway；monolith 看 `:8100/:8093`，coarse 看 `:8100–8103` |
 | Go 改了不生效 | 未写入 `backend/bin` 或未重启 LaunchAgent / compose 容器 |
 | 跨工作区资源 404 / scope 错 | 请求头是否带正确 `x-workspace-id` |
+| `E_IDENTITY_MOCK_FORBIDDEN` | 联调默认禁 mock token；设 `DE_ALLOW_DEMO_TOKEN=1` 或走真实登录 |
 
 ### 5.9 建议上手顺序
 

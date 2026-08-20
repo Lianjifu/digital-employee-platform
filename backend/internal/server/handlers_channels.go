@@ -469,6 +469,7 @@ func (s *Server) channelDeployAction(r *http.Request) (any, error) {
 			s.Store.ChannelDeploys = append(s.Store.ChannelDeploys[:i], s.Store.ChannelDeploys[i+1:]...)
 			s.appendChannelAuditLocked(ws, id.Name, "删除渠道部署", str(d["name"]), "success", str(body["reason"]), "")
 			go s.persistChannel()
+			s.durableDeleteSync("channel_deploys", did)
 			return map[string]any{"id": did, "status": "deleted"}, nil
 		}
 	}

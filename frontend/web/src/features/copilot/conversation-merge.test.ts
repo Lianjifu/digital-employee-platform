@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  dedupeConversationMessages,
   mergeConversationMessages,
   resolveHydratedMessages,
   shouldSkipConversationHydrate,
@@ -58,7 +59,7 @@ describe('conversation-merge', () => {
     expect(merged).toHaveLength(2);
     expect(merged[1]?.content).toBe('完整回复');
     expect(merged[1]?.toolCalls?.[0]?.name).toBe('skill:pptx');
-    expect(merged[1]?.id).toBe('a-local');
+    expect(merged[1]?.id).toBe('srv-a');
   });
 
   it('keeps optimistic local-only user messages', () => {
@@ -82,5 +83,28 @@ describe('conversation-merge', () => {
       msg({ id: 'a1', role: 'assistant', content: 'old reply', createdAt: '2026-08-06T05:00:30.000Z' }),
     ];
     expect(shouldSkipConversationHydrate({ localMessages: local, serverMessages: server })).toBe('skip_local_ahead');
+  });
+
+  it('collapses duplicate server id with local serverMsgId alias', () => {
+    const local = [
+      msg({ id: 'msg-4', role: 'assistant', content: 'cached', status: 'succeeded' }),
+      msg({ id: 'm_local', serverMsgId: 'msg-4', clientMsgId: 'c1', role: 'assistant', content: 'streaming', status: 'streaming' }),
+    ];
+    const server = [
+      msg({ id: 'msg-4', role: 'assistant', content: 'final from server', status: 'succeeded' }),
+    ];
+    const merged = mergeConversationMessages(local, server);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.content).toBe('final from server');
+    expect(merged.map((m) => m.id)).toEqual(['msg-4']);
+  });
+
+  it('dedupes messages that share the same id', () => {
+    const merged = dedupeConversationMessages([
+      msg({ id: 'msg-4', role: 'user', content: 'a' }),
+      msg({ id: 'msg-4', role: 'assistant', content: 'b' }),
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.content).toBe('b');
   });
 });

@@ -76,7 +76,7 @@ export type CopilotSSEEvent = {
 };
 
 export function isMockChatMode(): boolean {
-  return import.meta.env.VITE_USE_MOCK === 'true';
+  return import.meta.env.VITE_USE_DEMO === 'true' || import.meta.env.VITE_USE_MOCK === 'true';
 }
 
 export function mockIdentityHeaders(user: {

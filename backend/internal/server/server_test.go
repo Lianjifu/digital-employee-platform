@@ -2,10 +2,12 @@ package server_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/digital-employee-platform/backend/internal/server"
@@ -117,5 +119,37 @@ func TestLegacyApproveActivatesWithoutSOD(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), `"lifecycle":"active"`) {
 		t.Fatalf("expected active after approve: %s", rr.Body.String())
+	}
+}
+
+func TestEmployeeLifecyclePersists(t *testing.T) {
+	st := store.New()
+	persisted := false
+	var wg sync.WaitGroup
+	wg.Add(1)
+	st.SetPersistHook(func(_ context.Context, collection string, items []map[string]any) error {
+		if collection != "employees" {
+			return nil
+		}
+		defer wg.Done()
+		for _, e := range items {
+			if strID(e["id"]) == "de-2" && strID(e["lifecycle"]) == "active" {
+				persisted = true
+			}
+		}
+		return nil
+	})
+	h := server.New(st).Handler()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPatch, "/api/digital-employees/de-2/lifecycle", bytes.NewBufferString(`{"lifecycle":"active"}`))
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("lifecycle patch %d %s", rr.Code, rr.Body.String())
+	}
+	wg.Wait()
+	if !persisted {
+		t.Fatal("expected employees collection persist after lifecycle transition")
 	}
 }

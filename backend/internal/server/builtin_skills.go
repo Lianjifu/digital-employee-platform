@@ -343,7 +343,7 @@ func isDeprecatedCatalogItem(item map[string]any) bool {
 	return isDeprecatedSkillName(str(item["name"]))
 }
 
-func (s *Server) pruneDeprecatedSeedSkillsLocked() (removedCatalog, removedInstalled []string) {
+func (s *Server) pruneDeprecatedSeedSkillsLocked() (removedCatalog, removedInstalled, removedHealth []string) {
 	keptCatalog := make([]map[string]any, 0, len(s.Store.SkillCatalog))
 	for _, item := range s.Store.SkillCatalog {
 		if isDeprecatedCatalogItem(item) {
@@ -370,6 +370,9 @@ func (s *Server) pruneDeprecatedSeedSkillsLocked() (removedCatalog, removedInsta
 	keptHealth := make([]map[string]any, 0, len(s.Store.SkillHealth))
 	for _, h := range s.Store.SkillHealth {
 		if _, ok := removedSet[str(h["skillId"])]; ok {
+			if hid := str(h["id"]); hid != "" {
+				removedHealth = append(removedHealth, hid)
+			}
 			continue
 		}
 		keptHealth = append(keptHealth, h)
@@ -393,7 +396,7 @@ func (s *Server) pruneDeprecatedSeedSkillsLocked() (removedCatalog, removedInsta
 			extra["bindings"] = kept
 		}
 	}
-	return removedCatalog, removedInstalled
+	return removedCatalog, removedInstalled, removedHealth
 }
 
 func builtinSkillInstallID(skillName string) string {
@@ -401,10 +404,15 @@ func builtinSkillInstallID(skillName string) string {
 }
 
 // normalizeInstalledSkillsLocked assigns stable IDs to builtin installs and drops duplicate rows.
-func (s *Server) normalizeInstalledSkillsLocked() {
+// Returns orphan skill ids that should be PersistDeleted (duplicate rows or pre-normalize ids).
+func (s *Server) normalizeInstalledSkillsLocked() (removedSkillIDs []string) {
 	seenBuiltin := map[string]map[string]any{}
 	out := make([]map[string]any, 0, len(s.Store.Skills))
+	beforeIDs := map[string]struct{}{}
 	for _, sk := range s.Store.Skills {
+		if id := str(sk["id"]); id != "" {
+			beforeIDs[id] = struct{}{}
+		}
 		item := sk
 		ws := str(sk["workspaceId"])
 		bn := strings.TrimSpace(str(sk["builtinSkillName"]))
@@ -419,22 +427,53 @@ func (s *Server) normalizeInstalledSkillsLocked() {
 		out = append(out, item)
 	}
 	s.Store.Skills = store.DedupeMapsByID(out)
+	afterIDs := map[string]struct{}{}
+	for _, sk := range s.Store.Skills {
+		if id := str(sk["id"]); id != "" {
+			afterIDs[id] = struct{}{}
+		}
+	}
+	for id := range beforeIDs {
+		if _, ok := afterIDs[id]; !ok {
+			removedSkillIDs = append(removedSkillIDs, id)
+		}
+	}
+	return removedSkillIDs
 }
 
-// EnsureBuiltinSkillsReady seeds catalog, installs general pack to w1, binds de-general.
+// EnsureBuiltinSkillsReady seeds catalog, installs general pack to every workspace, binds de-general.
 func (s *Server) EnsureBuiltinSkillsReady() {
 	manifest := loadBuiltinManifest()
 	s.Store.Lock()
-	removedCatalog, removedInstalled := s.pruneDeprecatedSeedSkillsLocked()
-	s.normalizeInstalledSkillsLocked()
+	removedCatalog, removedInstalled, removedHealth := s.pruneDeprecatedSeedSkillsLocked()
+	removedNormalized := s.normalizeInstalledSkillsLocked()
 	s.ensureBuiltinCatalogLocked(manifest)
-	s.ensureGeneralPackInstalledLocked("w1", manifest)
+	workspaces := map[string]struct{}{"w1": {}}
+	for _, w := range s.Store.Workspaces {
+		if id := str(w["id"]); id != "" {
+			workspaces[id] = struct{}{}
+		}
+	}
+	for _, sk := range s.Store.Skills {
+		if id := str(sk["workspaceId"]); id != "" {
+			workspaces[id] = struct{}{}
+		}
+	}
+	for ws := range workspaces {
+		s.ensureGeneralPackInstalledLocked(ws, manifest)
+	}
 	s.Store.Unlock()
 	if len(removedCatalog) > 0 {
 		s.Store.PersistDelete("skill_catalog", removedCatalog...)
 	}
 	if len(removedInstalled) > 0 {
 		s.Store.PersistDelete("skills", removedInstalled...)
+	}
+	if len(removedNormalized) > 0 {
+		s.Store.PersistDelete("skills", removedNormalized...)
+	}
+	if len(removedHealth) > 0 {
+		s.Store.PersistDelete("skill_health", removedHealth...)
 	}
 	go s.persistSkills()
 }
@@ -578,10 +617,11 @@ func (s *Server) applyGeneralPack(r *http.Request) (any, error) {
 	s.ensureBuiltinCatalogLocked(manifest)
 	s.ensureGeneralPackInstalledLocked(ws, manifest)
 	s.Store.Unlock()
-	go s.persistSkills()
+	s.persistSkills()
 	return map[string]any{
 		"packId": manifest.PackID, "packName": manifest.PackName,
 		"skills": manifest.GeneralPackSkills, "workspaceId": ws,
+		"installed": len(manifest.GeneralPackSkills),
 	}, nil
 }
 

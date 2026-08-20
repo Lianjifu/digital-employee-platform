@@ -37,7 +37,7 @@ func (s *Server) publishWorkflowAsSkillLocked(actor *auth.Identity, ws string, w
 	name := coalesce(skillName, str(wf["name"])+"技能")
 	now := time.Now().UTC().Format(time.RFC3339)
 	status, life := "published", "enabled"
-	if productionLikeEnv() {
+	if requiresPeerApprovalGate(actor) {
 		status, life = "pending_approval", "pending_approval"
 	}
 	risk := coalesce(str(wf["riskLevel"]), coalesce(str(wf["risk"]), "mid"))

@@ -112,6 +112,55 @@ func (k *KernelStore) List(ctx context.Context, collection string) ([]map[string
 	}
 }
 
+// DeleteMany removes kernel rows by id. For messages, ids may be message ids or conversation ids
+// (deleteSession/deleteConversation pass conversation id for the messages collection).
+func (k *KernelStore) DeleteMany(ctx context.Context, collection string, ids []string) error {
+	if !k.Available() || len(ids) == 0 {
+		return nil
+	}
+	clean := make([]string, 0, len(ids))
+	seen := map[string]struct{}{}
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		clean = append(clean, id)
+	}
+	if len(clean) == 0 {
+		return nil
+	}
+	switch collection {
+	case "sessions":
+		_, err := k.Pool.Exec(ctx, `
+			DELETE FROM collab.sessions
+			WHERE id = ANY($1) OR conversation_id = ANY($1)
+		`, clean)
+		return err
+	case "messages":
+		_, err := k.Pool.Exec(ctx, `
+			DELETE FROM collab.messages
+			WHERE id = ANY($1) OR conversation_id = ANY($1)
+		`, clean)
+		return err
+	case "context_snapshots":
+		_, err := k.Pool.Exec(ctx, `
+			DELETE FROM collab.context_snapshots
+			WHERE id = ANY($1) OR conversation_id = ANY($1) OR correlation_id = ANY($1)
+		`, clean)
+		return err
+	case "channel_inbound":
+		_, err := k.Pool.Exec(ctx, `DELETE FROM cap.channel_inbound WHERE id = ANY($1)`, clean)
+		return err
+	default:
+		return fmt.Errorf("kernel: unsupported delete collection %s", collection)
+	}
+}
+
 func (k *KernelStore) upsertSessions(ctx context.Context, items []map[string]any) error {
 	for _, item := range items {
 		id := str(item["id"])

@@ -200,6 +200,8 @@ func (s *Server) listResolvedTurns(ctx context.Context, ws, requested string) []
 			continue
 		}
 		protocol := coalesce(str(c.provider["protocol"]), "openai_compatible")
+		// Keep turns even without API key so route-name → model-id resolution still works;
+		// streamLocalCandidates skips empty-key non-local protocols before dialing.
 		// DeepSeek Anthropic 兼容路径常被误配；会话统一走 OpenAI 兼容 /v1
 		if strings.Contains(strings.ToLower(base), "deepseek.com") {
 			protocol = "openai_compatible"
@@ -303,6 +305,11 @@ func (s *Server) streamLocalCandidates(ctx context.Context, ws, modelID string, 
 	for i, rt := range candidates {
 		if system != "" {
 			rt.Request.System = system
+		}
+		proto := strings.ToLower(strings.TrimSpace(rt.Request.Protocol))
+		if proto != "ollama" && proto != "embedded" && strings.TrimSpace(rt.Request.APIKey) == "" {
+			lastErr = fmt.Errorf("missing provider credential")
+			continue
 		}
 		// Cap multi-candidate: per-endpoint budget so dead providers fail over;
 		// primary (i==0) uses full candidate timeout, standbys may use a shorter budget.

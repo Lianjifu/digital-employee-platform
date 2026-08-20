@@ -329,7 +329,8 @@ func TestCopilotStreamViaCapHop(t *testing.T) {
 	if !strings.Contains(body, "【Cap】真实LLM") {
 		t.Fatalf("missing Cap llm delta: %s", body)
 	}
-	if strings.Contains(body, "runtime stub") || strings.Contains(body, `"status":"degraded"`) {
-		t.Fatalf("fell back to stub/degraded: %s", body)
+	// Memory stage may report degraded independently; only fail on runtime stub/degrade.
+	if strings.Contains(body, "runtime stub") || strings.Contains(body, `"stage":"runtime","status":"degraded"`) {
+		t.Fatalf("fell back to stub/degraded runtime: %s", body)
 	}
 }

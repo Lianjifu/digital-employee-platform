@@ -109,7 +109,24 @@ type Store struct {
 }
 
 func New() *Store {
-	s := &Store{
+	// Compatible default for unit tests: demo seed in memory.
+	return NewDemo()
+}
+
+// NewDemo builds an in-memory store with ACME demonstration seed (演示环境).
+func NewDemo() *Store {
+	s := newStoreShell()
+	s.seed()
+	return s
+}
+
+// NewEmpty builds a store with no demonstration seed (production data mode).
+func NewEmpty() *Store {
+	return newStoreShell()
+}
+
+func newStoreShell() *Store {
+	return &Store{
 		Members:              map[string][]map[string]any{},
 		Quotas:               map[string]map[string]any{},
 		WorkspacePolicy:      map[string]map[string]any{},
@@ -129,8 +146,6 @@ func New() *Store {
 		},
 		SkillGovernance: map[string]any{},
 	}
-	s.seed()
-	return s
 }
 
 func (s *Store) Lock()    { s.mu.Lock() }
@@ -454,14 +469,15 @@ func (s *Store) seed() {
 			"id": "sk-docx", "workspaceId": "w1", "ownerId": "u1", "owner": "平台管理员", "team": "文档能力组",
 			"name": "docx", "kind": "skill", "description": "根据文本内容生成 Word（.docx）文档并返回下载链接",
 			"lifecycleStatus": "enabled", "status": "installed", "runtime": "docx-local", "version": "1.0.0",
-			"riskLevel": "low", "rating": 4.8, "installCount": 96, "cacheable": true, "source": "builtin",
+			"riskLevel": "low", "rating": 4.8, "installCount": 96, "cacheable": true, "source": "builtin", "signed": true,
+			"publisher": "企业能力商店",
 			"environment": "production", "classification": "internal", "lastVerifiedAt": "刚刚",
 		},
 		{
 			"id": "sk-sandbox", "workspaceId": "w1", "ownerId": "u1", "owner": "平台管理员", "team": "沙箱验证组",
 			"name": "sandbox-echo", "kind": "skill", "description": "沙箱 echo 验证（治理/限流测试用）",
 			"lifecycleStatus": "enabled", "status": "installed", "version": "1.0.0",
-			"riskLevel": "low", "rating": 4.5, "installCount": 12, "cacheable": false, "source": "import",
+			"riskLevel": "low", "rating": 4.5, "installCount": 12, "cacheable": false, "source": "import", "signed": false,
 			"environment": "sandbox", "classification": "internal", "lastVerifiedAt": "刚刚",
 		},
 	}

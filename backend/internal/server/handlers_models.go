@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -199,14 +200,19 @@ func (s *Server) putProviderCredential(r *http.Request, providerID, raw string) 
 			return "", "", apperr.BadReq(apperr.ProviderCredential, "写入凭据失败")
 		}
 	}
-	// Durable local mirror (must not nest Store.Lock — callers like PATCH already hold it).
-	s.Store.Lock()
-	if s.Store.ModelSecrets == nil {
-		s.Store.ModelSecrets = map[string]string{}
+	// Local durable mirror when Vault is optional (dev / LaunchAgent).
+	// Must not nest Store.Lock — callers like PATCH already hold it, then unlock first.
+	if !vaultRequiredForCredentials() {
+		s.Store.Lock()
+		if s.Store.ModelSecrets == nil {
+			s.Store.ModelSecrets = map[string]string{}
+		}
+		s.Store.ModelSecrets[credRef] = raw
+		s.Store.Unlock()
+		if err := s.Store.PersistSync("model_secrets"); err != nil {
+			return "", "", apperr.BadReq(apperr.ProviderCredential, "凭据持久化失败，重启后将丢失")
+		}
 	}
-	s.Store.ModelSecrets[credRef] = raw
-	s.Store.Unlock()
-	s.Store.Persist("model_secrets")
 	return credRef, masked, nil
 }
 
@@ -219,7 +225,9 @@ func (s *Server) resolveProviderCredential(ctx context.Context, credRef string) 
 			return v
 		}
 	}
-	if productionLikeEnv() {
+	// DE_BAN_MOCK_TOKEN 只禁 mock 身份，不能挡住本地 model_secrets。
+	// 真实 staging/prod 才强制只走 Vault。
+	if vaultRequiredForCredentials() {
 		return ""
 	}
 	s.Store.RLock()
@@ -406,6 +414,12 @@ func (s *Server) testModelProvider(r *http.Request, id *auth.Identity, ws, pid s
 			s.appendModelAudit(ws, id.Name, "验证供应商连通性", name, "failed", map[string]any{"reason": "凭据不可用"})
 			s.Store.Unlock()
 			return nil, apperr.BadReq(apperr.ProviderCredential, "凭据不可用: "+vault.Redact(ref))
+		}
+		if !resolved && protocol != "ollama" {
+			s.Store.Lock()
+			s.appendModelAudit(ws, id.Name, "验证供应商连通性", name, "failed", map[string]any{"reason": "凭据不可用"})
+			s.Store.Unlock()
+			return nil, apperr.BadReq(apperr.ProviderCredential, "凭据不可用，请重新填写 API Key 后再验证")
 		}
 	}
 
@@ -595,8 +609,15 @@ func (s *Server) deleteModelProvider(r *http.Request, id *auth.Identity, ws, pid
 	s.Store.PersistCollection("model_providers", s.Store.ModelProviders)
 	s.appendModelAudit(ws, id.Name, "删除供应商", name, "success", nil)
 	s.Store.AppendAudit(ws, id.Name, "删除模型供应商", pid, "success", "")
-	if ref != "" && s.Vault != nil {
-		_ = s.Vault.Delete(r.Context(), ref)
+	if err := s.Store.PersistDeleteSync("model_providers", pid); err != nil {
+		log.Printf("persist-delete model_providers %s: %v", pid, err)
+	}
+	if ref != "" {
+		delete(s.Store.ModelSecrets, ref)
+		s.Store.PersistDelete("model_secrets", ref)
+		if s.Vault != nil {
+			_ = s.Vault.Delete(r.Context(), ref)
+		}
 	}
 	return map[string]any{"id": pid, "status": "deleted"}, nil
 }
@@ -618,6 +639,7 @@ func (s *Server) discoverModels(r *http.Request) (any, error) {
 		apiKey = strings.TrimSpace(str(body["apiKey"]))
 	}
 	apiVersion := str(body["apiVersion"])
+	credRef := ""
 	if pid := str(body["providerId"]); pid != "" {
 		s.Store.RLock()
 		if p, err := s.findProviderLocked(pid, ws); err == nil {
@@ -631,10 +653,13 @@ func (s *Server) discoverModels(r *http.Request) (any, error) {
 				apiVersion = str(p["apiVersion"])
 			}
 			if apiKey == "" {
-				apiKey = s.resolveProviderCredential(r.Context(), str(p["credentialRef"]))
+				credRef = str(p["credentialRef"])
 			}
 		}
 		s.Store.RUnlock()
+		if apiKey == "" && credRef != "" {
+			apiKey = s.resolveProviderCredential(r.Context(), credRef)
+		}
 	}
 	if baseURL == "" {
 		return nil, apperr.BadReq(apperr.ProviderDiscoverInvalid, "请先填写 API 请求地址")
@@ -889,13 +914,13 @@ func (s *Server) routingPolicyAction(r *http.Request) (any, error) {
 			s.Store.Unlock()
 			return nil, apperr.BadReq(apperr.PolicyNotReady, "草稿尚未通过校验，无法发布")
 		}
-		if productionLikeEnv() && st == "ready" {
+		if requiresPeerApprovalGate(id) && st == "ready" {
 			p["status"] = "pending_approval"
 			p["requestedBy"] = id.Name
 			p["requestedById"] = id.ID
 			p["requestedAt"] = time.Now().UTC().Format(time.RFC3339)
 			s.Store.PersistCollection("routing_policies", s.Store.RoutingPolicies)
-			s.appendModelAudit(ws, id.Name, "申请发布路由版本", str(p["level"]), "success", map[string]any{"reason": "待双人审批"})
+			s.appendModelAudit(ws, id.Name, "申请发布路由版本", str(p["level"]), "success", map[string]any{"reason": "待管理员审批"})
 			s.Store.Unlock()
 			return p, nil
 		}

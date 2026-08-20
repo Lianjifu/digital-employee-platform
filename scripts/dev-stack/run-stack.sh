@@ -1,5 +1,6 @@
 #!/bin/bash
 # Keep local FE+BE up for digital-employee-platform (real API + PG/Redis; no frontend mock).
+# Defaults: DE_ENV=development, DE_BAN_MOCK_TOKEN=1. See docs/环境与数据模式.md.
 set -u
 export PATH="/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin:/Users/LIANJIFU/ops/digital-employee-platform/backend/.tools/go/bin:$PATH"
 ROOT="/Users/LIANJIFU/ops/digital-employee-platform"
@@ -19,7 +20,9 @@ if [ -f "$BACKEND/deploy/.env" ]; then
   . "$BACKEND/deploy/.env"
   set +a
 fi
+export DE_ENV="${DE_ENV:-development}"
 export DE_BAN_MOCK_TOKEN="${DE_BAN_MOCK_TOKEN:-1}"
+export DE_BAN_DEMO_TOKEN="${DE_BAN_DEMO_TOKEN:-$DE_BAN_MOCK_TOKEN}"
 export DE_ALLOW_PASSWORD_LOGIN="${DE_ALLOW_PASSWORD_LOGIN:-1}"
 export DE_ALLOW_MOCK_IDENTITY="${DE_ALLOW_MOCK_IDENTITY:-0}"
 export DE_ALLOW_RUNTIME_STUB="${DE_ALLOW_RUNTIME_STUB:-0}"

@@ -25,6 +25,7 @@ import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useAuthStore } from '@/stores/authStore';
 import { isMockChatMode, streamCopilotTurn, type CopilotSSEEvent } from '@/features/copilot/copilot-stream';
 import { capSessionMessages } from '@/features/copilot/context-limits';
+import { dedupeConversationMessages } from '@/features/copilot/conversation-merge';
 import type {
   ChatMessageEx,
   ChatSession,
@@ -132,6 +133,8 @@ type Action =
 /* ============ 常量 ============ */
 
 const STORAGE_KEY = 'de-chat-state';
+/** 已删除会话 tombstone，刷新/重启后仍阻止服务端列表回灌 */
+const DELETED_TOMBSTONES_KEY = 'de-chat-deleted-tombstones';
 /** v7：清理侧栏已空但仍占用 activeId 的残留会话（如 Redis OOM） */
 const STORAGE_VERSION = 7;
 const MAX_SESSIONS = 200; // 总会话上限
@@ -275,8 +278,14 @@ function reducer(s: State, a: Action): State {
       const incomingMessages = a.session.messages ?? [];
       const keepLocalMessages = Boolean(existing && (existing.messages?.length ?? 0) > 0 && incomingMessages.length === 0);
       const merged = existing
-        ? { ...existing, ...a.session, messages: keepLocalMessages ? existing.messages : incomingMessages }
-        : a.session;
+        ? {
+            ...existing,
+            ...a.session,
+            messages: dedupeConversationMessages(
+              keepLocalMessages ? existing.messages : incomingMessages,
+            ),
+          }
+        : { ...a.session, messages: dedupeConversationMessages(incomingMessages) };
       // 消息 hydrate 不得冲掉本地已切换的研判/受控执行等治理字段
       const next = existing && a.preserveGovernance
         ? {
@@ -336,7 +345,14 @@ function reducer(s: State, a: Action): State {
     case 'append_msg': {
       const sess = s.sessions[a.sid];
       if (!sess) return s;
-      const messages = capMessages([...sess.messages, a.msg]);
+      const idx = sess.messages.findIndex((m) =>
+        m.id === a.msg.id
+        || (a.msg.clientMsgId && m.clientMsgId === a.msg.clientMsgId)
+        || (a.msg.serverMsgId && (m.serverMsgId === a.msg.serverMsgId || m.id === a.msg.serverMsgId)),
+      );
+      const messages = idx >= 0
+        ? sess.messages.map((m, i) => (i === idx ? { ...m, ...a.msg } : m))
+        : capMessages([...sess.messages, a.msg]);
       const updated: ChatSession = {
         ...sess,
         messages,
@@ -787,6 +803,32 @@ function saveState(s: State) {
   } catch {}
 }
 
+type DeletedTombstones = { sessionIds: string[]; conversationIds: string[] };
+
+function loadDeletedTombstones(): { sessions: Set<string>; conversations: Set<string> } {
+  try {
+    const raw = localStorage.getItem(DELETED_TOMBSTONES_KEY);
+    if (!raw) return { sessions: new Set(), conversations: new Set() };
+    const parsed = JSON.parse(raw) as Partial<DeletedTombstones>;
+    return {
+      sessions: new Set(Array.isArray(parsed.sessionIds) ? parsed.sessionIds.filter((id) => typeof id === 'string' && id) : []),
+      conversations: new Set(Array.isArray(parsed.conversationIds) ? parsed.conversationIds.filter((id) => typeof id === 'string' && id) : []),
+    };
+  } catch {
+    return { sessions: new Set(), conversations: new Set() };
+  }
+}
+
+function saveDeletedTombstones(sessions: Set<string>, conversations: Set<string>) {
+  try {
+    const payload: DeletedTombstones = {
+      sessionIds: [...sessions],
+      conversationIds: [...conversations],
+    };
+    localStorage.setItem(DELETED_TOMBSTONES_KEY, JSON.stringify(payload));
+  } catch {}
+}
+
 /* ============ 序列化（导出） ============ */
 
 export function exportSession(session: ChatSession, opts: { includeCitations?: boolean; includeToolCalls?: boolean; includeReasoning?: boolean; includeAuditTrail?: boolean } = {}): string {
@@ -853,8 +895,9 @@ export function useChat(agentMeta?: { name: string }) {
 
   // 超时监控：超时自动 abort + 写错误
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const deletedSessionIdsRef = useRef<Set<string>>(new Set());
-  const deletedConversationIdsRef = useRef<Set<string>>(new Set());
+  const initialTombstones = loadDeletedTombstones();
+  const deletedSessionIdsRef = useRef<Set<string>>(initialTombstones.sessions);
+  const deletedConversationIdsRef = useRef<Set<string>>(initialTombstones.conversations);
 
   /* ==================== 内部：启动流式 ==================== */
 
@@ -1630,12 +1673,18 @@ export function useChat(agentMeta?: { name: string }) {
     deletedSessionIdsRef.current.add(id);
     const convId = state.sessions[id]?.conversationId;
     if (convId) deletedConversationIdsRef.current.add(convId);
+    saveDeletedTombstones(deletedSessionIdsRef.current, deletedConversationIdsRef.current);
     dispatch({ type: 'del_session', id });
     if (isMockChatMode()) return;
+	// 本地已删；tombstone 保留到 DELETE 成功且服务端已持久删除。
     try {
       await getApiClient().request(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+      // 删除成功后再清 tombstone：失败时仍阻止 importSessions 回灌
+      deletedSessionIdsRef.current.delete(id);
+      if (convId) deletedConversationIdsRef.current.delete(convId);
+      saveDeletedTombstones(deletedSessionIdsRef.current, deletedConversationIdsRef.current);
     } catch {
-      // 本地已删；服务端失败时 tombstone 阻止 importSessions 回灌
+      // 保留 tombstone，避免服务端仍有记录时回灌
     }
   }, [state.sessions]);
   const switchSession = useCallback((id: string) => dispatch({ type: 'switch', id }), []);

@@ -20,6 +20,71 @@ function messageKey(message: ChatMessageEx): string {
   return message.clientMsgId || message.serverMsgId || message.id;
 }
 
+/** 同一逻辑消息可能以 client / server / local id 多种形式出现。 */
+function messageAliases(message: ChatMessageEx): string[] {
+  const out = new Set<string>();
+  if (message.clientMsgId) out.add(`c:${message.clientMsgId}`);
+  if (message.serverMsgId) {
+    out.add(`s:${message.serverMsgId}`);
+    out.add(`i:${message.serverMsgId}`);
+  }
+  if (message.id) {
+    out.add(`i:${message.id}`);
+    out.add(`s:${message.id}`);
+  }
+  return [...out];
+}
+
+function mergeMessagePair(existing: ChatMessageEx, incoming: ChatMessageEx, preferIncoming: boolean): ChatMessageEx {
+  // 本地灌入时：已有终态则不回退为 streaming 占位
+  if (!preferIncoming && !isStreaming(existing) && isStreaming(incoming)) {
+    return existing;
+  }
+  // 服务端灌入时：终态覆盖 streaming
+  if (preferIncoming && isStreaming(existing) && !isStreaming(incoming)) {
+    return {
+      ...existing,
+      ...incoming,
+      clientMsgId: existing.clientMsgId || incoming.clientMsgId,
+      serverMsgId: existing.serverMsgId || incoming.serverMsgId,
+      id: incoming.id || incoming.serverMsgId || existing.serverMsgId || existing.id,
+    };
+  }
+  if (isStreaming(existing) && !isStreaming(incoming)) {
+    if (!preferIncoming) return existing;
+  }
+  if (isStreaming(incoming) && !isStreaming(existing)) {
+    return incoming;
+  }
+  if (preferIncoming || stamp(incoming) >= stamp(existing)) {
+    return {
+      ...existing,
+      ...incoming,
+      clientMsgId: existing.clientMsgId || incoming.clientMsgId,
+      serverMsgId: existing.serverMsgId || incoming.serverMsgId,
+      id: incoming.id || incoming.serverMsgId || existing.serverMsgId || existing.id,
+    };
+  }
+  return existing;
+}
+
+/** 终态列表按 message.id 去重，避免 React key 冲突。 */
+export function dedupeConversationMessages(messages: ChatMessageEx[]): ChatMessageEx[] {
+  if (messages.length < 2) return messages;
+  const byId = new Map<string, ChatMessageEx>();
+  const order: string[] = [];
+  for (const message of messages) {
+    const existing = byId.get(message.id);
+    if (!existing) {
+      byId.set(message.id, message);
+      order.push(message.id);
+      continue;
+    }
+    byId.set(message.id, mergeMessagePair(existing, message, stamp(message) >= stamp(existing)));
+  }
+  return order.map((id) => byId.get(id)!);
+}
+
 function isStreaming(message: ChatMessageEx): boolean {
   return message.status === 'streaming' || message.status === 'in_flight' || message.status === 'queued';
 }
@@ -63,41 +128,40 @@ export function mergeConversationMessages(
   if (!local.length) return server;
 
   const byKey = new Map<string, ChatMessageEx>();
+  const aliasToKey = new Map<string, string>();
   const order: string[] = [];
 
+  const registerAliases = (canonicalKey: string, message: ChatMessageEx) => {
+    for (const alias of messageAliases(message)) aliasToKey.set(alias, canonicalKey);
+  };
+
+  const resolveKey = (message: ChatMessageEx): string | undefined => {
+    for (const alias of messageAliases(message)) {
+      const mapped = aliasToKey.get(alias);
+      if (mapped) return mapped;
+    }
+    return undefined;
+  };
+
   const put = (message: ChatMessageEx, preferIncoming: boolean) => {
-    const key = messageKey(message);
+    const existingKey = resolveKey(message);
+    const key = existingKey ?? messageKey(message);
     const existing = byKey.get(key);
     if (!existing) {
       byKey.set(key, message);
-      order.push(key);
+      registerAliases(key, message);
+      if (!existingKey) order.push(key);
       return;
     }
-    if (isStreaming(existing) && !isStreaming(message)) {
-      // 本地仍在流：保留本地，除非调用方明确用终态（由 preferIncoming + 非 streaming server）
-      if (!preferIncoming) return;
-    }
-    if (isStreaming(message) && !isStreaming(existing)) {
-      byKey.set(key, message);
-      return;
-    }
-    // 较新时间戳或 preferIncoming（服务端灌入）胜出
-    if (preferIncoming || stamp(message) >= stamp(existing)) {
-      byKey.set(key, {
-        ...existing,
-        ...message,
-        // 保留本地 clientMsgId，便于后续对齐
-        clientMsgId: existing.clientMsgId || message.clientMsgId,
-        id: existing.id || message.id,
-      });
-    }
+    const merged = mergeMessagePair(existing, message, preferIncoming);
+    byKey.set(key, merged);
+    registerAliases(key, merged);
   };
 
   for (const message of local) put(message, false);
   for (const message of server) put(message, true);
 
-  // 服务端没有、仅本地存在的消息（乐观用户气泡）保留在原相对位置之后
-  return order.map((key) => byKey.get(key)!).filter(Boolean);
+  return dedupeConversationMessages(order.map((key) => byKey.get(key)!).filter(Boolean));
 }
 
 export function resolveHydratedMessages(opts: {

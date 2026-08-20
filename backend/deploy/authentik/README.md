@@ -17,24 +17,24 @@ make compose-up-authentik
 ## 配置控制面 OAuth2 应用
 
 1. 登录 Authentik Admin → **Applications** → **Providers** → **Create** → **OAuth2/OpenID Provider**
-2. 名称：`de-core`（历史客户端名可保留）；Redirect URI：`http://127.0.0.1:8089/api/auth/oidc/callback`
+2. 名称：`de-platform`（历史名 `de-core` 可保留）；Redirect URI：`http://127.0.0.1:8089/api/auth/oidc/callback`
 3. Client type：Confidential；记下 Client ID / Secret
 4. **Applications** → Create，Slug 设为 `de`，绑定上述 Provider
-5. 导出环境变量后启动粗粒度栈：
+5. 导出环境变量后启动栈：
 
 ```bash
 export DE_OIDC_ISSUER=http://127.0.0.1:9000/application/o/de/
 export DE_OIDC_CLIENT_ID=<client-id>
 export DE_OIDC_CLIENT_SECRET=<client-secret>
 export DE_OIDC_REDIRECT_URL=http://127.0.0.1:8089/api/auth/oidc/callback
-# 端点由 OpenID discovery 自动解析，一般无需 DE_OIDC_AUTH_PATH
 export DE_FORCE_OIDC=1   # 可选：禁用密码登录
-make compose-up-coarse
+make compose-up-monolith   # 默认
+# 或 make compose-up-coarse
 ```
 
 浏览器打开：`http://127.0.0.1:8089/api/auth/oidc/login`
 
 ## Blueprint（可选）
 
-`blueprints/de-core-oidc.yaml` 会尝试自动创建 Provider/Application（Client ID=`de-core`，Secret=`de-core-secret`）。  
+`blueprints/de-core-oidc.yaml` 会尝试自动创建 Provider/Application（历史 Client ID=`de-core`，Secret=`de-core-secret`）。  
 若版本字段不兼容，以 UI 手工配置为准；控制面已支持 Authentik discovery。

@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -134,6 +135,13 @@ func TestCopilotStreamPersistsUnderConversationID(t *testing.T) {
 
 func TestDeleteSessionRemovesPersistedRecord(t *testing.T) {
 	st := store.New()
+	var deleted []string
+	st.SetDeleteHook(func(_ context.Context, collection string, ids []string) error {
+		if collection == "sessions" {
+			deleted = append(deleted, ids...)
+		}
+		return nil
+	})
 	srv := server.New(st).Handler()
 
 	create := httptest.NewRecorder()
@@ -172,6 +180,17 @@ func TestDeleteSessionRemovesPersistedRecord(t *testing.T) {
 		}
 	}
 	st.RUnlock()
+
+	found := false
+	for _, id := range deleted {
+		if id == sessID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected PersistDeleteSync sessions id=%s got %v", sessID, deleted)
+	}
 
 	list := httptest.NewRecorder()
 	lreq := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)

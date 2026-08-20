@@ -2,13 +2,13 @@ package server
 
 import (
 	"context"
-	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
 	"github.com/digital-employee-platform/backend/internal/modelprov"
+	"github.com/digital-employee-platform/backend/internal/runtimeenv"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
@@ -38,36 +38,28 @@ func requireModelWrite(id *auth.Identity) error {
 	return nil
 }
 
+// persistEmployeesLocked snapshots employees to durable storage; caller must hold Store.Lock.
+func (s *Server) persistEmployeesLocked() {
+	if !runtimeenv.FromEnv().PersistEnabled() {
+		return
+	}
+	empSnap := make([]map[string]any, len(s.Store.Employees))
+	copy(empSnap, s.Store.Employees)
+	s.Store.PersistCollection("employees", empSnap)
+}
+
 func vaultRequiredForCredentials() bool {
-	v := strings.TrimSpace(os.Getenv("DE_REQUIRE_VAULT"))
-	if v == "1" || strings.EqualFold(v, "true") {
-		return true
-	}
-	// 仅真实 staging/prod 环境强制 Vault；DE_BAN_MOCK_TOKEN 只影响鉴权，不等同于生产部署。
-	env := strings.ToLower(strings.TrimSpace(os.Getenv("DE_ENV")))
-	if env == "" {
-		env = strings.ToLower(strings.TrimSpace(os.Getenv("GO_ENV")))
-	}
-	switch env {
-	case "production", "prod", "staging":
-		return true
-	default:
-		return false
-	}
+	return runtimeenv.FromEnv().RequiresVault()
 }
 
 func budgetEnforceEnabled() bool {
 	if envFlagFalse("DE_MODEL_BUDGET_ENFORCE") {
 		return false
 	}
-	if productionLikeEnv() {
+	if envFlagTrue("DE_MODEL_BUDGET_ENFORCE") {
 		return true
 	}
-	v := strings.TrimSpace(os.Getenv("DE_MODEL_BUDGET_ENFORCE"))
-	if v == "" {
-		return false
-	}
-	return v == "1" || strings.EqualFold(v, "true")
+	return runtimeenv.FromEnv().RequiresVault() || runtimeenv.FromEnv().DualApproval()
 }
 
 func (s *Server) allowModelRate(key string, limit int, window time.Duration) bool {

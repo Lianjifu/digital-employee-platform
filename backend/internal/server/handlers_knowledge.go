@@ -929,9 +929,25 @@ func (s *Server) knowledgePackageAction(r *http.Request) (any, error) {
 			}
 		}
 		eval, _ := s.Store.KnowledgeExtra["eval"].(map[string]any)
+		pkgStatus, pkgSubmitter := "", ""
+		for _, p := range knowledgeSliceMaps(s.Store.KnowledgeExtra["packages"]) {
+			if str(p["id"]) == pkgID && (str(p["workspaceId"]) == "" || str(p["workspaceId"]) == ws) {
+				pkgStatus = str(p["status"])
+				pkgSubmitter = str(p["requestedById"])
+				break
+			}
+		}
 		s.Store.RUnlock()
 		if highRisk {
-			if err := s.evaluateWrite(r, "knowledge", "publish", policy.Input{ApproverID: id.ID, SubmitterID: id.ID}); err != nil && id.Role != "admin" {
+			// 首提进入待审批时不要把申请人同时填成批准人，否则会误触 SoD。
+			in := policy.Input{SubmitterID: id.ID}
+			if pkgStatus == "pending_approval" || pkgStatus == "pending_countersign" {
+				in.ApproverID = id.ID
+				if pkgSubmitter != "" {
+					in.SubmitterID = pkgSubmitter
+				}
+			}
+			if err := s.evaluateWrite(r, "knowledge", "publish", in); err != nil && id.Role != "admin" {
 				return nil, err
 			}
 		}
@@ -1005,7 +1021,7 @@ func (s *Server) knowledgePackageAction(r *http.Request) (any, error) {
 		if str(pkg["status"]) == "archived" || str(pkg["status"]) == "deprecated" {
 			return nil, apperr.BadReq(apperr.BadRequest, "已归档/废弃的知识包不可发布")
 		}
-		if productionLikeEnv() && str(pkg["status"]) != "pending_approval" && str(pkg["status"]) != "pending_countersign" {
+		if requiresPeerApprovalGate(id) && str(pkg["status"]) != "pending_approval" && str(pkg["status"]) != "pending_countersign" {
 			if err := s.requirePackageEvalSetLocked(ws, pkgID); err != nil {
 				return nil, err
 			}
@@ -1014,7 +1030,7 @@ func (s *Server) knowledgePackageAction(r *http.Request) (any, error) {
 			pkg["requestedById"] = id.ID
 			pkg["requestedAt"] = time.Now().UTC().Format(time.RFC3339)
 			s.Store.KnowledgeExtra["packages"] = pkgs
-			s.appendKnowledgeAuditLocked(ws, id.Name, "申请发布知识包", str(pkg["name"]), "success", "待双人审批")
+			s.appendKnowledgeAuditLocked(ws, id.Name, "申请发布知识包", str(pkg["name"]), "success", "待管理员审批")
 			go s.persistKnowledgeExtra()
 			return pkg, nil
 		}
@@ -1515,6 +1531,13 @@ func (s *Server) deleteKnowledgeDocsByIDs(r *http.Request, actor *auth.Identity,
 
 	s.appendKnowledgeAuditLocked(ws, actor.Name, "删除知识文档", strings.Join(titles, ","), "success", fmt.Sprintf("count=%d", len(deleted)))
 	s.Store.Unlock()
+	deletedIDList := make([]string, 0, len(deleted))
+	for _, d := range deleted {
+		if id := str(d["id"]); id != "" {
+			deletedIDList = append(deletedIDList, id)
+		}
+	}
+	s.durableDeleteSync("knowledge_docs", deletedIDList...)
 	s.Store.Persist("knowledge_docs")
 	s.persistKnowledgeExtra()
 	for _, path := range blobPaths {
@@ -1522,13 +1545,7 @@ func (s *Server) deleteKnowledgeDocsByIDs(r *http.Request, actor *auth.Identity,
 	}
 	return map[string]any{
 		"deleted": len(deleted),
-		"ids": func() []string {
-			out := make([]string, 0, len(deleted))
-			for _, d := range deleted {
-				out = append(out, str(d["id"]))
-			}
-			return out
-		}(),
+		"ids":     deletedIDList,
 	}, nil
 }
 

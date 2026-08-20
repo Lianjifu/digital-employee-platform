@@ -1,8 +1,14 @@
 /**
- * API 运行模式：默认走真实控制面（de-gateway）；仅当显式 VITE_USE_MOCK=true 时启用本地 Mock。
+ * API 运行模式：默认走真实控制面（de-gateway）；仅当显式演示模式时注入本地 Handler。
+ * VITE_USE_DEMO=true 或兼容旧名 VITE_USE_MOCK=true。
  */
+export function isDemoApiMode(): boolean {
+  return import.meta.env.VITE_USE_DEMO === 'true' || import.meta.env.VITE_USE_MOCK === 'true';
+}
+
+/** @deprecated 使用 isDemoApiMode */
 export function isMockApiMode(): boolean {
-  return import.meta.env.VITE_USE_MOCK === 'true';
+  return isDemoApiMode();
 }
 
 function isLoopbackBase(url: string): boolean {

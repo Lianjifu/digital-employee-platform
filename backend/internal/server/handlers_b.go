@@ -96,6 +96,7 @@ func (s *Server) createEmployee(r *http.Request) (any, error) {
 	defer s.Store.Unlock()
 	s.Store.Employees = append([]map[string]any{item}, s.Store.Employees...)
 	s.Store.AppendAudit(ws, id.Name, "创建数字工作伙伴草稿", name, "success", "")
+	s.persistEmployeesLocked()
 	return item, nil
 }
 
@@ -120,6 +121,7 @@ func (s *Server) patchEmployee(r *http.Request) (any, error) {
 		}
 		e["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
 		s.Store.AppendAudit(str(e["workspaceId"]), id.Name, "更新数字工作伙伴配置", str(e["name"]), "success", "")
+		s.persistEmployeesLocked()
 		return e, nil
 	}
 	return nil, apperr.NotFoundErr(apperr.DigitalEmployeeNotFound, "数字工作伙伴不存在")
@@ -148,29 +150,38 @@ func (s *Server) employeeAction(r *http.Request) (any, error) {
 	if err := s.requireWorkspaceAccess(id, str(emp["workspaceId"])); err != nil {
 		return nil, err
 	}
+	mutated := false
+	defer func() {
+		if mutated {
+			s.persistEmployeesLocked()
+		}
+	}()
 	switch action {
 	case "submit":
 		if err := s.validatePublishedCapabilities(emp); err != nil {
 			return nil, err
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		if productionLikeEnv() {
+		if requiresPeerApprovalGate(id) {
 			emp["lifecycle"] = "pending_approval"
 			emp["release"] = map[string]any{
 				"status": "pending_approval", "requestedAt": now,
 				"requestedBy": id.Name, "requestedById": id.ID,
 			}
 			emp["updatedAt"] = now
-			s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "申请数字工作伙伴上岗", str(emp["name"]), "success", "待双人审批")
+			s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "申请数字工作伙伴上岗", str(emp["name"]), "success", "待管理员审批")
+			mutated = true
 			return emp, nil
 		}
 		emp["lifecycle"] = "active"
 		emp["release"] = map[string]any{
 			"status": "released", "releasedAt": now,
 			"requestedBy": id.Name, "requestedById": id.ID,
+			"approver": id.Name, "approverId": id.ID,
 		}
 		emp["updatedAt"] = now
 		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "数字工作伙伴上岗", str(emp["name"]), "success", "")
+		mutated = true
 		return emp, nil
 	case "approve":
 		if err := s.validatePublishedCapabilities(emp); err != nil {
@@ -202,6 +213,7 @@ func (s *Server) employeeAction(r *http.Request) (any, error) {
 			emp["release"] = relMap
 			emp["updatedAt"] = now
 			s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "上岗会签待副署", str(emp["name"]), "success", "pending_countersign")
+			mutated = true
 			return emp, nil
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
@@ -216,21 +228,24 @@ func (s *Server) employeeAction(r *http.Request) (any, error) {
 		}
 		emp["updatedAt"] = now
 		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "确认数字工作伙伴上岗", str(emp["name"]), "success", "")
+		mutated = true
 		return emp, nil
 	case "reject":
 		if !auth.Has(id, "release.approve") && id.Role != "admin" {
 			return nil, apperr.Forbidden(apperr.ReleaseApproveForbidden, "无权驳回")
 		}
-		if str(emp["ownerId"]) == id.ID {
+		if !actorIsAdmin(id) && str(emp["ownerId"]) == id.ID {
 			return nil, apperr.Forbidden(apperr.SODSelfApproval, "创建者不能审批自己的生产发布")
 		}
 		emp["lifecycle"] = "draft"
 		emp["updatedAt"] = time.Now().UTC().Format(time.RFC3339)
 		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "驳回数字工作伙伴上岗", str(emp["name"]), "success", "")
+		mutated = true
 		return emp, nil
 	case "pause":
 		emp["lifecycle"] = "paused"
 		s.Store.AppendAudit(str(emp["workspaceId"]), id.Name, "暂停数字工作伙伴", str(emp["name"]), "success", "")
+		mutated = true
 		return emp, nil
 	default:
 		return nil, apperr.NotFoundErr(apperr.NotFound, "未知动作")

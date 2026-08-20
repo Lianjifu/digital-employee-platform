@@ -83,11 +83,17 @@ func (s *Server) persistContextSnapshot(rec map[string]any) {
 	}
 	if !replaced {
 		s.Store.ContextSnapshots = append([]map[string]any{rec}, s.Store.ContextSnapshots...)
+		dropped := idsBeyondKeep(s.Store.ContextSnapshots, 2000)
 		if len(s.Store.ContextSnapshots) > 2000 {
 			s.Store.ContextSnapshots = s.Store.ContextSnapshots[:2000]
 		}
+		s.Store.Unlock()
+		if len(dropped) > 0 {
+			s.durableDeleteSync("context_snapshots", dropped...)
+		}
+	} else {
+		s.Store.Unlock()
 	}
-	s.Store.Unlock()
 	if err := s.Store.PersistSync("context_snapshots"); err != nil {
 		log.Printf("persist context_snapshots: %v", err)
 	}

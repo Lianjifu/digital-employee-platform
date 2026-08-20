@@ -39,6 +39,13 @@ func TestKernelOwns(t *testing.T) {
 	}
 }
 
+func TestKernelDeleteManyNilSafe(t *testing.T) {
+	k := &KernelStore{}
+	if err := k.DeleteMany(context.Background(), "sessions", []string{"s1"}); err != nil {
+		t.Fatalf("nil pool should no-op: %v", err)
+	}
+}
+
 func TestGetSnapshotNilPool(t *testing.T) {
 	k := &KernelStore{}
 	got, err := k.GetSnapshot(context.Background(), "w1", "c1", "corr-1")

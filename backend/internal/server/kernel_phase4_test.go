@@ -168,21 +168,51 @@ func TestProductionEvolveApproveRequiresSoD(t *testing.T) {
 	st.EvolveCands = append(st.EvolveCands, map[string]any{
 		"id": "evolve-sod-1", "workspaceId": "w1",
 		"kind": "memory_promote", "status": "pending_review",
-		"title": "偏好", "createdBy": "平台管理员", "createdById": "u1",
+		"title": "偏好", "createdBy": "业务构建者", "createdById": "u2",
+		"payload": map[string]any{"targetLayer": "working", "title": "x", "content": "y"},
+	})
+	st.Unlock()
+	h := server.New(st).Handler()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/evolve/candidates/evolve-sod-1/approve", strings.NewReader("{}"))
+	req.Header.Set("Authorization", "Bearer mock-user-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	h.ServeHTTP(rr, req)
+	if rr.Code == 200 {
+		t.Fatalf("user must not approve evolve: %s", rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/evolve/candidates/evolve-sod-1/approve", strings.NewReader("{}"))
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("admin approve user evolve %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestProductionAdminEvolveSelfApproveAllowed(t *testing.T) {
+	t.Setenv("DE_ENV", "production")
+	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "true")
+	st := store.New()
+	st.Lock()
+	st.EvolveCands = append(st.EvolveCands, map[string]any{
+		"id": "evolve-admin-1", "workspaceId": "w1",
+		"kind": "memory_promote", "status": "pending_review",
+		"title": "管理员偏好", "createdBy": "平台管理员", "createdById": "u1",
 		"payload": map[string]any{"targetLayer": "working", "title": "x", "content": "y"},
 	})
 	st.Unlock()
 	h := server.New(st).Handler()
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/evolve/candidates/evolve-sod-1/approve", strings.NewReader("{}"))
+	req := httptest.NewRequest(http.MethodPost, "/api/evolve/candidates/evolve-admin-1/approve", strings.NewReader("{}"))
 	req.Header.Set("Authorization", "Bearer mock-admin-token")
 	req.Header.Set("X-Workspace-Id", "w1")
 	h.ServeHTTP(rr, req)
-	if rr.Code == 200 {
-		t.Fatalf("self approve must fail: %s", rr.Body.String())
-	}
-	if !strings.Contains(rr.Body.String(), "E_SOD_SELF_APPROVAL") {
-		t.Fatalf("want SOD: %s", rr.Body.String())
+	if rr.Code != 200 {
+		t.Fatalf("admin may approve own evolve candidate: %d %s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -248,9 +278,19 @@ func TestReplicaForcedRejectsWrites(t *testing.T) {
 func TestProductionRestrictedRoutingRequiresCountersign(t *testing.T) {
 	t.Setenv("DE_ENV", "production")
 	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "true")
-	h := server.New(store.New()).Handler()
+	st := store.New()
+	st.Lock()
+	st.RoutingPolicies = append(st.RoutingPolicies, map[string]any{
+		"id": "rp-restricted-user", "workspaceId": "w1", "level": "P4",
+		"primaryModelId": "mdl-gpt4", "fallbackModelIds": []string{},
+		"dataScope": "restricted", "egressAllowed": false, "budgetLimitUsd": 80,
+		"status": "pending_approval", "validationIssues": []string{},
+		"requestedBy": "业务构建者", "requestedById": "u2",
+	})
+	st.Unlock()
+	h := server.New(st).Handler()
 
-	adminHdr := func(req *http.Request, tok string) {
+	hdr := func(req *http.Request, tok string) {
 		req.Header.Set("Authorization", "Bearer "+tok)
 		req.Header.Set("X-Workspace-Id", "w1")
 		req.Header.Set("Content-Type", "application/json")
@@ -264,78 +304,26 @@ func TestProductionRestrictedRoutingRequiresCountersign(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	thirdTok, err := auth.Sign(auth.Identity{
-		ID: "u5", Name: "第三管理员", Role: "admin", TenantID: "tenant-acme",
-		WorkspaceID: "w1", WorkspaceIDs: []string{"w1"},
-		EnvironmentScopes: []string{"sandbox", "staging", "production"},
-		Permissions:       auth.RolePermissions("admin"),
-	}, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/model-routing/policies", bytes.NewBufferString(
-		`{"level":"P4","primaryModelId":"mdl-gpt4","dataScope":"restricted","egressAllowed":false,"budgetLimitUsd":80}`))
-	adminHdr(req, "mock-admin-token")
-	h.ServeHTTP(rr, req)
-	if rr.Code != 200 {
-		t.Fatalf("create %d %s", rr.Code, rr.Body.String())
-	}
-	var env struct {
-		Data map[string]any `json:"data"`
-	}
-	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
-		t.Fatal(err)
-	}
-	pid, _ := env.Data["id"].(string)
-	if pid == "" {
-		t.Fatalf("missing policy id: %s", rr.Body.String())
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/"+pid+"/validate", bytes.NewBufferString(`{}`))
-	adminHdr(req, "mock-admin-token")
-	h.ServeHTTP(rr, req)
-	if rr.Code != 200 {
-		t.Fatalf("validate %d %s", rr.Code, rr.Body.String())
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/"+pid+"/publish", bytes.NewBufferString(`{}`))
-	adminHdr(req, "mock-admin-token")
-	h.ServeHTTP(rr, req)
-	if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"status":"pending_approval"`) {
-		t.Fatalf("first publish want pending_approval: %d %s", rr.Code, rr.Body.String())
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/"+pid+"/publish", bytes.NewBufferString(`{}`))
-	adminHdr(req, "mock-admin-token")
-	h.ServeHTTP(rr, req)
-	if rr.Code == 200 {
-		t.Fatalf("self publish must fail: %s", rr.Body.String())
-	}
-
-	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/"+pid+"/publish", bytes.NewBufferString(`{}`))
-	adminHdr(req, secondTok)
+	req := httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/rp-restricted-user/publish", bytes.NewBufferString(`{}`))
+	hdr(req, "mock-admin-token")
 	h.ServeHTTP(rr, req)
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "pending_countersign") {
-		t.Fatalf("want pending_countersign: %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("admin first approve want pending_countersign: %d %s", rr.Code, rr.Body.String())
 	}
 
 	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/"+pid+"/publish", bytes.NewBufferString(`{}`))
-	adminHdr(req, secondTok)
+	req = httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/rp-restricted-user/publish", bytes.NewBufferString(`{}`))
+	hdr(req, "mock-admin-token")
 	h.ServeHTTP(rr, req)
 	if rr.Code == 200 {
 		t.Fatalf("same first approver must not countersign: %s", rr.Body.String())
 	}
 
 	rr = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/"+pid+"/publish", bytes.NewBufferString(`{}`))
-	adminHdr(req, thirdTok)
+	req = httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/rp-restricted-user/publish", bytes.NewBufferString(`{}`))
+	hdr(req, secondTok)
 	h.ServeHTTP(rr, req)
 	if rr.Code != 200 {
 		t.Fatalf("countersign %d %s", rr.Code, rr.Body.String())
@@ -345,20 +333,76 @@ func TestProductionRestrictedRoutingRequiresCountersign(t *testing.T) {
 	}
 }
 
+func TestProductionAdminRestrictedRoutingDirectPublish(t *testing.T) {
+	t.Setenv("DE_ENV", "production")
+	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "true")
+	h := server.New(store.New()).Handler()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/model-routing/policies", bytes.NewBufferString(
+		`{"level":"P5","primaryModelId":"mdl-gpt4","dataScope":"restricted","egressAllowed":false,"budgetLimitUsd":80}`))
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("create %d %s", rr.Code, rr.Body.String())
+	}
+	var env struct {
+		Data map[string]any `json:"data"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &env)
+	pid, _ := env.Data["id"].(string)
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/"+pid+"/validate", bytes.NewBufferString(`{}`))
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/model-routing/policies/"+pid+"/publish", bytes.NewBufferString(`{}`))
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("admin restricted publish %d %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "pending_approval") || strings.Contains(rr.Body.String(), "pending_countersign") {
+		t.Fatalf("admin must not need peer/countersign: %s", rr.Body.String())
+	}
+}
+
 func TestProductionWorkflowSkillPublishRequiresSoD(t *testing.T) {
 	t.Setenv("DE_ENV", "production")
 	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "true")
 	st := store.New()
 	h := server.New(st).Handler()
 
+	// Admin publish-as-skill: immediate published.
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/workflows/wf1/publish-as-skill", bytes.NewBufferString(`{"name":"待批流程技能"}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/workflows/wf1/publish-as-skill", bytes.NewBufferString(`{"name":"管理员流程技能"}`))
 	req.Header.Set("Authorization", "Bearer mock-admin-token")
 	req.Header.Set("X-Workspace-Id", "w1")
 	req.Header.Set("Content-Type", "application/json")
 	h.ServeHTTP(rr, req)
 	if rr.Code != 200 {
-		t.Fatalf("publish-as-skill %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("admin publish-as-skill %d %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "pending_approval") {
+		t.Fatalf("admin must publish skill immediately: %s", rr.Body.String())
+	}
+
+	// User publish-as-skill → pending → cannot self-approve → admin approves.
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/workflows/wf1/publish-as-skill", bytes.NewBufferString(`{"name":"待批流程技能"}`))
+	req.Header.Set("Authorization", "Bearer mock-user-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("user publish-as-skill %d %s", rr.Code, rr.Body.String())
 	}
 	if !strings.Contains(rr.Body.String(), "pending_approval") {
 		t.Fatalf("want pending_approval: %s", rr.Body.String())
@@ -376,32 +420,23 @@ func TestProductionWorkflowSkillPublishRequiresSoD(t *testing.T) {
 
 	rr = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/api/workflow-skills/"+sid+"/publish", nil)
-	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("Authorization", "Bearer mock-user-token")
 	req.Header.Set("X-Workspace-Id", "w1")
 	h.ServeHTTP(rr, req)
 	if rr.Code == 200 {
-		t.Fatalf("self approve must fail: %s", rr.Body.String())
+		t.Fatalf("user self approve must fail: %s", rr.Body.String())
 	}
 	if !strings.Contains(rr.Body.String(), "E_SOD_SELF_APPROVAL") {
 		t.Fatalf("want SOD: %s", rr.Body.String())
 	}
 
-	tok, err := auth.Sign(auth.Identity{
-		ID: "u4", Name: "第二管理员", Role: "admin", TenantID: "tenant-acme",
-		WorkspaceID: "w1", WorkspaceIDs: []string{"w1"},
-		EnvironmentScopes: []string{"sandbox", "staging", "production"},
-		Permissions:       auth.RolePermissions("admin"),
-	}, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
 	rr = httptest.NewRecorder()
 	req = httptest.NewRequest(http.MethodPost, "/api/workflow-skills/"+sid+"/publish", nil)
-	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
 	req.Header.Set("X-Workspace-Id", "w1")
 	h.ServeHTTP(rr, req)
 	if rr.Code != 200 {
-		t.Fatalf("approve %d %s", rr.Code, rr.Body.String())
+		t.Fatalf("admin approve %d %s", rr.Code, rr.Body.String())
 	}
 	if !strings.Contains(rr.Body.String(), `"status":"published"`) {
 		t.Fatalf("want published: %s", rr.Body.String())
