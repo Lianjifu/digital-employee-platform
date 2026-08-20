@@ -234,7 +234,19 @@ function CreateWizard({ onClose, onCreated }: { onClose: () => void; onCreated: 
   const [name, setName] = useState('');
   const [region, setRegion] = useState('cn-east-1');
   const [plan, setPlan] = useState('enterprise');
-  const create = useApiMutation<Workspace, { name: string; region: string; plan: string }>(
+  const [seatsLimit, setSeatsLimit] = useState(10);
+  const [agentsLimit, setAgentsLimit] = useState(5);
+  const [tokensLimit, setTokensLimit] = useState(1_000_000);
+  const create = useApiMutation<Workspace, {
+    name: string;
+    region: string;
+    plan: string;
+    quota: {
+      seats: { limit: number };
+      agents: { limit: number };
+      tokens: { limit: number };
+    };
+  }>(
     '/api/workspaces',
     {
       onSuccess: (ws) => {
@@ -252,7 +264,16 @@ function CreateWizard({ onClose, onCreated }: { onClose: () => void; onCreated: 
       setStep(1);
       return;
     }
-    create.mutate({ name: name.trim(), region: region.trim() || 'cn-east-1', plan: plan.trim() || 'enterprise' });
+    create.mutate({
+      name: name.trim(),
+      region: region.trim() || 'cn-east-1',
+      plan: plan.trim() || 'enterprise',
+      quota: {
+        seats: { limit: seatsLimit },
+        agents: { limit: agentsLimit },
+        tokens: { limit: tokensLimit },
+      },
+    });
   };
 
   return (
@@ -284,10 +305,31 @@ function CreateWizard({ onClose, onCreated }: { onClose: () => void; onCreated: 
             </div>
           )}
           {step === 2 && (
-            <div className="space-y-3 text-xs">
-              <Limiter label="席位" value="10" max="50" />
-              <Limiter label="智能体" value="5" max="20" />
-              <Limiter label="Token / 月" value="1M" max="50M" />
+            <div className="space-y-4 text-xs">
+              <p className="text-[11px] text-[var(--text-muted)]">按套餐上限拖动或输入配额；创建后可在工作区「配额」页查看使用情况。</p>
+              <QuotaLimitControl
+                label="席位"
+                value={seatsLimit}
+                min={1}
+                max={50}
+                onChange={setSeatsLimit}
+              />
+              <QuotaLimitControl
+                label="数字工作伙伴"
+                value={agentsLimit}
+                min={1}
+                max={20}
+                onChange={setAgentsLimit}
+              />
+              <QuotaLimitControl
+                label="Token / 月"
+                value={tokensLimit}
+                min={100_000}
+                max={50_000_000}
+                step={100_000}
+                format={formatTokenQuota}
+                onChange={setTokensLimit}
+              />
             </div>
           )}
           {step === 3 && (
@@ -340,16 +382,64 @@ function Field({
   );
 }
 
-function Limiter({ label, value, max }: { label: string; value: string; max: string }) {
+function formatTokenQuota(n: number): string {
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000;
+    return Number.isInteger(m) ? `${m}M` : `${m.toFixed(1)}M`;
+  }
+  if (n >= 1_000) return `${Math.round(n / 1_000)}K`;
+  return String(n);
+}
+
+function QuotaLimitControl({
+  label, value, min, max, step = 1, format = String, onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step?: number;
+  format?: (n: number) => string;
+  onChange: (n: number) => void;
+}) {
+  const clamp = (n: number) => Math.min(max, Math.max(min, n));
+  const pct = max === min ? 100 : ((value - min) / (max - min)) * 100;
+
   return (
-    <div>
-      <div className="flex justify-between text-[10px] mb-1">
-        <span className="text-[var(--text-muted)]">{label}</span>
-        <span className="font-mono">{value} / {max}</span>
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-3 text-[10px]">
+        <span className="text-[var(--text-muted)] shrink-0">{label}</span>
+        <div className="flex items-center gap-1.5">
+          <input
+            type="number"
+            min={min}
+            max={max}
+            step={step}
+            value={value}
+            aria-label={`${label}上限`}
+            onChange={(e) => {
+              const next = Number(e.target.value);
+              if (Number.isFinite(next)) onChange(clamp(next));
+            }}
+            className="h-7 w-[5.5rem] rounded-md border border-[var(--border)] bg-[var(--bg)] px-2 text-right font-mono text-[11px]"
+          />
+          <span className="font-mono text-[var(--text-muted)]">/ {format(max)}</span>
+        </div>
       </div>
-      <div className="h-1.5 bg-[var(--bg-hover)] rounded overflow-hidden">
-        <div className="h-full bg-[var(--brand)]" style={{ width: '20%' }} />
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        aria-label={`调整${label}`}
+        onChange={(e) => onChange(clamp(Number(e.target.value)))}
+        className="h-1.5 w-full cursor-pointer accent-[var(--brand)]"
+      />
+      <div className="h-1.5 overflow-hidden rounded bg-[var(--bg-hover)]" aria-hidden>
+        <div className="h-full bg-[var(--brand)] transition-[width] duration-150" style={{ width: `${pct}%` }} />
       </div>
+      <div className="text-right font-mono text-[10px] text-[var(--text-muted)]">{format(value)}</div>
     </div>
   );
 }

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -52,26 +53,72 @@ func (s *Server) createWorkspace(r *http.Request) (any, error) {
 	s.Store.Members[wsID] = []map[string]any{
 		{"id": id.ID, "name": id.Name, "role": id.Role, "email": id.Email},
 	}
-	if q, ok := s.Store.Quotas["w1"]; ok {
-		cp := map[string]any{}
-		for k, v := range q {
-			cp[k] = v
-		}
-		s.Store.Quotas[wsID] = cp
-	} else {
-		s.Store.Quotas[wsID] = map[string]any{
-			"seats":       map[string]any{"used": 1, "limit": 50},
-			"agents":      map[string]any{"used": 0, "limit": 20},
-			"tokens":      map[string]any{"used": 0, "limit": 1000000},
-			"concurrency": map[string]any{"used": 0, "limit": 10},
-			"budgetUsd":   map[string]any{"used": 0, "limit": 5000},
-		}
-	}
+	s.Store.Quotas[wsID] = buildWorkspaceQuota(body)
 	s.Store.ActorExtraWorkspaces[id.ID] = append(s.Store.ActorExtraWorkspaces[id.ID], wsID)
 	id.WorkspaceIDs = append(id.WorkspaceIDs, wsID)
 	s.Store.AppendAudit(wsID, id.Name, "创建工作区", name, "success", "")
 	s.Store.PersistCollection("workspaces", s.Store.Workspaces)
 	return item, nil
+}
+
+func buildWorkspaceQuota(body map[string]any) map[string]any {
+	quotaBody, _ := body["quota"].(map[string]any)
+	return map[string]any{
+		"seats":       map[string]any{"used": 1, "limit": quotaLimit(quotaBody, "seats", 50, 1, 500)},
+		"agents":      map[string]any{"used": 0, "limit": quotaLimit(quotaBody, "agents", 20, 1, 200)},
+		"tokens":      map[string]any{"used": 0, "limit": quotaLimit(quotaBody, "tokens", 1_000_000, 100_000, 500_000_000)},
+		"concurrency": map[string]any{"used": 0, "limit": quotaLimit(quotaBody, "concurrency", 10, 1, 200)},
+		"budgetUsd":   map[string]any{"used": 0, "limit": quotaLimit(quotaBody, "budgetUsd", 5000, 100, 1_000_000)},
+	}
+}
+
+func quotaLimit(quota map[string]any, key string, def, min, max int) int {
+	if quota == nil {
+		return def
+	}
+	raw, ok := quota[key]
+	if !ok || raw == nil {
+		return def
+	}
+	switch v := raw.(type) {
+	case map[string]any:
+		if lim, ok := asInt(v["limit"]); ok {
+			return clampInt(lim, min, max)
+		}
+	case float64:
+		return clampInt(int(v), min, max)
+	case int:
+		return clampInt(v, min, max)
+	case int64:
+		return clampInt(int(v), min, max)
+	}
+	return def
+}
+
+func asInt(v any) (int, bool) {
+	switch n := v.(type) {
+	case float64:
+		return int(n), true
+	case int:
+		return n, true
+	case int64:
+		return int(n), true
+	case json.Number:
+		i, err := n.Int64()
+		return int(i), err == nil
+	default:
+		return 0, false
+	}
+}
+
+func clampInt(n, min, max int) int {
+	if n < min {
+		return min
+	}
+	if n > max {
+		return max
+	}
+	return n
 }
 
 func (s *Server) switchHistory(r *http.Request) (any, error) {

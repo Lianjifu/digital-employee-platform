@@ -204,6 +204,14 @@ func runDurable(ctx context.Context, opts Options, domain store.Domain, rt runti
 	// Intentionally NO PersistNow(seed) on empty DB — that polluted production with ACME demo data.
 
 	st.DropUnowned(domain)
+	if domain == store.DomainAll || domain == store.DomainSys {
+		if st.EnsureDefaultWorkspace() {
+			log.Printf("ensured default workspace %s (empty durable store shell)", store.DefaultWorkspaceID)
+			if rt.PersistEnabled() && st.CanWrite("workspaces") {
+				st.Persist("workspaces")
+			}
+		}
+	}
 	if domain == store.DomainAll || domain == store.DomainCap {
 		st.EnsureDocxSkillReady()
 		server.New(st).EnsureBuiltinSkillsReady()
