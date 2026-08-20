@@ -241,9 +241,21 @@ func (s *Server) accessGovernance(r *http.Request) (any, error) {
 			}
 		}
 	}
+	grants := s.Store.AccessGrants
+	if grants == nil {
+		grants = []map[string]any{}
+	}
+	reviews := s.Store.AccessReviews
+	if reviews == nil {
+		reviews = []map[string]any{}
+	}
+	rules := s.Store.SodRules
+	if rules == nil {
+		rules = []map[string]any{}
+	}
 	return map[string]any{
-		"grants": s.Store.AccessGrants, "reviews": s.Store.AccessReviews,
-		"rules": s.Store.SodRules, "conflicts": conflicts, "generatedAt": time.Now().UTC().Format(time.RFC3339),
+		"grants": grants, "reviews": reviews,
+		"rules": rules, "conflicts": conflicts, "generatedAt": time.Now().UTC().Format(time.RFC3339),
 	}, nil
 }
 

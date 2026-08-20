@@ -54,7 +54,7 @@ export default function Governance({ embedded = false }: { embedded?: boolean } 
   const grants = data?.grants ?? [];
   const activeGrants = grants.filter((g) => g.status === 'active').length;
   const expiringGrants = grants.filter((g) => g.status === 'expiring').length;
-  const sodIssues = (data?.conflicts.length ?? 0) + (data?.rules.filter((r) => r.violations).length ?? 0);
+  const sodIssues = (data?.conflicts ?? []).length + (data?.rules ?? []).filter((r) => r.violations).length;
 
   const tabItems: Array<[Tab, string]> = [
     ['access', t('module.governance.tabs.access')],
