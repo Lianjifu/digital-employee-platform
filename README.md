@@ -1,20 +1,45 @@
 # 数字工作伙伴平台
 
-企业级 **岗位数字工作伙伴** 编排与治理控制台：把大模型、企业知识、技能/工具与工作流装配为可上岗的数字工作伙伴，在受控边界内完成协作、执行与审计。
+企业级 **岗位数字工作伙伴** 编排与治理控制台：把大模型、企业知识、技能/工具与工作流，装配为可上岗的数字工作伙伴，在受控边界内完成协作、执行与审计。
 
-**默认联调真实 API**（`VITE_USE_DEMO=false` / `VITE_USE_MOCK=false`，Vite 代理 → `de-gateway :8089`）。纯前端演示见 `npm run dev:demo`。
+> **安全零信任，驱动先进生产力**  
+> 持续验证守住身份、权限、数据与执行边界；以能力复用与用量治理，让每一次协同可托付、可度量。
 
-环境矩阵、硬删除持久化、seed 清理、岗位包与平台工具说明见 [`docs/环境与数据模式.md`](docs/环境与数据模式.md)。
+冷启动即带 **办公开箱**（知识 × 技能 × 流程 + `de-office` 办公助手）：制度问答、会议纪要、周报、假勤等场景无需先手工灌库。
 
-配套文档：[`docs/数字工作伙伴平台-架构文档.md`](docs/数字工作伙伴平台-架构文档.md) · [`docs/数字工作伙伴平台-功能模块文档.md`](docs/数字工作伙伴平台-功能模块文档.md) · [`docs/后端架构规划.md`](docs/后端架构规划.md) · [`docs/后端微服务重构方案.md`](docs/后端微服务重构方案.md) · [`backend/deploy/topology-split.md`](backend/deploy/topology-split.md) · [`docs/视觉设计规范.md`](docs/视觉设计规范.md)
+| | |
+|:--|:--|
+| **默认联调** | 真实 API（`VITE_USE_MOCK=false`）→ Vite 代理 `de-gateway :8089` |
+| **纯前端演示** | `cd frontend/web && npm run dev:demo` |
+| **合规目标** | 等保 3 / ISO 27001 |
 
 ---
 
-## 1. 产品背景
+## 目录
 
-### 1.1 品牌定位
+- [产品主轴](#产品主轴)
+- [品牌能力支柱](#品牌能力支柱)
+- [快速开始](#快速开始)
+- [控制台一览](#控制台一览)
+- [能力地图](#能力地图)
+- [办公开箱](#办公开箱)
+- [能力供给（五中心）](#能力供给五中心)
+- [功能模块](#功能模块)
+- [技术架构](#技术架构)
+- [本地部署](#本地部署)
+- [验证与常见问题](#验证与常见问题)
+- [文档索引](#文档索引)
+- [路线图](#路线图)
 
-**数字工作伙伴平台**（Digital Work Partner Platform）是面向企业生产运营的编排与治理控制台：把大模型、企业知识、技能/工具与工作流，装配为可按岗位上岗的 **数字工作伙伴**（Digital Work Partner），在受控边界内与人并肩协作。
+---
+
+## 产品主轴
+
+一切能力围绕 **一位数字工作伙伴** 运转：先装配可信身份，再进入人机协同，最后沉淀可度量结果。模型 / 知识 / 技能 / 记忆 / 渠道是 **供给**，不是主叙事。
+
+<p align="center">
+  <img src="./docs/images/brand/partner-axis.png" alt="数字工作伙伴图" width="100%" />
+</p>
 
 | 我们是 | 我们不是 |
 |--------|----------|
@@ -22,590 +47,341 @@
 | 岗位级工作伙伴：有职责、有边界、有版本、有证据 | 一次性对话机器人 |
 | 能力分控制面治理，伙伴只引用已发布版本 | 把模型 / 知识 / 技能堆在同一页里任选即用 |
 
-品牌主张（与登录页一致）：
-
-> **安全零信任，驱动先进生产力**  
-> 以持续验证守住身份、权限、数据与执行边界，让数字工作伙伴在受控协同中创造可衡量的业务价值；以能力复用与精细化用量治理，重构智能执行成本。
-
-三条品牌能力支柱：
-
-| 支柱 | 一句话 | 能力展开 | 用户感知 |
-|------|--------|----------|----------|
-| **安全零信任** | 敢托付 | 持续验证 · 全程审计 · 人工审核 · 工作区隔离 | 「他凭什么能做这件事，出事能否说清」 |
-| **先进生产力** | 愿协作 | 人机协同 · 受控执行 · 岗位上岗 · 任务/工作流闭环 | 「像靠谱同事一样并肩，而不是裸模型」 |
-| **成本新范式** | 花得明白 | 用量治理 · 价值可度量 · 配额与路由预算 · 诚实空态 | 「花了多少、换回什么，没有数就不假装有数」 |
-
-### 1.2 为何需要
-
-企业把大模型推进生产时，往往不是「模型不够强」，而是 **装不起来、管不住、说不清**：
-
-1. **能力散落难装配** — 模型、知识库、技能、渠道各自为政，难以沉淀成可复用的岗位能力。  
-2. **生产写操作不可控** — 一句话就能触发变更，缺少研判 / 受控执行、审核与零信任门禁。  
-3. **结果与成本难审计** — 谁做的决定、依据什么、花了多少 Token/预算，事后无法交代。
-
-品牌三支柱正是对这三类问题的产品回答：
-
-| 落地困境 | 对应支柱 | 平台如何解 |
-|----------|----------|------------|
-| 越权执行、责任不清、合规追问 | **安全零信任** | 身份与策略持续验证；高风险动作进入审核；审计关联 ID 与证据可追溯；目标对齐等保 3 / ISO 27001 |
-| 能力难复制、交接断层、人机各干各的 | **先进生产力** | 工作伙伴全生命周期（配置 → 装配 → 评测上岗 → 协同运营）；专家协作 + 任务/工作流形成班组闭环 |
-| 资产失控、演示数字充数、价值说不清 | **成本新范式** | 模型/知识/技能/记忆/渠道分治发布；伙伴只引用已发布版本；运营总览直播聚合，无 UsageMeters 时显示 `—` |
-
-因此平台的选型标准不是「又一个 Agent IDE」，而是：**让组织放心地把重复性、标准化工作交给数字工作伙伴，并在可信、协同、可度量三条线上同时成立。**
-
-### 1.3 产品主轴
-
-一切能力围绕 **一位数字工作伙伴** 运转：先装配可信身份，再进入人机协同，最后沉淀可度量结果。模型 / 知识 / 技能 / 记忆 / 渠道是供给，不是主叙事。
+价值流转：
 
 ```text
-                    ┌─────────────────────────┐
-                    │     数字工作伙伴         │
-                    │  岗位 · 边界 · 版本 · 证据 │
-                    └───────────┬─────────────┘
-            ┌───────────────────┼───────────────────┐
-            ▼                   ▼                   ▼
-     可信（安全零信任）    协同（先进生产力）    可度量（成本新范式）
-     敢托付再执行          愿并肩再分派          花得明白再扩面
-            │                   │                   │
-     身份 / 策略 / 审核    会话 / 任务 / 流程    用量 / 产出 / 配额
-     零信任 / 审计证据     交接 / 人机班组       运营总览诚实聚合
-            │                   │                   │
-            └───────────────────┼───────────────────┘
-                                ▼
-              能力供给：模型 · 知识 · 技能 · 记忆 · 渠道
-              （分控制面发布 → 伙伴只引用已发布版本）
+能力接入（含办公开箱预置） → 装配上岗 → 受控协同（研判 / 执行 / 审核 / 流程） → 运营复盘与审计
 ```
-
-| 主轴 | 设计原则 | 运行时要回答的问题 |
-|------|----------|-------------------|
-| **可信** | 安全动作可解释、可审批、可追溯；情感上给人「被保护」而非「被拦」 | 谁授权？策略为何命中？证据在哪？ |
-| **协同** | 像班组同事：有岗位、有交接、有进度，而不是单向推任务 | 谁在岗？做到哪一步？何时该人接手？ |
-| **可度量** | 有数说数、无数显示 `—`；成本归属到工作区与路由，不靠演示充数 | 花了多少？办成几件？值不值得扩面？ |
-
-价值流转（与功能闭环一致）：
-
-```text
-能力接入 → 装配上岗 → 受控协同（研判 / 执行 / 审核） → 运营复盘与审计
-```
-
-合规基线贯穿主轴，而非另起一层：目标对齐 **等保 3 / ISO 27001**（双审计、凭据掩码、数据出境策略、沙箱隔离）。
 
 ---
 
-## 2. 产品功能
+## 品牌能力支柱
 
-平台功能按「**装配 → 协同 → 供给 → 度量 → 治理**」组织：每一步都回答「这位数字工作伙伴能不能干、怎么干、干得怎样、是否可信」。
+企业把大模型推进生产时，常见困境是 **装不起来、管不住、说不清**。三支柱即产品回答：
 
-### 2.0 产品截图
+<p align="center">
+  <img src="./docs/images/brand/brand-pillars.png" alt="三大品牌能力支柱" width="100%" />
+</p>
 
-本地联调（`http://127.0.0.1:5173`，经网关 `:8089`）下的控制台界面示意：
+| 支柱 | 一句话 | 用户感知 |
+|------|--------|----------|
+| **安全零信任** | 敢托付 | 「他凭什么能做这件事，出事能否说清」 |
+| **先进生产力** | 愿协作 | 「像靠谱同事一样并肩，而不是裸模型」 |
+| **成本新范式** | 花得明白 | 「花了多少、换回什么，没有数就不假装有数」 |
+
+---
+
+## 快速开始
+
+本机联调（**monolith** + 真实网关）最短路径：
+
+```bash
+# 1) Docker Postgres 16（勿用 Homebrew 抢 5432）
+bash scripts/dev-stack/ensure-docker-postgres.sh
+
+# 2) 控制面
+cd backend && make compose-up-monolith
+curl -sS http://127.0.0.1:8089/healthz
+
+# 3) 前端
+cd ../frontend && pnpm install && pnpm --filter web dev
+# 打开 http://127.0.0.1:5173 ，用 admin@… 登录（密码任意非空）
+```
+
+建议验收：
+
+1. **工作伙伴** → 可见 `de-office` 办公助手  
+2. **工作流程 → 流程模板** → 默认「办公通用」；可切「个人创建」  
+3. **知识 / 技能中心** → 办公知识包 published；岗位包 `office` 已安装  
+4. **专家协作** → 选用办公助手做一次制度问答或纪要类对话  
+
+改 Go 后：`cd backend && make build`，再 `launchctl kickstart -k "gui/$(id -u)/com.digital-employee.dev-stack"`。完整部署见 [本地部署](#本地部署)。
+
+---
+
+## 控制台一览
+
+本地联调（`:5173` → 网关 `:8089`）界面示意（产品截图 2.0）：
 
 | 运营总览 | 专家协作 |
 |:-------:|:-------:|
-| ![运营总览](docs/images/product/ops-home.png) | ![专家协作](docs/images/product/copilot.png) |
-| KPI、需关注与工作记录的直播聚合 | 会话流式协同；问答 / 方案 / 执行与推理档位 |
+| <img src="./docs/images/product/ops-home.png" alt="运营总览" width="100%" /> | <img src="./docs/images/product/copilot.png" alt="专家协作" width="100%" /> |
+| 在岗 KPI、工作伙伴与工作记录直播聚合 | 与在岗伙伴流式协同；问答 / 方案 / 执行 |
 
 | 工作伙伴 | 工作流程 |
 |:-------:|:-------:|
-| ![工作伙伴](docs/images/product/partners.png) | ![工作流程](docs/images/product/workflows.png) |
-| 岗位目录、能力装配与上岗发布 | 可视化编排、版本与发布为流程技能 |
+| <img src="./docs/images/product/partners.png" alt="工作伙伴" width="100%" /> | <img src="./docs/images/product/workflows.png" alt="工作流程" width="100%" /> |
+| 专家目录、上岗状态与进入对话 | 办公开箱流程编排（如 `wf.office.expense_precheck`） |
 
 | 技能中心 |
 |:-------:|
-| ![技能中心](docs/images/product/skills.png) |
-| 技能 / MCP / 平台工具清单与商店安装 |
+| <img src="./docs/images/product/skills.png" alt="技能中心" width="100%" /> |
+| 启用清单 / 技能商店 / 平台工具；含办公相关技能 |
 
-截图原图见 [`docs/images/product/`](docs/images/product/)。
+原图：[`docs/images/product/`](docs/images/product/)。
 
-### 2.1 能力地图
+---
 
-| 阶段 | 用户在做什么 | 核心能力 | 成熟度 |
-|------|--------------|----------|--------|
-| **装配上岗** | 定义岗位、绑定能力、评测后上岗 | 岗位档案、能力装配、上岗门禁、模板采用 | 控制面可用；上岗门禁与可信画像持续加深 |
-| **人机协同** | 与在岗伙伴对话、处置、交接 | 专家协作（问答/方案/执行）、人工审核、结案交接 | 单人审核与 SSE 流式已通；多人会签深化中 |
-| **任务与流程** | 把处置沉淀为任务或确定性流程 | 任务生命周期、SLA/复核、工作流画布与版本、发布为流程技能 | 任务受控路径可用；流程技能发布可用 |
-| **能力供给** | 为伙伴准备可引用的已发布资产 | 模型路由、知识检索、技能/MCP、分层记忆、消息渠道 | 五中心控制面可用；组织/个人作用域统一待落地 |
-| **运营度量** | 看在岗、待办、成本与产出 | 运营总览直播聚合、UsageMeters、工作记录 | KPI/告警已实聚合；持久计量与 ROI 闭环待补 |
-| **信任治理** | 管权限、策略、证据 | 工作区、访问控制、零信任、审计中心 | 治理面可用；等保级底座与真沙箱属目标 |
+## 能力地图
 
-### 2.2 装配上岗
+从上岗到信任治理，形成可运营的智能协同闭环：
 
-把「能调用的模型」变成「可托付的岗位伙伴」：
+<p align="center">
+  <img src="./docs/images/brand/capability-map.png" alt="能力地图" width="100%" />
+</p>
 
-- **岗位契约**：职责、禁止项、风险等级、服务对象与能力边界  
-- **能力装配**：只引用各控制面**已发布**的模型路由、知识包、技能、记忆策略、渠道  
-- **上岗路径**：草稿 → 评测/测试 → 审批 → 在岗运营；缺边界或未绑已发布能力则不应上岗  
-- **运行视图**：在岗状态、调用与交接摘要，为协同与审计提供入口  
+| 阶段 | 用户在做什么 | 成熟度摘要 |
+|------|--------------|------------|
+| **装配上岗** | 定义岗位、绑定能力、评测后上岗 | 控制面可用；含出厂 `de-office` |
+| **人机协同** | 与在岗伙伴对话、处置、交接 | 单人审核与 SSE 流式已通 |
+| **任务与流程** | 沉淀为任务或确定性流程 | 办公开箱/部门/个人模板；流程技能可发布 |
+| **能力供给** | 准备已发布资产 | 五中心控制面可用 |
+| **运营度量** | 看在岗、待办、成本与产出 | live-aggregate；无数则显示 `—` |
+| **信任治理** | 管权限、策略、证据 | 治理面可用 |
 
-### 2.3 人机协同与处置
+---
 
-业务人员与在岗伙伴在同一工作现场协作，而不是把问题丢给裸模型：
+## 办公开箱
 
-- **专家协作**：会话流式输出、岗位改绑、附件与分享、GFM 可读渲染  
-- **运行档位**：产品层问答 / 方案 / 执行（ABI 仍为研判 `investigate` 与受控执行 `execute`）；推理深度可调；写操作受策略与审核约束  
-- **会话治理**：模式 / 风险等级 / 交接 / 结案；结案后拒绝写入；工具按模式过滤  
-- **人工审核**：高风险动作待审 → 授权事件 → 批准后执行（当前以单人审核为主，发起人不可自批）  
-- **任务中心**：对话与事件任务化，支持复核、SLA 风险与受控状态流转  
-- **工作流程**：可视化编排复杂路径，版本管理，可发布为流程技能再被伙伴装配  
-- **运行时**：Harness（Direct / ReAct / Plan-Exec）、反射、记忆溯源与自进化候选；技能可产出可下载制品（如 docx）  
+面向「入职第一天就能干活」：制度问答、会议纪要、周报、文档审阅、假勤出差、报销自查、会议预约、IT 求助、通知拟稿、待办跟催等。部门审批剧目（入职/权限/合同等）仍在内置库中，**不作为办公默认主路径**。
 
-### 2.4 能力供给（五中心）
-
-能力分控制面治理，避免「一个页面里什么都接」：
-
-| 中心 | 功能要点 |
-|------|----------|
-| **模型服务** | 供应商接入与连通性校验、路由策略发布/回滚、治理演练与模型审计 |
-| **知识中心** | 资产入库与知识包、加工与检索评测、图谱与引用治理；记忆晋升需审核后进入知识 |
-| **技能中心** | 技能/MCP/工具清单、商店安装、运行治理与流程技能 |
-| **记忆中心** | 短时 / 工作 / 长期分层；范围含个人/团队/工作区/伙伴；向知识中心输送候选 |
-| **消息渠道** | 飞书 / 钉钉 / 企微 / 个人微信等接入、投递策略、健康与死信、审计 |
-
-边界约定：伙伴**只引用已发布版本**；跨工作区的组织目录、个人绑定与组织配置统一作用域仍在建设中。
-
-### 2.5 运营度量
-
-让管理者看见「谁在岗、什么待处理、花了多少」：
-
-- **运营总览**：KPI、需关注、投入产出、工作记录；数据来自员工/任务/会话的 **live-aggregate**  
-- **诚实计量**：仅当存在 UsageMeters（`costMonth.source=usage-meters`）时展示金额；否则 `—`，不用 Billing / 告警种子充数  
-- **需关注来源**：复核中、SLA 风险、P0 等**真实任务**衍生，而非演示告警文案  
-
-### 2.6 信任治理
-
-可信能力渗透在每一次执行里，而不只放在安全菜单：
-
-- **工作区**：业务域隔离、环境与配额  
-- **访问控制**：授权、发布审批、职责分离（SoD）  
-- **持续验证**：零信任策略与临时授权事件  
-- **审计中心**：只读追溯、关联证据与脱敏导出  
-- **凭据**：接入密钥掩码与引用（Vault 路径），控制台不落明文  
-
-目标合规贯穿上述能力：等保 3 / ISO 27001（双审计、出境策略、沙箱隔离等）。
-
-### 2.7 建设重点（近期）
-
-产品功能已形成闭环，以下方向决定「敢托付 / 愿协作 / 花得明白」能否再进一步：
-
-| 方向 | 说明 |
+| 入口 | 体验 |
 |------|------|
-| 个人 / 组织 / 工作区作用域 | 五中心统一目录、启用与个人绑定（方案已定） |
-| 计量与价值闭环 | 持久 UsageMeters、预算归属与运营侧 ROI |
-| 审核与会签 | 多人会签、SoD 与发布审批深链 |
-| 记忆与检索生产化 | TTL/日提炼调度、持久索引与评测流水线 |
-| 执行隔离 | 白名单技能可跑；目标 gVisor / runsc 全量沙箱 |
-| 工程硬化 | 企业写路径实装、handler 迁包、CI 入库等 |
+| **工作流程 → 流程模板** | 「平台内置 / 个人创建」；默认筛 **办公通用**；「全部」平铺分页；卡片展示配套知识/技能 |
+| **工作伙伴** | 出厂 **办公助手** `de-office` |
+| **知识中心** | `kp.office.*` 六包冷启动 published |
+| **技能中心** | 岗位包 `office` 对各工作区 `autoInstall` |
 
-模块级路由与 Tab 说明见 [§4 功能模块](#4-功能模块) 与 [`docs/数字工作伙伴平台-功能模块文档.md`](docs/数字工作伙伴平台-功能模块文档.md)。
+| 层 | 源码 | 冷启动 |
+|----|------|--------|
+| 知识 | `backend/builtin/knowledge/office/` | `EnsureBuiltinKnowledgeReady` |
+| 技能 | `office`（`builtin/skills/manifest.json`） | `EnsureBuiltinSkillsReady` |
+| 流程 | `wf.office.*` + 部门 Certified + 高级库 | `EnsureBuiltinWorkflowsReady`（不覆盖 `wft-user-*`） |
+| 场景三联 | `backend/builtin/scenarios/office/` | 模板卡片标签来源 |
+| 伙伴 | `de-office` | 与通用伙伴 ensure 同路径 |
 
-## 3. 技术架构
+细则：[`docs/环境与数据模式.md`](docs/环境与数据模式.md)。
 
-技术选型服务于产品主轴：**控制面管可信与编排，执行面跑推理与工具，网关统一入口**。默认联调真实 API（`VITE_USE_MOCK=false` → Vite 代理 `de-gateway :8089`）。
+---
 
-详细方案：[`docs/后端架构规划.md`](docs/后端架构规划.md) · [`docs/后端微服务重构方案.md`](docs/后端微服务重构方案.md) · [`docs/数字工作伙伴平台-架构文档.md`](docs/数字工作伙伴平台-架构文档.md)
+## 能力供给（五中心）
 
-### 3.1 架构原则
+能力分控制面治理；伙伴 **只引用已发布版本**。
+
+<p align="center">
+  <img src="./docs/images/brand/five-centers.png" alt="能力供给（五中心）" width="100%" />
+</p>
+
+| 中心 | 要点 |
+|------|------|
+| **模型服务** | 供应商、路由发布/回滚、治理演练、审计 |
+| **知识中心** | 资产与知识包、加工检索、图谱与引用；含办公开箱知识 |
+| **技能中心** | 清单/商店/MCP、岗位包（`office` / `general`）、流程技能、运行治理 |
+| **记忆中心** | 短时 / 工作 / 长期；向知识中心输送候选（需审核） |
+| **消息渠道** | 飞书 / 钉钉 / 企微 / 个人微信；投递、健康、死信、审计 |
+
+概念图：[`docs/images/brand/`](docs/images/brand/)。
+
+---
+
+## 功能模块
+
+侧栏按用户工作顺序组织；底层 Agent **不作**一级入口。细则见 [`docs/数字工作伙伴平台-功能模块文档.md`](docs/数字工作伙伴平台-功能模块文档.md)。
+
+```text
+运营总览
+协作：专家协作 → 任务中心
+编排：数字工作伙伴 → 工作流程
+能力：模型 → 知识 → 技能 → 记忆 → 渠道
+账号：工作区 · 平台设置（访问控制 / 持续验证 / 审计中心）
+```
+
+| ID | 模块 | 路由 | 一句话 |
+|----|------|------|--------|
+| M01 | 运营总览 | `/home` | 直播 KPI、需关注、投入产出、工作记录 |
+| M02 | 专家协作 | `/copilot` | 与在岗伙伴会话；研判/执行、审核、交接 |
+| M03 | 任务中心 | `/tasks` | 任务生命周期、复核与 SLA |
+| M04 | 工作区 | `/workspaces` | 业务域隔离、环境与配额 |
+| M05 | 数字工作伙伴 | `/partners` | 岗位装配与上岗；含 `de-office` |
+| M06 | 工作流程 | `/workflows` | 办公开箱/部门/个人模板；画布与发布 |
+| M07–M11 | 五中心 | `/models` … `/channels` | 已发布资产供给 |
+| M12–M15 | 设置与治理 | `/settings` 等 | 组织壳、授权、零信任、审计 |
+
+典型闭环：能力接入 → 装配上岗 → 受控协同 → 运营复盘 / 审计。办公快捷路径：流程模板（办公通用）或直接与 `de-office` 对话。
+
+---
+
+## 技术架构
+
+**控制面管可信与编排，执行面跑推理与工具，网关统一入口。** 默认 monolith：`de-app:8100` + `de-skill-runtime:8093` + `de-gateway:8089`。
+
+详细方案：[`docs/数字工作伙伴平台-架构文档.md`](docs/数字工作伙伴平台-架构文档.md) · [`docs/后端架构规划.md`](docs/后端架构规划.md) · [`backend/deploy/topology-split.md`](backend/deploy/topology-split.md)
+
+### 原则与分层
 
 | 原则 | 含义 |
 |------|------|
-| **粗粒度部署** | 本地默认 **monolith**（de-app 合一）；coarse 四进程保留用于规模化对照 |
-| **双栈分工** | Go 承担控制面（身份、策略、审计、资源编排）；Python 承担执行面（Agent / RAG / Skill） |
-| **网关统一入口** | 浏览器只认 `:8089`；monolith 全量路由 → de-app:8100 |
-| **工作区硬隔离** | 请求带 `x-workspace-id`；跨工作区引用拒绝 |
-| **执行面不混部** | agent-runtime / rag / skill-runtime 独立端口，隔离要求不同 |
-| **可观测默认开** | `/metrics`（含 `service` label）+ 可选 Prometheus / Grafana |
-
-文档分层（读架构文档时对照）：
-
-| 层 | 含义 | 现状 |
-|----|------|------|
-| **L0 控制面** | IA、模块能力、角色与治理闭环 | React 控制台 + monolith 联调（de-app + skill-runtime） |
-| **L1 领域契约** | 工作区、权限、审核、零信任、审计事件 | 契约已落地；部分企业写路径仍硬化中 |
-| **L2 运行时底座** | Temporal、Milvus、真沙箱、K8s、SPIRE 等 | 选型锁定，按阶段补齐 |
-
-### 3.2 逻辑分层与请求路径
+| 粗粒度部署 | 本地默认 monolith；coarse 四进程可对照 |
+| 双栈分工 | Go 控制面；Python 执行面（Agent / RAG / Skill） |
+| 网关统一入口 | 浏览器只认 `:8089` |
+| 工作区硬隔离 | `x-workspace-id`；跨工作区引用拒绝 |
+| 可观测默认开 | `/metrics` + 可选 Prometheus / Grafana |
 
 ```text
-┌──────────────────────────────────────────────────────────────┐
-│  L0 控制台  frontend/web                                      │
-│  React 18 · Vite · TanStack Query · Zustand · React Flow     │
-└────────────────────────────┬─────────────────────────────────┘
-                             │ 同源 /api（开发态 Vite 代理）
-┌────────────────────────────▼─────────────────────────────────┐
-│  de-gateway :8089 · Envoy（monolith 或 coarse 路由）           │
-└───────────────┬──────────────────────────────┬───────────────┘
-                │ 默认 monolith                 │ coarse 四进程
-                ▼                               ▼
-         de-app:8100                    de-sys / collab / cap / workflow
-    sys + collab + cap 合一              :8100–8103
-                │
-                └──► de-skill-runtime :8093（沙箱，必须独立）
-                     de-agent / de-rag（coarse 或按需）
+┌─ L0 控制台  frontend/web (React · Vite · TanStack Query) ─┐
+└────────────────────────┬──────────────────────────────────┘
+                         │ /api → Vite 代理
+┌────────────────────────▼──────────────────────────────────┐
+│  de-gateway :8089                                          │
+└───────────┬──────────────────────────────┬─────────────────┘
+            │ monolith                     │ coarse
+            ▼                              ▼
+     de-app:8100                    de-sys / collab / cap / workflow
+            │
+            └──► de-skill-runtime :8093（必须）
 ```
 
-一次「人对在岗数字工作伙伴发消息」的典型路径（monolith）：
+| 层 | 技术 |
+|----|------|
+| 前端 | React 18、TypeScript、Vite 5、pnpm、Zustand、React Flow |
+| 控制面 | Go 1.24、PostgreSQL、Redis、Connect/Protobuf |
+| 执行面 | Python FastAPI（Harness / RAG / Skill） |
+| 基建 | Envoy；可选 Dex、OPA、Temporal、Milvus、Vault 等 |
 
-```text
-控制台 → gateway → de-app（会话/治理 + 模型/知识/技能/记忆 + 策略/审计）
-                 ↘ de-skill-runtime（技能沙箱执行）
-                 ↘ de-workflow（可选，流程编排）
-```
-
-### 3.3 技术栈
-
-| 层 | 技术 | 职责 |
-|----|------|------|
-| **前端** | React 18、TypeScript、Vite 5、pnpm Workspace、TanStack Query、Zustand、React Flow | 控制台 IA、联调与治理交互 |
-| **控制面** | Go 1.24、Connect/Protobuf、PostgreSQL、Redis、ServiceMode | 身份、工作区、策略、审计、资源 CRUD、运营聚合 |
-| **执行面** | Python FastAPI | Agent Harness、RAG 检索、Skill 沙箱执行 |
-| **网关 / 基建** | Envoy、Dex/Authentik、OPA、OpenSearch、Temporal、Vault、Milvus、Kafka | 入口、IdP、策略引擎、检索、编排、密钥、向量、事件（目标/可选） |
-
-### 3.4 部署单元与产品映射
-
-| 单元 | 端口 | 产品侧覆盖 | 内含逻辑模块 |
-|------|------|------------|--------------|
-| **de-gateway** | 8089 | 统一 API 入口 | Envoy monolith / coarse |
-| **de-app** | 8100 | **monolith 默认**：上述 sys+collab+cap 全部 | sys + collab + cap |
-| **de-sys** | 8100 | coarse：工作区、平台设置、零信任、审计、运营总览 | platform · policy · audit · ops |
-| **de-collab** | 8101 | coarse：专家协作、数字工作伙伴、任务、审核 | collab · employee |
-| **de-cap** | 8102 | coarse：模型 / 知识 / 记忆 / 技能 / 渠道 | model · knowledge · memory · skill · channel |
-| **de-workflow** | 8103 | 工作流程与流程技能发布（可选） | workflow HTTP + Temporal Worker |
-| **de-skill-runtime** | 8093 | 技能沙箱执行（必须） | skill-runtime |
-| **执行面** | 8091–8092 | coarse 或按需：推理、RAG | agent-runtime · rag |
-
-> 已退役：`de-core:8080`、细端口 `de-policy:8094` / `de-audit:8095`（能力现由 de-app / de-sys 吸收）。
-
-### 3.5 关键契约（实现要点）
-
-| 主题 | 约定 |
-|------|------|
-| **鉴权与范围** | 登录签发 Token；业务请求携带工作区；RBAC：`admin` / `user` / `auditor` |
-| **持久化** | 控制面多为内存 + PG 快照（`kv_documents`）；消息按 `conversationId` 分桶 |
-| **会话权威** | 在线回合以**本地消息时间线**为准；模式/风险/交接以 Session PATCH 为准，hydrate 不得覆盖治理字段 |
-| **运营聚合** | `/api/home/extra`、`/api/home/kpis`、`/api/operations/overview` 为 live-aggregate；成本仅认 UsageMeters |
-| **能力引用** | 数字工作伙伴只装配已发布的模型/知识/技能/渠道版本 |
-| **观测** | 各服务 `/metrics`；Copilot 流式经网关超时约 180s |
-| **本机二进制** | LaunchAgent 读 `backend/bin/de-*`（默认 `de-app`）；改 Go 后需 `make build` 再 kickstart |
-
-### 3.6 仓库结构
+### 仓库结构
 
 ```text
 digital-employee-platform/
-├── frontend/
-│   ├── web/                 # React 控制台
-│   └── packages/            # api · types · ui · utils · hooks
+├── frontend/web + packages/   # 控制台
 ├── backend/
-│   ├── cmd/                 # de-app · de-sys · de-collab · de-cap · de-workflow
-│   ├── services/            # 一部署单元一目录（Dockerfile · SERVICE.md · FastAPI）
-│   ├── infra/ · obs/        # 基础服务与可观测
-│   ├── internal/            # apprun · server(ServiceMode) · store …
-│   ├── runtimes/            # 测试辅助（向量 / RunToken 等）
-│   └── deploy/              # compose · envoy.monolith.yaml · envoy.coarse.yaml
-├── scripts/dev-stack/       # 本机 LaunchAgent 联调栈（默认 monolith）
-└── docs/                    # 架构 · 模块 · 规格 · 视觉
+│   ├── cmd/ · internal/       # de-app 等
+│   ├── builtin/               # 出厂知识 / 技能 / 流程 / 场景
+│   └── deploy/                # compose · envoy
+├── scripts/dev-stack/         # LaunchAgent 联调
+└── docs/                      # 架构 · 模块 · 环境 · 视觉
 ```
-
-六边形目录骨架已就位；handler 仍集中在 `internal/server`（物理迁包属后续工程）。
-
-### 3.7 演进边界
 
 | 已成立 | 仍在路上 |
 |--------|----------|
-| **monolith 默认**（de-app + de-skill + gateway） | 个人/组织/工作区统一作用域 |
-| 控制台默认打真实网关 | 企业写操作全量实装、真 gVisor 沙箱 |
-| 工作区隔离与直播运营聚合 | LangGraph 全图、SPIRE SDS、CI 工作流入库 |
-| 内置技能包与 PilotDeck 工具链 | Handler 按六边形物理迁包 |
-| coarse 四进程可对照部署 | Temporal / Milvus 生产化 |
+| monolith 默认 + 真实网关联调 | 组织/个人作用域统一 |
+| 工作区隔离与直播运营聚合 | 真 gVisor 沙箱、Temporal/Milvus 生产化 |
+| 办公开箱 + PilotDeck 工具链 | Handler 六边形物理迁包 |
 
 ---
 
-## 4. 功能模块
+## 本地部署
 
-模块按**用户工作顺序**组织，与侧栏 IA 一致：先看运营，再协同处置，再编排上岗，再治理能力供给，账号菜单承载工作区与平台治理。底层 Agent 只作执行内核，**不作为侧栏一级入口**。
+两条路径：**Compose**（首次推荐）与 **LaunchAgent**（日常改代码）。均经网关 `:8089`。细则：[`backend/README.md`](backend/README.md) · [`docs/环境与数据模式.md`](docs/环境与数据模式.md)。
 
-细则见 [`docs/数字工作伙伴平台-功能模块文档.md`](docs/数字工作伙伴平台-功能模块文档.md)。
+### 环境要求
 
-### 4.1 导航信息架构
-
-```text
-运营总览                                              ← 度量入口
-协作：专家协作 → 任务中心                              ← 人机处置
-编排：数字工作伙伴 → 工作流程                          ← 岗位与确定性路径
-能力：模型 → 知识 → 技能 → 记忆 → 渠道                 ← 已发布资产供给
-账号：工作区 · 平台设置
-        └─ 组织/身份/保留/集成/用量
-        └─ 访问控制 · 持续验证 · 审计中心              ← 信任治理
-```
-
-控制型模块（模型/知识/技能/记忆/渠道等）二级菜单统一顺序：
-
-```text
-概览或资产 → 接入与配置 → 验证与发布 → 运行与处置 → 治理与审计
-```
-
-角色可见性（摘要）：`admin` 全量；`user` 侧重协作/任务/已授权伙伴与能力消费；`auditor` 侧重审计与只读核查。模型服务、消息渠道等写操作以 admin 为主。
-
-### 4.2 模块一览
-
-| ID | 模块 | 路由 | 分组 | 一句话 | 后端归属（monolith） |
-|----|------|------|------|--------|----------------------|
-| M01 | 运营总览 | `/home` | 运营 | 直播 KPI、需关注、投入产出、工作记录 | de-app · ops |
-| M02 | 专家协作 | `/copilot` | 协作 | 与在岗伙伴会话；研判/受控执行、审核、交接 | de-app · collab + skill-runtime |
-| M03 | 任务中心 | `/tasks` | 协作 | 任务生命周期、复核与 SLA | de-app · collab |
-| M04 | 工作区 | `/workspaces` | 账号 | 业务域隔离、环境与配额 | de-app · sys |
-| M05 | 数字工作伙伴 | `/partners` | 编排 | 岗位配置、能力装配、上岗与运营 | de-app · collab |
-| M06 | 工作流程 | `/workflows` | 编排 | 模板/画布/版本；发布为流程技能 | de-workflow（可选） |
-| M07 | 模型服务 | `/models` | 能力 | 供应商、路由、治理、审计 | de-app · cap |
-| M08 | 知识中心 | `/knowledge` | 能力 | 资产、加工、检索评测、图谱与引用 | de-app · cap（+ RAG 按需） |
-| M09 | 技能中心 | `/skills` | 能力 | 清单、商店、集成、运行治理 | de-app · cap + skill-runtime |
-| M10 | 记忆中心 | `/memory` | 能力 | 三层记忆、晋升候选、策略审计 | de-app · cap |
-| M11 | 消息渠道 | `/channels` | 能力 | 接入、投递、健康、死信、审计 | de-app · cap |
-| M12 | 平台设置 | `/settings` | 账号 | 租户组织壳与运营设置 | de-app · sys |
-| M13 | 访问控制 | settings / 独立 | 治理 | 授权、发布审批、SoD | de-app · sys/policy |
-| M14 | 持续验证 | settings / 独立 | 治理 | 零信任策略与临时授权 | de-app · sys/policy |
-| M15 | 审计中心 | settings / 独立 | 治理 | 只读追溯与脱敏导出 | de-app · sys/audit |
-
-### 4.3 分组说明
-
-#### 运营
-
-| 模块 | 关键能力 |
-|------|----------|
-| **运营总览** | 在岗/进行中/需关注/完成等 KPI；待办与投入产出；工作记录时间线；数据 live-aggregate，无计量诚实为空 |
-
-#### 协作
-
-| 模块 | 关键能力 |
-|------|----------|
-| **专家协作** | 会话列表与流式对话；岗位改绑；模式/风险/交接/结案；人工审核；附件与分享只读页 |
-| **任务中心** | 看板/列表流转；复核与 SLA 风险；与会话、审批、伙伴运行关联 |
-
-#### 编排
-
-| 模块 | 关键能力 |
-|------|----------|
-| **数字工作伙伴** | 岗位职责与禁止项；装配已发布模型/知识/技能/记忆/渠道；评测与上岗门禁；运行与证据入口 |
-| **工作流程** | 可视化编排；版本与发布；发布产物进入技能中心再被伙伴引用 |
-
-#### 能力（五中心）
-
-| 模块 | 关键能力 |
-|------|----------|
-| **模型服务** | Provider 接入与探测；路由策略校验/发布/回滚；故障演练；调用与变更审计 |
-| **知识中心** | 文档与知识包；加工任务；检索 Profile 与评测；图谱；引用与治理策略 |
-| **技能中心** | 启用清单与商店；MCP/工具集成；流程技能；运行配额与熔断等治理 |
-| **记忆中心** | short / working / long；范围 user/team/workspace/agent；晋升知识候选（需审核） |
-| **消息渠道** | 飞书/钉钉/企微/个人微信等部署；投递策略；健康与死信；渠道审计 |
-
-约定：能力中心**发布版本**，编排模块**只引用**；记忆不直通权威知识。
-
-#### 账号与治理
-
-| 模块 | 关键能力 |
-|------|----------|
-| **工作区** | 切换上下文、成员与配额、环境（sandbox/staging/production） |
-| **平台设置** | 组织资料、身份与保留、集成与用量；聚合跳转三项治理 |
-| **访问控制** | 授权范围、发布审批、职责分离 |
-| **持续验证** | 零信任策略、事件与临时授权 |
-| **审计中心** | 事件列表、故事线（伙伴/任务/工作流）、合规复核与导出 |
-
-### 4.4 模块协作关系
-
-```text
-能力五中心（发布） ──引用──► 数字工作伙伴（装配上岗）
-                              │
-              ┌───────────────┼───────────────┐
-              ▼               ▼               ▼
-         专家协作          任务中心        工作流程
-              │               │               │
-              └───────审核 / 审计 / 零信任─────┘
-                              │
-                         运营总览 ← 聚合
-```
-
-典型闭环：
-
-1. **能力接入** → 模型/知识/技能/渠道在各中心配置并发布  
-2. **装配上岗** → 数字工作伙伴绑定已发布版本并审批上岗  
-3. **受控协同** → 专家协作或任务中处置；高风险走审核  
-4. **复盘治理** → 运营总览看结果；审计中心留证据  
-
-### 4.5 与产品主轴的对应
-
-| 品牌主轴 | 主要模块 |
-|----------|----------|
-| **可信（安全零信任）** | 访问控制、持续验证、审计中心、协作审核、平台设置 |
-| **协同（先进生产力）** | 数字工作伙伴、专家协作、任务中心、工作流程 |
-| **可度量（成本新范式）** | 运营总览、工作区配额、模型预算/用量、渠道健康 |
-
----
-
-## 5. 部署步骤
-
-本地有两条常用路径：**Compose 一键拉起**（推荐首次）、**LaunchAgent 常驻联调**（改代码频繁时）。两者都经 **de-gateway :8089** 对外；前端默认 `VITE_USE_MOCK=false`，由 Vite 把 `/api` 代理到网关。
-
-更细的后端说明见 [`backend/README.md`](backend/README.md) · [`backend/deploy/topology-split.md`](backend/deploy/topology-split.md)。
-
-### 5.1 环境要求
-
-| 依赖 | 版本 / 说明 |
-|------|-------------|
-| Docker 或 Colima | **唯一**提供 PostgreSQL / Redis；本机勿再跑 Homebrew Postgres |
-| Go | 1.24+（可用 `backend/.tools` 引导） |
-| Node.js | 20+ |
-| pnpm | 11+ |
-| macOS（可选） | LaunchAgent 常驻联调时需要 |
-
-Postgres **必须**是 Compose 容器 `de-postgres`（`postgres:16-alpine`，主机 `127.0.0.1:5432`）。启动前建议：
+| 依赖 | 说明 |
+|------|------|
+| Docker / Colima | **唯一**提供 PG / Redis；禁止 Homebrew Postgres 占 5432 |
+| Go 1.24+ | 可用 `backend/.tools` |
+| Node 20+ · pnpm 11+ | 前端 |
+| macOS（可选） | LaunchAgent 常驻 |
 
 ```bash
 bash scripts/dev-stack/ensure-docker-postgres.sh
-# 或
-cd backend && make infra-env
+# 或 cd backend && make infra-env
 ```
 
-若本机 Homebrew `postgresql@17` 等占用了 5432，会抢掉 Colima 端口映射，导致 de-app 连到错误的空库/旧库。详见 [`docs/环境与数据模式.md`](docs/环境与数据模式.md)。
+### 端口
 
-### 5.2 端口一览
+| 服务 | 端口 |
+|------|------|
+| de-gateway | **8089** |
+| de-app（monolith） | 8100 |
+| de-skill-runtime | 8093 |
+| Vite | 5173 |
+| de-workflow（可选） | 8103 |
+| coarse sys/collab/cap | 8100–8102 |
 
-| 服务 | 端口 | 说明 |
-|------|------|------|
-| **de-gateway** | 8089 | 统一 API 入口（健康检查 `/healthz`） |
-| **de-app** | 8100 | **monolith 默认**：sys + collab + cap |
-| de-sys / de-collab / de-cap | 8100–8102 | coarse 四进程模式 |
-| de-workflow | 8103 | 工作流（可选） |
-| de-skill-runtime | 8093 | 技能沙箱（必须） |
-| agent / rag | 8091–8092 | coarse 或按需 |
-| Vite 控制台 | 5173 | 前端开发服 |
-
-### 5.3 路径 A：Compose（推荐）
-
-适合第一次把整栈跑起来。
+### Compose
 
 ```bash
 cd backend
-make compose-up-monolith   # PG/Redis + de-app + de-skill + gateway:8089
-# 等价：make run
-# 可选工作流：make compose-up-monolith-workflow
-```
-
-粗粒度四进程（规模化 / 对照）：
-
-```bash
-make compose-up-coarse
-make smoke-coarse
-```
-
-验证网关：
-
-```bash
+make compose-up-monolith    # 推荐
+# make compose-up-coarse    # 四进程对照
+# make compose-up-staging   # 预发拓扑
 curl -sS http://127.0.0.1:8089/healthz
 ```
 
-预发拓扑（额外含 Dex / OPA / OpenSearch / 观测等）：
+### LaunchAgent
+
+栈读 `backend/bin/de-*`。改 Go 必须重编再重启：
 
 ```bash
-cd backend && make compose-up-staging
-```
-
-单进程调试（可选）：
-
-```bash
-cd backend
-make run-app        # :8100 monolith
-make run-sys        # :8100 sys only
-make run-collab     # :8101
-make run-cap        # :8102
-make run-workflow   # :8103
-make skill          # :8093 沙箱
-```
-
-### 5.4 路径 B：本机 LaunchAgent（常驻联调）
-
-适合日常改 Go / 前端、希望栈常驻。脚本：[`scripts/dev-stack/run-stack.sh`](scripts/dev-stack/run-stack.sh)（**默认 `DE_STACK=monolith`，`DE_ENV=development`**），Label：`com.digital-employee.dev-stack`。启动时会经 `ensure-docker-postgres.sh` 校验 **Docker Postgres 16**（禁止本机 Homebrew 抢占 5432）。
-
-**重要：** 栈进程读取的是仓库内 **`backend/bin/de-*`**。改控制面代码后必须重编再重启：
-
-```bash
-cd backend
-make build   # 含 bin/de-app
+cd backend && make build
 launchctl kickstart -k "gui/$(id -u)/com.digital-employee.dev-stack"
-# 回退四进程：DE_STACK=coarse launchctl kickstart -k "gui/$(id -u)/com.digital-employee.dev-stack"
 ```
 
-常用监听（monolith）：gateway `8089`、de-app `8100`、skill `8093`、vite `5173`。数据模式细节见 [`docs/环境与数据模式.md`](docs/环境与数据模式.md)。
+脚本：[`scripts/dev-stack/run-stack.sh`](scripts/dev-stack/run-stack.sh)（默认 `DE_STACK=monolith`，`DE_ENV=development`）。
 
-### 5.5 前端
+### 前端与登录
 
 ```bash
-cd frontend
-pnpm install
-pnpm --filter web dev
+cd frontend && pnpm install && pnpm --filter web dev
 ```
-
-浏览器打开：<http://localhost:5173>
-
-| 变量 | 推荐值 | 说明 |
-|------|--------|------|
-| `VITE_USE_DEMO` / `VITE_USE_MOCK` | `false` | 打真实网关；纯前端演示用 `npm run dev:demo` |
-| `VITE_API_BASE` | 空 | 开发态走同源 `/api`，由 Vite 代理到 `:8089` |
-| `VITE_API_DIRECT` | 可选 | `true` 时配合 `VITE_API_BASE=http://127.0.0.1:8089` 直连 |
-
-示例（`frontend/web/.env` / `.env.local`）：
 
 ```env
+# frontend/web/.env.local
 VITE_USE_MOCK=false
 VITE_API_BASE=
 ```
 
-### 5.6 演示登录
-
-密码任意非空即可。默认 `DE_BAN_MOCK_TOKEN=1` 时禁止 `mock-*-token`；联调需开 mock 身份时设 `DE_ALLOW_DEMO_TOKEN=1` 或 `DE_BAN_MOCK_TOKEN=0`（见 backend README）。
-
 | 邮箱前缀 | 角色 | 说明 |
 |---------|------|------|
-| `admin@` | admin | 工作区全量会话与写权限；**上架/上岗申请可自批直通** |
-| `audit@` | auditor | 治理 / 审计只读视角 |
-| 其他 | user | 协作与任务；会话按 `ownerId` 隔离；**写操作须管理员审批** |
+| `admin@` | admin | 全量写权限；上架/上岗可自批 |
+| `audit@` | auditor | 治理 / 审计只读 |
+| 其他 | user | 协作与任务；写操作须管理员审批 |
 
-登录后注意当前**工作区**：岗位包安装、会话列表均按 `x-workspace-id` 隔离。空工作区运营总览为真实 0 / `—`。
+默认 `DE_BAN_MOCK_TOKEN=1` 禁止 `mock-*-token`；需 mock 身份时设 `DE_ALLOW_DEMO_TOKEN=1`。业务按 `x-workspace-id` 隔离。
 
-### 5.7 验证与冒烟
+---
+
+## 验证与常见问题
 
 ```bash
-# 前端
 cd frontend && pnpm --filter web typecheck && pnpm --filter web test
-
-# 后端
 cd ../backend && make test && make test-python && make smoke-monolith
-
-# 文案/空白
-git diff --check
 ```
-
-`make smoke-monolith` 经 `:8089` 探测 monolith 主路径（workspaces / skills / sessions / evaluate）。
-
-### 5.8 常见问题
 
 | 现象 | 处理 |
 |------|------|
-| 运营总览仍见演示金额/旧告警文案 | 确认已编到 `backend/bin` 并 `kickstart`；浏览器强刷；检查是否打到旧进程 |
-| 前端有数据但像 Mock | 确认 `VITE_USE_MOCK=false` 且 Vite 代理目标为 `:8089` |
-| 列表里既有 ACME 演示又有真实数据 | 历史 seed 残留在 PG；执行 `backend/scripts/purge-demo-seed-ids.sql` 后重启栈（见环境文档） |
-| 数据「像空库」或与预期不一致 | 检查 `127.0.0.1:5432` 是否为 Docker `de-postgres`（`SELECT version()` 应为 16.x）；执行 `ensure-docker-postgres.sh` / `make infra-env`，停掉 Homebrew Postgres |
-| Network 里同一 API 打两次 | 开发态 React StrictMode 双挂载，仍是同一真实网关 |
-| 删会话/文档重启又回来 | 确认硬删走了 `PersistDeleteSync`；已修路径含 sessions/messages/snapshots/知识/技能等 |
-| 岗位包 toast 已装但按钮仍「安装」 | 刷新页面（现按工作区 `installed` 展示）；确认当前工作区头 `x-workspace-id` |
-| 平台工具不在岗位包里 | 正常：Harness 内置，见岗位包页「平台工具（启动即用）」 |
-| `healthz` 失败 | 先起 PG/Redis 与 gateway；monolith 看 `:8100/:8093`，coarse 看 `:8100–8103` |
-| Go 改了不生效 | 未写入 `backend/bin` 或未重启 LaunchAgent / compose 容器 |
-| 跨工作区资源 404 / scope 错 | 请求头是否带正确 `x-workspace-id` |
-| `E_IDENTITY_MOCK_FORBIDDEN` | 联调默认禁 mock token；设 `DE_ALLOW_DEMO_TOKEN=1` 或走真实登录 |
+| 运营总览仍见演示金额 | `make build` + kickstart；强刷；确认未打到旧进程 |
+| 前端像 Mock | `VITE_USE_MOCK=false`，代理指向 `:8089` |
+| ACME 演示与真实数据混杂 | `backend/scripts/purge-demo-seed-ids.sql` 后重启 |
+| 数据像空库 / 版本不对 | 确认 `127.0.0.1:5432` 为 Docker `de-postgres` 16.x |
+| 办公模板 / 知识包缺失 | `make build` 并重启，确认 `EnsureBuiltin*` |
+| Go 改了不生效 | 未写入 `backend/bin` 或未重启栈 |
+| `E_IDENTITY_MOCK_FORBIDDEN` | `DE_ALLOW_DEMO_TOKEN=1` 或真实登录 |
+| `healthz` 失败 | 先起 PG/Redis 与 gateway |
 
-### 5.9 建议上手顺序
+---
 
-1. `backend && make compose-up-monolith` → `curl :8089/healthz`  
-2. `frontend && pnpm --filter web dev` → 用 `admin@` 登录  
-3. 走一遍：能力接入 → 数字工作伙伴上岗 → 专家协作 → 看运营总览  
-4. 日常开发可切 LaunchAgent；每次改 Go 走「build → kickstart」  
-5. 提交前跑 §5.7 验证命令  
+## 文档索引
+
+| 文档 | 用途 |
+|------|------|
+| [`docs/环境与数据模式.md`](docs/环境与数据模式.md) | `DE_ENV`、Postgres、硬删除、岗位包、办公开箱 |
+| [`docs/数字工作伙伴平台-功能模块文档.md`](docs/数字工作伙伴平台-功能模块文档.md) | 模块 Tab / 路由 / 成熟度 |
+| [`docs/数字工作伙伴平台-架构文档.md`](docs/数字工作伙伴平台-架构文档.md) | L0 / L1 / L2 |
+| [`docs/后端架构规划.md`](docs/后端架构规划.md) · [`docs/后端微服务重构方案.md`](docs/后端微服务重构方案.md) | 后端演进 |
+| [`backend/deploy/topology-split.md`](backend/deploy/topology-split.md) | 部署拓扑 |
+| [`backend/README.md`](backend/README.md) | 控制面命令与 `builtin/` |
+| [`docs/视觉设计规范.md`](docs/视觉设计规范.md) | UI 规范 |
+
+---
+
+## 路线图
+
+| 方向 | 说明 |
+|------|------|
+| 个人 / 组织 / 工作区作用域 | 五中心统一目录与个人绑定 |
+| 计量与价值闭环 | 持久 UsageMeters、预算与 ROI |
+| 审核与会签 | 多人会签、SoD 与发布审批深链 |
+| 记忆与检索生产化 | TTL/日提炼、持久索引与评测流水线 |
+| 执行隔离 | 目标 gVisor / runsc 全量沙箱 |
+| 工程硬化 | 企业写路径实装、handler 迁包、CI 入库 |

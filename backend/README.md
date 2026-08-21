@@ -4,7 +4,7 @@
 
 **本地默认**：**monolith**（`de-app:8100` + `de-skill:8093` + `de-gateway:8089`）。coarse 四进程保留用于规模化对照。
 
-环境与数据模式（`DE_ENV`、seed、硬删除、岗位包、**Postgres 仅 Docker**）见 [docs/环境与数据模式.md](../docs/环境与数据模式.md)。本机联调前请 `make infra-env`（或 `scripts/dev-stack/ensure-docker-postgres.sh`），确保 `127.0.0.1:5432` 指向容器 `de-postgres`（16.x），勿使用 Homebrew Postgres。
+环境与数据模式（`DE_ENV`、seed、硬删除、岗位包、**办公开箱**、**Postgres 仅 Docker**）见 [docs/环境与数据模式.md](../docs/环境与数据模式.md)。本机联调前请 `make infra-env`（或 `scripts/dev-stack/ensure-docker-postgres.sh`），确保 `127.0.0.1:5432` 指向容器 `de-postgres`（16.x），勿使用 Homebrew Postgres。
 
 | 部署单元 | 端口 | 说明 |
 |----------|------|------|
@@ -67,6 +67,7 @@ LaunchAgent 默认 `DE_BAN_MOCK_TOKEN=1`，禁止上述 mock token。
 ```text
 backend/
 ├── cmd/                # de-app · de-sys · de-collab · de-cap · de-workflow
+├── builtin/            # 出厂知识 / 技能 / 流程 / 场景（办公开箱）
 ├── services/           # Dockerfile · SERVICE.md · FastAPI · 六边形骨架
 ├── infra/ · obs/
 ├── libs/hexkit/
@@ -76,6 +77,8 @@ backend/
 ├── deploy/             # compose · envoy.coarse.yaml
 └── Makefile
 ```
+
+冷启动由 `apprun` 调用 `EnsureBuiltinSkillsReady` / `EnsureBuiltinKnowledgeReady` / `EnsureBuiltinWorkflowsReady` 装载 `builtin/`；说明见各子目录 README 与 [环境与数据模式](../docs/环境与数据模式.md)。
 
 ## Compose
 
