@@ -213,59 +213,224 @@ cd ../frontend && pnpm install && pnpm --filter web dev
 
 ## 技术架构
 
-**控制面管可信与编排，执行面跑推理与工具，网关统一入口。** 默认 monolith：`de-app:8100` + `de-skill-runtime:8093` + `de-gateway:8089`。
+**控制面管可信与编排，执行面跑推理与工具，网关统一入口。**  
+本地 / SME 默认 **monolith**：`de-gateway:8089` → `de-app:8100` + `de-skill-runtime:8093`（可选 `de-workflow:8103`）。
 
-详细方案：[`docs/数字工作伙伴平台-架构文档.md`](docs/数字工作伙伴平台-架构文档.md) · [`docs/后端架构规划.md`](docs/后端架构规划.md) · [`backend/deploy/topology-split.md`](backend/deploy/topology-split.md)
+| 文档 | 用途 |
+|------|------|
+| [`docs/数字工作伙伴平台-架构文档.md`](docs/数字工作伙伴平台-架构文档.md) | L0 / L1 / L2 产品与领域架构 |
+| [`docs/后端架构规划.md`](docs/后端架构规划.md) | 服务边界与演进阶段 |
+| [`backend/deploy/topology-split.md`](backend/deploy/topology-split.md) | monolith / coarse 切流 |
+| [`docs/环境与数据模式.md`](docs/环境与数据模式.md) | `DE_ENV`、Persist、办公开箱冷启动 |
 
-### 原则与分层
+### 文档分层
+
+| 层 | 含义 | 现状 |
+|----|------|------|
+| **L0 控制面** | IA、模块能力、角色与治理闭环 | React 控制台 + monolith 联调（Mock 可选） |
+| **L1 领域契约** | 工作区、权限、审核、零信任、审计事件 | 契约已落地；企业写路径持续硬化 |
+| **L2 运行时底座** | Temporal、Milvus、真沙箱、K8s、SPIRE 等 | 选型锁定，按阶段补齐 |
+
+### 架构原则
 
 | 原则 | 含义 |
 |------|------|
-| 粗粒度部署 | 本地默认 monolith；coarse 四进程可对照 |
-| 双栈分工 | Go 控制面；Python 执行面（Agent / RAG / Skill） |
-| 网关统一入口 | 浏览器只认 `:8089` |
-| 工作区硬隔离 | `x-workspace-id`；跨工作区引用拒绝 |
-| 可观测默认开 | `/metrics` + 可选 Prometheus / Grafana |
+| **粗粒度部署** | 默认 monolith（`ModeApp` / `DomainAll`）；coarse 四进程可对照规模化 |
+| **双栈分工** | Go：身份、策略、审计、资源编排；Python：Agent / RAG / Skill 沙箱 |
+| **网关统一入口** | 浏览器只认 `:8089`；Vite 开发态同源 `/api` 代理到网关 |
+| **工作区硬隔离** | 请求带 `x-workspace-id`；跨工作区引用拒绝 |
+| **执行面不混部** | skill-runtime 必须独立；agent / rag 按需或 coarse 才启 |
+| **能力只引用已发布** | 伙伴装配模型 / 知识 / 技能 / 渠道的已发布版本 |
+| **可观测默认开** | 各服务 `/metrics`（含 `service` label） |
 
-```text
-┌─ L0 控制台  frontend/web (React · Vite · TanStack Query) ─┐
-└────────────────────────┬──────────────────────────────────┘
-                         │ /api → Vite 代理
-┌────────────────────────▼──────────────────────────────────┐
-│  de-gateway :8089                                          │
-└───────────┬──────────────────────────────┬─────────────────┘
-            │ monolith                     │ coarse
-            ▼                              ▼
-     de-app:8100                    de-sys / collab / cap / workflow
-            │
-            └──► de-skill-runtime :8093（必须）
+### 逻辑拓扑
+
+默认 **monolith**；规模化可切 **coarse** 四进程（同一网关入口）。
+
+```mermaid
+flowchart TB
+  subgraph Console["L0 控制台"]
+    FE["frontend/web<br/>React 18 · Vite · TanStack Query · Zustand"]
+  end
+
+  GW["de-gateway :8089<br/>Envoy monolith / coarse · 或 dev proxy"]
+
+  FE -->|"HTTPS / SSE · 同源 /api"| GW
+
+  subgraph Mono["monolith 默认"]
+    APP["de-app :8100<br/>sys + collab + cap"]
+  end
+
+  subgraph Coarse["coarse 四进程"]
+    SYS["de-sys :8100<br/>platform · ops · policy · audit"]
+    COL["de-collab :8101<br/>collab · employee"]
+    CAP["de-cap :8102<br/>model · knowledge · memory · skill · channel"]
+    WFc["de-workflow :8103<br/>可选"]
+  end
+
+  SKILL["de-skill-runtime :8093<br/>技能沙箱 · 必须独立"]
+  WFm["de-workflow :8103<br/>流程 HTTP + Temporal · 可选"]
+  AI["de-agent / de-rag :8091–8092<br/>coarse 或按需<br/>monolith 默认进程内 Harness"]
+
+  GW -->|"默认"| APP
+  GW -->|"规模化"| SYS
+  GW --> COL
+  GW --> CAP
+  GW --> WFc
+
+  APP --> SKILL
+  APP --> WFm
+  APP -.-> AI
+  CAP --> SKILL
+  COL -.-> AI
 ```
 
-| 层 | 技术 |
-|----|------|
-| 前端 | React 18、TypeScript、Vite 5、pnpm、Zustand、React Flow |
-| 控制面 | Go 1.24、PostgreSQL、Redis、Connect/Protobuf |
-| 执行面 | Python FastAPI（Harness / RAG / Skill） |
-| 基建 | Envoy；可选 Dex、OPA、Temporal、Milvus、Vault 等 |
+### 数据流时序图
+
+专家协作发一条消息时的数据流（**monolith**；`de-app` 内含 sys / collab / cap 域逻辑）。高风险写操作可插入人工审核门禁后再执行工具。
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant UI as 控制台
+  participant GW as de-gateway
+  participant APP as de-app
+  participant PG as PostgreSQL / Redis
+  participant LLM as 模型供应商
+  participant SK as de-skill-runtime
+  participant WF as de-workflow
+  participant AUD as 审计 / 用量
+
+  UI->>GW: HTTPS / SSE · /api · x-workspace-id
+  GW->>APP: 鉴权路由 → monolith
+
+  rect rgb(245, 248, 255)
+    Note over APP: 控制面（会话 · 策略 · 伙伴 · 能力引用）
+    APP->>PG: 读/写 Session · TaskCard · ContextSnapshot
+    APP->>APP: PolicyDecision（allow / mask / approval / deny）
+    alt 需人工审核
+      APP-->>UI: 待审事件（SSE / 轮询）
+      UI->>APP: 批准 / 驳回
+    end
+    APP->>APP: 解析已发布能力<br/>模型路由 · 知识包 · 技能 · 记忆策略
+  end
+
+  rect rgb(245, 255, 248)
+    Note over APP,SK: 执行面（Harness · 检索 · 沙箱）
+    APP->>PG: 知识检索 / 记忆召回（元数据与索引）
+    APP->>LLM: 模型推理（流式）
+    LLM-->>APP: token / tool_call
+    opt 调用技能 / MCP / 平台工具
+      APP->>SK: 沙箱执行 SkillRequest
+      SK-->>APP: SkillResult · 制品
+    end
+    opt 确定性流程
+      APP->>WF: 启动 / 推进 WorkflowRun
+      WF-->>APP: 节点状态 · 人工节点回写
+    end
+  end
+
+  APP->>PG: 回写证据 · 消息时间线 · 任务态
+  APP-->>UI: SSE 流式增量 → done
+  APP--)AUD: 异步 AuditEvent · UsageMeter
+```
+
+coarse 模式下，上图 `de-app` 内域调用拆到 `de-collab` / `de-sys`(policy) / `de-cap`；网关仍统一入口 `:8089`。完整扇出见 [`docs/后端架构规划.md`](docs/后端架构规划.md) §3.3。
+
+### 部署单元
+
+| 单元 | 端口 | 说明 |
+|------|------|------|
+| **de-gateway** | 8089 | 统一 API 入口；健康检查 `/healthz` |
+| **de-app** | 8100 | **monolith 默认**：sys + collab + cap |
+| de-sys / de-collab / de-cap | 8100–8102 | coarse：地基 / 协作编排 / 能力五中心 |
+| de-workflow | 8103 | 工作流与流程技能发布（可选） |
+| **de-skill-runtime** | 8093 | 技能沙箱（必须独立） |
+| agent / rag | 8091–8092 | coarse 或按需 |
+
+已退役：`de-core:8080`、细端口 `de-policy:8094` / `de-audit:8095`（能力由 de-app / de-sys 吸收）。
+
+### 技术栈
+
+| 层 | 技术 | 职责 |
+|----|------|------|
+| **前端** | React 18、TypeScript、Vite 5、pnpm Workspace、TanStack Query、Zustand、React Flow | 控制台 IA、联调与治理交互 |
+| **控制面** | Go 1.24、Connect/Protobuf、PostgreSQL 16、Redis、`ServiceMode` | 身份、工作区、策略、审计、CRUD、运营聚合 |
+| **执行面** | Python FastAPI；monolith 默认进程内 Harness | Agent 编排、RAG、Skill 沙箱 |
+| **网关 / 基建** | Envoy；可选 Dex、OPA、OpenSearch、Temporal、Vault、Milvus、Kafka | 入口、IdP、策略引擎、编排、密钥、向量（目标/可选） |
+
+### 关键契约（实现要点）
+
+| 主题 | 约定 |
+|------|------|
+| **鉴权与角色** | Token + 工作区头；RBAC：`admin` / `user` / `auditor` |
+| **持久化** | 控制面内存 + PG 快照；硬删须 `PersistDelete(Sync)`，仅 `Persist` 不会删掉旧行 |
+| **环境** | `DE_ENV=development` 默认联调（空库 + hydrate，不灌 ACME seed）；`demo` 仅内存 |
+| **运营聚合** | `/api/home/*`、`/api/operations/overview` 为 live-aggregate；成本仅认 UsageMeters，否则 `—` |
+| **办公开箱** | 冷启动 ensure 知识包 / `autoInstall` 岗位包 / Certified 流程 / `de-office`；个人模板 `wft-user-*` 不覆盖 |
+| **本机二进制** | LaunchAgent 读 `backend/bin/de-*`；改 Go 后须 `make build` 再 kickstart |
+| **观测** | `/metrics`；Copilot 流式经网关超时约 180s |
 
 ### 仓库结构
 
 ```text
 digital-employee-platform/
-├── frontend/web + packages/   # 控制台
-├── backend/
-│   ├── cmd/ · internal/       # de-app 等
-│   ├── builtin/               # 出厂知识 / 技能 / 流程 / 场景
-│   └── deploy/                # compose · envoy
-├── scripts/dev-stack/         # LaunchAgent 联调
-└── docs/                      # 架构 · 模块 · 环境 · 视觉
+├── README.md                      # GitHub 项目介绍（本文件）
+├── frontend/                      # pnpm workspace 控制台
+│   ├── web/                       # React 18 + Vite 应用（:5173）
+│   └── packages/                  # api · types · ui · utils · hooks
+├── backend/                       # Go 控制面 + Python 执行面
+│   ├── cmd/                       # de-app（默认）· de-sys · de-collab · de-cap
+│   │                              # de-workflow · de-policy · de-audit · …
+│   ├── builtin/                   # 出厂包（办公开箱）
+│   │   ├── knowledge/office/      # kp.office.* 知识包
+│   │   ├── skills/                # 岗位包 manifest（含 office autoInstall）
+│   │   ├── workflows/             # wf.office.* + 部门 Certified + 高级库
+│   │   └── scenarios/office/      # 知识·技能·流程三联
+│   ├── internal/                  # apprun · server(ServiceMode) · store · policy …
+│   ├── api/                       # routes.md · proto · 契约说明
+│   ├── services/                  # 部署单元：Dockerfile · SERVICE.md · FastAPI
+│   │                              # （de-app / de-skill-runtime / de-rag …）
+│   ├── deploy/                    # compose · envoy.monolith/coarse · topology-split
+│   ├── infra/ · obs/              # 基础依赖与可观测
+│   ├── libs/ · pkg/ · gen/        # 共享库与生成代码
+│   ├── runtimes/                  # 测试辅助（非部署入口）
+│   ├── scripts/                   # purge-demo-seed 等运维脚本
+│   ├── bin/                       # make build 产物（LaunchAgent 读取）
+│   └── Makefile
+├── scripts/
+│   └── dev-stack/                 # ensure-docker-postgres · run-stack · gateway-proxy
+├── docs/
+│   ├── images/
+│   │   ├── brand/                 # 产品主轴 / 三支柱 / 能力地图 / 五中心
+│   │   └── product/               # 控制台截图 2.0
+│   ├── adr/                       # 架构决策记录
+│   ├── 环境与数据模式.md
+│   ├── 数字工作伙伴平台-架构文档.md
+│   ├── 数字工作伙伴平台-功能模块文档.md
+│   └── …                          # 后端规划 · 规格 · 视觉等
+└── .github/workflows/             # CI（如 backend-contract）
 ```
+
+| 路径 | 说明 |
+|------|------|
+| `backend/cmd/de-app` | monolith 主进程入口（sys + collab + cap） |
+| `backend/builtin/` | 冷启动由 `EnsureBuiltin*` 装载；见各子目录 README |
+| `backend/bin/` | 本机常驻栈二进制；改 Go 后须 `make build` |
+| `scripts/dev-stack/` | LaunchAgent 联调（默认 `DE_STACK=monolith`） |
+| `docs/images/` | README 内联概念图与产品截图 |
+
+出厂包入口：[`backend/builtin/workflows/README.md`](backend/builtin/workflows/README.md) · [`backend/builtin/knowledge/office/README.md`](backend/builtin/knowledge/office/README.md) · [`backend/builtin/scenarios/office/README.md`](backend/builtin/scenarios/office/README.md) · [`backend/README.md`](backend/README.md)。
+
+### 演进边界
 
 | 已成立 | 仍在路上 |
 |--------|----------|
-| monolith 默认 + 真实网关联调 | 组织/个人作用域统一 |
-| 工作区隔离与直播运营聚合 | 真 gVisor 沙箱、Temporal/Milvus 生产化 |
-| 办公开箱 + PilotDeck 工具链 | Handler 六边形物理迁包 |
+| **monolith 默认**（de-app + skill + gateway） | 组织 / 个人作用域统一、真 gVisor |
+| 控制台真实网关 + 工作区隔离 + live-aggregate | Temporal / Milvus 生产化 |
+| 办公开箱（知识×技能×流程）+ PilotDeck | Handler 六边形迁包、LangGraph 全图 |
+
+分阶段计划见下方 [路线图](#路线图)。
 
 ---
 
@@ -377,11 +542,47 @@ cd ../backend && make test && make test-python && make smoke-monolith
 
 ## 路线图
 
-| 方向 | 说明 |
+围绕三支柱推进：**敢托付**（零信任 / 审核 / 沙箱）→ **愿协作**（作用域 / 流程 / 多模态）→ **花得明白**（计量 / ROI）。细则见 [`docs/数字工作伙伴平台-架构文档.md`](docs/数字工作伙伴平台-架构文档.md) · [`docs/后端架构规划.md`](docs/后端架构规划.md)。
+
+```mermaid
+flowchart LR
+  D0["已交付<br/>L0 闭环"] --> N1["近端<br/>写路径硬化"]
+  N1 --> N2["中期<br/>L2 底座"]
+  N2 --> N3["远期<br/>联邦与形态"]
+```
+
+### 已交付（当前 main）
+
+| 主题 | 内容 |
 |------|------|
-| 个人 / 组织 / 工作区作用域 | 五中心统一目录与个人绑定 |
-| 计量与价值闭环 | 持久 UsageMeters、预算与 ROI |
-| 审核与会签 | 多人会签、SoD 与发布审批深链 |
-| 记忆与检索生产化 | TTL/日提炼、持久索引与评测流水线 |
-| 执行隔离 | 目标 gVisor / runsc 全量沙箱 |
-| 工程硬化 | 企业写路径实装、handler 迁包、CI 入库 |
+| **联调拓扑** | monolith 默认（de-app + skill + gateway）；coarse 可对照；Docker Postgres 16 |
+| **产品闭环** | 伙伴上岗 → 专家协作 / 任务 / 流程 → 运营 live-aggregate → 审计 |
+| **办公开箱** | 知识 × 技能 × 流程 + `de-office`；模板库「平台内置 / 个人创建」 |
+| **运行时** | 进程内 Harness；技能沙箱独立；流式 SSE；单人审核主路径 |
+
+### 近端（对齐生产写路径）
+
+| 方向 | 目标 | 对应支柱 |
+|------|------|----------|
+| **作用域统一** | 个人 / 组织 / 工作区目录、启用与绑定一致 | 协同 |
+| **企业写路径** | 模型 / 渠道 / 记忆 / 知识发布对接生产 API；硬删与 Persist 全覆盖 | 可信 |
+| **身份与审批** | 真实 IdP / SSO；多人会签、SoD、发布审批深链 | 可信 |
+| **计量诚实** | 持久 UsageMeters、预算归属；无数仍显示 `—` | 可度量 |
+| **工程硬化** | Handler 按六边形迁包；契约 / smoke CI 入库 | — |
+
+### 中期（L2 底座补齐）
+
+| 方向 | 目标 | 对应支柱 |
+|------|------|----------|
+| **流程生产化** | Temporal Worker 常驻；失败切换与双签节点落盘 | 协同 |
+| **检索生产化** | Milvus + 评测流水线；记忆 TTL / 日提炼调度 | 协同 |
+| **执行隔离** | gVisor / runsc 全量技能沙箱 | 可信 |
+| **可观测与多活** | 统一观测栈；`DE_REPLICA_MODE` / 从库只读深化 | 可度量 |
+| **协作深化** | 多 Agent / A2A；Open API 嵌入；渠道入站扩展 | 协同 |
+
+### 远期
+
+| 方向 | 目标 |
+|------|------|
+| **合规底座** | 等保 3 / ISO 27001：WORM 证据、出境策略、mTLS / SPIRE |
+| **联邦与形态** | 数据不出域的跨企业协同；语音 / 多模态伙伴形态 |

@@ -66,15 +66,18 @@ LaunchAgent 默认 `DE_BAN_MOCK_TOKEN=1`，禁止上述 mock token。
 
 ```text
 backend/
-├── cmd/                # de-app · de-sys · de-collab · de-cap · de-workflow
-├── builtin/            # 出厂知识 / 技能 / 流程 / 场景（办公开箱）
-├── services/           # Dockerfile · SERVICE.md · FastAPI · 六边形骨架
-├── infra/ · obs/
-├── libs/hexkit/
-├── internal/           # apprun · runtimeenv · server · store …
-├── scripts/            # purge-demo-seed-ids.sql 等
+├── cmd/                # de-app（默认）· de-sys · de-collab · de-cap · de-workflow
+│                       # de-policy · de-audit · de-local-llm …
+├── builtin/            # 出厂包：knowledge/ · skills/ · workflows/ · scenarios/
+├── internal/           # apprun · server(ServiceMode) · store · policy · auth …
+├── api/                # routes.md · proto · 契约
+├── services/           # 一部署单元一目录（Dockerfile · SERVICE.md · FastAPI）
+├── deploy/             # compose · envoy.monolith.yaml · envoy.coarse.yaml · topology-split
+├── infra/ · obs/       # 基础依赖与可观测
+├── libs/ · pkg/ · gen/ # hexkit 等共享库与生成代码
 ├── runtimes/           # 测试辅助（非部署入口）
-├── deploy/             # compose · envoy.coarse.yaml
+├── scripts/            # purge-demo-seed-ids.sql 等
+├── bin/                # make build 产物（LaunchAgent 读取）
 └── Makefile
 ```
 
