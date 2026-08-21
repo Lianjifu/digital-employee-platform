@@ -35,12 +35,31 @@ describe('workflows orchestration copy', () => {
     expect(workflowsSource).not.toContain('运行观察');
   });
 
+  it('paginates and shows a flat unified template grid', () => {
+    expect(workflowsSource).toContain('TPL_PAGE_SIZE');
+    expect(workflowsSource).toContain('wf-tpl-pager');
+    expect(workflowsSource).toContain('pagedFlat');
+    expect(workflowsSource).toContain('全部部门统一列表');
+    expect(workflowsSource).not.toContain('pagedGroups');
+  });
+
+  it('splits workflow templates into platform builtin and personal origins', () => {
+    expect(workflowsSource).toContain('平台内置');
+    expect(workflowsSource).toContain('个人创建');
+    expect(workflowsSource).toContain('templateOriginFilter');
+    expect(workflowsSource).toContain('saveAsPersonalTemplate');
+    expect(workflowsSource).toContain('isPersonalTemplate');
+    expect(workflowsSource).toContain('办公通用');
+    expect(workflowsSource).toContain('knowledgePackageIds');
+  });
+
   it('aligns workflow mock draft terminology with platform lexicon', () => {
     const workflowSlice = mockSource.slice(
       mockSource.indexOf('export const mockWorkflow'),
       mockSource.indexOf('// 工作流控制台运行态'),
     );
-    expect(workflowSlice).toContain('cache-oom 受控恢复');
+    expect(workflowSlice).toContain('员工入职开通');
+    expect(workflowSlice).toContain('cache-oom 受控恢复');  // IT 高级库仍保留
     expect(workflowSlice).toContain('工作伙伴研判');
     expect(workflowSlice).toContain('双重审批');
     expect(workflowSlice).toContain('审计留痕');
@@ -50,9 +69,10 @@ describe('workflows orchestration copy', () => {
 
 describe('workflow template library gates', () => {
   it('states digital-employee consumption positioning on the template page', () => {
-    expect(workflowsSource).toContain('供数字工作伙伴能力装配与专家协同引用');
+    expect(workflowsSource).toContain('发布为流程技能');
     expect(workflowsSource).toContain('创建隔离草稿');
-    expect(workflowsSource).toContain('研判分析');
+    expect(workflowsSource).toContain('平台认证模板');
+    expect(workflowsSource).toContain('IT 高级库');
   });
 
   it('blocks trial run and publish when template dependencies are unauthorized', () => {
@@ -64,10 +84,11 @@ describe('workflow template library gates', () => {
   });
 
   it('persists template provenance on isolated drafts', () => {
-    expect(workflowsSource).toContain('来源模板 ${asset.id}');
+    expect(workflowsSource).toContain('sourceTemplateId=${asset.id}@${asset.version}');
     expect(workflowsSource).toContain('normalizeTemplateAsset');
     expect(mockSource).toContain('dependencyStatus');
-    expect(mockSource).toContain('kubernetes-mcp：当前工作区未授权生产写权限');
+    expect(mockSource).toContain('infra.execute：当前工作区未授权生产写权限');
+    expect(mockSource).toMatch(/payment\.initiate|付款/);
   });
 });
 

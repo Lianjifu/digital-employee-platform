@@ -28,15 +28,30 @@ func TestEnsureDefaultWorkspace_EmptyCreatesW1(t *testing.T) {
 	}
 }
 
-func TestEnsureDefaultWorkspace_PreservesExisting(t *testing.T) {
+func TestEnsureDefaultWorkspace_CreatesW1AlongsideOrphan(t *testing.T) {
 	st := NewEmpty()
 	st.Workspaces = []map[string]any{
-		{"id": "w-custom", "name": "已有工作区", "tenantId": "tenant-acme", "status": "active"},
+		{"id": "workspace-1", "name": "测试工作区", "tenantId": "tenant-acme", "ownerId": "u1", "status": "active"},
 	}
-	if st.EnsureDefaultWorkspace() {
-		t.Fatal("should not overwrite existing workspaces")
+	if !st.EnsureDefaultWorkspace() {
+		t.Fatal("expected w1 shell when only orphan workspace exists")
 	}
-	if len(st.Workspaces) != 1 || str(st.Workspaces[0]["id"]) != "w-custom" {
-		t.Fatalf("got %#v", st.Workspaces)
+	if len(st.Workspaces) != 2 {
+		t.Fatalf("workspaces=%d", len(st.Workspaces))
+	}
+	if str(st.Workspaces[0]["id"]) != DefaultWorkspaceID {
+		t.Fatalf("expected w1 first, got %#v", st.Workspaces[0])
+	}
+}
+
+func TestRebuildWorkspaceAccessGrants_FromOwner(t *testing.T) {
+	st := NewEmpty()
+	st.Workspaces = []map[string]any{
+		{"id": "workspace-1", "ownerId": "u1", "tenantId": "tenant-acme"},
+	}
+	st.RebuildWorkspaceAccessGrants()
+	got := st.ActorExtraWorkspaces["u1"]
+	if len(got) != 1 || got[0] != "workspace-1" {
+		t.Fatalf("grants=%v", got)
 	}
 }

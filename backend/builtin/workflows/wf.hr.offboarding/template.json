@@ -1,0 +1,163 @@
+{
+  "id": "wf.hr.offboarding",
+  "name": "离职交接与权限回收",
+  "version": "1.0.0",
+  "certification": "certified",
+  "library": "default",
+  "department": "hr",
+  "audience": "离职员工 / HRBP / IT",
+  "industryTags": [
+    "all"
+  ],
+  "description": "资产交还、账号回收、证明开具与交接确认，保障离场安全基线。",
+  "antiPatterns": "不覆盖法律劳动争议流程。",
+  "owner": "平台内置",
+  "risk": "L2",
+  "suggestedExpertRole": "人事经理",
+  "sequence": [
+    "event",
+    "retrieve",
+    "approval",
+    "execute",
+    "audit",
+    "notify"
+  ],
+  "variables": [
+    {
+      "key": "employee_id",
+      "label": "员工工号",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "key": "last_day",
+      "label": "最后工作日",
+      "required": true,
+      "type": "date"
+    }
+  ],
+  "connectors": [
+    {
+      "slot": "identity.revoke",
+      "label": "权限回收",
+      "required": true,
+      "capability": "identity.revoke",
+      "defaultBinding": "sandbox:identity.mock"
+    },
+    {
+      "slot": "notify.send",
+      "label": "通知渠道",
+      "required": true,
+      "capability": "notify.send"
+    }
+  ],
+  "policy": {
+    "approvalRoles": [
+      "hr_manager",
+      "it_admin"
+    ],
+    "requireAudit": true
+  },
+  "fixtures": [
+    {
+      "name": "sandbox-offboard",
+      "variables": {
+        "employee_id": "E1001",
+        "last_day": "2026-09-30"
+      }
+    }
+  ],
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-08-21",
+      "note": "出厂 Certified 首发"
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "event",
+        "label": "触发",
+        "position": {
+          "x": 80,
+          "y": 80
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "retrieve",
+        "label": "知识检索",
+        "position": {
+          "x": 300,
+          "y": 80
+        }
+      },
+      {
+        "id": "n3",
+        "kind": "approval",
+        "label": "审批",
+        "position": {
+          "x": 520,
+          "y": 80
+        }
+      },
+      {
+        "id": "n4",
+        "kind": "execute",
+        "label": "执行",
+        "position": {
+          "x": 740,
+          "y": 80
+        }
+      },
+      {
+        "id": "n5",
+        "kind": "audit",
+        "label": "审计",
+        "position": {
+          "x": 80,
+          "y": 220
+        }
+      },
+      {
+        "id": "n6",
+        "kind": "notify",
+        "label": "通知",
+        "position": {
+          "x": 300,
+          "y": 220
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1-2",
+        "source": "n1",
+        "target": "n2"
+      },
+      {
+        "id": "e2-3",
+        "source": "n2",
+        "target": "n3"
+      },
+      {
+        "id": "e3-4",
+        "source": "n3",
+        "target": "n4"
+      },
+      {
+        "id": "e4-5",
+        "source": "n4",
+        "target": "n5"
+      },
+      {
+        "id": "e5-6",
+        "source": "n5",
+        "target": "n6"
+      }
+    ]
+  },
+  "nodes": 6
+}

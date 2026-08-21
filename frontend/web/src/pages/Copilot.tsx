@@ -30,9 +30,9 @@ import { Avatar, Badge, Button, Input, Row, CollapsedPanelHandle, toast } from '
 import {
   Bot, Search, ListChecks as ListChecksIcon, Wrench, Workflow as WorkflowIcon, FileText, ShieldCheck,
   AlertTriangle, Upload, MoreHorizontal, Download,
-  Link2, CheckCircle2, BarChart3, Volume2, Zap, Clock, Server, BellOff,
+  Link2, CheckCircle2, BarChart3, Volume2, Zap, Server, BellOff,
   Star, Share2, Settings, X, Pin, ChevronDown, ChevronLeft,
-  Sparkles, Database, Code, Cpu, Users, Loader2, AlertCircle, AtSign,
+  Sparkles, Code, Cpu, Users, Loader2, AlertCircle, AtSign,
   Hash, Activity, Languages, BookOpenCheck, RotateCcw,
   Paperclip, Send, ChevronRight, ThumbsUp, ThumbsDown,
   Copy, Trash2, Square, Plus, Archive, ArchiveRestore, FileDown, Lock, Eye, EyeOff, ArrowUp,
@@ -93,6 +93,7 @@ import { sortSessionsByRecency } from '@/features/copilot/session-sort';
 import { resolveHydratedMessages } from '@/features/copilot/conversation-merge';
 import { getApiClient } from '@de/web-api';
 import { deriveExpertContextOverview } from '@/features/copilot/expert-context';
+import { ExpertContextPanel } from '@/features/copilot/expert-context-panel';
 import { sessionHistoryPresentation } from '@/features/copilot/layout';
 import { COPILOT_LLM_HISTORY_TURNS, shouldShowContextWindowHint } from '@/features/copilot/context-limits';
 import { RoleReadonlyBanner } from '@/components/shared';
@@ -1609,6 +1610,14 @@ export default function Copilot() {
     () => deriveExpertContextOverview(contextMessages),
     [contextMessages],
   );
+  const sessionExpertContext = useMemo(
+    () => deriveExpertContextOverview(currentSession?.messages ?? []),
+    [currentSession?.messages],
+  );
+  const messageExpertContext = useMemo(
+    () => (selectedContextMessage ? deriveExpertContextOverview([selectedContextMessage]) : null),
+    [selectedContextMessage],
+  );
   const hasSessionContext = workbench.evidence + workbench.linkedTasks + workbench.pendingApprovals + workbench.executions > 0;
   const hasStreamingAssistant = Boolean(
     currentSession?.messages.some((message) => message.role === 'assistant' && message.status === 'streaming'),
@@ -2740,9 +2749,6 @@ export default function Copilot() {
               </span>
               {handoffActive && <span className="copilot-agent-details__handoff">由 {handoffOwner} 处理后续变更</span>}
             </div>
-            <p className="mt-2 px-1 text-[10px] leading-4 text-[var(--text-muted)]">
-              会话上下文即运行记忆入口；管理员可在「记忆中心」做策略治理，审计员可核查记忆策略。
-            </p>
           </header>
 
           <nav className="copilot-agent-details__tabs shrink-0" aria-label="会话上下文分区">
@@ -2774,188 +2780,28 @@ export default function Copilot() {
               <ContextDrawerPanel tab={contextTab} messages={contextMessages} onCitation={openCitation} focusedCitation={focusedCitation} />
             )}
             {contextTab === 'overview' && (
-              <div className="copilot-context-stack">
-                <ContextOverview summary={contextSummary} runMode={runMode} riskLevel={riskLevel} handoffActive={handoffActive} onOpenTab={setContextTab} />
-
-                <section className="copilot-agent-details__section">
-                  <div className="copilot-details-card">
-                    <div className="copilot-details-card__heading">
-                      <BriefcaseBusiness className="h-3.5 w-3.5 text-[var(--brand)]" />
-                      岗位专家
-                    </div>
-                    {activeEmployee ? (
-                      <div className="copilot-expert-facts">
-                        <div><span>岗位</span><strong className="truncate">{employeePrimaryLabel(activeEmployee)}</strong></div>
-                        <div><span>花名</span><strong className="truncate">{activeEmployee.name}</strong></div>
-                        <div><span>部门</span><Badge tone="info">{activeEmployee.department}</Badge></div>
-                        <div><span>版本</span><strong className="font-mono">v{activeEmployee.version}</strong></div>
-                        <div className="copilot-expert-facts__wide">
-                          <span>已装配能力</span>
-                          <div className="copilot-expert-caps">
-                            {[...activeEmployee.capabilities.skills, ...activeEmployee.capabilities.workflows, ...activeEmployee.capabilities.tools].slice(0, 6).map((item) => (
-                              <span key={item}>{item}</span>
-                            ))}
-                            {![...activeEmployee.capabilities.skills, ...activeEmployee.capabilities.workflows, ...activeEmployee.capabilities.tools].length && (
-                              <em>尚未装配</em>
-                            )}
-                          </div>
-                        </div>
-                        <Link to="/partners" className="copilot-text-link">查看岗位配置</Link>
-                      </div>
-                    ) : (
-                      <div className="copilot-expert-empty">
-                        <p>当前会话尚未绑定在岗数字工作伙伴。</p>
-                        <Button size="sm" onClick={openNewSessionPicker}>选择专家</Button>
-                      </div>
-                    )}
-                  </div>
-                </section>
-
-                <section className="copilot-agent-details__section">
-                  <div className="copilot-details-card">
-                    <div className="copilot-details-card__heading">
-                      <Database className="h-3.5 w-3.5 text-[var(--brand)]" />
-                      RAG 检索
-                      <Badge tone={expertContext.rag.attempted ? 'success' : 'neutral'} className="ml-auto text-[10px]">
-                        {expertContext.rag.attempted ? '本会话' : '未触发'}
-                      </Badge>
-                    </div>
-                    <div className="copilot-rag-grid">
-                      <div>
-                        <span>状态</span>
-                        <strong className="truncate text-[11px]">{expertContext.rag.label}</strong>
-                      </div>
-                      <div>
-                        <span>Top-K</span>
-                        <strong className="font-mono">{expertContext.rag.topK ?? '—'}</strong>
-                      </div>
-                      <div>
-                        <span>命中</span>
-                        <strong className="font-mono">{expertContext.rag.hitCount}</strong>
-                      </div>
-                      <div>
-                        <span>后端</span>
-                        <strong className="truncate font-mono text-[11px]">{expertContext.rag.backend ?? '—'}</strong>
-                      </div>
-                    </div>
-                    <div className="copilot-token-meter">
-                      <div className="copilot-token-meter__label">
-                        <span>上下文 Token</span>
-                        <strong className="font-mono">
-                          {expertContext.tokenUsed != null
-                            ? expertContext.tokenUsed >= 1000
-                              ? `${(expertContext.tokenUsed / 1000).toFixed(1)}k`
-                              : String(expertContext.tokenUsed)
-                            : '—'}
-                          {expertContext.modelLabel ? ` · ${expertContext.modelLabel}` : ''}
-                        </strong>
-                      </div>
-                      <div className="copilot-token-meter__track">
-                        <span style={{ width: expertContext.tokenUsed != null ? `${Math.min(100, (expertContext.tokenUsed / 200000) * 100)}%` : '0%' }} />
-                      </div>
-                      {expertContext.providerLabel && (
-                        <div className="mt-1.5 text-[10px] text-[var(--text-muted)]">供应商 {expertContext.providerLabel}</div>
-                      )}
-                    </div>
-                  </div>
-                </section>
-
-                <section className="copilot-agent-details__section">
-                  <div className="copilot-details-card__heading mb-2.5">
-                    <Link2 className="h-3.5 w-3.5 text-[var(--brand)]" />
-                    最近引用
-                  </div>
-                  {expertContext.citations.length === 0 ? (
-                    <div className="copilot-expert-empty">
-                      <p>本会话尚未产生可追溯引用。</p>
-                    </div>
-                  ) : (
-                    <div className="copilot-details-list">
-                      {expertContext.citations.map((c) => (
-                        <button
-                          key={c.id}
-                          type="button"
-                          onClick={() => openCitation(c)}
-                          className="copilot-evidence-item block w-full text-left p-2.5"
-                        >
-                          <div className="mb-1.5 flex items-center gap-1.5">
-                            <span className={cn('nav-pill text-[9px]', SOURCE_COLOR[c.source] ?? 'text-[var(--text-secondary)] bg-[var(--bg-elevated)]')}>{c.source}</span>
-                            <span className="flex-1 truncate text-[11px] font-semibold">{c.docId || c.source}</span>
-                            {c.page != null && <span className="text-[10px] text-[var(--text-muted)]">p.{c.page}</span>}
-                          </div>
-                          {c.text ? (
-                            <p className="mb-1.5 line-clamp-2 text-[10px] text-[var(--text-secondary)]">{c.text}</p>
-                          ) : null}
-                          <div className="flex items-center gap-2 text-[10px]">
-                            <span className="shrink-0 text-[var(--text-muted)]">置信度</span>
-                            <div className={cn('copilot-confidence-bar', c.score >= 0.85 ? 'is-high' : c.score >= 0.7 ? 'is-mid' : 'is-low')}>
-                              <span style={{ width: `${Math.min(100, Math.max(0, c.score * 100))}%` }} />
-                            </div>
-                            <span className={cn('font-mono', c.score >= 0.85 ? 'text-[var(--success)]' : c.score >= 0.7 ? 'text-[var(--text-secondary)]' : 'text-[var(--warning)]')}>
-                              {(c.score * 100).toFixed(0)}%
-                            </span>
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </section>
-
-                <section className="copilot-agent-details__section">
-                  <div className="copilot-details-card__heading mb-2.5">
-                    <Wrench className="h-3.5 w-3.5 text-[var(--brand)]" />
-                    工具调用
-                    <Badge tone="brand" className="ml-auto text-[10px]">{expertContext.tools.total}</Badge>
-                  </div>
-                  {expertContext.tools.total === 0 ? (
-                    <div className="copilot-expert-empty">
-                      <p>本会话尚未调用工具。</p>
-                    </div>
-                  ) : (
-                    <div className="copilot-mini-grid">
-                      <Mini label="成功" value={String(expertContext.tools.success)} tone="success" />
-                      <Mini label="失败" value={String(expertContext.tools.failed)} tone={expertContext.tools.failed === 0 ? 'success' : undefined} />
-                      <Mini label="平均" value={expertContext.tools.avgMs != null ? `${expertContext.tools.avgMs}ms` : '—'} />
-                      <Mini label="合计" value={String(expertContext.tools.total)} />
-                    </div>
-                  )}
-                </section>
-
-                <section className="copilot-agent-details__section copilot-agent-details__section--last">
-                  <div className="copilot-details-card__heading mb-2.5">
-                    <Clock className="h-3.5 w-3.5 text-[var(--brand)]" />
-                    活动时间线
-                  </div>
-                  {expertContext.timeline.length === 0 ? (
-                    <div className="copilot-expert-empty">
-                      <p>暂无活动记录。</p>
-                    </div>
-                  ) : (
-                    <div className="activity-timeline">
-                      {expertContext.timeline.map((a, i) => {
-                        const TimelineIcon = a.tone === 'success'
-                          ? CheckCircle2
-                          : a.tone === 'warn'
-                            ? AlertTriangle
-                            : a.tone === 'error'
-                              ? AlertCircle
-                              : Search;
-                        return (
-                          <div key={`${a.text}-${a.time}-${i}`} className="activity-timeline__item">
-                            <div className={cn('activity-timeline__dot', `activity-timeline__dot--${a.tone}`)}>
-                              <TimelineIcon className="h-3 w-3" />
-                            </div>
-                            <div className="activity-timeline__content">
-                              <div className="activity-timeline__text">{a.text}</div>
-                              <div className="activity-timeline__time">{a.time}</div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
-              </div>
+              <ExpertContextPanel
+                employee={activeEmployee}
+                overview={expertContext}
+                sessionOverview={sessionExpertContext}
+                messageOverview={messageExpertContext}
+                scope={contextSelection.scope}
+                runMode={runMode}
+                riskLevel={riskLevel}
+                handoffActive={handoffActive}
+                handoffOwner={handoffOwner}
+                nextAction={contextSummary.nextAction}
+                summaryCounts={{
+                  linkedTasks: contextSummary.linkedTasks,
+                  pendingApprovals: contextSummary.pendingApprovals,
+                  evidence: contextSummary.evidence,
+                  executions: contextSummary.executions,
+                }}
+                onOpenTab={setContextTab}
+                onCitation={(c) => openCitation(c)}
+                onJumpMessage={jumpToMessage}
+                onPickExpert={openNewSessionPicker}
+              />
             )}
           </div>
         </div>
@@ -3117,7 +2963,7 @@ export default function Copilot() {
           </label>
           <div className="rounded-md bg-[var(--warning-bg)] px-3 py-2 text-[11px] text-[var(--text-secondary)]">
             <AlertTriangle className="mr-1 inline h-3.5 w-3.5 text-[var(--warning)]" />
-            交接包含当前结论、{sessionSignals.evidence} 条证据与 {sessionSignals.pendingApprovals} 项待审批。确认后将切回研判模式并暂停自动写操作。
+            交接包含当前结论、{sessionSignals.evidence} 条证据与 {sessionSignals.pendingApprovals} 项待审批。确认后将切回「方案」模式并暂停自动写操作。
           </div>
         </div>
       </Modal>
@@ -4004,63 +3850,6 @@ function ContextDrawerPanel({ tab, messages, onCitation, focusedCitation }: { ta
   if (tab === 'tasks') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4" />{meta.label}</div><div>{meta.hint}</div></div>{tasks.length ? <div className="copilot-details-list">{tasks.map((task) => <div key={task.id} className="copilot-context-item"><div className="flex items-start justify-between gap-2"><span className="min-w-0 truncate text-xs font-semibold">{task.title}</span><Badge tone={task.status === 'approved' ? 'success' : 'warn'}>{task.status === 'approved' ? '已通过' : '待处理'}</Badge></div><div className="mt-2 flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]"><span>任务 ID</span><span className="font-mono">{task.id}</span></div></div>)}</div> : empty('关联任务')}</section>;
   if (tab === 'approvals') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4" />{meta.label}</div><div>{meta.hint}</div></div>{approvals.length ? <div className="copilot-details-list">{approvals.map(({ id, approval }) => <div key={id} className="copilot-context-item copilot-context-item--approval"><div className="flex items-start justify-between gap-2"><span className="text-xs font-semibold">受控审批</span><Badge tone={approval.decision === 'approved' ? 'success' : approval.decision === 'rejected' ? 'error' : 'warn'}>{approval.decision === 'approved' ? '已通过' : approval.decision === 'rejected' ? '已拒绝' : '待审批'}</Badge></div><p className="mt-2 break-words text-[11px] leading-5 text-[var(--text-secondary)]">{approval.action}</p><div className="mt-2 flex items-center justify-between text-[10px] text-[var(--text-muted)]"><span>签署进度</span><span className="font-mono">{approval.signed}/{approval.required} 已签</span></div></div>)}</div> : empty('待审批事项')}</section>;
   return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4" />{meta.label}</div><div>{meta.hint}</div></div>{audit.length ? <div className="copilot-details-list">{audit.map((item) => <div key={item.id} className="copilot-context-item copilot-context-item--audit"><span className={cn('copilot-audit-dot', item.tone === 'error' ? 'copilot-audit-dot--error' : 'copilot-audit-dot--success')} /><div className="min-w-0"><div className="text-[11px] font-medium text-[var(--text)]">{item.text}</div><div className="mt-1 font-mono text-[10px] text-[var(--text-muted)]">{item.time.slice(11, 19)} · {item.id}</div></div></div>)}</div> : empty('审计事件')}</section>;
-}
-
-function ContextOverview({ summary, runMode, riskLevel, handoffActive, onOpenTab }: {
-  summary: ReturnType<typeof deriveWorkbenchSummary>;
-  runMode: RunMode;
-  riskLevel: 'low' | 'medium' | 'high';
-  handoffActive: boolean;
-  onOpenTab: (tab: WorkbenchContextTab) => void;
-}) {
-  const statusLabel = handoffActive ? '人工接管中' : runMode === 'agent' ? '执行中' : runMode === 'ask' ? '问答中' : '方案中';
-  const statusTone = handoffActive ? 'warn' : runMode === 'agent' ? 'warn' : 'brand';
-  const riskLabel = riskLevel === 'high' ? '高' : riskLevel === 'medium' ? '中' : '低';
-  const cards: { tab: WorkbenchContextTab; label: string; value: number; icon: any; tone: string }[] = [
-    { tab: 'tasks', label: '关联任务', value: summary.linkedTasks, icon: ListChecksIcon, tone: 'text-[var(--brand)] bg-[var(--brand-light)]' },
-    { tab: 'approvals', label: '待审批', value: summary.pendingApprovals, icon: ShieldCheck, tone: 'text-[var(--warning)] bg-[var(--warning-bg)]' },
-    { tab: 'evidence', label: '证据引用', value: summary.evidence, icon: Link2, tone: 'text-[var(--success)] bg-[var(--success-bg)]' },
-    { tab: 'audit', label: '执行记录', value: summary.executions, icon: Activity, tone: 'text-[var(--info)] bg-[var(--info-bg)]' },
-  ];
-  return (
-    <section className="copilot-context-overview">
-      <div className="copilot-context-overview__hero">
-        <div className="copilot-context-overview__eyebrow">
-          <span>处置状态</span>
-          <Badge tone={statusTone as any} className="text-[10px]">{statusLabel}</Badge>
-        </div>
-        <div className="mt-2 text-sm font-semibold leading-5 text-[var(--text)]">{summary.nextAction}</div>
-        <div className="copilot-context-overview__meta">
-          <span className="inline-flex items-center gap-1.5">
-            <span className={cn('h-1.5 w-1.5 rounded-full', riskLevel === 'high' ? 'bg-[var(--danger)]' : riskLevel === 'medium' ? 'bg-[var(--warning)]' : 'bg-[var(--success)]')} />
-            风险 {riskLabel}
-          </span>
-          <span>数字工作伙伴持续监控</span>
-        </div>
-      </div>
-      <div className="copilot-context-overview__summary-head">
-        <span>治理摘要</span>
-        <span>点击查看明细</span>
-      </div>
-      <div className="copilot-context-overview__stats">
-        {cards.filter((card) => card.value > 0).map((card) => {
-          const Icon = card.icon;
-          return (
-            <button key={card.tab} type="button" onClick={() => onOpenTab(card.tab)} className="copilot-summary-card group">
-              <span className={cn('copilot-summary-card__icon grid h-7 w-7 place-items-center rounded-lg', card.tone)}>
-                <Icon className="h-3.5 w-3.5" />
-              </span>
-              <span className="mt-2 flex items-end justify-between gap-2">
-                <span className="text-[10px] text-[var(--text-muted)]">{card.label}</span>
-                <span className="font-mono text-base font-semibold text-[var(--text)]">{card.value}</span>
-              </span>
-              <span className="copilot-summary-card__action">查看明细 <ChevronRight className="h-3 w-3" /></span>
-            </button>
-          );
-        })}
-      </div>
-    </section>
-  );
 }
 
 // ============ Agent 详情折叠条 ============

@@ -458,9 +458,7 @@ func (s *Store) seed() {
 		},
 	}
 	s.WorkflowGens = []map[string]any{}
-	s.WorkflowTpls = []map[string]any{
-		{"id": "wft-1", "name": "告警处置模板", "description": "标准告警处置"},
-	}
+	s.WorkflowTpls = []map[string]any{} // 出厂包由 EnsureBuiltinWorkflowsReady 从 builtin/workflows 装载
 	s.WorkflowSkills = []map[string]any{
 		{
 			"id": "wfs-1", "workspaceId": "w1", "workflowId": "wf1", "sourceWorkflowId": "wf1", "sourceVersionId": "v1.2.0",

@@ -142,8 +142,8 @@ func skillInvocationNeedsApproval(sessionMode string, tool *registeredTool, sk m
 func denySkillWriteInInvestigate() toolExecResult {
 	return toolExecResult{
 		Status: "denied", Permission: "session_mode",
-		Error:  "研判模式禁止技能写/执行产出，请切换到受控执行",
-		Output: "当前为研判模式：仅允许 skill action=open / artifacts。写文件或 run 产出请切换到受控执行并经人工审核。",
+		Error:  "当前模式禁止技能写/执行产出，请切换到「执行」",
+		Output: "当前为「问答」或「方案」模式：仅允许 skill action=open / artifacts。写文件或 run 产出请切换到「执行」并经人工审核。",
 	}
 }
 

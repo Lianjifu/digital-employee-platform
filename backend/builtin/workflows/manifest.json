@@ -1,0 +1,213 @@
+{
+  "version": "1.0.0",
+  "factoryDefaults": [
+    "wf.hr.onboarding",
+    "wf.hr.offboarding",
+    "wf.it.access_request",
+    "wf.fin.expense",
+    "wf.fin.purchase",
+    "wf.ops.ticket_escalate",
+    "wf.sales.contract_approve",
+    "wf.rd.release_gate",
+    "wf.compliance.export_review"
+  ],
+  "advanced": [
+    "wf.it.incident_mitigate"
+  ],
+  "packs": [
+    {
+      "id": "wf.hr.onboarding",
+      "name": "员工入职开通",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "hr"
+    },
+    {
+      "id": "wf.hr.offboarding",
+      "name": "离职交接与权限回收",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "hr"
+    },
+    {
+      "id": "wf.it.access_request",
+      "name": "权限申请",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "it"
+    },
+    {
+      "id": "wf.fin.expense",
+      "name": "费用报销",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "finance"
+    },
+    {
+      "id": "wf.fin.purchase",
+      "name": "采购申请",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "finance"
+    },
+    {
+      "id": "wf.ops.ticket_escalate",
+      "name": "客诉升级闭环",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "operations"
+    },
+    {
+      "id": "wf.sales.contract_approve",
+      "name": "合同与折扣审批",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "sales"
+    },
+    {
+      "id": "wf.rd.release_gate",
+      "name": "发版门禁",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "rd"
+    },
+    {
+      "id": "wf.compliance.export_review",
+      "name": "数据导出审批",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "it"
+    },
+    {
+      "id": "wf.it.incident_mitigate",
+      "name": "生产事件缓解",
+      "version": "1.0.0",
+      "certification": "advanced",
+      "library": "advanced",
+      "department": "it"
+    },
+    {
+      "id": "wf.office.ask_policy",
+      "name": "制度问答与答复留痕",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "office"
+    },
+    {
+      "id": "wf.office.meeting_minutes",
+      "name": "会议纪要生成与分发",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "office"
+    },
+    {
+      "id": "wf.office.weekly_report",
+      "name": "周报汇总",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "office"
+    },
+    {
+      "id": "wf.office.doc_review",
+      "name": "文档审阅与定稿",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "office"
+    },
+    {
+      "id": "wf.office.leave_request",
+      "name": "请假申请",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "office"
+    },
+    {
+      "id": "wf.office.travel_request",
+      "name": "出差申请",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "office"
+    },
+    {
+      "id": "wf.office.expense_precheck",
+      "name": "报销前自查",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "office"
+    },
+    {
+      "id": "wf.office.meeting_book",
+      "name": "会议预约协作",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "office"
+    },
+    {
+      "id": "wf.office.it_helpdesk",
+      "name": "IT 求助工单",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "office"
+    },
+    {
+      "id": "wf.office.announce",
+      "name": "通知拟稿与发布",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "office"
+    },
+    {
+      "id": "wf.office.todo_followup",
+      "name": "待办跟催",
+      "version": "1.0.0",
+      "certification": "certified",
+      "library": "default",
+      "department": "office"
+    }
+  ],
+  "factoryDefaultsOffice": [
+    "wf.office.ask_policy",
+    "wf.office.meeting_minutes",
+    "wf.office.weekly_report",
+    "wf.office.doc_review",
+    "wf.office.leave_request",
+    "wf.office.travel_request",
+    "wf.office.expense_precheck",
+    "wf.office.meeting_book",
+    "wf.office.it_helpdesk",
+    "wf.office.announce",
+    "wf.office.todo_followup"
+  ],
+  "office": [
+    "wf.office.ask_policy",
+    "wf.office.meeting_minutes",
+    "wf.office.weekly_report",
+    "wf.office.doc_review",
+    "wf.office.leave_request",
+    "wf.office.travel_request",
+    "wf.office.expense_precheck",
+    "wf.office.meeting_book",
+    "wf.office.it_helpdesk",
+    "wf.office.announce",
+    "wf.office.todo_followup"
+  ]
+}

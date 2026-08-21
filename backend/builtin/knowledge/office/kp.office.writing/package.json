@@ -1,0 +1,34 @@
+{
+  "id": "kp.office.writing",
+  "name": "公文与材料规范",
+  "version": "1.0.0",
+  "description": "周报、请示、通知的文风与结构规范。",
+  "domain": "办公",
+  "classification": "internal",
+  "builtin": true,
+  "source": "platform",
+  "tags": [
+    "office",
+    "开箱"
+  ],
+  "docs": [
+    {
+      "file": "01-周报结构.md",
+      "title": "周报结构"
+    },
+    {
+      "file": "02-通知写作.md",
+      "title": "通知写作"
+    }
+  ],
+  "qa": [
+    {
+      "q": "周报结构",
+      "a": "完成、风险、计划、需要支持。"
+    },
+    {
+      "q": "通知要素",
+      "a": "对象、要求、截止、联系人。"
+    }
+  ]
+}

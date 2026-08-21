@@ -53,9 +53,14 @@ func runDemo(ctx context.Context, opts Options, domain store.Domain) error {
 	if domain == store.DomainAll || domain == store.DomainCap {
 		st.EnsureDocxSkillReady()
 		server.New(st).EnsureBuiltinSkillsReady()
+		server.New(st).EnsureBuiltinKnowledgeReady()
+	}
+	if domain == store.DomainAll || domain == store.DomainCap || domain == store.DomainWorkflow {
+		server.New(st).EnsureBuiltinWorkflowsReady()
 	}
 	if domain == store.DomainAll || domain == store.DomainCollab {
 		st.EnsureGeneralEmployee()
+		st.EnsureOfficeEmployee()
 	}
 	srv := server.New(st)
 	srv.Mode = opts.Mode
@@ -211,16 +216,22 @@ func runDurable(ctx context.Context, opts Options, domain store.Domain, rt runti
 				st.Persist("workspaces")
 			}
 		}
+		st.RebuildWorkspaceAccessGrants()
 	}
 	if domain == store.DomainAll || domain == store.DomainCap {
 		st.EnsureDocxSkillReady()
 		server.New(st).EnsureBuiltinSkillsReady()
+		server.New(st).EnsureBuiltinKnowledgeReady()
 		if rt.PersistEnabled() && st.CanWrite("skills") {
 			st.Persist("skills")
 		}
 	}
+	if domain == store.DomainAll || domain == store.DomainCap || domain == store.DomainWorkflow {
+		server.New(st).EnsureBuiltinWorkflowsReady()
+	}
 	if (domain == store.DomainAll || domain == store.DomainCollab) && rt.EnsureGeneralEmployeeAllowed() {
 		st.EnsureGeneralEmployee()
+		st.EnsureOfficeEmployee()
 		if rt.PersistEnabled() && st.CanWrite("employees") {
 			st.Persist("employees")
 		}

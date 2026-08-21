@@ -461,6 +461,12 @@ func (s *Server) EnsureBuiltinSkillsReady() {
 	}
 	for ws := range workspaces {
 		s.ensureGeneralPackInstalledLocked(ws, manifest)
+		for packID, def := range manifest.normalizePacks() {
+			if !def.AutoInstall || packID == "general" {
+				continue
+			}
+			s.ensurePackInstalledLocked(ws, packID, manifest)
+		}
 	}
 	s.Store.Unlock()
 	if len(removedCatalog) > 0 {

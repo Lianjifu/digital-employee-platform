@@ -9,25 +9,48 @@ import (
 
 	"github.com/digital-employee-platform/backend/internal/auth"
 	"github.com/digital-employee-platform/backend/internal/policy"
+	"github.com/digital-employee-platform/backend/internal/store"
 	"github.com/digital-employee-platform/backend/pkg/contract"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
 func (s *Server) listWorkspaces(r *http.Request) (any, error) {
 	id := identityFrom(r.Context())
+	out := s.visibleWorkspaces(id)
+	if len(out) == 0 {
+		created := s.Store.EnsureDefaultWorkspace()
+		s.Store.RebuildWorkspaceAccessGrants()
+		if created {
+			s.Store.Persist("workspaces")
+		}
+		if id != nil && !contains(id.WorkspaceIDs, store.DefaultWorkspaceID) {
+			id.WorkspaceIDs = append(id.WorkspaceIDs, store.DefaultWorkspaceID)
+		}
+		if id != nil && (id.WorkspaceID == "" || !contains(id.WorkspaceIDs, id.WorkspaceID)) {
+			id.WorkspaceID = store.DefaultWorkspaceID
+		}
+		out = s.visibleWorkspaces(id)
+	}
+	return out, nil
+}
+
+func (s *Server) visibleWorkspaces(id *auth.Identity) []map[string]any {
+	out := make([]map[string]any, 0)
+	if id == nil {
+		return out
+	}
 	s.Store.RLock()
 	defer s.Store.RUnlock()
-	out := make([]map[string]any, 0)
 	for _, w := range s.Store.Workspaces {
 		if str(w["tenantId"]) != id.TenantID {
 			continue
 		}
-		if !contains(id.WorkspaceIDs, str(w["id"])) {
-			continue
+		wsID := str(w["id"])
+		if id.Role == "admin" || contains(id.WorkspaceIDs, wsID) || str(w["ownerId"]) == id.ID {
+			out = append(out, w)
 		}
-		out = append(out, w)
 	}
-	return out, nil
+	return out
 }
 
 func (s *Server) createWorkspace(r *http.Request) (any, error) {

@@ -37,10 +37,10 @@ func (s *Server) runPilotdeckTool(ctx toolRunContext, t *registeredTool, call to
 		return s.runtimeSendAttachment(ctx, call, started)
 	case "enter_plan_mode":
 		return toolExecResult{Status: "success", DurationMs: int(time.Since(started).Milliseconds()),
-			Output: "【enter_plan_mode】已建议切换 sessionMode=investigate（研判模式）。请在前端切换或下轮以只读工具继续。"}
+			Output: "【enter_plan_mode】已建议切换到「方案」模式（runMode=plan）。请在前端切换，或下轮以只读工具继续。"}
 	case "exit_plan_mode":
 		return toolExecResult{Status: "success", DurationMs: int(time.Since(started).Milliseconds()),
-			Output: "【exit_plan_mode】已建议切换 sessionMode=execute（受控执行）。写/run 工具需审批。"}
+			Output: "【exit_plan_mode】已建议切换到「执行」模式（runMode=agent）。写/run 工具需审批。"}
 	case "agent":
 		return s.runtimeAgent(ctx, call, started)
 	case "task_create":

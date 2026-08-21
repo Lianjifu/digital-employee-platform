@@ -1,0 +1,208 @@
+{
+  "id": "wf.it.incident_mitigate",
+  "name": "生产事件缓解",
+  "version": "1.0.0",
+  "certification": "advanced",
+  "library": "advanced",
+  "department": "it",
+  "audience": "SRE / 平台",
+  "industryTags": [
+    "internet",
+    "saas"
+  ],
+  "description": "告警触发、研判、双重审批、受控执行与补偿回滚（运维高级库）。",
+  "owner": "平台内置",
+  "risk": "L3",
+  "suggestedExpertRole": "SRE 专家",
+  "sequence": [
+    "event",
+    "retrieve",
+    "decision",
+    "policy",
+    "approval",
+    "execute",
+    "compensate",
+    "audit",
+    "notify"
+  ],
+  "variables": [
+    {
+      "key": "incident_id",
+      "label": "事件单号",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "key": "cluster",
+      "label": "目标集群",
+      "required": true,
+      "type": "string"
+    }
+  ],
+  "connectors": [
+    {
+      "slot": "infra.execute",
+      "label": "受控执行",
+      "required": true,
+      "capability": "infra.execute"
+    },
+    {
+      "slot": "notify.send",
+      "label": "通知渠道",
+      "required": true,
+      "capability": "notify.send"
+    }
+  ],
+  "policy": {
+    "approvalRoles": [
+      "sre_oncall",
+      "eng_manager"
+    ],
+    "requireAudit": true,
+    "requireCompensate": true
+  },
+  "fixtures": [
+    {
+      "name": "sandbox-incident",
+      "variables": {
+        "incident_id": "INC-1",
+        "cluster": "prod-a"
+      }
+    }
+  ],
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-08-21",
+      "note": "IT 高级库"
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "event",
+        "label": "触发",
+        "position": {
+          "x": 80,
+          "y": 80
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "retrieve",
+        "label": "知识检索",
+        "position": {
+          "x": 300,
+          "y": 80
+        }
+      },
+      {
+        "id": "n3",
+        "kind": "decision",
+        "label": "研判",
+        "position": {
+          "x": 520,
+          "y": 80
+        }
+      },
+      {
+        "id": "n4",
+        "kind": "policy",
+        "label": "策略",
+        "position": {
+          "x": 740,
+          "y": 80
+        }
+      },
+      {
+        "id": "n5",
+        "kind": "approval",
+        "label": "审批",
+        "position": {
+          "x": 80,
+          "y": 220
+        }
+      },
+      {
+        "id": "n6",
+        "kind": "execute",
+        "label": "执行",
+        "position": {
+          "x": 300,
+          "y": 220
+        }
+      },
+      {
+        "id": "n7",
+        "kind": "compensate",
+        "label": "补偿",
+        "position": {
+          "x": 520,
+          "y": 220
+        }
+      },
+      {
+        "id": "n8",
+        "kind": "audit",
+        "label": "审计",
+        "position": {
+          "x": 740,
+          "y": 220
+        }
+      },
+      {
+        "id": "n9",
+        "kind": "notify",
+        "label": "通知",
+        "position": {
+          "x": 80,
+          "y": 360
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1-2",
+        "source": "n1",
+        "target": "n2"
+      },
+      {
+        "id": "e2-3",
+        "source": "n2",
+        "target": "n3"
+      },
+      {
+        "id": "e3-4",
+        "source": "n3",
+        "target": "n4"
+      },
+      {
+        "id": "e4-5",
+        "source": "n4",
+        "target": "n5"
+      },
+      {
+        "id": "e5-6",
+        "source": "n5",
+        "target": "n6"
+      },
+      {
+        "id": "e6-7",
+        "source": "n6",
+        "target": "n7"
+      },
+      {
+        "id": "e7-8",
+        "source": "n7",
+        "target": "n8"
+      },
+      {
+        "id": "e8-9",
+        "source": "n8",
+        "target": "n9"
+      }
+    ]
+  },
+  "nodes": 9
+}

@@ -30,7 +30,7 @@ import {
   Edit3, Copy, Box, ArrowRight, GripVertical, RefreshCw,
   Undo2, Redo2, FileJson, MessageSquare, StepForward, StepBack, SkipForward, SkipBack, History as HistoryIcon,
 } from 'lucide-react';
-import type { KnowledgePackage, KnowledgeRetrievalProfile, Workflow, WorkflowNodeKind, WorkflowSkill } from '@de/web-types';
+import type { DigitalEmployee, KnowledgePackage, KnowledgeRetrievalProfile, Workflow, WorkflowNodeKind, WorkflowSkill } from '@de/web-types';
 import { cn } from '@de/web-utils';
 import { Drawer, ConfirmDialog, RoleReadonlyBanner } from '@/components/shared';
 import { useApiMutation, useApiQuery } from '@/services/query';
@@ -38,6 +38,29 @@ import { useAuthStore } from '@/stores/authStore';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useT } from '@/i18n';
 import { computeVersionDiff } from '@/features/workflows/version-diff';
+import {
+  ALL_WORKFLOW_TEMPLATES,
+  DEPARTMENT_OPTIONS,
+  DEFAULT_VISIBLE_TEMPLATES,
+  INDUSTRY_OPTIONS,
+  departmentLabel,
+  deriveTemplateBlockers,
+  diffTemplateUpgrade,
+  evaluateTemplateConnectors,
+  filterByIndustry,
+  isPersonalTemplate,
+  isPlatformTemplate,
+  isTemplateReusable,
+  loadConnectorBindings,
+  matchDepartmentKey,
+  needsTemplateReview,
+  saveConnectorBindings,
+  type ConnectorBindings,
+  type DepartmentKey,
+  type TemplateOrigin,
+  type TemplateUpgradeDiff,
+  type WorkflowTemplateAsset,
+} from '@/features/workflows/department-templates';
 import { defaultWorkflowTab, roleCanMutate, rolePageCopy, visibleWorkflowTabs, type WorkflowTab } from '@/features/role-nav/role-nav';
 
 type SidePanelKey = 'library' | 'debug' | 'properties';
@@ -360,31 +383,8 @@ function CustomNode({ data, selected }: { data: any; selected?: boolean }) {
 const nodeTypes = { custom: CustomNode };
 
 /* ============ Mock 模板 ============ */
-/* ============ 工作流模板资产（与 /api/workflow-templates 字段对齐） ============ */
-type TemplateHealth = '健康' | '需授权';
-type WorkflowTemplateAsset = {
-  id: string;
-  name: string;
-  version: string;
-  category: 'business' | 'system' | 'security' | 'ai';
-  description: string;
-  nodes: number;
-  installs: number;
-  rating: number;
-  owner: string;
-  verifiedAt: string;
-  risk: 'L1' | 'L2' | 'L3';
-  dependencies: string[];
-  dependencyStatus: Array<{ name: string; status: 'ready' | 'unauthorized'; reason?: string }>;
-  health: TemplateHealth;
-  successRate: string;
-  sequence: WorkflowNodeKind[];
-  blockers: string[];
-  variables: Array<{ key: string; label: string; required: boolean }>;
-  permissions: Array<{ action: string; gate: string }>;
-  changelog: Array<{ version: string; date: string; note: string }>;
-  recentRuns: Array<{ id: string; time: string; status: 'success' | 'failed'; note: string }>;
-};
+/* ============ 工作流模板资产（部门默认库 + IT 高级库） ============ */
+const TEMPLATES: WorkflowTemplateAsset[] = DEFAULT_VISIBLE_TEMPLATES;
 
 type DraftGate = {
   blocked: boolean;
@@ -393,253 +393,95 @@ type DraftGate = {
   templateName: string;
   templateVersion: string;
   owner: string;
+  sourceTemplateId?: string;
+  sourceTemplateVersion?: string;
+  degraded?: boolean;
+  healthHint?: string;
 };
 
-function categoryLabel(category: WorkflowTemplateAsset['category'] | string) {
+function categoryLabel(category: WorkflowTemplateAsset['category'] | string, department?: string) {
+  if (department) return department;
   if (category === 'business') return '业务自动化';
   if (category === 'system') return '系统运维';
   if (category === 'security') return '安全响应';
   return '研判与分析';
 }
 
-function isTemplateReusable(template: WorkflowTemplateAsset) {
-  return template.health === '健康' && template.blockers.length === 0 && template.dependencyStatus.every((item) => item.status === 'ready');
-}
-
-function needsTemplateReview(template: WorkflowTemplateAsset) {
-  return !isTemplateReusable(template);
-}
-
-function deriveTemplateBlockers(template: Pick<WorkflowTemplateAsset, 'health' | 'dependencyStatus' | 'blockers'>) {
-  if (template.blockers?.length) return template.blockers;
-  return (template.dependencyStatus ?? [])
-    .filter((item) => item.status === 'unauthorized')
-    .map((item) => item.reason ?? `${item.name}：当前工作区未授权`);
-}
-
-const TEMPLATES: WorkflowTemplateAsset[] = [
-  {
-    id: 'tpl1',
-    name: 'cache-oom 受控恢复',
-    version: 'v2.4',
-    category: 'system',
-    description: 'Redis 缓存 OOM 受控恢复 + 切换 LRU 策略；写操作需双重审批与补偿回滚',
-    nodes: 10,
-    installs: 124,
-    rating: 4.8,
-    owner: 'SRE 平台组',
-    verifiedAt: '2026-07-16',
-    risk: 'L3',
-    dependencies: ['redis-cli', 'kubernetes-mcp'],
-    dependencyStatus: [
-      { name: 'redis-cli', status: 'ready' },
-      { name: 'kubernetes-mcp', status: 'unauthorized', reason: 'kubernetes-mcp：当前工作区未授权生产写权限' },
-    ],
-    health: '需授权',
-    successRate: '98.6%',
-    sequence: ['event', 'retrieve', 'decision', 'policy', 'approval', 'execute', 'compensate', 'audit', 'notify'],
-    blockers: ['kubernetes-mcp：当前工作区未授权生产写权限'],
-    variables: [
-      { key: 'cluster', label: '目标集群', required: true },
-      { key: 'maxmemory', label: '扩容上限', required: true },
-      { key: 'approver_group', label: '双重审批组', required: true },
-    ],
-    permissions: [
-      { action: 'CONFIG SET', gate: '双重审批 + 生产写权限' },
-      { action: '回滚补偿', gate: '审计留痕必选' },
-    ],
-    changelog: [
-      { version: 'v2.4', date: '2026-07-16', note: '补齐补偿分支与依赖授权检查' },
-      { version: 'v2.3', date: '2026-06-28', note: '审批超时默认改为 300s' },
-    ],
-    recentRuns: [
-      { id: 'r-tpl1-01', time: '07-16 14:28', status: 'success', note: '验证集通过' },
-      { id: 'r-tpl1-02', time: '07-15 11:02', status: 'failed', note: '依赖未授权阻断' },
-    ],
-  },
-  {
-    id: 'tpl2',
-    name: 'CVE 自动修复',
-    version: 'v3.1',
-    category: 'security',
-    description: 'CVE 扫描 → 资产匹配 → 人工复核 → 工单与受控修复',
-    nodes: 10,
-    installs: 88,
-    rating: 4.6,
-    owner: '安全运营组',
-    verifiedAt: '2026-07-12',
-    risk: 'L3',
-    dependencies: ['cve-kb', 'patch-skill'],
-    dependencyStatus: [
-      { name: 'cve-kb', status: 'ready' },
-      { name: 'patch-skill', status: 'ready' },
-    ],
-    health: '健康',
-    successRate: '96.8%',
-    sequence: ['event', 'retrieve', 'decision', 'policy', 'approval', 'task', 'execute', 'compensate', 'audit', 'notify'],
-    blockers: [],
-    variables: [
-      { key: 'cve_id', label: 'CVE 编号', required: true },
-      { key: 'asset_scope', label: '影响资产范围', required: true },
-    ],
-    permissions: [
-      { action: '创建修复工单', gate: '人工复核' },
-      { action: '执行补丁', gate: '双重审批' },
-    ],
-    changelog: [
-      { version: 'v3.1', date: '2026-07-12', note: '增加影响面评估节点' },
-      { version: 'v3.0', date: '2026-06-01', note: '统一审计留痕字段' },
-    ],
-    recentRuns: [
-      { id: 'r-tpl2-01', time: '07-12 09:40', status: 'success', note: '验证集通过' },
-    ],
-  },
-  {
-    id: 'tpl3',
-    name: '合规审计报告',
-    version: 'v2.2',
-    category: 'business',
-    description: '等保核查项自动汇总 + 报告生成与分发',
-    nodes: 7,
-    installs: 56,
-    rating: 4.7,
-    owner: '合规运营组',
-    verifiedAt: '2026-07-17',
-    risk: 'L1',
-    dependencies: ['compliance-kb'],
-    dependencyStatus: [{ name: 'compliance-kb', status: 'ready' }],
-    health: '健康',
-    successRate: '99.2%',
-    sequence: ['schedule', 'retrieve', 'decision', 'transform', 'audit', 'notify'],
-    blockers: [],
-    variables: [{ key: 'report_period', label: '报告周期', required: true }],
-    permissions: [{ action: '导出报告', gate: '审计留痕' }],
-    changelog: [{ version: 'v2.2', date: '2026-07-17', note: '补充分发渠道校验' }],
-    recentRuns: [{ id: 'r-tpl3-01', time: '07-17 08:10', status: 'success', note: '验证集通过' }],
-  },
-  {
-    id: 'tpl4',
-    name: '变更灰度发布',
-    version: 'v1.8',
-    category: 'system',
-    description: '蓝绿/金丝雀发布 + 指标门禁与异常自动补偿',
-    nodes: 9,
-    installs: 142,
-    rating: 4.9,
-    owner: '交付工程组',
-    verifiedAt: '2026-07-14',
-    risk: 'L3',
-    dependencies: ['release-skill', 'prometheus-mcp'],
-    dependencyStatus: [
-      { name: 'release-skill', status: 'ready' },
-      { name: 'prometheus-mcp', status: 'ready' },
-    ],
-    health: '健康',
-    successRate: '97.9%',
-    sequence: ['event', 'policy', 'approval', 'parallel', 'condition', 'execute', 'compensate', 'audit', 'notify'],
-    blockers: [],
-    variables: [
-      { key: 'service', label: '发布服务', required: true },
-      { key: 'canary_percent', label: '灰度比例', required: true },
-    ],
-    permissions: [
-      { action: '生产发布', gate: '双重审批' },
-      { action: '自动回滚', gate: '补偿节点必选' },
-    ],
-    changelog: [{ version: 'v1.8', date: '2026-07-14', note: '指标门禁阈值可配置' }],
-    recentRuns: [{ id: 'r-tpl4-01', time: '07-14 16:22', status: 'success', note: '验证集通过' }],
-  },
-  {
-    id: 'tpl5',
-    name: '告警降噪',
-    version: 'v1.6',
-    category: 'security',
-    description: 'SIEM 重复告警合并 + 静默策略与人工接管',
-    nodes: 4,
-    installs: 78,
-    rating: 4.5,
-    owner: '安全运营组',
-    verifiedAt: '2026-07-15',
-    risk: 'L2',
-    dependencies: ['siem-connector'],
-    dependencyStatus: [{ name: 'siem-connector', status: 'ready' }],
-    health: '健康',
-    successRate: '98.1%',
-    sequence: ['event', 'transform', 'decision', 'notify'],
-    blockers: [],
-    variables: [{ key: 'silence_window', label: '静默窗口', required: false }],
-    permissions: [{ action: '写入静默规则', gate: '策略校验' }],
-    changelog: [{ version: 'v1.6', date: '2026-07-15', note: '合并规则支持标签匹配' }],
-    recentRuns: [{ id: 'r-tpl5-01', time: '07-15 10:05', status: 'success', note: '验证集通过' }],
-  },
-  {
-    id: 'tpl6',
-    name: '容量预测',
-    version: 'v2.0',
-    category: 'ai',
-    description: '历史趋势研判、扩容建议、人工确认与结果通知',
-    nodes: 7,
-    installs: 42,
-    rating: 4.4,
-    owner: '容量运营组',
-    verifiedAt: '2026-07-10',
-    risk: 'L2',
-    dependencies: ['capacity-forecast-skill'],
-    dependencyStatus: [{ name: 'capacity-forecast-skill', status: 'ready' }],
-    health: '健康',
-    successRate: '95.4%',
-    sequence: ['schedule', 'retrieve', 'decision', 'policy', 'task', 'audit', 'notify'],
-    blockers: [],
-    variables: [
-      { key: 'metric', label: '容量指标', required: true },
-      { key: 'horizon_days', label: '预测窗口（天）', required: true },
-    ],
-    permissions: [{ action: '创建扩容建议工单', gate: '人工确认' }],
-    changelog: [{ version: 'v2.0', date: '2026-07-10', note: '研判节点改用企业默认模型路由' }],
-    recentRuns: [{ id: 'r-tpl6-01', time: '07-10 18:30', status: 'success', note: '验证集通过' }],
-  },
-];
-
-function normalizeTemplateAsset(raw: Partial<WorkflowTemplateAsset> & { id: string; name: string }): WorkflowTemplateAsset {
-  const fallback = TEMPLATES.find((item) => item.id === raw.id || item.name === raw.name);
+function normalizeTemplateAsset(
+  raw: Partial<WorkflowTemplateAsset> & { id: string; name: string },
+  bindings: ConnectorBindings = {},
+): WorkflowTemplateAsset {
+  const fallback = ALL_WORKFLOW_TEMPLATES.find((item) => item.id === raw.id || item.name === raw.name);
+  const connectors = raw.connectors?.length ? raw.connectors : (fallback?.connectors ?? []);
+  const degrade = raw.degrade ?? fallback?.degrade;
+  const evaluated = evaluateTemplateConnectors({ connectors, degrade }, bindings);
   const dependencyStatus = raw.dependencyStatus?.length
     ? raw.dependencyStatus
-    : (raw.dependencies ?? fallback?.dependencies ?? []).map((name) => ({
+    : (raw.dependencies ?? fallback?.dependencies ?? connectors.map((c) => c.slot)).map((name) => ({
         name,
-        status: (raw.health ?? fallback?.health) === '需授权' && name.includes('kubernetes') ? 'unauthorized' as const : 'ready' as const,
-        reason: (raw.health ?? fallback?.health) === '需授权' && name.includes('kubernetes') ? `${name}：当前工作区未授权生产写权限` : undefined,
+        status: (evaluated.blockers.some((b) => b.startsWith(`${name}：`)) ? 'unauthorized' : 'ready') as 'ready' | 'unauthorized',
+        reason: evaluated.blockers.find((b) => b.startsWith(`${name}：`)),
       }));
-  const health = (raw.health ?? fallback?.health ?? '健康') as TemplateHealth;
-  const blockers = deriveTemplateBlockers({
-    health,
-    dependencyStatus,
-    blockers: raw.blockers ?? fallback?.blockers ?? [],
-  });
+  const blockers = evaluated.blockers.length
+    ? evaluated.blockers
+    : deriveTemplateBlockers({
+      health: evaluated.health,
+      dependencyStatus,
+      blockers: raw.blockers ?? fallback?.blockers ?? [],
+    });
+  const health: WorkflowTemplateAsset['health'] = blockers.length > 0 ? '需授权' : evaluated.health;
+  const department = (raw.department as DepartmentKey | undefined)
+    ?? fallback?.department
+    ?? matchDepartmentKey(raw.owner)
+    ?? 'it';
   return {
     id: raw.id,
     name: raw.name,
-    version: raw.version ?? fallback?.version ?? 'v1.0',
+    version: raw.version ?? fallback?.version ?? '1.0.0',
     category: (raw.category as WorkflowTemplateAsset['category']) ?? fallback?.category ?? 'business',
+    department,
+    departmentLabel: raw.departmentLabel ?? fallback?.departmentLabel ?? departmentLabel(department),
+    audience: raw.audience ?? fallback?.audience ?? '内部用户',
     description: raw.description ?? fallback?.description ?? '',
     nodes: raw.nodes ?? fallback?.nodes ?? (raw.sequence?.length ?? 0),
     installs: raw.installs ?? fallback?.installs ?? 0,
     rating: raw.rating ?? fallback?.rating ?? 0,
-    owner: raw.owner ?? fallback?.owner ?? '未指定维护团队',
+    owner: raw.owner ?? fallback?.owner ?? '平台内置',
     verifiedAt: raw.verifiedAt ?? fallback?.verifiedAt ?? '—',
     risk: (raw.risk as WorkflowTemplateAsset['risk']) ?? fallback?.risk ?? 'L2',
-    dependencies: raw.dependencies ?? fallback?.dependencies ?? dependencyStatus.map((item) => item.name),
+    dependencies: raw.dependencies ?? fallback?.dependencies ?? connectors.map((c) => c.slot),
     dependencyStatus,
     health,
-    successRate: raw.successRate ?? fallback?.successRate ?? '—',
-    sequence: (raw.sequence as WorkflowNodeKind[]) ?? fallback?.sequence ?? ['event', 'decision', 'audit', 'notify'],
+    healthHint: raw.healthHint ?? evaluated.healthHint ?? fallback?.healthHint,
+    successRate: raw.successRate ?? fallback?.successRate ?? (raw.certification === 'certified' || fallback?.certification === 'certified' ? 'Certified' : '—'),
+    sequence: (raw.sequence as WorkflowTemplateAsset['sequence']) ?? fallback?.sequence ?? ['event', 'decision', 'audit', 'notify'],
     blockers,
     variables: raw.variables ?? fallback?.variables ?? [],
     permissions: raw.permissions ?? fallback?.permissions ?? [],
     changelog: raw.changelog ?? fallback?.changelog ?? [],
     recentRuns: raw.recentRuns ?? fallback?.recentRuns ?? [],
+    library: raw.library ?? fallback?.library ?? 'default',
+    parentId: raw.parentId ?? fallback?.parentId,
+    suggestedExpertRole: raw.suggestedExpertRole ?? fallback?.suggestedExpertRole,
+    certification: raw.certification ?? fallback?.certification ?? (raw.library === 'advanced' ? 'advanced' : 'certified'),
+    industryTags: raw.industryTags ?? fallback?.industryTags ?? ['all'],
+    connectors,
+    degrade,
+    antiPatterns: raw.antiPatterns ?? fallback?.antiPatterns,
+    graph: raw.graph ?? fallback?.graph,
+    fixtures: raw.fixtures ?? fallback?.fixtures,
+    builtin: raw.builtin ?? fallback?.builtin ?? (raw.source === 'personal' || raw.source === 'user' ? false : true),
+    source: raw.source ?? fallback?.source ?? (raw.builtin === false ? 'personal' : 'platform'),
+    ownerId: raw.ownerId ?? fallback?.ownerId,
+    workspaceId: raw.workspaceId ?? fallback?.workspaceId,
+    createdAt: raw.createdAt ?? fallback?.createdAt,
+    updatedAt: raw.updatedAt ?? fallback?.updatedAt,
+    knowledgePackageIds: raw.knowledgePackageIds ?? fallback?.knowledgePackageIds ?? [],
+    requiredSkills: raw.requiredSkills ?? fallback?.requiredSkills ?? [],
+    optionalSkills: raw.optionalSkills ?? fallback?.optionalSkills ?? [],
+    scenarioId: raw.scenarioId ?? fallback?.scenarioId,
   };
 }
-
 
 /* ============ 版本快照 ============ */
 type Snapshot = { nodes: Node[]; edges: Edge[] };
@@ -730,6 +572,25 @@ function cloneSnapshot(snapshot: Snapshot): Snapshot {
 }
 
 function templateSnapshot(template: WorkflowTemplateAsset): Snapshot {
+  if (template.graph?.nodes?.length) {
+    const nodes = template.graph.nodes.map((node) => ({
+      id: node.id,
+      type: 'custom',
+      position: node.position ?? { x: 80, y: 80 },
+      data: {
+        kind: (node.kind as WorkflowNodeKind) || 'task',
+        label: node.label || NODE_LABELS[(node.kind as WorkflowNodeKind)] || node.kind,
+      },
+    } as Node));
+    return {
+      nodes,
+      edges: (template.graph.edges ?? []).map((edge) => ({
+        id: edge.id,
+        source: edge.source,
+        target: edge.target,
+      })),
+    };
+  }
   const sequence = template.sequence;
   const nodes = sequence.map((kind, index) => ({
     id: `n${index + 1}`,
@@ -770,7 +631,13 @@ export default function Workflows() {
   const [deleteConfirmNodeId, setDeleteConfirmNodeId] = useState<string | null>(null);
 
   // 模板筛选
-  const [filterGroup, setFilterGroup] = useState<'all' | 'business' | 'system' | 'security' | 'ai'>('all');
+  const [filterGroup, setFilterGroup] = useState<DepartmentKey | 'all'>('office');
+  const [filterIndustry, setFilterIndustry] = useState<string>('all');
+  const [templateOriginFilter, setTemplateOriginFilter] = useState<TemplateOrigin>('platform');
+  const [showAdvancedLibrary, setShowAdvancedLibrary] = useState(false);
+  const [workspaceDeptOnly, setWorkspaceDeptOnly] = useState(false);
+  const [connectorBindings, setConnectorBindings] = useState<ConnectorBindings>(() => loadConnectorBindings(currentWorkspaceId));
+  const [upgradeDiff, setUpgradeDiff] = useState<{ template: WorkflowTemplateAsset; diff: TemplateUpgradeDiff } | null>(null);
 
   // 顶部操作按钮组
   const [webhookEnabled, setWebhookEnabled] = useState(true);
@@ -796,8 +663,17 @@ export default function Workflows() {
   const [generationModel, setGenerationModel] = useState('企业默认模型');
   const { data: generationHistoryData } = useApiQuery<GenerationResult[]>(['workflow-generations'], '/api/workflows/generations');
   const generationHistory = generationHistoryData ?? [];
-  const { data: templateAssetsData } = useApiQuery<Array<Partial<WorkflowTemplateAsset> & { id: string; name: string }>>(['workflow-templates'], '/api/workflow-templates');
+  const { data: templateAssetsData, refetch: refetchTemplates } = useApiQuery<Array<Partial<WorkflowTemplateAsset> & { id: string; name: string }>>(['workflow-templates'], '/api/workflow-templates');
   const templateAssets = templateAssetsData ?? [];
+  const { data: employeesData } = useApiQuery<DigitalEmployee[]>(['digital-employees'], '/api/digital-employees');
+  const workspaceDepartments = useMemo(() => {
+    const keys = new Set<DepartmentKey>();
+    for (const employee of employeesData ?? []) {
+      const key = matchDepartmentKey(employee.department);
+      if (key) keys.add(key);
+    }
+    return keys;
+  }, [employeesData]);
   const { data: workflowListData } = useApiQuery<Array<Pick<Workflow, 'id'>>>(['workflows', currentWorkspaceId], '/api/workflows');
   const workflowList = Array.isArray(workflowListData) ? workflowListData : [];
   const workflowId = workflowList[0]?.id ?? '';
@@ -907,6 +783,44 @@ export default function Workflows() {
         showToast(message.replace(/^E_[A-Z_]+:\s*/, ''), 'error');
       },
     },
+  );
+  const createPersonalTemplateApi = useApiMutation<
+    Partial<WorkflowTemplateAsset> & { id: string; name: string },
+    {
+      name: string;
+      description?: string;
+      department?: string;
+      sequence?: string[];
+      graph?: { nodes: unknown[]; edges: unknown[] };
+      risk?: string;
+    }
+  >('/api/workflow-templates', {
+    invalidateKeys: [['workflow-templates']],
+    onSuccess: (tpl) => {
+      setTemplateOriginFilter('personal');
+      setTab('templates');
+      showToast(`已保存个人模板「${tpl.name}」`, 'success');
+      void refetchTemplates();
+    },
+    onError: (err) => {
+      const message = err instanceof Error ? err.message : '保存个人模板失败';
+      showToast(message.replace(/^E_[A-Z_]+:\s*/, ''), 'error');
+    },
+  });
+  const deletePersonalTemplateApi = useApiMutation<{ ok: boolean; id: string }, { id: string }>(
+    (vars) => `/api/workflow-templates/${vars.id}`,
+    {
+      invalidateKeys: [['workflow-templates']],
+      onSuccess: () => {
+        showToast('已删除个人模板', 'info');
+        void refetchTemplates();
+      },
+      onError: (err) => {
+        const message = err instanceof Error ? err.message : '删除失败';
+        showToast(message.replace(/^E_[A-Z_]+:\s*/, ''), 'error');
+      },
+    },
+    'DELETE',
   );
   const rollbackVersionApi = useApiMutation<{ draft: any; version: VersionSnapshot; restoredFrom: string }, { workflowId: string; versionId: string }>(
     (vars) => `/api/workflows/${vars.workflowId}/rollback`,
@@ -1078,11 +992,30 @@ export default function Workflows() {
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedNodeId, contextMenu, versionMenuOpen, previewTemplate, undo, redo]);
 
-  const availableTemplates = useMemo(
-    () => (templateAssets.length > 0 ? templateAssets.map((item) => normalizeTemplateAsset(item)) : TEMPLATES),
-    [templateAssets],
-  );
-  const filteredTemplates = availableTemplates.filter((t) => filterGroup === 'all' || t.category === filterGroup);
+  const availableTemplates = useMemo(() => {
+    const fromApi = templateAssets.length > 0
+      ? templateAssets.map((item) => normalizeTemplateAsset(item, connectorBindings))
+      : (templateOriginFilter === 'personal'
+        ? []
+        : ALL_WORKFLOW_TEMPLATES.map((item) => normalizeTemplateAsset(item, connectorBindings)));
+    const byId = new Map(fromApi.map((item) => [item.id, item]));
+    // 仅在平台库补齐前端出厂包；个人库完全以 API / mock 为准
+    if (templateOriginFilter === 'platform') {
+      for (const item of ALL_WORKFLOW_TEMPLATES) {
+        if (!byId.has(item.id)) byId.set(item.id, normalizeTemplateAsset(item, connectorBindings));
+      }
+    }
+    return filterByIndustry(Array.from(byId.values()), filterIndustry);
+  }, [templateAssets, connectorBindings, filterIndustry, templateOriginFilter]);
+  const filteredTemplates = availableTemplates.filter((t) => {
+    if (templateOriginFilter === 'platform' ? !isPlatformTemplate(t) : !isPersonalTemplate(t)) return false;
+    if (templateOriginFilter === 'platform' && !showAdvancedLibrary && t.library === 'advanced') return false;
+    if (filterGroup !== 'all' && t.department !== filterGroup) return false;
+    if (workspaceDeptOnly && workspaceDepartments.size > 0 && !workspaceDepartments.has(t.department)) return false;
+    return true;
+  });
+  const platformTemplateCount = availableTemplates.filter((t) => isPlatformTemplate(t) && t.library === 'default').length;
+  const personalTemplateCount = availableTemplates.filter((t) => isPersonalTemplate(t)).length;
   const filteredLibrary = NODE_LIB.filter((k) =>
     !librarySearchQ || NODE_LABELS[k].includes(librarySearchQ) || NODE_DESCS[k].toLowerCase().includes(librarySearchQ.toLowerCase()),
   );
@@ -1366,21 +1299,27 @@ export default function Workflows() {
   }, [discardGenerationApi, generationResult]);
   const createTemplateDraft = useCallback((template: WorkflowTemplateAsset) => {
     if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
-    const asset = normalizeTemplateAsset(template);
+    const asset = normalizeTemplateAsset(template, connectorBindings);
     const snapshot = templateSnapshot(asset);
     const currentSnapshot = versions.find((version) => version.id === activeVersion);
     const hasUnsavedChanges = !currentSnapshot || JSON.stringify({ nodes, edges }) !== JSON.stringify({ nodes: currentSnapshot.nodes, edges: currentSnapshot.edges });
     if (hasUnsavedChanges && !window.confirm('当前画布存在未保存修改。模板将创建为新的隔离草稿，是否继续？')) return;
     const revisionId = `tpl_${asset.id}_${Date.now().toString(36)}`;
-    const reasons = deriveTemplateBlockers(asset);
+    const reasons = asset.blockers.length ? asset.blockers : deriveTemplateBlockers(asset);
     const blocked = !isTemplateReusable(asset);
+    const provenance = {
+      sourceTemplateId: asset.id,
+      sourceTemplateVersion: asset.version,
+      certification: asset.certification,
+      degraded: Boolean(asset.healthHint),
+    };
     setNodes(snapshot.nodes);
     setEdges(snapshot.edges);
     setVersions((previous) => [{
       id: revisionId,
       label: `${asset.version} · 模板草稿`,
       time: '刚刚',
-      desc: `来源模板 ${asset.id} · ${asset.name} · ${asset.owner}`,
+      desc: `sourceTemplateId=${asset.id}@${asset.version} · ${asset.name} · ${asset.owner}${asset.healthHint ? ` · ${asset.healthHint}` : ''}`,
       nodes: cloneSnapshot(snapshot).nodes,
       edges: cloneSnapshot(snapshot).edges,
     }, ...previous]);
@@ -1394,16 +1333,88 @@ export default function Workflows() {
       templateName: asset.name,
       templateVersion: asset.version,
       owner: asset.owner,
+      sourceTemplateId: provenance.sourceTemplateId,
+      sourceTemplateVersion: provenance.sourceTemplateVersion,
+      degraded: provenance.degraded,
+      healthHint: asset.healthHint,
     });
     setTab('canvas');
     setSidePanel('properties');
     showToast(
       blocked
         ? `已基于「${asset.name}」创建隔离草稿（依赖未授权，试运行与发布已禁用）`
-        : `已基于「${asset.name}」创建隔离草稿`,
+        : asset.healthHint
+          ? `已基于「${asset.name}」创建隔离草稿（${asset.healthHint}）`
+          : `已基于「${asset.name}」创建隔离草稿（溯源 ${asset.id}@${asset.version}）`,
       blocked ? 'info' : 'success',
     );
-  }, [activeVersion, canWrite, edges, nodes, pushHistory, showToast, versions]);
+  }, [activeVersion, canWrite, connectorBindings, edges, nodes, pushHistory, showToast, versions]);
+
+  const saveAsPersonalTemplate = useCallback(() => {
+    if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
+    if (!nodes.length) { showToast('空画布不能保存为个人模板', 'error'); return; }
+    const defaultName = versions.find((v) => v.id === activeVersion)?.label?.replace(/^v?\d[\w.-]*\s*[·•-]?\s*/, '') || '我的流程模板';
+    const name = window.prompt('个人模板名称', defaultName || '我的流程模板');
+    if (name == null) return;
+    const trimmed = name.trim();
+    if (!trimmed) { showToast('模板名称不能为空', 'error'); return; }
+    const sequence = nodes.map((n) => String(n.data?.kind ?? 'task'));
+    createPersonalTemplateApi.mutate({
+      name: trimmed,
+      description: `由画布另存 · ${nodes.length} 节点 / ${edges.length} 连线`,
+      department: filterGroup === 'all' ? 'it' : filterGroup,
+      sequence,
+      graph: {
+        nodes: nodes.map((n) => ({ id: n.id, kind: n.data?.kind, label: n.data?.label, position: n.position })),
+        edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+      },
+      risk: 'L2',
+    });
+  }, [activeVersion, canWrite, createPersonalTemplateApi, edges, filterGroup, nodes, showToast, versions]);
+
+  const deletePersonalTemplate = useCallback((template: WorkflowTemplateAsset) => {
+    if (!canWrite) { showToast('当前账号没有工作流编辑权限', 'error'); return; }
+    if (!isPersonalTemplate(template)) { showToast('平台内置模板不可删除', 'error'); return; }
+    if (!window.confirm(`确认删除个人模板「${template.name}」？此操作不可恢复。`)) return;
+    deletePersonalTemplateApi.mutate({ id: template.id });
+  }, [canWrite, deletePersonalTemplateApi, showToast]);
+
+  const bindConnectorSlot = useCallback((slotName: string, binding = `workspace:${slotName}`) => {
+    const next = { ...connectorBindings, [slotName]: binding };
+    setConnectorBindings(next);
+    saveConnectorBindings(currentWorkspaceId, next);
+    showToast(`已绑定槽位 ${slotName}`, 'success');
+  }, [connectorBindings, currentWorkspaceId, showToast]);
+
+  const openUpgradeDiff = useCallback((template: WorkflowTemplateAsset) => {
+    const latest = availableTemplates.find((t) => t.id === template.id) ?? template;
+    const current = draftGate?.sourceTemplateId === template.id
+      ? { ...template, version: draftGate.sourceTemplateVersion || template.version }
+      : { ...template, version: '0.9.0' };
+    // 演示：若 changelog 含更高版本预告，构造升级 Diff
+    const previewLatest = template.changelog.some((c) => c.version !== template.version)
+      ? {
+          ...latest,
+          version: template.changelog.map((c) => c.version).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).at(-1) || latest.version,
+        }
+      : latest;
+    const diff = diffTemplateUpgrade(current, previewLatest);
+    if (!diff.available && template.id === 'wf.fin.expense') {
+      const synthetic = diffTemplateUpgrade(
+        { ...template, version: '1.0.0' },
+        {
+          ...template,
+          version: '1.1.0',
+          sequence: [...template.sequence, 'schedule'],
+          connectors: [...template.connectors, { slot: 'budget.check', label: '预算校验', required: false, capability: 'budget.check' }],
+          changelog: [...template.changelog],
+        },
+      );
+      setUpgradeDiff({ template, diff: synthetic });
+      return;
+    }
+    setUpgradeDiff({ template, diff });
+  }, [availableTemplates, draftGate]);
   const exportWorkflow = useCallback(() => {
     const data = {
       version: '1.0',
@@ -1606,11 +1617,18 @@ export default function Workflows() {
                   {nodes.length} 节点 · {edges.length} 连线
                 </span>
                 {isDirty && <Badge tone="warn">草稿未保存</Badge>}
+                {canWrite && nodes.length > 0 && (
+                  <Button size="sm" variant="secondary" onClick={() => saveAsPersonalTemplate()}>
+                    <Save className="h-3.5 w-3.5" />存为个人模板
+                  </Button>
+                )}
               </>
             )}
             {tab === 'templates' && (
               <span className="rounded-lg bg-[var(--bg)] px-2.5 py-1.5 text-[11px] text-[var(--text-muted)]" style={{ boxShadow: 'var(--saas-ring)' }}>
-                模板库 · {TEMPLATES.length} 套
+                {templateOriginFilter === 'personal'
+                  ? `个人创建 · ${personalTemplateCount} 套`
+                  : `平台内置 · ${platformTemplateCount} 套`}
               </span>
             )}
             {tab === 'publishSkill' && (
@@ -1749,10 +1767,26 @@ export default function Workflows() {
           <TemplatesView
             filterGroup={filterGroup}
             setFilterGroup={setFilterGroup}
+            filterIndustry={filterIndustry}
+            setFilterIndustry={setFilterIndustry}
+            templateOrigin={templateOriginFilter}
+            setTemplateOrigin={setTemplateOriginFilter}
+            platformCount={platformTemplateCount}
+            personalCount={personalTemplateCount}
             filteredTemplates={filteredTemplates}
-            showToast={showToast}
+            showAdvancedLibrary={showAdvancedLibrary}
+            setShowAdvancedLibrary={setShowAdvancedLibrary}
+            workspaceDeptOnly={workspaceDeptOnly}
+            setWorkspaceDeptOnly={setWorkspaceDeptOnly}
+            workspaceDeptCount={workspaceDepartments.size}
             onPreview={(t) => setPreviewTemplate(t)}
             onUseTemplate={createTemplateDraft}
+            onBindSlot={bindConnectorSlot}
+            onUpgradeDiff={openUpgradeDiff}
+            onDeletePersonal={deletePersonalTemplate}
+            onSaveFromCanvas={() => { setTab('canvas'); }}
+            canWrite={canWrite}
+            connectorBindings={connectorBindings}
           />
         )}
 
@@ -2167,6 +2201,42 @@ export default function Workflows() {
           onUseTemplate={createTemplateDraft}
         />
       )}
+
+      <Drawer
+        open={Boolean(upgradeDiff)}
+        onClose={() => setUpgradeDiff(null)}
+        width={480}
+        title="模板版本升级 Diff"
+        description={upgradeDiff ? `${upgradeDiff.template.name} · ${upgradeDiff.diff.fromVersion} → ${upgradeDiff.diff.toVersion}` : ''}
+        footer={<Button size="sm" className="w-full" onClick={() => setUpgradeDiff(null)}>关闭</Button>}
+      >
+        {upgradeDiff && (
+          <div className="space-y-3 p-1 text-xs leading-5">
+            <div className={cn('rounded-lg border px-3 py-2', upgradeDiff.diff.available ? 'border-[var(--info)]/30 bg-[var(--info-bg)] text-[var(--info)]' : 'border-[var(--border)] text-[var(--text-muted)]')}>
+              {upgradeDiff.diff.available ? '检测到可升级版本（择期应用，不强制）' : '当前已是目录最新版本'}
+            </div>
+            <div>
+              <div className="mb-1 font-semibold text-[var(--text)]">节点变更</div>
+              <div>新增：{upgradeDiff.diff.sequenceAdded.join(', ') || '—'}</div>
+              <div>移除：{upgradeDiff.diff.sequenceRemoved.join(', ') || '—'}</div>
+            </div>
+            <div>
+              <div className="mb-1 font-semibold text-[var(--text)]">连接器槽位</div>
+              <div>新增：{upgradeDiff.diff.connectorAdded.join(', ') || '—'}</div>
+              <div>移除：{upgradeDiff.diff.connectorRemoved.join(', ') || '—'}</div>
+            </div>
+            <div>
+              <div className="mb-1 font-semibold text-[var(--text)]">变更说明</div>
+              <ul className="list-disc pl-4 text-[var(--text-secondary)]">
+                {(upgradeDiff.diff.notes.length ? upgradeDiff.diff.notes : ['无额外说明']).map((note) => (
+                  <li key={note}>{note}</li>
+                ))}
+              </ul>
+            </div>
+            <p className="text-[11px] text-[var(--text-muted)]">升级不会覆盖工作区草稿；确认后需重新创建草稿并校验门禁。</p>
+          </div>
+        )}
+      </Drawer>
 
       <Drawer
         open={preflightOpen}
@@ -3353,158 +3423,421 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 /* =============================================================
- *  工作流模版库
+ *  工作流模版库（平台认证模板 + IT 高级库）
  * ============================================================= */
+const TPL_PAGE_SIZE = 6;
+
 function TemplatesView({
-  filterGroup, setFilterGroup, filteredTemplates, showToast, onPreview, onUseTemplate,
+  filterGroup, setFilterGroup, filterIndustry, setFilterIndustry, filteredTemplates,
+  templateOrigin, setTemplateOrigin, platformCount, personalCount,
+  showAdvancedLibrary, setShowAdvancedLibrary,
+  workspaceDeptOnly, setWorkspaceDeptOnly, workspaceDeptCount,
+  onPreview, onUseTemplate, onBindSlot, onUpgradeDiff, onDeletePersonal, onSaveFromCanvas,
+  canWrite, connectorBindings,
 }: {
-  filterGroup: 'all' | 'business' | 'system' | 'security' | 'ai';
-  setFilterGroup: (k: 'all' | 'business' | 'system' | 'security' | 'ai') => void;
+  filterGroup: DepartmentKey | 'all';
+  setFilterGroup: (k: DepartmentKey | 'all') => void;
+  filterIndustry: string;
+  setFilterIndustry: (k: string) => void;
   filteredTemplates: WorkflowTemplateAsset[];
-  showToast: (msg: string, tone?: 'success' | 'error' | 'info') => void;
+  templateOrigin: TemplateOrigin;
+  setTemplateOrigin: (k: TemplateOrigin) => void;
+  platformCount: number;
+  personalCount: number;
+  showAdvancedLibrary: boolean;
+  setShowAdvancedLibrary: (v: boolean) => void;
+  workspaceDeptOnly: boolean;
+  setWorkspaceDeptOnly: (v: boolean) => void;
+  workspaceDeptCount: number;
   onPreview: (t: WorkflowTemplateAsset) => void;
   onUseTemplate: (t: WorkflowTemplateAsset) => void;
+  onBindSlot: (slot: string) => void;
+  onUpgradeDiff: (t: WorkflowTemplateAsset) => void;
+  onDeletePersonal: (t: WorkflowTemplateAsset) => void;
+  onSaveFromCanvas: () => void;
+  canWrite: boolean;
+  connectorBindings: ConnectorBindings;
 }) {
+  const isPersonal = templateOrigin === 'personal';
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState<'all' | 'healthy' | 'review'>('all');
   const [page, setPage] = useState(1);
-  const visibleTemplates = filteredTemplates.filter((template) => {
-    const matchesQuery = !query.trim() || `${template.name} ${template.description} ${template.owner} ${template.dependencies.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase());
+
+  const visibleTemplates = useMemo(() => filteredTemplates.filter((template) => {
+    const hay = `${template.name} ${template.description} ${template.owner} ${template.departmentLabel} ${template.audience} ${template.industryTags.join(' ')} ${template.connectors.map((c) => c.slot).join(' ')}`.toLowerCase();
+    const matchesQuery = !query.trim() || hay.includes(query.trim().toLowerCase());
     const matchesScope = scope === 'all' || (scope === 'healthy' ? isTemplateReusable(template) : needsTemplateReview(template));
     return matchesQuery && matchesScope;
-  });
-  const pageSize = 8;
-  const pageCount = Math.max(1, Math.ceil(visibleTemplates.length / pageSize));
-  const currentPage = Math.min(page, pageCount);
-  const pagedTemplates = visibleTemplates.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  }), [filteredTemplates, query, scope]);
+
+  /** 全部部门：统一平铺；单部门筛选时同样平铺（不再插入分组标题） */
+  const flatList = useMemo(
+    () => visibleTemplates.slice().sort((a, b) => {
+      if (filterGroup === 'all') {
+        return a.department.localeCompare(b.department) || a.name.localeCompare(b.name, 'zh');
+      }
+      return a.name.localeCompare(b.name, 'zh');
+    }),
+    [visibleTemplates, filterGroup],
+  );
+
+  const readyCount = visibleTemplates.filter((t) => isTemplateReusable(t)).length;
+  const reviewCount = visibleTemplates.length - readyCount;
+  const totalCount = flatList.length;
+  const totalPages = Math.max(1, Math.ceil(totalCount / TPL_PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
 
   useEffect(() => {
     setPage(1);
-  }, [query, scope, filteredTemplates]);
+  }, [query, scope, filterGroup, filterIndustry, showAdvancedLibrary, workspaceDeptOnly, templateOrigin]);
+
+  useEffect(() => {
+    if (page !== safePage) setPage(safePage);
+  }, [page, safePage]);
+
+  const pagedFlat = useMemo(() => {
+    const start = (safePage - 1) * TPL_PAGE_SIZE;
+    return flatList.slice(start, start + TPL_PAGE_SIZE);
+  }, [flatList, safePage]);
+
+  const rangeStart = totalCount === 0 ? 0 : (safePage - 1) * TPL_PAGE_SIZE + 1;
+  const rangeEnd = Math.min(safePage * TPL_PAGE_SIZE, totalCount);
+
+  const renderCard = (t: WorkflowTemplateAsset, compact = false) => {
+    const reusable = isTemplateReusable(t);
+    const personal = isPersonalTemplate(t);
+    const unbound = (t.connectors ?? []).filter((c) => !c.defaultBinding && !connectorBindings[c.slot] && c.slot !== 'notify.send' && c.slot !== 'knowledge.retrieve');
+    const industryLabel = (t.industryTags ?? []).filter((tag) => tag !== 'all').slice(0, 2);
+    return (
+      <article
+        key={t.id}
+        className={cn(
+          'wf-tpl-card group',
+          compact && 'wf-tpl-card--compact',
+          t.library === 'advanced' && 'wf-tpl-card--advanced',
+          personal && 'wf-tpl-card--personal',
+          !reusable && 'wf-tpl-card--blocked',
+        )}
+      >
+        <header className="wf-tpl-card__head">
+          <div className="min-w-0 flex-1">
+            <div className="wf-tpl-card__title-row">
+              <h3 className="wf-tpl-card__title" title={t.name}>{t.name}</h3>
+              {personal
+                ? <span className="wf-tpl-chip wf-tpl-chip--info">个人创建</span>
+                : t.certification === 'certified' && <span className="wf-tpl-chip wf-tpl-chip--ok">平台认证</span>}
+              {t.library === 'advanced' && <span className="wf-tpl-chip">高级库</span>}
+              {t.parentId && <span className="wf-tpl-chip wf-tpl-chip--info">子流程</span>}
+            </div>
+            <p className="wf-tpl-card__meta">
+              <span>{t.audience}</span>
+              <span aria-hidden="true">·</span>
+              <span className="font-mono text-[10px]">{t.version}</span>
+              <span aria-hidden="true">·</span>
+              <span>风险 {t.risk}</span>
+              {personal && t.owner && (
+                <>
+                  <span aria-hidden="true">·</span>
+                  <span>{t.owner}</span>
+                </>
+              )}
+            </p>
+          </div>
+          <span className={cn('wf-tpl-status', reusable ? 'is-ready' : 'is-blocked')}>
+            {reusable ? (t.healthHint ? '可降级使用' : '可直接使用') : '需先授权'}
+          </span>
+        </header>
+
+        <p className={cn('wf-tpl-card__desc', compact && 'line-clamp-2')}>{t.description}</p>
+
+        {t.healthHint && (
+          <div className="wf-tpl-callout wf-tpl-callout--info">{t.healthHint}</div>
+        )}
+
+        {!reusable && t.blockers.length > 0 && (
+          <div className="wf-tpl-callout wf-tpl-callout--warn">
+            <span>{t.blockers[0]}{t.blockers.length > 1 ? ` 等 ${t.blockers.length} 项` : ''}</span>
+            {unbound[0] && (
+              <button type="button" className="wf-tpl-link" onClick={() => onBindSlot(unbound[0].slot)}>去绑定</button>
+            )}
+          </div>
+        )}
+
+        {!compact && (
+          <div className="wf-tpl-card__flow" aria-label={`共 ${t.nodes} 个节点`}>
+            {t.sequence.slice(0, 5).map((kind, index) => {
+              const StageIcon = NODE_ICONS[kind];
+              return (
+                <div key={`${kind}-${index}`} className="wf-tpl-card__flow-item">
+                  {index > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-[var(--border-strong)]" aria-hidden="true" />}
+                  <span title={NODE_LABELS[kind]} className="wf-tpl-card__flow-icon">
+                    <StageIcon className="h-3 w-3" />
+                  </span>
+                  <span className="wf-tpl-card__flow-label">{NODE_LABELS[kind]}</span>
+                </div>
+              );
+            })}
+            {t.sequence.length > 5 && <span className="wf-tpl-card__flow-more">+{t.sequence.length - 5}</span>}
+          </div>
+        )}
+
+        {!compact && (t.connectors?.length ?? 0) > 0 && (
+          <div className="wf-tpl-card__slots">
+            {t.connectors.slice(0, 3).map((c) => {
+              const bound = Boolean(c.defaultBinding || connectorBindings[c.slot] || c.slot === 'notify.send' || c.slot === 'knowledge.retrieve');
+              return (
+                <button
+                  key={c.slot}
+                  type="button"
+                  title={`${c.label}（${c.slot}）`}
+                  onClick={() => !bound && onBindSlot(c.slot)}
+                  className={cn('wf-tpl-slot', bound ? 'is-bound' : 'is-open')}
+                >
+                  {c.label}{c.required ? '' : '（可选）'}
+                </button>
+              );
+            })}
+            {t.connectors.length > 3 && <span className="wf-tpl-slot is-more">+{t.connectors.length - 3}</span>}
+          </div>
+        )}
+
+        {(industryLabel.length > 0 || !compact || (t.knowledgePackageIds?.length ?? 0) > 0 || (t.requiredSkills?.length ?? 0) > 0) && (
+          <div className="wf-tpl-card__tags">
+            {industryLabel.map((tag) => (
+              <span key={tag} className="wf-tpl-tag">{tag}</span>
+            ))}
+            {industryLabel.length === 0 && <span className="wf-tpl-tag">通用</span>}
+            {(t.knowledgePackageIds ?? []).slice(0, 2).map((id) => (
+              <span key={id} className="wf-tpl-tag wf-tpl-tag--knowledge" title={id}>知识 · {id.replace(/^kp\.office\./, '')}</span>
+            ))}
+            {(t.requiredSkills ?? []).slice(0, 3).map((sk) => (
+              <span key={sk} className="wf-tpl-tag wf-tpl-tag--skill" title={sk}>技能 · {sk}</span>
+            ))}
+          </div>
+        )}
+
+        <footer className="wf-tpl-card__foot">
+          <div className="wf-tpl-card__actions">
+            <button type="button" className="wf-tpl-ghost" onClick={() => onPreview(t)}>
+              <Eye className="h-3.5 w-3.5" />预览
+            </button>
+            {!personal && (
+              <button type="button" className="wf-tpl-ghost" onClick={() => onUpgradeDiff(t)} title="查看版本差异">
+                <GitCompare className="h-3.5 w-3.5" />版本
+              </button>
+            )}
+            {personal && canWrite && (
+              <button type="button" className="wf-tpl-ghost wf-tpl-ghost--danger" onClick={() => onDeletePersonal(t)} title="删除个人模板">
+                <Trash2 className="h-3.5 w-3.5" />删除
+              </button>
+            )}
+          </div>
+          <Button size="sm" className="rounded-lg px-3.5" onClick={() => onUseTemplate(t)}>
+            使用模板<ArrowRight className="h-3.5 w-3.5" />
+          </Button>
+        </footer>
+      </article>
+    );
+  };
 
   return (
-    <div className="workflow-template-page h-full overflow-y-auto bg-[var(--bg-elevated)] p-6">
-      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
-        <div className="max-w-3xl">
-          <h2 className="text-base font-semibold flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-[var(--brand)]" />工作流模版库
-          </h2>
-          <p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">
-            {filteredTemplates.length} 套受治理处置流程资产 · 创建隔离草稿后经校验发布为流程技能，供数字工作伙伴能力装配与专家协同引用。模板本身不可直接上岗调用。
+    <div className="wf-tpl-page">
+      <div className="wf-tpl-origin" role="tablist" aria-label="模板来源">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={!isPersonal}
+          className={cn('wf-tpl-origin__btn', !isPersonal && 'is-active')}
+          onClick={() => setTemplateOrigin('platform')}
+        >
+          平台内置<em>{platformCount}</em>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={isPersonal}
+          className={cn('wf-tpl-origin__btn', isPersonal && 'is-active')}
+          onClick={() => setTemplateOrigin('personal')}
+        >
+          个人创建<em>{personalCount}</em>
+        </button>
+      </div>
+
+      <header className="wf-tpl-hero">
+        <div className="wf-tpl-hero__main">
+          <div className="wf-tpl-hero__eyebrow">
+            <Sparkles className="h-3.5 w-3.5" />
+            {isPersonal ? '工作区私有 · 可复用草稿' : '平台认证 · 可安全复用'}
+          </div>
+          <h2 className="wf-tpl-hero__title">{isPersonal ? '个人创建模板' : '平台认证模板'}</h2>
+          <p className="wf-tpl-hero__lead">
+            {isPersonal
+              ? '由当前账号从画布另存，仅本工作区可见。选用后生成可编辑草稿，可继续校验、试运行并发布为流程技能。'
+              : filterGroup === 'office'
+                ? '面向日常办公：制度问答、会议纪要、周报、请假出差等。配套开箱知识与办公技能，可直接使用。'
+                : '覆盖入职、报销、权限、发版等部门场景，以及办公通用流程。选用后生成可编辑草稿，配置连接并校验通过后即可发布为流程技能。'}
           </p>
+          <ol className="wf-tpl-steps" aria-label="使用路径">
+            {(isPersonal
+              ? ['画布编排', '存为个人模板', '再次使用', '发布技能']
+              : ['选用模板', '配置连接', '校验试运行', '发布技能']
+            ).map((label, index) => (
+              <li key={label} className="wf-tpl-steps__item">
+                {index > 0 && <span className="wf-tpl-steps__sep" aria-hidden="true" />}
+                <span className="wf-tpl-steps__num">{index + 1}</span>
+                <span className="wf-tpl-steps__label">{label}</span>
+              </li>
+            ))}
+          </ol>
         </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <span className="mr-1 text-xs font-semibold leading-5 text-[var(--text-muted)]">分组</span>
-          {([
-            { k: 'all' as const, label: '全部' },
-            { k: 'business' as const, label: '业务' },
-            { k: 'system' as const, label: '系统' },
-            { k: 'security' as const, label: '安全' },
-            { k: 'ai' as const, label: '研判分析' },
-          ]).map((g) => (
-            <button
-              key={g.k}
-              onClick={() => setFilterGroup(g.k)}
-              className={cn(
-                'rounded-md px-2.5 py-1 text-xs leading-5 transition-colors',
-                filterGroup === g.k
-                  ? 'bg-[var(--brand)] text-white'
-                  : 'bg-[var(--bg)] text-[var(--text-muted)] border border-[var(--border)] hover:border-[var(--brand)]',
-              )}
+        <aside className="wf-tpl-hero__aside" aria-label="库说明">
+          <div className="wf-tpl-stat">
+            <strong>{visibleTemplates.length}</strong>
+            <span>当前可见</span>
+          </div>
+          <div className="wf-tpl-stat">
+            <strong>{readyCount}</strong>
+            <span>可直接使用</span>
+          </div>
+          <div className="wf-tpl-stat">
+            <strong>{reviewCount}</strong>
+            <span>需先授权</span>
+          </div>
+          <p className="wf-tpl-hero__note">
+            {isPersonal
+              ? '个人模板不会覆盖平台内置包；删除仅影响自己创建的条目。可在画布页点击「存为个人模板」。'
+              : '源模板只读；运维类剧本请打开「IT 高级库」。创建隔离草稿后不会覆盖现有画布版本。'}
+          </p>
+        </aside>
+      </header>
+
+      <div className="wf-tpl-toolbar">
+        <div className="wf-tpl-toolbar__depts" role="group" aria-label="按部门筛选">
+          {DEPARTMENT_OPTIONS.map((g) => {
+            const count = g.key === 'all'
+              ? visibleTemplates.length
+              : visibleTemplates.filter((t) => t.department === g.key).length;
+            return (
+              <button
+                key={g.key}
+                type="button"
+                onClick={() => setFilterGroup(g.key)}
+                className={cn('wf-tpl-dept', filterGroup === g.key && 'is-active')}
+              >
+                {g.label}
+                {g.key !== 'all' && count > 0 && <em>{count}</em>}
+              </button>
+            );
+          })}
+        </div>
+        <div className="wf-tpl-toolbar__filters">
+          <div className="wf-tpl-search">
+            <Search className="h-3.5 w-3.5" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索流程名称、适用对象或连接能力"
+              aria-label="搜索模板"
+            />
+          </div>
+          {!isPersonal && (
+            <select
+              value={filterIndustry}
+              onChange={(e) => setFilterIndustry(e.target.value)}
+              className="wf-tpl-select"
+              aria-label="行业筛选"
             >
-              {g.label}
-            </button>
-          ))}
+              {INDUSTRY_OPTIONS.map((opt) => (
+                <option key={opt.key} value={opt.key}>{opt.label}</option>
+              ))}
+            </select>
+          )}
+          <div className="wf-tpl-seg" role="group" aria-label="就绪状态">
+            {([['all', '全部'], ['healthy', '可直接使用'], ['review', '需先授权']] as const).map(([key, label]) => (
+              <button key={key} type="button" onClick={() => setScope(key)} className={cn(scope === key && 'is-active')}>{label}</button>
+            ))}
+          </div>
+          {!isPersonal && (
+            <>
+              <button
+                type="button"
+                onClick={() => setWorkspaceDeptOnly(!workspaceDeptOnly)}
+                className={cn('wf-tpl-toggle', workspaceDeptOnly && 'is-on')}
+                title={workspaceDeptCount ? `当前工作区伙伴覆盖 ${workspaceDeptCount} 个部门` : '当前工作区暂无部门伙伴，将展示全部'}
+              >
+                仅本工作区部门
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowAdvancedLibrary(!showAdvancedLibrary)}
+                className={cn('wf-tpl-toggle', showAdvancedLibrary && 'is-warn')}
+              >
+                IT 高级库
+              </button>
+            </>
+          )}
         </div>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-3">
-        <div className="relative min-w-[220px] flex-1"><Search className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--text-muted)]" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索模板、维护团队或依赖" className="h-8 w-full rounded-lg border border-[var(--border)] bg-[var(--bg)] pl-8 pr-3 text-xs outline-none focus:border-[var(--brand)] focus:shadow-[0_0_0_3px_var(--brand-light)]" /></div>
-        <div className="flex items-center gap-1 rounded-lg bg-[var(--bg-elevated)] p-1" role="group" aria-label="模板健康度">
-          {([['all', '全部资产'], ['healthy', '可直接复用'], ['review', '需授权/复核']] as const).map(([key, label]) => <button key={key} type="button" onClick={() => setScope(key)} className={cn('rounded-md px-2.5 py-1 text-xs leading-5 font-medium transition-colors', scope === key ? 'bg-[var(--surface-1)] text-[var(--brand)] shadow-sm' : 'text-[var(--text-muted)] hover:text-[var(--text)]')}>{label}</button>)}
+      {visibleTemplates.length === 0 ? (
+        <div className="wf-tpl-empty">
+          <Layers className="h-8 w-8 text-[var(--text-muted)]" />
+          <p className="wf-tpl-empty__title">{isPersonal ? '还没有个人模板' : '没有符合条件的模板'}</p>
+          <p className="wf-tpl-empty__desc">
+            {isPersonal
+              ? '在画布编排流程后，点击「存为个人模板」，即可在此复用。'
+              : '可切换部门或行业，关闭「仅本工作区部门」，或打开「IT 高级库」。'}
+          </p>
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            {isPersonal ? (
+              canWrite && <Button size="sm" onClick={onSaveFromCanvas}>去画布另存</Button>
+            ) : (
+              <>
+                <Button size="sm" variant="secondary" onClick={() => { setFilterGroup('all'); setFilterIndustry('all'); setScope('all'); setQuery(''); setWorkspaceDeptOnly(false); }}>重置筛选</Button>
+                {!showAdvancedLibrary && <Button size="sm" onClick={() => setShowAdvancedLibrary(true)}>打开 IT 高级库</Button>}
+              </>
+            )}
+          </div>
         </div>
-        <span className="text-xs leading-5 text-[var(--text-muted)]">{visibleTemplates.length} 个可发现模板</span>
-      </div>
+      ) : (
+        <>
+          <div className="wf-tpl-pagebar">
+            <span>
+              {filterGroup === 'all' ? '全部部门统一列表' : `${departmentLabel(filterGroup)} · 统一列表`}
+              {' · '}
+              第 {rangeStart}–{rangeEnd} 项，共 {totalCount} 个模板 · 每页 {TPL_PAGE_SIZE} 个
+            </span>
+          </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {pagedTemplates.map((t) => {
-          const categoryStyle = t.category === 'business'
-            ? 'bg-[var(--info-bg)] text-[var(--info)]'
-            : t.category === 'system'
-              ? 'bg-[var(--success-bg)] text-[var(--success)]'
-              : t.category === 'security'
-                ? 'bg-[var(--danger-bg)] text-[var(--danger)]'
-                : 'bg-[var(--brand-light)] text-[var(--brand)]';
-          const reusable = isTemplateReusable(t);
+          <div className="wf-tpl-grid">
+            {pagedFlat.map((t) => renderCard(t, Boolean(t.parentId)))}
+          </div>
 
-          return (
-            <article
-              key={t.id}
-              className="workflow-template-card group flex min-h-[320px] flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-1)] p-5 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition-all duration-200 hover:-translate-y-1 hover:border-[var(--border-strong)] hover:shadow-[0_14px_30px_rgba(15,23,42,0.10)]"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex min-w-0 items-start gap-3">
-                  <div className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl ring-1 ring-inset ring-black/[0.03]', categoryStyle)}>
-                    <Sparkles className="h-4 w-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <h3 className="truncate text-sm font-semibold tracking-[-0.01em] text-[var(--text)]">{t.name}</h3>
-                      <span className="rounded-md bg-[var(--bg-elevated)] px-1.5 py-0.5 font-mono text-[10px] font-medium text-[var(--text-muted)]">{t.version}</span>
-                    </div>
-                    <div className="mt-1 text-[11px] text-[var(--text-muted)]">{categoryLabel(t.category)} · {t.owner}</div>
-                  </div>
-                </div>
-                <Badge tone={reusable ? 'success' : 'warn'} className="shrink-0 text-[10px]">{t.health}</Badge>
+          {totalPages > 1 && (
+            <nav className="wf-tpl-pager" aria-label="模板分页">
+              <Button size="sm" variant="secondary" disabled={safePage <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                上一页
+              </Button>
+              <div className="wf-tpl-pager__pages">
+                {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    className={cn('wf-tpl-pager__btn', n === safePage && 'is-active')}
+                    onClick={() => setPage(n)}
+                    aria-current={n === safePage ? 'page' : undefined}
+                  >
+                    {n}
+                  </button>
+                ))}
               </div>
-
-              <p className="mt-4 min-h-[34px] text-[12px] leading-[18px] text-[var(--text-secondary)] line-clamp-2">{t.description}</p>
-
-              {!reusable && t.blockers.length > 0 && (
-                <div className="mt-3 rounded-lg border border-[var(--warning)]/30 bg-[var(--warning-bg)] px-2.5 py-2 text-[10px] leading-4 text-[var(--warning)]">
-                  <span className="font-semibold">阻断：</span>{t.blockers[0]}
-                  {t.blockers.length > 1 ? ` 等 ${t.blockers.length} 项` : ''}
-                </div>
-              )}
-
-              <div className="mt-4 rounded-lg bg-[var(--bg-elevated)] px-3 py-2.5">
-                <div className="mb-2 flex items-center justify-between text-[11px] font-medium text-[var(--text-muted)]"><span>流程能力</span><span>{t.nodes} 个节点</span></div>
-                <div className="flex items-center gap-1.5 overflow-hidden">
-                  {t.sequence.slice(0, 4).map((kind, index) => {
-                    const StageIcon = NODE_ICONS[kind];
-                    return (
-                      <div key={`${kind}-${index}`} className="flex min-w-0 items-center gap-1.5">
-                        {index > 0 && <ChevronRight className="h-3 w-3 shrink-0 text-[var(--border-strong)]" />}
-                        <span title={NODE_LABELS[kind]} className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-[var(--surface-1)] text-[var(--text-secondary)] shadow-[0_1px_1px_rgba(15,23,42,0.04)]"><StageIcon className="h-3 w-3" /></span>
-                      </div>
-                    );
-                  })}
-                  {t.sequence.length > 4 && <span className="ml-0.5 shrink-0 text-[11px] font-medium text-[var(--text-muted)]">+{t.sequence.length - 4}</span>}
-                </div>
-              </div>
-
-              <div className="mt-4 flex items-center gap-3 border-t border-[var(--border)] pt-3">
-                <div className="min-w-0 flex-1"><div className="text-[11px] text-[var(--text-muted)]">验证成功率</div><div className="mt-0.5 font-mono text-sm font-semibold text-[var(--text)]">{t.successRate}</div></div>
-                <div className="h-7 w-px bg-[var(--border)]" />
-                <div className="min-w-0 flex-1"><div className="text-[11px] text-[var(--text-muted)]">最近验证</div><div className="mt-0.5 font-mono text-[11px] font-semibold text-[var(--text)]">{t.verifiedAt}</div></div>
-                <div className="h-7 w-px bg-[var(--border)]" />
-                <div className="min-w-0 flex-1"><div className="text-[11px] text-[var(--text-muted)]">治理</div><div className="mt-0.5 flex items-center gap-1"><Badge tone={t.risk === 'L3' ? 'warn' : t.risk === 'L2' ? 'info' : 'success'} className="text-[10px]">{t.risk}</Badge></div></div>
-              </div>
-
-              <div className="mt-auto flex items-center justify-between gap-2 pt-4">
-                <button type="button" className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-xs font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--brand)]/30" onClick={() => onPreview(t)}>
-                  <Eye className="h-3.5 w-3.5" />查看架构
-                </button>
-                <Button size="sm" className="rounded-lg px-3" onClick={() => onUseTemplate(t)}>
-                  创建隔离草稿<ArrowRight className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-      {visibleTemplates.length > 0 && <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--border)] pt-4 text-xs text-[var(--text-muted)]"><span>显示第 {(currentPage - 1) * pageSize + 1}–{Math.min(currentPage * pageSize, visibleTemplates.length)} 套，共 {visibleTemplates.length} 套模板</span><nav className="flex items-center gap-1" aria-label="模板库分页"><button type="button" disabled={currentPage === 1} onClick={() => setPage((value) => Math.max(1, value - 1))} className="grid h-8 w-8 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="上一页"><ChevronLeft className="h-3.5 w-3.5" /></button>{Array.from({ length: pageCount }, (_, index) => index + 1).map((item) => <button key={item} type="button" onClick={() => setPage(item)} aria-current={item === currentPage ? 'page' : undefined} className={cn('grid h-8 min-w-8 place-items-center rounded-md px-2 font-medium transition-colors', item === currentPage ? 'bg-[var(--brand)] text-white' : 'text-[var(--text-secondary)] hover:bg-[var(--bg-hover)]')}>{item}</button>)}<button type="button" disabled={currentPage === pageCount} onClick={() => setPage((value) => Math.min(pageCount, value + 1))} className="grid h-8 w-8 place-items-center rounded-md border border-[var(--border)] bg-[var(--surface-1)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40" aria-label="下一页"><ChevronRight className="h-3.5 w-3.5" /></button></nav></div>}
-      {visibleTemplates.length === 0 && <div className="mt-10 text-center text-sm text-[var(--text-muted)]">没有符合当前条件的模板，请调整搜索或健康度筛选。</div>}
+              <Button size="sm" variant="secondary" disabled={safePage >= totalPages} onClick={() => setPage((p) => Math.min(totalPages, p + 1))}>
+                下一页
+              </Button>
+            </nav>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -3541,7 +3874,7 @@ function TemplatePreviewModalInner({
       : template.category === 'security'
         ? 'bg-[var(--danger-bg)] text-[var(--danger)]'
         : 'bg-[var(--brand-light)] text-[var(--brand)]';
-  const categoryName = categoryLabel(template.category);
+  const categoryName = template.departmentLabel || categoryLabel(template.category);
   const governanceChecks = template.risk === 'L3' ? 4 : template.risk === 'L2' ? 3 : 2;
   const reusable = isTemplateReusable(template);
   const mid = Math.ceil(previewSeq.length / 2);
@@ -3738,7 +4071,7 @@ function TemplatePreviewModalInner({
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="ghost" onClick={onClose}>取消</Button>
-            <Button size="sm" onClick={() => { onUseTemplate(template); onClose(); }}><Download className="h-3.5 w-3.5" />创建隔离草稿</Button>
+            <Button size="sm" onClick={() => { onUseTemplate(template); onClose(); }}><Download className="h-3.5 w-3.5" />使用模板</Button>
           </div>
         </footer>
       </section>

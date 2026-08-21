@@ -1,0 +1,159 @@
+{
+  "version": "1.0.0",
+  "scenarios": [
+    {
+      "id": "sc.office.ask_policy",
+      "name": "制度问答与答复留痕",
+      "phase": "P0",
+      "workflowId": "wf.office.ask_policy",
+      "knowledgePackageIds": [
+        "kp.office.handbook",
+        "kp.office.leave_travel"
+      ],
+      "requiredSkills": [
+        "summarize"
+      ],
+      "optionalSkills": [],
+      "skillPack": "office"
+    },
+    {
+      "id": "sc.office.meeting_minutes",
+      "name": "会议纪要生成与分发",
+      "phase": "P0",
+      "workflowId": "wf.office.meeting_minutes",
+      "knowledgePackageIds": [
+        "kp.office.meeting"
+      ],
+      "requiredSkills": [
+        "summarize",
+        "docx"
+      ],
+      "optionalSkills": [
+        "pdf"
+      ],
+      "skillPack": "office"
+    },
+    {
+      "id": "sc.office.weekly_report",
+      "name": "周报汇总",
+      "phase": "P0",
+      "workflowId": "wf.office.weekly_report",
+      "knowledgePackageIds": [
+        "kp.office.writing"
+      ],
+      "requiredSkills": [
+        "summarize",
+        "docx"
+      ],
+      "optionalSkills": [],
+      "skillPack": "office"
+    },
+    {
+      "id": "sc.office.doc_review",
+      "name": "文档审阅与定稿",
+      "phase": "P0",
+      "workflowId": "wf.office.doc_review",
+      "knowledgePackageIds": [
+        "kp.office.writing"
+      ],
+      "requiredSkills": [
+        "docx",
+        "pdf"
+      ],
+      "optionalSkills": [],
+      "skillPack": "office"
+    },
+    {
+      "id": "sc.office.leave_request",
+      "name": "请假申请",
+      "phase": "P0",
+      "workflowId": "wf.office.leave_request",
+      "knowledgePackageIds": [
+        "kp.office.leave_travel"
+      ],
+      "requiredSkills": [],
+      "optionalSkills": [],
+      "skillPack": "office"
+    },
+    {
+      "id": "sc.office.travel_request",
+      "name": "出差申请",
+      "phase": "P0",
+      "workflowId": "wf.office.travel_request",
+      "knowledgePackageIds": [
+        "kp.office.leave_travel"
+      ],
+      "requiredSkills": [],
+      "optionalSkills": [],
+      "skillPack": "office"
+    },
+    {
+      "id": "sc.office.expense_precheck",
+      "name": "报销前自查",
+      "phase": "P1",
+      "workflowId": "wf.office.expense_precheck",
+      "knowledgePackageIds": [
+        "kp.office.expense_lite"
+      ],
+      "requiredSkills": [
+        "summarize"
+      ],
+      "optionalSkills": [],
+      "skillPack": "office"
+    },
+    {
+      "id": "sc.office.meeting_book",
+      "name": "会议预约协作",
+      "phase": "P1",
+      "workflowId": "wf.office.meeting_book",
+      "knowledgePackageIds": [
+        "kp.office.meeting"
+      ],
+      "requiredSkills": [],
+      "optionalSkills": [],
+      "skillPack": "office"
+    },
+    {
+      "id": "sc.office.it_helpdesk",
+      "name": "IT 求助工单",
+      "phase": "P1",
+      "workflowId": "wf.office.it_helpdesk",
+      "knowledgePackageIds": [
+        "kp.office.it_selfservice"
+      ],
+      "requiredSkills": [
+        "summarize"
+      ],
+      "optionalSkills": [],
+      "skillPack": "office"
+    },
+    {
+      "id": "sc.office.announce",
+      "name": "通知拟稿与发布",
+      "phase": "P1",
+      "workflowId": "wf.office.announce",
+      "knowledgePackageIds": [
+        "kp.office.writing",
+        "kp.office.handbook"
+      ],
+      "requiredSkills": [
+        "docx",
+        "summarize"
+      ],
+      "optionalSkills": [],
+      "skillPack": "office"
+    },
+    {
+      "id": "sc.office.todo_followup",
+      "name": "待办跟催",
+      "phase": "P1",
+      "workflowId": "wf.office.todo_followup",
+      "knowledgePackageIds": [
+        "kp.office.meeting"
+      ],
+      "requiredSkills": [],
+      "optionalSkills": [],
+      "skillPack": "office"
+    }
+  ]
+}

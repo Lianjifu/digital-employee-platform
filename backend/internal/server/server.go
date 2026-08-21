@@ -420,6 +420,10 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.createWorkflow(r)
 	case path == "/api/workflow-templates" && method == http.MethodGet:
 		data, err = s.listWorkflowTemplates(r)
+	case path == "/api/workflow-templates" && method == http.MethodPost:
+		data, err = s.createWorkflowTemplate(r)
+	case strings.HasPrefix(path, "/api/workflow-templates/") && method == http.MethodDelete:
+		data, err = s.deleteWorkflowTemplate(r)
 	case path == "/api/workflows/generations" && method == http.MethodGet:
 		data, err = s.listWorkflowGenerations(r)
 	case path == "/api/workflows/generate" && method == http.MethodPost:

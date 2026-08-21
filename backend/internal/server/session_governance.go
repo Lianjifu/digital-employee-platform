@@ -22,6 +22,43 @@ func normalizeRiskLevelSession(v string) string {
 	return contract.ParseRiskLevel(v)
 }
 
+// normalizeRunMode accepts product-layer modes: ask | plan | agent.
+func normalizeRunMode(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "ask", "plan", "agent":
+		return strings.ToLower(strings.TrimSpace(v))
+	default:
+		return ""
+	}
+}
+
+// resolveRunMode prefers explicit product runMode; falls back from ABI sessionMode.
+func resolveRunMode(bodyRun, sessRun, sessionMode string) string {
+	if rm := normalizeRunMode(bodyRun); rm != "" {
+		return rm
+	}
+	if rm := normalizeRunMode(sessRun); rm != "" {
+		return rm
+	}
+	if sessionMode == sessionModeExecute {
+		return "agent"
+	}
+	return "plan"
+}
+
+// runModePromptClause injects product-facing mode language into the system prompt.
+// ABI remains investigate|execute; model-visible copy must match 问答/方案/执行.
+func runModePromptClause(runMode string) string {
+	switch normalizeRunMode(runMode) {
+	case "ask":
+		return "\n当前会话为「问答」模式：只回答与解释，禁止宣称已执行写操作或调用写类工具；需要变更时提示用户切换到「方案」或「执行」。对外说明时使用「问答」，不要说「研判模式」。"
+	case "agent":
+		return "\n当前会话为「执行」模式：可调用工具推进任务；写类 skill.run/write 将进入人工审核队列；仅当工具观察为 pending_authorization 时可告知已进入审核；未获批准前不得声称执行成功或已生成文件。needs_instruction 表示尚未真正执行脚本。对外说明时使用「执行」，不要说「受控执行模式」或「研判模式」。"
+	default: // plan
+		return "\n当前会话为「方案」模式：先给出可执行计划与风险说明，禁止宣称已完成写操作；技能仅可只读查阅；需要落盘变更时提示用户切换到「执行」并经人工审核。对外说明时使用「方案」，不要说「研判模式」。"
+	}
+}
+
 func sessionHandoffActive(sess map[string]any) bool {
 	if sess == nil {
 		return false

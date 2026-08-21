@@ -1,0 +1,34 @@
+{
+  "id": "kp.office.it_selfservice",
+  "name": "IT 自助服务",
+  "version": "1.0.0",
+  "description": "密码重置、账号与权限自助说明。",
+  "domain": "办公",
+  "classification": "internal",
+  "builtin": true,
+  "source": "platform",
+  "tags": [
+    "office",
+    "开箱"
+  ],
+  "docs": [
+    {
+      "file": "01-密码重置.md",
+      "title": "密码重置"
+    },
+    {
+      "file": "02-权限申请说明.md",
+      "title": "权限申请说明"
+    }
+  ],
+  "qa": [
+    {
+      "q": "密码忘了",
+      "a": "先门户自助重置，失败再提 IT 工单。"
+    },
+    {
+      "q": "临时权限",
+      "a": "须写明到期日并审批。"
+    }
+  ]
+}

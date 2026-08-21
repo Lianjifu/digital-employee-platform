@@ -799,18 +799,335 @@ export interface WorkflowTemplate {
   name: string;
   description: string;
   category: string;
+  department?: string;
+  library?: 'default' | 'advanced';
+  parentId?: string;
   nodes: number;
   installs: number;
   rating: number;
+  version?: string;
+  owner?: string;
+  ownerId?: string;
+  workspaceId?: string;
+  verifiedAt?: string;
+  risk?: 'L1' | 'L2' | 'L3';
+  health?: '健康' | '需授权';
+  successRate?: string;
+  dependencies?: string[];
+  dependencyStatus?: Array<{ name: string; status: 'ready' | 'unauthorized'; reason?: string }>;
+  blockers?: string[];
+  sequence?: string[];
+  variables?: Array<{ key: string; label: string; required: boolean }>;
+  permissions?: Array<{ action: string; gate: string }>;
+  changelog?: Array<{ version: string; date: string; note: string }>;
+  recentRuns?: Array<{ id: string; time: string; status: 'success' | 'failed'; note: string }>;
+  audience?: string;
+  builtin?: boolean;
+  source?: 'platform' | 'personal' | string;
+  certification?: string;
+  knowledgePackageIds?: string[];
+  requiredSkills?: string[];
+  graph?: { nodes: Array<Record<string, unknown>>; edges: Array<Record<string, unknown>> };
 }
 
+const readyDep = (name: string) => ({ name, status: 'ready' as const });
+
 export const mockWorkflowTemplates: WorkflowTemplate[] = [
-  { id: 'tpl1', name: 'cache-oom 受控恢复', description: 'Redis 缓存 OOM 受控恢复 + 切换 LRU 策略；写操作需双重审批与补偿回滚', category: 'system', nodes: 10, installs: 124, rating: 4.8 },
-  { id: 'tpl2', name: 'CVE 自动修复', description: 'CVE 扫描 → 资产匹配 → 人工复核 → 工单与受控修复', category: 'security', nodes: 10, installs: 88, rating: 4.6 },
-  { id: 'tpl3', name: '合规审计报告', description: '等保核查项自动汇总 + 报告生成与分发', category: 'business', nodes: 7, installs: 56, rating: 4.7 },
-  { id: 'tpl4', name: '变更灰度发布', description: '蓝绿/金丝雀发布 + 指标门禁与异常自动补偿', category: 'system', nodes: 9, installs: 142, rating: 4.9 },
-  { id: 'tpl5', name: '告警降噪', description: 'SIEM 重复告警合并 + 静默策略与人工接管', category: 'security', nodes: 4, installs: 78, rating: 4.5 },
-  { id: 'tpl6', name: '容量预测', description: '历史趋势研判、扩容建议、人工确认与结果通知', category: 'ai', nodes: 7, installs: 42, rating: 4.4 },
+  {
+    id: "wf.compliance.export_review", name: "数据导出审批", description: "敏感数据导出申请、脱敏策略校验、审批与审计留痕。",
+    category: 'business', department: "it", library: "default", nodes: 7, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L3", health: "健康", successRate: 'Certified',
+    audience: "业务申请人 / 合规 / 数据管理员", dependencies: ["data.export", "notify.send"],
+    dependencyStatus: [readyDep("data.export"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "policy", "decision", "approval", "execute", "audit", "notify"] as any,
+    variables: [{"key": "dataset", "label": "数据集", "required": true, "type": "string"}, {"key": "classification", "label": "密级", "required": true, "type": "enum", "enum": ["internal", "confidential", "restricted"]}, {"key": "purpose", "label": "用途说明", "required": true, "type": "string"}] as any,
+    permissions: [],
+    changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "出厂 Certified 首发"}] as any,
+    recentRuns: [],
+  },
+  {
+    id: "wf.fin.expense", name: "费用报销", description: "票据校验、预算核验、分级审批；无付款连接器时可降级为仅审批闭环。",
+    category: 'business', department: "finance", library: "default", nodes: 9, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L3", health: "健康", successRate: 'Certified',
+    audience: "报销人 / 财务共享", dependencies: ["knowledge.retrieve", "payment.initiate", "notify.send"],
+    dependencyStatus: [readyDep("knowledge.retrieve"), readyDep("payment.initiate"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "decision", "policy", "approval", "execute", "compensate", "audit", "notify"] as any,
+    variables: [{"key": "amount", "label": "报销金额", "required": true, "type": "number"}, {"key": "cost_center", "label": "成本中心", "required": true, "type": "string"}, {"key": "invoice_ids", "label": "票据编号", "required": true, "type": "string"}] as any,
+    permissions: [],
+    changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "出厂 Certified；支持付款槽位降级"}] as any,
+    recentRuns: [],
+  },
+  {
+    id: "wf.fin.purchase", name: "采购申请", description: "采购立项、预算占用、审批与订单回写；可按企业裁剪三单匹配。",
+    category: 'business', department: "finance", library: "default", nodes: 8, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L3", health: "健康", successRate: 'Certified',
+    audience: "采购 / 预算责任人", dependencies: ["erp.purchase", "notify.send"],
+    dependencyStatus: [readyDep("erp.purchase"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "decision", "approval", "execute", "task", "audit", "notify"] as any,
+    variables: [{"key": "po_title", "label": "采购事项", "required": true, "type": "string"}, {"key": "budget_code", "label": "预算科目", "required": true, "type": "string"}, {"key": "amount", "label": "金额", "required": true, "type": "number"}] as any,
+    permissions: [],
+    changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "出厂 Certified 首发"}] as any,
+    recentRuns: [],
+  },
+  {
+    id: "wf.hr.offboarding", name: "离职交接与权限回收", description: "资产交还、账号回收、证明开具与交接确认，保障离场安全基线。",
+    category: 'business', department: "hr", library: "default", nodes: 6, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L2", health: "健康", successRate: 'Certified',
+    audience: "离职员工 / HRBP / IT", dependencies: ["identity.revoke", "notify.send"],
+    dependencyStatus: [readyDep("identity.revoke"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "approval", "execute", "audit", "notify"] as any,
+    variables: [{"key": "employee_id", "label": "员工工号", "required": true, "type": "string"}, {"key": "last_day", "label": "最后工作日", "required": true, "type": "date"}] as any,
+    permissions: [],
+    changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "出厂 Certified 首发"}] as any,
+    recentRuns: [],
+  },
+  {
+    id: "wf.hr.onboarding", name: "员工入职开通", description: "入职申请、材料核验、账号开通、权限分配与欢迎通知；跨行业通用。",
+    category: 'business', department: "hr", library: "default", nodes: 8, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L2", health: "健康", successRate: 'Certified',
+    audience: "新员工 / HRBP / IT", dependencies: ["identity.provision", "knowledge.retrieve", "notify.send"],
+    dependencyStatus: [readyDep("identity.provision"), readyDep("knowledge.retrieve"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "decision", "approval", "execute", "task", "audit", "notify"] as any,
+    variables: [{"key": "employee_name", "label": "入职人姓名", "required": true, "type": "string"}, {"key": "start_date", "label": "入职日期", "required": true, "type": "date"}, {"key": "role_profile", "label": "岗位画像", "required": true, "type": "string"}] as any,
+    permissions: [],
+    changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "出厂 Certified 首发"}] as any,
+    recentRuns: [],
+  },
+  {
+    id: "wf.it.access_request", name: "权限申请", description: "权限申请、影响评估、审批开通/时限授权与到期回收。",
+    category: 'business', department: "it", library: "default", nodes: 8, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L2", health: "健康", successRate: 'Certified',
+    audience: "全体员工 / IT 服务台", dependencies: ["identity.provision", "notify.send"],
+    dependencyStatus: [readyDep("identity.provision"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "decision", "approval", "execute", "schedule", "audit", "notify"] as any,
+    variables: [{"key": "account", "label": "账号", "required": true, "type": "string"}, {"key": "permission_set", "label": "权限集", "required": true, "type": "string"}, {"key": "expire_days", "label": "授权天数", "required": false, "type": "number", "default": 90}] as any,
+    permissions: [],
+    changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "出厂 Certified 首发"}] as any,
+    recentRuns: [],
+  },
+  {
+    id: "wf.it.incident_mitigate", name: "生产事件缓解", description: "告警触发、研判、双重审批、受控执行与补偿回滚（运维高级库）。",
+    category: 'business', department: "it", library: "advanced", nodes: 9, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L3", health: "需授权", successRate: 'Certified',
+    audience: "SRE / 平台", dependencies: ["infra.execute", "notify.send"],
+    dependencyStatus: [{ name: "infra.execute", status: 'unauthorized' as const, reason: "infra.execute：未绑定连接器槽位" }, readyDep("notify.send")], blockers: ["infra.execute：未绑定连接器槽位"],
+    sequence: ["event", "retrieve", "decision", "policy", "approval", "execute", "compensate", "audit", "notify"] as any,
+    variables: [{"key": "incident_id", "label": "事件单号", "required": true, "type": "string"}, {"key": "cluster", "label": "目标集群", "required": true, "type": "string"}] as any,
+    permissions: [],
+    changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "IT 高级库"}] as any,
+    recentRuns: [],
+  },
+  {
+    id: "wf.ops.ticket_escalate", name: "客诉升级闭环", description: "工单分级、SLA 监控、升级人工、回访与知识沉淀。",
+    category: 'business', department: "operations", library: "default", nodes: 8, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L2", health: "健康", successRate: 'Certified',
+    audience: "客服 / 运营 / 值班", dependencies: ["ticket.manage", "knowledge.retrieve", "notify.send"],
+    dependencyStatus: [readyDep("ticket.manage"), readyDep("knowledge.retrieve"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "decision", "task", "approval", "execute", "audit", "notify"] as any,
+    variables: [{"key": "ticket_id", "label": "工单号", "required": true, "type": "string"}, {"key": "sla_minutes", "label": "SLA（分钟）", "required": false, "type": "number", "default": 240}] as any,
+    permissions: [],
+    changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "出厂 Certified 首发"}] as any,
+    recentRuns: [],
+  },
+  {
+    id: "wf.rd.release_gate", name: "发版门禁", description: "需求关联、测试门禁、环境审批到发布通报；对齐沙箱/预发/生产。",
+    category: 'business', department: "rd", library: "default", nodes: 9, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L2", health: "健康", successRate: 'Certified',
+    audience: "产品 / 研发负责人", dependencies: ["ci.pipeline", "notify.send"],
+    dependencyStatus: [readyDep("ci.pipeline"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "decision", "approval", "parallel", "condition", "execute", "audit", "notify"] as any,
+    variables: [{"key": "requirement_id", "label": "需求编号", "required": true, "type": "string"}, {"key": "target_env", "label": "目标环境", "required": true, "type": "enum", "enum": ["sandbox", "staging", "production"]}] as any,
+    permissions: [],
+    changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "出厂 Certified 首发"}] as any,
+    recentRuns: [],
+  },
+  {
+    id: "wf.sales.contract_approve", name: "合同与折扣审批", description: "商机报价、折扣超阈审批、合同归档与 CRM 阶段回写。",
+    category: 'business', department: "sales", library: "default", nodes: 8, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L2", health: "健康", successRate: 'Certified',
+    audience: "销售代表 / 销售经理", dependencies: ["crm.update_stage", "notify.send"],
+    dependencyStatus: [readyDep("crm.update_stage"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "decision", "policy", "approval", "execute", "audit", "notify"] as any,
+    variables: [{"key": "opportunity_id", "label": "商机编号", "required": true, "type": "string"}, {"key": "discount_pct", "label": "折扣比例", "required": false, "type": "number", "default": 0}, {"key": "contract_amount", "label": "合同金额", "required": true, "type": "number"}] as any,
+    permissions: [],
+    changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "出厂 Certified 首发"}] as any,
+    recentRuns: [],
+  },
+  {
+    id: 'tpl-adv-cache-oom', name: 'cache-oom 受控恢复', description: 'Redis 缓存 OOM 受控恢复（IT 高级库）。',
+    category: 'system', department: 'it', library: 'advanced', nodes: 10, installs: 0, rating: 4.8,
+    version: '2.4.0', owner: 'SRE 平台组', verifiedAt: '2026-07-16', risk: 'L3', health: '需授权', successRate: 'Advanced',
+    audience: 'SRE / 平台', dependencies: ['infra.execute'],
+    dependencyStatus: [{ name: 'infra.execute', status: 'unauthorized' as const, reason: 'infra.execute：当前工作区未授权生产写权限' }],
+    blockers: ['infra.execute：当前工作区未授权生产写权限'],
+    sequence: ['event', 'retrieve', 'decision', 'policy', 'approval', 'execute', 'compensate', 'audit', 'notify'] as any,
+    variables: [{ key: 'cluster', label: '目标集群', required: true }] as any,
+    permissions: [], changelog: [], recentRuns: [],
+  },
+  {
+    id: "wf.office.announce", name: "通知拟稿与发布", description: "按写作规范拟订通知，审批后通过渠道发布。",
+    category: 'business', department: "office", library: "default", nodes: 6, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L2", health: "健康", successRate: 'Certified',
+    audience: "全员 / 办公协作", dependencies: ["knowledge.retrieve", "notify.send"],
+    dependencyStatus: [readyDep("knowledge.retrieve"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "approval", "execute", "audit", "notify"] as any,
+    variables: [{"key": "title", "label": "通知标题", "required": true}] as any,
+    permissions: [], changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "办公开箱首发"}] as any,
+    recentRuns: [], builtin: true, source: 'platform', certification: 'certified',
+    knowledgePackageIds: ["kp.office.writing", "kp.office.handbook"] as any, requiredSkills: ["docx", "summarize"] as any,
+  },
+  {
+    id: "wf.office.ask_policy", name: "制度问答与答复留痕", description: "针对制度疑问检索员工手册与制度包，生成可留痕答复并通知提问人。",
+    category: 'business', department: "office", library: "default", nodes: 5, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L1", health: "健康", successRate: 'Certified',
+    audience: "全员 / 办公协作", dependencies: ["knowledge.retrieve", "notify.send"],
+    dependencyStatus: [readyDep("knowledge.retrieve"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "decision", "audit", "notify"] as any,
+    variables: [{"key": "question", "label": "制度问题", "required": true}] as any,
+    permissions: [], changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "办公开箱首发"}] as any,
+    recentRuns: [], builtin: true, source: 'platform', certification: 'certified',
+    knowledgePackageIds: ["kp.office.handbook", "kp.office.leave_travel"] as any, requiredSkills: ["summarize"] as any,
+  },
+  {
+    id: "wf.office.doc_review", name: "文档审阅与定稿", description: "按文档质量清单审阅材料，经确认后定稿归档。",
+    category: 'business', department: "office", library: "default", nodes: 6, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L2", health: "健康", successRate: 'Certified',
+    audience: "全员 / 办公协作", dependencies: ["knowledge.retrieve", "notify.send"],
+    dependencyStatus: [readyDep("knowledge.retrieve"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "approval", "execute", "audit", "notify"] as any,
+    variables: [{"key": "doc_title", "label": "文档标题", "required": true}] as any,
+    permissions: [], changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "办公开箱首发"}] as any,
+    recentRuns: [], builtin: true, source: 'platform', certification: 'certified',
+    knowledgePackageIds: ["kp.office.writing"] as any, requiredSkills: ["docx", "pdf"] as any,
+  },
+  {
+    id: "wf.office.expense_precheck", name: "报销前自查", description: "按报销常识自查票据与不可报项，通过后可衔接部门报销流程。",
+    category: 'business', department: "office", library: "default", nodes: 6, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L1", health: "健康", successRate: 'Certified',
+    audience: "全员 / 办公协作", dependencies: ["knowledge.retrieve", "notify.send"],
+    dependencyStatus: [readyDep("knowledge.retrieve"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "decision", "task", "audit", "notify"] as any,
+    variables: [{"key": "amount", "label": "金额", "required": true}] as any,
+    permissions: [], changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "办公开箱首发"}] as any,
+    recentRuns: [], builtin: true, source: 'platform', certification: 'certified',
+    knowledgePackageIds: ["kp.office.expense_lite"] as any, requiredSkills: ["summarize"] as any,
+  },
+  {
+    id: "wf.office.it_helpdesk", name: "IT 求助工单", description: "先检索 IT 自助知识，无法解决则升级人工处理并通知。",
+    category: 'business', department: "office", library: "default", nodes: 6, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L1", health: "健康", successRate: 'Certified',
+    audience: "全员 / 办公协作", dependencies: ["knowledge.retrieve", "notify.send"],
+    dependencyStatus: [readyDep("knowledge.retrieve"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "decision", "task", "audit", "notify"] as any,
+    variables: [{"key": "issue", "label": "问题描述", "required": true}] as any,
+    permissions: [], changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "办公开箱首发"}] as any,
+    recentRuns: [], builtin: true, source: 'platform', certification: 'certified',
+    knowledgePackageIds: ["kp.office.it_selfservice"] as any, requiredSkills: ["summarize"] as any,
+  },
+  {
+    id: "wf.office.leave_request", name: "请假申请", description: "对照假勤制度提交请假，经审批后通知相关人。",
+    category: 'business', department: "office", library: "default", nodes: 6, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L2", health: "健康", successRate: 'Certified',
+    audience: "全员 / 办公协作", dependencies: ["knowledge.retrieve", "notify.send"],
+    dependencyStatus: [readyDep("knowledge.retrieve"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "policy", "approval", "audit", "notify"] as any,
+    variables: [{"key": "leave_type", "label": "假种", "required": true}, {"key": "days", "label": "天数", "required": true}] as any,
+    permissions: [], changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "办公开箱首发"}] as any,
+    recentRuns: [], builtin: true, source: 'platform', certification: 'certified',
+    knowledgePackageIds: ["kp.office.leave_travel"] as any, requiredSkills: [] as any,
+  },
+  {
+    id: "wf.office.meeting_book", name: "会议预约协作", description: "发起会议预约意向，确认时间与参会人后通知相关方（可先人工确认会议室）。",
+    category: 'business', department: "office", library: "default", nodes: 5, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L1", health: "健康", successRate: 'Certified',
+    audience: "全员 / 办公协作", dependencies: ["knowledge.retrieve", "notify.send"],
+    dependencyStatus: [readyDep("knowledge.retrieve"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "condition", "approval", "task", "notify"] as any,
+    variables: [{"key": "slot", "label": "期望时段", "required": true}] as any,
+    permissions: [], changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "办公开箱首发"}] as any,
+    recentRuns: [], builtin: true, source: 'platform', certification: 'certified',
+    knowledgePackageIds: ["kp.office.meeting"] as any, requiredSkills: [] as any,
+  },
+  {
+    id: "wf.office.meeting_minutes", name: "会议纪要生成与分发", description: "按会议规范整理要点，生成纪要文档并分发给参会人。",
+    category: 'business', department: "office", library: "default", nodes: 7, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L1", health: "健康", successRate: 'Certified',
+    audience: "全员 / 办公协作", dependencies: ["knowledge.retrieve", "notify.send"],
+    dependencyStatus: [readyDep("knowledge.retrieve"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "decision", "execute", "task", "audit", "notify"] as any,
+    variables: [{"key": "meeting_title", "label": "会议主题", "required": true}, {"key": "attendees", "label": "参会人", "required": false}] as any,
+    permissions: [], changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "办公开箱首发"}] as any,
+    recentRuns: [], builtin: true, source: 'platform', certification: 'certified',
+    knowledgePackageIds: ["kp.office.meeting"] as any, requiredSkills: ["summarize", "docx"] as any,
+  },
+  {
+    id: "wf.office.todo_followup", name: "待办跟催", description: "对会议纪要或任务中的动作项到期提醒并回传结果。",
+    category: 'business', department: "office", library: "default", nodes: 4, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L1", health: "健康", successRate: 'Certified',
+    audience: "全员 / 办公协作", dependencies: ["knowledge.retrieve", "notify.send"],
+    dependencyStatus: [readyDep("knowledge.retrieve"), readyDep("notify.send")], blockers: [],
+    sequence: ["schedule", "retrieve", "task", "notify"] as any,
+    variables: [{"key": "todo_id", "label": "待办编号", "required": true}] as any,
+    permissions: [], changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "办公开箱首发"}] as any,
+    recentRuns: [], builtin: true, source: 'platform', certification: 'certified',
+    knowledgePackageIds: ["kp.office.meeting"] as any, requiredSkills: [] as any,
+  },
+  {
+    id: "wf.office.travel_request", name: "出差申请", description: "对照差旅标准提交出差申请，审批后通知与留痕。",
+    category: 'business', department: "office", library: "default", nodes: 7, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L2", health: "健康", successRate: 'Certified',
+    audience: "全员 / 办公协作", dependencies: ["knowledge.retrieve", "notify.send"],
+    dependencyStatus: [readyDep("knowledge.retrieve"), readyDep("notify.send")], blockers: [],
+    sequence: ["event", "retrieve", "policy", "approval", "task", "audit", "notify"] as any,
+    variables: [{"key": "destination", "label": "目的地", "required": true}, {"key": "days", "label": "天数", "required": true}] as any,
+    permissions: [], changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "办公开箱首发"}] as any,
+    recentRuns: [], builtin: true, source: 'platform', certification: 'certified',
+    knowledgePackageIds: ["kp.office.leave_travel"] as any, requiredSkills: [] as any,
+  },
+  {
+    id: "wf.office.weekly_report", name: "周报汇总", description: "汇总本周工作进展，按写作规范生成周报并通知相关人。",
+    category: 'business', department: "office", library: "default", nodes: 6, installs: 0, rating: 5,
+    version: "1.0.0", owner: "平台内置", verifiedAt: '2026-08-21', risk: "L1", health: "健康", successRate: 'Certified',
+    audience: "全员 / 办公协作", dependencies: ["knowledge.retrieve", "notify.send"],
+    dependencyStatus: [readyDep("knowledge.retrieve"), readyDep("notify.send")], blockers: [],
+    sequence: ["schedule", "retrieve", "transform", "execute", "audit", "notify"] as any,
+    variables: [{"key": "week", "label": "周次", "required": true}] as any,
+    permissions: [], changelog: [{"version": "1.0.0", "date": "2026-08-21", "note": "办公开箱首发"}] as any,
+    recentRuns: [], builtin: true, source: 'platform', certification: 'certified',
+    knowledgePackageIds: ["kp.office.writing"] as any, requiredSkills: ["summarize", "docx"] as any,
+  },
+
+  {
+    id: 'wft-user-sample-oncall',
+    name: '值班交接清单',
+    description: '个人另存：值班交接、未决告警核对与群通知；仅当前工作区可见。',
+    category: 'business',
+    department: 'it',
+    library: 'default',
+    nodes: 5,
+    installs: 0,
+    rating: 0,
+    version: '1.0.0',
+    owner: '业务构建者',
+    ownerId: 'u1',
+    workspaceId: 'w1',
+    verifiedAt: '2026-08-21',
+    risk: 'L2',
+    health: '健康',
+    successRate: 'Personal',
+    audience: '本人 / 值班同事',
+    dependencies: ['notify.send'],
+    dependencyStatus: [readyDep('notify.send')],
+    blockers: [],
+    sequence: ['event', 'retrieve', 'task', 'audit', 'notify'] as any,
+    variables: [{ key: 'shift', label: '班次', required: true }] as any,
+    permissions: [],
+    changelog: [{ version: '1.0.0', date: '2026-08-21', note: '个人创建示例' }] as any,
+    recentRuns: [],
+    builtin: false,
+    source: 'personal',
+    certification: 'preview',
+  },
 ];
 
 export type WorkflowRunRecord = {
@@ -860,7 +1177,7 @@ function buildRunNodeSteps(nodes: any[] | undefined, opts?: { failedAt?: number;
 
 export const mockWorkflowRuns: WorkflowRunRecord[] = [
   {
-    id: 'r1', workflowId: 'wf1', time: '14:28', trigger: 'Redis OOM 告警', status: 'success', duration: 38, steps: 10, who: '王昊',
+    id: 'r1', workflowId: 'wf1', time: '14:28', trigger: '入职申请', status: 'success', duration: 38, steps: 10, who: '王昊',
     revisionId: 'v4', correlationId: 'corr_run_r1', environment: 'sandbox', evidenceMode: 'recorded',
     nodeSteps: buildRunNodeSteps([
       { id: 'n1', kind: 'trigger', label: 'Webhook 触发' }, { id: 'n2', kind: 'retrieve', label: '知识检索' },
@@ -871,7 +1188,7 @@ export const mockWorkflowRuns: WorkflowRunRecord[] = [
     ], { status: 'success' }),
   },
   {
-    id: 'r2', workflowId: 'wf1', time: '13:42', trigger: 'Redis OOM 告警', status: 'success', duration: 36, steps: 10, who: '李婷',
+    id: 'r2', workflowId: 'wf1', time: '13:42', trigger: '入职申请', status: 'success', duration: 36, steps: 10, who: '李婷',
     revisionId: 'v4', correlationId: 'corr_run_r2', environment: 'sandbox', evidenceMode: 'recorded',
     nodeSteps: buildRunNodeSteps([
       { id: 'n1', kind: 'trigger', label: 'Webhook 触发' }, { id: 'n2', kind: 'retrieve', label: '知识检索' },
@@ -882,20 +1199,20 @@ export const mockWorkflowRuns: WorkflowRunRecord[] = [
     ], { status: 'success' }),
   },
   {
-    id: 'r3', workflowId: 'wf1', time: '11:18', trigger: 'Redis OOM 告警', status: 'failed', duration: 52, steps: 4, who: '王昊',
+    id: 'r3', workflowId: 'wf1', time: '11:18', trigger: '入职申请', status: 'failed', duration: 52, steps: 4, who: '王昊',
     error: '双重审批超时（300s）', revisionId: 'v3', correlationId: 'corr_run_r3', environment: 'sandbox', evidenceMode: 'recorded',
     nodeSteps: buildRunNodeSteps([
-      { id: 'n1', kind: 'trigger', label: 'Webhook 触发' }, { id: 'n2', kind: 'retrieve', label: '知识检索' },
+      { id: 'n1', kind: 'trigger', label: '入职申请触发' }, { id: 'n2', kind: 'retrieve', label: '知识检索' },
       { id: 'n3', kind: 'decision', label: '工作伙伴研判' }, { id: 'n4', kind: 'approval', label: '双重审批' },
-      { id: 'n5', kind: 'branch', label: '条件分支' }, { id: 'n6', kind: 'execute', label: '执行受控恢复' },
+      { id: 'n5', kind: 'branch', label: '条件分支' }, { id: 'n6', kind: 'execute', label: '开通账号权限' },
     ], { status: 'failed', failedAt: 3 }),
   },
   {
-    id: 'r4', workflowId: 'wf1', time: '09:54', trigger: 'K8s 灰度发布', status: 'success', duration: 124, steps: 8, who: '孙博',
+    id: 'r4', workflowId: 'wf1', time: '09:54', trigger: '发版门禁', status: 'success', duration: 124, steps: 8, who: '孙博',
     revisionId: 'v2', correlationId: 'corr_run_r4', environment: 'staging', evidenceMode: 'synthetic',
   },
   {
-    id: 'r5', workflowId: 'wf1', time: '08:30', trigger: 'CVE 扫描处置', status: 'success', duration: 78, steps: 6, who: '张睿',
+    id: 'r5', workflowId: 'wf1', time: '08:30', trigger: '合同审批', status: 'success', duration: 78, steps: 6, who: '张睿',
     revisionId: 'v2', correlationId: 'corr_run_r5', environment: 'staging', evidenceMode: 'synthetic',
   },
 ];
@@ -910,20 +1227,20 @@ export const mockWorkflowKpi = {
 
 export const mockWorkflow: Workflow = {
   id: 'wf1',
-  name: 'cache-oom 受控恢复',
+  name: '入职办理与权限开通',
   status: 'active',
   triggerCount: 124,
   successRate: 1.0,
   avgDurationSec: 38,
   nodes: [
-    { id: 'n1', kind: 'trigger', label: 'Webhook 触发', position: { x: 60, y: 80 }, status: 'success', durationMs: 12 },
+    { id: 'n1', kind: 'trigger', label: '入职申请触发', position: { x: 60, y: 80 }, status: 'success', durationMs: 12 },
     { id: 'n2', kind: 'retrieve', label: '知识检索', position: { x: 280, y: 80 }, status: 'success', durationMs: 320 },
     { id: 'n3', kind: 'decision', label: '工作伙伴研判', position: { x: 500, y: 80 }, status: 'success', durationMs: 880 },
     { id: 'n4', kind: 'approval', label: '双重审批', position: { x: 720, y: 80 }, status: 'success', durationMs: 4500 },
-    { id: 'n5', kind: 'branch', label: '分支：成功路径', position: { x: 940, y: 40 }, status: 'success', durationMs: 4 },
-    { id: 'n6', kind: 'branch', label: '分支：回滚路径', position: { x: 940, y: 160 }, status: 'success', durationMs: 4 },
-    { id: 'n7', kind: 'execute', label: '执行受控恢复', position: { x: 1180, y: 40 }, status: 'success', durationMs: 21000 },
-    { id: 'n8', kind: 'execute', label: '回滚 + 告警', position: { x: 1180, y: 160 }, status: 'success', durationMs: 18000 },
+    { id: 'n5', kind: 'branch', label: '分支：开通路径', position: { x: 940, y: 40 }, status: 'success', durationMs: 4 },
+    { id: 'n6', kind: 'branch', label: '分支：驳回路径', position: { x: 940, y: 160 }, status: 'success', durationMs: 4 },
+    { id: 'n7', kind: 'execute', label: '开通账号权限', position: { x: 1180, y: 40 }, status: 'success', durationMs: 21000 },
+    { id: 'n8', kind: 'execute', label: '通知 HRBP', position: { x: 1180, y: 160 }, status: 'success', durationMs: 18000 },
     { id: 'n9', kind: 'audit', label: '审计留痕', position: { x: 1420, y: 100 }, status: 'success', durationMs: 60 },
     { id: 'n10', kind: 'notify', label: '飞书 / 企微通知', position: { x: 1660, y: 100 }, status: 'success', durationMs: 180 },
   ],
@@ -1563,6 +1880,36 @@ export const mockKnowledgePackages: KnowledgePackage[] = [
     id: 'kp-draft-review', name: '草稿待发布知识包', description: '用于验证未发布版本不可绑定。', domain: '演示', classification: 'internal', owner: '平台组', status: 'review', documentCount: 0, documentIds: [], consumers: 0,
     currentVersion: { id: 'kpv-draft-01', version: 'v0.1', status: 'review', indexVersion: 'idx-draft-01', qualityScore: 70, changeSummary: '尚未发布' },
     versions: [{ id: 'kpv-draft-01', version: 'v0.1', status: 'review', indexVersion: 'idx-draft-01', qualityScore: 70, changeSummary: '尚未发布' }],
+  },
+  {
+    id: 'kp.office.handbook', workspaceId: 'w1', name: '员工手册与制度问答', description: '办公开箱：员工手册摘要与 FAQ', domain: '办公', classification: 'internal', owner: '平台内置', ownerId: 'u1', status: 'published', documentCount: 2, documentIds: [], consumers: 0,
+    currentVersion: { id: 'kpv-office-handbook-1', version: '1.0.0', status: 'published', indexVersion: 'idx-office-1', publishedAt: '2026-08-21T00:00:00Z', qualityScore: 90, changeSummary: '办公开箱首发' },
+    versions: [{ id: 'kpv-office-handbook-1', version: '1.0.0', status: 'published', indexVersion: 'idx-office-1', publishedAt: '2026-08-21T00:00:00Z', qualityScore: 90, changeSummary: '办公开箱首发' }],
+  },
+  {
+    id: 'kp.office.meeting', workspaceId: 'w1', name: '会议与纪要规范', description: '办公开箱：会议纪要必填项与分发规则', domain: '办公', classification: 'internal', owner: '平台内置', ownerId: 'u1', status: 'published', documentCount: 2, documentIds: [], consumers: 0,
+    currentVersion: { id: 'kpv-office-meeting-1', version: '1.0.0', status: 'published', indexVersion: 'idx-office-1', publishedAt: '2026-08-21T00:00:00Z', qualityScore: 90, changeSummary: '办公开箱首发' },
+    versions: [{ id: 'kpv-office-meeting-1', version: '1.0.0', status: 'published', indexVersion: 'idx-office-1', publishedAt: '2026-08-21T00:00:00Z', qualityScore: 90, changeSummary: '办公开箱首发' }],
+  },
+  {
+    id: 'kp.office.writing', workspaceId: 'w1', name: '公文与材料规范', description: '办公开箱：周报/通知写作规范', domain: '办公', classification: 'internal', owner: '平台内置', ownerId: 'u1', status: 'published', documentCount: 2, documentIds: [], consumers: 0,
+    currentVersion: { id: 'kpv-office-writing-1', version: '1.0.0', status: 'published', indexVersion: 'idx-office-1', publishedAt: '2026-08-21T00:00:00Z', qualityScore: 90, changeSummary: '办公开箱首发' },
+    versions: [{ id: 'kpv-office-writing-1', version: '1.0.0', status: 'published', indexVersion: 'idx-office-1', publishedAt: '2026-08-21T00:00:00Z', qualityScore: 90, changeSummary: '办公开箱首发' }],
+  },
+  {
+    id: 'kp.office.leave_travel', workspaceId: 'w1', name: '假勤与差旅标准', description: '办公开箱：假勤与差旅摘要', domain: '办公', classification: 'internal', owner: '平台内置', ownerId: 'u1', status: 'published', documentCount: 2, documentIds: [], consumers: 0,
+    currentVersion: { id: 'kpv-office-leave-1', version: '1.0.0', status: 'published', indexVersion: 'idx-office-1', publishedAt: '2026-08-21T00:00:00Z', qualityScore: 90, changeSummary: '办公开箱首发' },
+    versions: [{ id: 'kpv-office-leave-1', version: '1.0.0', status: 'published', indexVersion: 'idx-office-1', publishedAt: '2026-08-21T00:00:00Z', qualityScore: 90, changeSummary: '办公开箱首发' }],
+  },
+  {
+    id: 'kp.office.expense_lite', workspaceId: 'w1', name: '报销常识（轻量）', description: '办公开箱：报销自查与不可报项', domain: '办公', classification: 'internal', owner: '平台内置', ownerId: 'u1', status: 'published', documentCount: 2, documentIds: [], consumers: 0,
+    currentVersion: { id: 'kpv-office-expense-1', version: '1.0.0', status: 'published', indexVersion: 'idx-office-1', publishedAt: '2026-08-21T00:00:00Z', qualityScore: 90, changeSummary: '办公开箱首发' },
+    versions: [{ id: 'kpv-office-expense-1', version: '1.0.0', status: 'published', indexVersion: 'idx-office-1', publishedAt: '2026-08-21T00:00:00Z', qualityScore: 90, changeSummary: '办公开箱首发' }],
+  },
+  {
+    id: 'kp.office.it_selfservice', workspaceId: 'w1', name: 'IT 自助服务', description: '办公开箱：密码重置与权限自助说明', domain: '办公', classification: 'internal', owner: '平台内置', ownerId: 'u1', status: 'published', documentCount: 2, documentIds: [], consumers: 0,
+    currentVersion: { id: 'kpv-office-it-1', version: '1.0.0', status: 'published', indexVersion: 'idx-office-1', publishedAt: '2026-08-21T00:00:00Z', qualityScore: 90, changeSummary: '办公开箱首发' },
+    versions: [{ id: 'kpv-office-it-1', version: '1.0.0', status: 'published', indexVersion: 'idx-office-1', publishedAt: '2026-08-21T00:00:00Z', qualityScore: 90, changeSummary: '办公开箱首发' }],
   },
 ];
 
@@ -3539,85 +3886,90 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
 
   // 工作流
   if (path === '/api/workflows') return mockWorkflowCatalog.map((workflow) => ({ ...workflow, workspaceId: currentWorkspaceId, ownerId: 'u1', environment: 'production', lifecycleStatus: workflow.status, classification: 'internal', createdBy: 'u1', updatedAt: '2026-07-19T12:00:00.000Z' }));
-  if (path === '/api/workflow-templates') return mockWorkflowTemplates.map((template, index) => {
-    const catalog = [
-      {
-        version: 'v2.4', owner: 'SRE 平台组', verifiedAt: '2026-07-16', risk: 'L3', health: '需授权', successRate: '98.6%',
-        dependencies: ['redis-cli', 'kubernetes-mcp'],
-        dependencyStatus: [
-          { name: 'redis-cli', status: 'ready' },
-          { name: 'kubernetes-mcp', status: 'unauthorized', reason: 'kubernetes-mcp：当前工作区未授权生产写权限' },
-        ],
-        blockers: ['kubernetes-mcp：当前工作区未授权生产写权限'],
-        sequence: ['event', 'retrieve', 'decision', 'policy', 'approval', 'execute', 'compensate', 'audit', 'notify'],
-        variables: [{ key: 'cluster', label: '目标集群', required: true }, { key: 'approver_group', label: '双重审批组', required: true }],
-        permissions: [{ action: 'CONFIG SET', gate: '双重审批 + 生产写权限' }],
-        changelog: [{ version: 'v2.4', date: '2026-07-16', note: '补齐补偿分支与依赖授权检查' }],
-        recentRuns: [{ id: 'r-tpl1-01', time: '07-16 14:28', status: 'success', note: '验证集通过' }],
-      },
-      {
-        version: 'v3.1', owner: '安全运营组', verifiedAt: '2026-07-12', risk: 'L3', health: '健康', successRate: '96.8%',
-        dependencies: ['cve-kb', 'patch-skill'],
-        dependencyStatus: [{ name: 'cve-kb', status: 'ready' }, { name: 'patch-skill', status: 'ready' }],
-        blockers: [],
-        sequence: ['event', 'retrieve', 'decision', 'policy', 'approval', 'task', 'execute', 'compensate', 'audit', 'notify'],
-        variables: [{ key: 'cve_id', label: 'CVE 编号', required: true }],
-        permissions: [{ action: '执行补丁', gate: '双重审批' }],
-        changelog: [{ version: 'v3.1', date: '2026-07-12', note: '增加影响面评估节点' }],
-        recentRuns: [{ id: 'r-tpl2-01', time: '07-12 09:40', status: 'success', note: '验证集通过' }],
-      },
-      {
-        version: 'v2.2', owner: '合规运营组', verifiedAt: '2026-07-17', risk: 'L1', health: '健康', successRate: '99.2%',
-        dependencies: ['compliance-kb'],
-        dependencyStatus: [{ name: 'compliance-kb', status: 'ready' }],
-        blockers: [],
-        sequence: ['schedule', 'retrieve', 'decision', 'transform', 'audit', 'notify'],
-        variables: [{ key: 'report_period', label: '报告周期', required: true }],
-        permissions: [{ action: '导出报告', gate: '审计留痕' }],
-        changelog: [{ version: 'v2.2', date: '2026-07-17', note: '补充分发渠道校验' }],
-        recentRuns: [{ id: 'r-tpl3-01', time: '07-17 08:10', status: 'success', note: '验证集通过' }],
-      },
-      {
-        version: 'v1.8', owner: '交付工程组', verifiedAt: '2026-07-14', risk: 'L3', health: '健康', successRate: '97.9%',
-        dependencies: ['release-skill', 'prometheus-mcp'],
-        dependencyStatus: [{ name: 'release-skill', status: 'ready' }, { name: 'prometheus-mcp', status: 'ready' }],
-        blockers: [],
-        sequence: ['event', 'policy', 'approval', 'parallel', 'condition', 'execute', 'compensate', 'audit', 'notify'],
-        variables: [{ key: 'service', label: '发布服务', required: true }],
-        permissions: [{ action: '生产发布', gate: '双重审批' }],
-        changelog: [{ version: 'v1.8', date: '2026-07-14', note: '指标门禁阈值可配置' }],
-        recentRuns: [{ id: 'r-tpl4-01', time: '07-14 16:22', status: 'success', note: '验证集通过' }],
-      },
-      {
-        version: 'v1.6', owner: '安全运营组', verifiedAt: '2026-07-15', risk: 'L2', health: '健康', successRate: '98.1%',
-        dependencies: ['siem-connector'],
-        dependencyStatus: [{ name: 'siem-connector', status: 'ready' }],
-        blockers: [],
-        sequence: ['event', 'transform', 'decision', 'notify'],
-        variables: [{ key: 'silence_window', label: '静默窗口', required: false }],
-        permissions: [{ action: '写入静默规则', gate: '策略校验' }],
-        changelog: [{ version: 'v1.6', date: '2026-07-15', note: '合并规则支持标签匹配' }],
-        recentRuns: [{ id: 'r-tpl5-01', time: '07-15 10:05', status: 'success', note: '验证集通过' }],
-      },
-      {
-        version: 'v2.0', owner: '容量运营组', verifiedAt: '2026-07-10', risk: 'L2', health: '健康', successRate: '95.4%',
-        dependencies: ['capacity-forecast-skill'],
-        dependencyStatus: [{ name: 'capacity-forecast-skill', status: 'ready' }],
-        blockers: [],
-        sequence: ['schedule', 'retrieve', 'decision', 'policy', 'task', 'audit', 'notify'],
-        variables: [{ key: 'metric', label: '容量指标', required: true }],
-        permissions: [{ action: '创建扩容建议工单', gate: '人工确认' }],
-        changelog: [{ version: 'v2.0', date: '2026-07-10', note: '研判节点改用企业默认模型路由' }],
-        recentRuns: [{ id: 'r-tpl6-01', time: '07-10 18:30', status: 'success', note: '验证集通过' }],
-      },
-    ][index] ?? {
-      version: 'v1.0', owner: '平台组', verifiedAt: '2026-07-01', risk: 'L2', health: '健康', successRate: '95%',
-      dependencies: ['受控连接器'], dependencyStatus: [{ name: '受控连接器', status: 'ready' }], blockers: [],
-      sequence: ['schedule', 'retrieve', 'decision', 'policy', 'task', 'audit', 'notify'],
-      variables: [], permissions: [], changelog: [], recentRuns: [],
+  if (path === '/api/workflow-templates' && method === 'GET') {
+    const origin = String((opts as any).query?.origin ?? '').toLowerCase();
+    return mockWorkflowTemplates
+      .filter((template) => {
+        const source = (template as any).source ?? ((template as any).builtin === false ? 'personal' : 'platform');
+        const builtin = (template as any).builtin !== false && source === 'platform';
+        const isPersonal = source === 'personal' || (template as any).builtin === false;
+        if (isPersonal) {
+          const ws = (template as any).workspaceId;
+          const ownerId = (template as any).ownerId;
+          if (ws && ws !== currentWorkspaceId) return false;
+          if (ownerId && ownerId !== (identity?.id ?? 'u1') && identity?.role !== 'admin') return false;
+        }
+        if (origin === 'platform' && isPersonal) return false;
+        if (origin === 'personal' && !isPersonal) return false;
+        return true;
+      })
+      .map((template) => {
+        const source = (template as any).source ?? ((template as any).builtin === false ? 'personal' : 'platform');
+        return {
+          ...template,
+          source,
+          builtin: source === 'platform',
+        };
+      });
+  }
+  if (path === '/api/workflow-templates' && method === 'POST') {
+    const body = (opts.body ?? {}) as Record<string, any>;
+    const name = String(body.name ?? '').trim();
+    if (!name) throw new Error('E_BAD_REQUEST: 模板名称不能为空');
+    const graph = body.graph ?? { nodes: body.nodes ?? [], edges: body.edges ?? [] };
+    const nodeCount = Array.isArray(graph.nodes) ? graph.nodes.length : 0;
+    const seq = Array.isArray(body.sequence) ? body.sequence : (graph.nodes ?? []).map((n: any) => n.kind ?? 'task');
+    if (!nodeCount && !seq.length) throw new Error('E_BAD_REQUEST: 空画布不能保存为个人模板');
+    const now = new Date().toISOString();
+    const item: WorkflowTemplate = {
+      id: mockId('wft-user'),
+      name,
+      description: String(body.description ?? '由当前画布另存的个人模板'),
+      category: String(body.category ?? 'business'),
+      department: String(body.department ?? 'it'),
+      library: 'default',
+      nodes: nodeCount || seq.length,
+      installs: 0,
+      rating: 0,
+      version: String(body.version ?? '1.0.0'),
+      owner: identity?.name ?? '业务构建者',
+      ownerId: identity?.id ?? 'u1',
+      workspaceId: currentWorkspaceId,
+      verifiedAt: now.slice(0, 10),
+      risk: (body.risk as any) ?? 'L2',
+      health: '健康',
+      successRate: 'Personal',
+      audience: '本人 / 协作同事',
+      dependencies: body.dependencies ?? [],
+      dependencyStatus: body.dependencyStatus ?? [],
+      blockers: [],
+      sequence: seq as any,
+      variables: body.variables ?? [],
+      permissions: body.permissions ?? [],
+      changelog: [{ version: '1.0.0', date: now.slice(0, 10), note: '个人创建' }],
+      recentRuns: [],
+      builtin: false,
+      source: 'personal',
+      certification: 'preview',
+      graph,
     };
-    return { ...template, ...catalog };
-  });
+    mockWorkflowTemplates.unshift(item);
+    return item;
+  }
+  const personalTplDelete = path.match(/^\/api\/workflow-templates\/([^/]+)$/);
+  if (personalTplDelete && method === 'DELETE') {
+    const id = decodeURIComponent(personalTplDelete[1]);
+    const idx = mockWorkflowTemplates.findIndex((t) => t.id === id);
+    if (idx < 0) throw new Error('E_NOT_FOUND: 模板不存在');
+    const item = mockWorkflowTemplates[idx] as any;
+    const isPersonal = item.source === 'personal' || item.builtin === false;
+    if (!isPersonal) throw new Error('E_ROLE_FORBIDDEN: 平台内置模板不可删除');
+    if (item.ownerId && item.ownerId !== (identity?.id ?? 'u1') && identity?.role !== 'admin') {
+      throw new Error('E_ROLE_FORBIDDEN: 仅可删除本人创建的个人模板');
+    }
+    mockWorkflowTemplates.splice(idx, 1);
+    return { ok: true, id };
+  }
   if (path === '/api/workflow-runs') return workflowControl.runs;
   if (path === '/api/workflow-kpi') return mockWorkflowKpi;
   if (path === '/api/workflows/generations' && method === 'GET') {

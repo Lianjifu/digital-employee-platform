@@ -1,0 +1,167 @@
+{
+  "id": "wf.office.leave_request",
+  "name": "请假申请",
+  "version": "1.0.0",
+  "certification": "certified",
+  "library": "default",
+  "department": "office",
+  "audience": "全员 / 办公协作",
+  "industryTags": [
+    "all",
+    "saas",
+    "internet"
+  ],
+  "description": "对照假勤制度提交请假，经审批后通知相关人。",
+  "antiPatterns": "不替代部门专业审批主流程。",
+  "owner": "平台内置",
+  "risk": "L2",
+  "suggestedExpertRole": "办公助手",
+  "sequence": [
+    "event",
+    "retrieve",
+    "policy",
+    "approval",
+    "audit",
+    "notify"
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "event",
+        "label": "触发",
+        "position": {
+          "x": 80,
+          "y": 80
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "retrieve",
+        "label": "知识检索",
+        "position": {
+          "x": 300,
+          "y": 80
+        }
+      },
+      {
+        "id": "n3",
+        "kind": "policy",
+        "label": "策略",
+        "position": {
+          "x": 520,
+          "y": 80
+        }
+      },
+      {
+        "id": "n4",
+        "kind": "approval",
+        "label": "审批",
+        "position": {
+          "x": 740,
+          "y": 80
+        }
+      },
+      {
+        "id": "n5",
+        "kind": "audit",
+        "label": "审计",
+        "position": {
+          "x": 80,
+          "y": 220
+        }
+      },
+      {
+        "id": "n6",
+        "kind": "notify",
+        "label": "通知",
+        "position": {
+          "x": 300,
+          "y": 220
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1-2",
+        "source": "n1",
+        "target": "n2"
+      },
+      {
+        "id": "e2-3",
+        "source": "n2",
+        "target": "n3"
+      },
+      {
+        "id": "e3-4",
+        "source": "n3",
+        "target": "n4"
+      },
+      {
+        "id": "e4-5",
+        "source": "n4",
+        "target": "n5"
+      },
+      {
+        "id": "e5-6",
+        "source": "n5",
+        "target": "n6"
+      }
+    ]
+  },
+  "nodes": 6,
+  "variables": [
+    {
+      "key": "leave_type",
+      "label": "假种",
+      "required": true
+    },
+    {
+      "key": "days",
+      "label": "天数",
+      "required": true
+    }
+  ],
+  "connectors": [
+    {
+      "slot": "knowledge.retrieve",
+      "label": "知识检索",
+      "required": false,
+      "capability": "knowledge.retrieve",
+      "defaultBinding": "builtin:knowledge.retrieve"
+    },
+    {
+      "slot": "notify.send",
+      "label": "通知渠道",
+      "required": false,
+      "capability": "notify.send"
+    }
+  ],
+  "knowledgePackageIds": [
+    "kp.office.leave_travel"
+  ],
+  "requiredSkills": [],
+  "optionalSkills": [],
+  "scenarioId": "sc.office.leave_request",
+  "policy": {
+    "requireApproval": true,
+    "requireAudit": true
+  },
+  "fixtures": [
+    {
+      "name": "sandbox-ok",
+      "variables": {
+        "topic": "示例"
+      }
+    }
+  ],
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-08-21",
+      "note": "办公开箱首发"
+    }
+  ],
+  "builtin": true,
+  "source": "platform"
+}

@@ -2,7 +2,7 @@
  * 工作区是业务域资源与运营的边界。
  * 身份权限、安全策略、审计与运行处置统一由安全治理承接，避免控制面重复。
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { useApiMutation, useApiQuery } from '@/services/query';
@@ -36,7 +36,14 @@ export default function Workspaces() {
   const freezeWorkspace = useApiMutation<any, { reason: string }>(() => `/api/workspaces/${activeWs}/freeze`, { onSuccess: () => setGovernanceNotice('工作区已冻结，相关动作已写入审计。'), onError: (error) => setGovernanceNotice(error instanceof Error ? error.message : '冻结失败') });
   const transferWorkspace = useApiMutation<any, { ownerId: string; reason: string }>(() => `/api/workspaces/${activeWs}/transfer`, { onSuccess: () => { setGovernanceNotice('工作区负责人已移交，变更已写入审计。'); setTransferOwnerId(''); }, onError: (error) => setGovernanceNotice(error instanceof Error ? error.message : '负责人移交失败') });
 
-  const active = list?.find((w) => w.id === activeWs);
+  useEffect(() => {
+    if (!list?.length) return;
+    if (!current || !list.some((w) => w.id === current.id)) {
+      setCurrent(list.find((w) => w.id === 'w1') ?? list[0]!);
+    }
+  }, [list, current, setCurrent]);
+
+  const active = list?.find((w) => w.id === activeWs) ?? list?.[0];
 
   return (
     <div className="workspaces-page h-full min-w-0 overflow-y-auto bg-[var(--bg-elevated)]">

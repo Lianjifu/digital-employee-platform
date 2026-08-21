@@ -387,6 +387,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	modeHint := coalesce(str(body["modeHint"]), str(body["mode"]))
 	reflectHint := coalesce(str(body["reflectHint"]), str(body["feedback"]))
 	sessionMode := normalizeSessionMode(str(body["sessionMode"]))
+	runMode := normalizeRunMode(str(body["runMode"]))
 	reasoningEffort := strings.ToLower(strings.TrimSpace(str(body["reasoningEffort"])))
 	switch reasoningEffort {
 	case "off", "standard", "deep":
@@ -443,6 +444,9 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		if sm := str(sess["sessionMode"]); sm != "" && str(body["sessionMode"]) == "" {
 			sessionMode = normalizeSessionMode(sm)
 		}
+		if runMode == "" {
+			runMode = normalizeRunMode(str(sess["runMode"]))
+		}
 		if rl := str(sess["riskLevel"]); rl != "" && str(body["riskLevel"]) == "" {
 			riskLevel = normalizeRiskLevelSession(rl)
 		}
@@ -457,6 +461,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	runMode = resolveRunMode(runMode, "", sessionMode)
 	s.Store.RUnlock()
 
 	eval, err := s.evaluateZeroTrust(id, "session", "write", "internal", false, corr)
@@ -617,11 +622,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	system := buildCopilotSystemPromptWithEffort(empMap, ragHits, memoryHits, reasoningEffort)
-	if sessionMode == sessionModeInvestigate {
-		system += "\n当前会话为研判模式：禁止宣称已执行写操作；技能仅可 action=open/artifacts；需要变更时提示用户切换到受控执行。"
-	} else {
-		system += "\n当前会话为受控执行模式：写类 skill.run/write 将进入人工审核队列；仅当工具观察为 pending_authorization 时可告知已进入审核；未获批准前不得声称执行成功或已生成文件。needs_instruction 表示尚未真正执行脚本。"
-	}
+	system += runModePromptClause(runMode)
 
 	chatMessages := assembleCopilotChatMessages(historySnapshot)
 	if len(chatMessages) == 0 {

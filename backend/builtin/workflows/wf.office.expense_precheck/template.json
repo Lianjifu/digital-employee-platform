@@ -1,0 +1,164 @@
+{
+  "id": "wf.office.expense_precheck",
+  "name": "报销前自查",
+  "version": "1.0.0",
+  "certification": "certified",
+  "library": "default",
+  "department": "office",
+  "audience": "全员 / 办公协作",
+  "industryTags": [
+    "all",
+    "saas",
+    "internet"
+  ],
+  "description": "按报销常识自查票据与不可报项，通过后可衔接部门报销流程。",
+  "antiPatterns": "不替代财务费用报销主流程（请用 wf.fin.expense）。",
+  "owner": "平台内置",
+  "risk": "L1",
+  "suggestedExpertRole": "办公助手",
+  "sequence": [
+    "event",
+    "retrieve",
+    "decision",
+    "task",
+    "audit",
+    "notify"
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "event",
+        "label": "触发",
+        "position": {
+          "x": 80,
+          "y": 80
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "retrieve",
+        "label": "知识检索",
+        "position": {
+          "x": 300,
+          "y": 80
+        }
+      },
+      {
+        "id": "n3",
+        "kind": "decision",
+        "label": "研判",
+        "position": {
+          "x": 520,
+          "y": 80
+        }
+      },
+      {
+        "id": "n4",
+        "kind": "task",
+        "label": "人工任务",
+        "position": {
+          "x": 740,
+          "y": 80
+        }
+      },
+      {
+        "id": "n5",
+        "kind": "audit",
+        "label": "审计",
+        "position": {
+          "x": 80,
+          "y": 220
+        }
+      },
+      {
+        "id": "n6",
+        "kind": "notify",
+        "label": "通知",
+        "position": {
+          "x": 300,
+          "y": 220
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1-2",
+        "source": "n1",
+        "target": "n2"
+      },
+      {
+        "id": "e2-3",
+        "source": "n2",
+        "target": "n3"
+      },
+      {
+        "id": "e3-4",
+        "source": "n3",
+        "target": "n4"
+      },
+      {
+        "id": "e4-5",
+        "source": "n4",
+        "target": "n5"
+      },
+      {
+        "id": "e5-6",
+        "source": "n5",
+        "target": "n6"
+      }
+    ]
+  },
+  "nodes": 6,
+  "variables": [
+    {
+      "key": "amount",
+      "label": "金额",
+      "required": true
+    }
+  ],
+  "connectors": [
+    {
+      "slot": "knowledge.retrieve",
+      "label": "知识检索",
+      "required": false,
+      "capability": "knowledge.retrieve",
+      "defaultBinding": "builtin:knowledge.retrieve"
+    },
+    {
+      "slot": "notify.send",
+      "label": "通知渠道",
+      "required": false,
+      "capability": "notify.send"
+    }
+  ],
+  "knowledgePackageIds": [
+    "kp.office.expense_lite"
+  ],
+  "requiredSkills": [
+    "summarize"
+  ],
+  "optionalSkills": [],
+  "scenarioId": "sc.office.expense_precheck",
+  "policy": {
+    "requireApproval": false,
+    "requireAudit": true
+  },
+  "fixtures": [
+    {
+      "name": "sandbox-ok",
+      "variables": {
+        "topic": "示例"
+      }
+    }
+  ],
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-08-21",
+      "note": "办公开箱首发"
+    }
+  ],
+  "builtin": true,
+  "source": "platform"
+}

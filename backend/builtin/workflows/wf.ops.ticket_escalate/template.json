@@ -1,0 +1,201 @@
+{
+  "id": "wf.ops.ticket_escalate",
+  "name": "客诉升级闭环",
+  "version": "1.0.0",
+  "certification": "certified",
+  "library": "default",
+  "department": "operations",
+  "audience": "客服 / 运营 / 值班",
+  "industryTags": [
+    "all",
+    "retail",
+    "saas"
+  ],
+  "description": "工单分级、SLA 监控、升级人工、回访与知识沉淀。",
+  "owner": "平台内置",
+  "risk": "L2",
+  "suggestedExpertRole": "运营专员",
+  "sequence": [
+    "event",
+    "retrieve",
+    "decision",
+    "task",
+    "approval",
+    "execute",
+    "audit",
+    "notify"
+  ],
+  "variables": [
+    {
+      "key": "ticket_id",
+      "label": "工单号",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "key": "sla_minutes",
+      "label": "SLA（分钟）",
+      "required": false,
+      "type": "number",
+      "default": 240
+    }
+  ],
+  "connectors": [
+    {
+      "slot": "ticket.manage",
+      "label": "工单系统",
+      "required": false,
+      "capability": "ticket.manage"
+    },
+    {
+      "slot": "knowledge.retrieve",
+      "label": "知识检索",
+      "required": false,
+      "capability": "knowledge.retrieve",
+      "defaultBinding": "builtin:knowledge.retrieve"
+    },
+    {
+      "slot": "notify.send",
+      "label": "通知渠道",
+      "required": true,
+      "capability": "notify.send"
+    }
+  ],
+  "policy": {
+    "approvalRoles": [
+      "ops_lead"
+    ],
+    "requireAudit": true,
+    "escalateOnSlaBreach": true
+  },
+  "fixtures": [
+    {
+      "name": "sandbox-ticket",
+      "variables": {
+        "ticket_id": "T-100",
+        "sla_minutes": 120
+      }
+    }
+  ],
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-08-21",
+      "note": "出厂 Certified 首发"
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "event",
+        "label": "触发",
+        "position": {
+          "x": 80,
+          "y": 80
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "retrieve",
+        "label": "知识检索",
+        "position": {
+          "x": 300,
+          "y": 80
+        }
+      },
+      {
+        "id": "n3",
+        "kind": "decision",
+        "label": "研判",
+        "position": {
+          "x": 520,
+          "y": 80
+        }
+      },
+      {
+        "id": "n4",
+        "kind": "task",
+        "label": "任务",
+        "position": {
+          "x": 740,
+          "y": 80
+        }
+      },
+      {
+        "id": "n5",
+        "kind": "approval",
+        "label": "审批",
+        "position": {
+          "x": 80,
+          "y": 220
+        }
+      },
+      {
+        "id": "n6",
+        "kind": "execute",
+        "label": "执行",
+        "position": {
+          "x": 300,
+          "y": 220
+        }
+      },
+      {
+        "id": "n7",
+        "kind": "audit",
+        "label": "审计",
+        "position": {
+          "x": 520,
+          "y": 220
+        }
+      },
+      {
+        "id": "n8",
+        "kind": "notify",
+        "label": "通知",
+        "position": {
+          "x": 740,
+          "y": 220
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1-2",
+        "source": "n1",
+        "target": "n2"
+      },
+      {
+        "id": "e2-3",
+        "source": "n2",
+        "target": "n3"
+      },
+      {
+        "id": "e3-4",
+        "source": "n3",
+        "target": "n4"
+      },
+      {
+        "id": "e4-5",
+        "source": "n4",
+        "target": "n5"
+      },
+      {
+        "id": "e5-6",
+        "source": "n5",
+        "target": "n6"
+      },
+      {
+        "id": "e6-7",
+        "source": "n6",
+        "target": "n7"
+      },
+      {
+        "id": "e7-8",
+        "source": "n7",
+        "target": "n8"
+      }
+    ]
+  },
+  "nodes": 8
+}

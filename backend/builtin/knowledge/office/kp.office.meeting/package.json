@@ -1,0 +1,34 @@
+{
+  "id": "kp.office.meeting",
+  "name": "会议与纪要规范",
+  "version": "1.0.0",
+  "description": "会议议程、纪要必填项与分发规则。",
+  "domain": "办公",
+  "classification": "internal",
+  "builtin": true,
+  "source": "platform",
+  "tags": [
+    "office",
+    "开箱"
+  ],
+  "docs": [
+    {
+      "file": "01-纪要必填项.md",
+      "title": "纪要必填项"
+    },
+    {
+      "file": "02-会议分发规则.md",
+      "title": "会议分发规则"
+    }
+  ],
+  "qa": [
+    {
+      "q": "纪要要写什么",
+      "a": "主题、参会人、决议、动作项与截止日期。"
+    },
+    {
+      "q": "多久发出纪要",
+      "a": "会后 1 个工作日内。"
+    }
+  ]
+}

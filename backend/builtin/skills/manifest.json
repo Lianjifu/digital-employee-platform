@@ -8,6 +8,14 @@
   ],
   "tierDOptIn": ["browser-use", "1password"],
   "packs": {
+    "office": {
+      "packName": "办公通用",
+      "phase": "P0",
+      "autoInstall": true,
+      "skills": [
+        "summarize", "docx", "pdf", "pptx", "spreadsheets", "diagram-maker"
+      ]
+    },
     "general": {
       "packName": "通用",
       "phase": "P0",

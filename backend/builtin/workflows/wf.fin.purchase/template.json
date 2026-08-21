@@ -1,0 +1,199 @@
+{
+  "id": "wf.fin.purchase",
+  "name": "采购申请",
+  "version": "1.0.0",
+  "certification": "certified",
+  "library": "default",
+  "department": "finance",
+  "audience": "采购 / 预算责任人",
+  "industryTags": [
+    "all",
+    "manufacturing"
+  ],
+  "description": "采购立项、预算占用、审批与订单回写；可按企业裁剪三单匹配。",
+  "owner": "平台内置",
+  "risk": "L3",
+  "suggestedExpertRole": "财务专员",
+  "sequence": [
+    "event",
+    "retrieve",
+    "decision",
+    "approval",
+    "execute",
+    "task",
+    "audit",
+    "notify"
+  ],
+  "variables": [
+    {
+      "key": "po_title",
+      "label": "采购事项",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "key": "budget_code",
+      "label": "预算科目",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "key": "amount",
+      "label": "金额",
+      "required": true,
+      "type": "number"
+    }
+  ],
+  "connectors": [
+    {
+      "slot": "erp.purchase",
+      "label": "采购/ERP",
+      "required": false,
+      "capability": "erp.purchase"
+    },
+    {
+      "slot": "notify.send",
+      "label": "通知渠道",
+      "required": true,
+      "capability": "notify.send"
+    }
+  ],
+  "policy": {
+    "approvalRoles": [
+      "budget_owner",
+      "finance_manager"
+    ],
+    "requireAudit": true
+  },
+  "fixtures": [
+    {
+      "name": "sandbox-po",
+      "variables": {
+        "po_title": "笔记本采购",
+        "budget_code": "IT-HW",
+        "amount": 12000
+      }
+    }
+  ],
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-08-21",
+      "note": "出厂 Certified 首发"
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "event",
+        "label": "触发",
+        "position": {
+          "x": 80,
+          "y": 80
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "retrieve",
+        "label": "知识检索",
+        "position": {
+          "x": 300,
+          "y": 80
+        }
+      },
+      {
+        "id": "n3",
+        "kind": "decision",
+        "label": "研判",
+        "position": {
+          "x": 520,
+          "y": 80
+        }
+      },
+      {
+        "id": "n4",
+        "kind": "approval",
+        "label": "审批",
+        "position": {
+          "x": 740,
+          "y": 80
+        }
+      },
+      {
+        "id": "n5",
+        "kind": "execute",
+        "label": "执行",
+        "position": {
+          "x": 80,
+          "y": 220
+        }
+      },
+      {
+        "id": "n6",
+        "kind": "task",
+        "label": "任务",
+        "position": {
+          "x": 300,
+          "y": 220
+        }
+      },
+      {
+        "id": "n7",
+        "kind": "audit",
+        "label": "审计",
+        "position": {
+          "x": 520,
+          "y": 220
+        }
+      },
+      {
+        "id": "n8",
+        "kind": "notify",
+        "label": "通知",
+        "position": {
+          "x": 740,
+          "y": 220
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1-2",
+        "source": "n1",
+        "target": "n2"
+      },
+      {
+        "id": "e2-3",
+        "source": "n2",
+        "target": "n3"
+      },
+      {
+        "id": "e3-4",
+        "source": "n3",
+        "target": "n4"
+      },
+      {
+        "id": "e4-5",
+        "source": "n4",
+        "target": "n5"
+      },
+      {
+        "id": "e5-6",
+        "source": "n5",
+        "target": "n6"
+      },
+      {
+        "id": "e6-7",
+        "source": "n6",
+        "target": "n7"
+      },
+      {
+        "id": "e7-8",
+        "source": "n7",
+        "target": "n8"
+      }
+    ]
+  },
+  "nodes": 8
+}

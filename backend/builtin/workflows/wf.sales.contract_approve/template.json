@@ -1,0 +1,200 @@
+{
+  "id": "wf.sales.contract_approve",
+  "name": "合同与折扣审批",
+  "version": "1.0.0",
+  "certification": "certified",
+  "library": "default",
+  "department": "sales",
+  "audience": "销售代表 / 销售经理",
+  "industryTags": [
+    "saas",
+    "b2b"
+  ],
+  "description": "商机报价、折扣超阈审批、合同归档与 CRM 阶段回写。",
+  "owner": "平台内置",
+  "risk": "L2",
+  "suggestedExpertRole": "销售顾问",
+  "sequence": [
+    "event",
+    "retrieve",
+    "decision",
+    "policy",
+    "approval",
+    "execute",
+    "audit",
+    "notify"
+  ],
+  "variables": [
+    {
+      "key": "opportunity_id",
+      "label": "商机编号",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "key": "discount_pct",
+      "label": "折扣比例",
+      "required": false,
+      "type": "number",
+      "default": 0
+    },
+    {
+      "key": "contract_amount",
+      "label": "合同金额",
+      "required": true,
+      "type": "number"
+    }
+  ],
+  "connectors": [
+    {
+      "slot": "crm.update_stage",
+      "label": "CRM 回写",
+      "required": false,
+      "capability": "crm.update_stage"
+    },
+    {
+      "slot": "notify.send",
+      "label": "通知渠道",
+      "required": true,
+      "capability": "notify.send"
+    }
+  ],
+  "policy": {
+    "approvalRoles": [
+      "sales_manager"
+    ],
+    "requireAudit": true,
+    "discountThresholdPct": 15
+  },
+  "fixtures": [
+    {
+      "name": "sandbox-contract",
+      "variables": {
+        "opportunity_id": "OPP-9",
+        "discount_pct": 10,
+        "contract_amount": 80000
+      }
+    }
+  ],
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-08-21",
+      "note": "出厂 Certified 首发"
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "event",
+        "label": "触发",
+        "position": {
+          "x": 80,
+          "y": 80
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "retrieve",
+        "label": "知识检索",
+        "position": {
+          "x": 300,
+          "y": 80
+        }
+      },
+      {
+        "id": "n3",
+        "kind": "decision",
+        "label": "研判",
+        "position": {
+          "x": 520,
+          "y": 80
+        }
+      },
+      {
+        "id": "n4",
+        "kind": "policy",
+        "label": "策略",
+        "position": {
+          "x": 740,
+          "y": 80
+        }
+      },
+      {
+        "id": "n5",
+        "kind": "approval",
+        "label": "审批",
+        "position": {
+          "x": 80,
+          "y": 220
+        }
+      },
+      {
+        "id": "n6",
+        "kind": "execute",
+        "label": "执行",
+        "position": {
+          "x": 300,
+          "y": 220
+        }
+      },
+      {
+        "id": "n7",
+        "kind": "audit",
+        "label": "审计",
+        "position": {
+          "x": 520,
+          "y": 220
+        }
+      },
+      {
+        "id": "n8",
+        "kind": "notify",
+        "label": "通知",
+        "position": {
+          "x": 740,
+          "y": 220
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1-2",
+        "source": "n1",
+        "target": "n2"
+      },
+      {
+        "id": "e2-3",
+        "source": "n2",
+        "target": "n3"
+      },
+      {
+        "id": "e3-4",
+        "source": "n3",
+        "target": "n4"
+      },
+      {
+        "id": "e4-5",
+        "source": "n4",
+        "target": "n5"
+      },
+      {
+        "id": "e5-6",
+        "source": "n5",
+        "target": "n6"
+      },
+      {
+        "id": "e6-7",
+        "source": "n6",
+        "target": "n7"
+      },
+      {
+        "id": "e7-8",
+        "source": "n7",
+        "target": "n8"
+      }
+    ]
+  },
+  "nodes": 8
+}

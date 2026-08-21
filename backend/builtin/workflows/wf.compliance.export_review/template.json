@@ -1,0 +1,191 @@
+{
+  "id": "wf.compliance.export_review",
+  "name": "数据导出审批",
+  "version": "1.0.0",
+  "certification": "certified",
+  "library": "default",
+  "department": "it",
+  "audience": "业务申请人 / 合规 / 数据管理员",
+  "industryTags": [
+    "all",
+    "finance",
+    "healthcare"
+  ],
+  "description": "敏感数据导出申请、脱敏策略校验、审批与审计留痕。",
+  "owner": "平台内置",
+  "risk": "L3",
+  "suggestedExpertRole": "合规审计员",
+  "sequence": [
+    "event",
+    "policy",
+    "decision",
+    "approval",
+    "execute",
+    "audit",
+    "notify"
+  ],
+  "variables": [
+    {
+      "key": "dataset",
+      "label": "数据集",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "key": "classification",
+      "label": "密级",
+      "required": true,
+      "type": "enum",
+      "enum": [
+        "internal",
+        "confidential",
+        "restricted"
+      ]
+    },
+    {
+      "key": "purpose",
+      "label": "用途说明",
+      "required": true,
+      "type": "string"
+    }
+  ],
+  "connectors": [
+    {
+      "slot": "data.export",
+      "label": "导出执行",
+      "required": false,
+      "capability": "data.export"
+    },
+    {
+      "slot": "notify.send",
+      "label": "通知渠道",
+      "required": true,
+      "capability": "notify.send"
+    }
+  ],
+  "policy": {
+    "approvalRoles": [
+      "compliance",
+      "data_owner"
+    ],
+    "requireAudit": true,
+    "maskingRequired": true
+  },
+  "fixtures": [
+    {
+      "name": "sandbox-export",
+      "variables": {
+        "dataset": "orders",
+        "classification": "confidential",
+        "purpose": "季度审计"
+      }
+    }
+  ],
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-08-21",
+      "note": "出厂 Certified 首发"
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "event",
+        "label": "触发",
+        "position": {
+          "x": 80,
+          "y": 80
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "policy",
+        "label": "策略",
+        "position": {
+          "x": 300,
+          "y": 80
+        }
+      },
+      {
+        "id": "n3",
+        "kind": "decision",
+        "label": "研判",
+        "position": {
+          "x": 520,
+          "y": 80
+        }
+      },
+      {
+        "id": "n4",
+        "kind": "approval",
+        "label": "审批",
+        "position": {
+          "x": 740,
+          "y": 80
+        }
+      },
+      {
+        "id": "n5",
+        "kind": "execute",
+        "label": "执行",
+        "position": {
+          "x": 80,
+          "y": 220
+        }
+      },
+      {
+        "id": "n6",
+        "kind": "audit",
+        "label": "审计",
+        "position": {
+          "x": 300,
+          "y": 220
+        }
+      },
+      {
+        "id": "n7",
+        "kind": "notify",
+        "label": "通知",
+        "position": {
+          "x": 520,
+          "y": 220
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1-2",
+        "source": "n1",
+        "target": "n2"
+      },
+      {
+        "id": "e2-3",
+        "source": "n2",
+        "target": "n3"
+      },
+      {
+        "id": "e3-4",
+        "source": "n3",
+        "target": "n4"
+      },
+      {
+        "id": "e4-5",
+        "source": "n4",
+        "target": "n5"
+      },
+      {
+        "id": "e5-6",
+        "source": "n5",
+        "target": "n6"
+      },
+      {
+        "id": "e6-7",
+        "source": "n6",
+        "target": "n7"
+      }
+    ]
+  },
+  "nodes": 7
+}

@@ -1,0 +1,34 @@
+{
+  "id": "kp.office.expense_lite",
+  "name": "报销常识（轻量）",
+  "version": "1.0.0",
+  "description": "报销前自查清单与不可报项摘要。",
+  "domain": "办公",
+  "classification": "internal",
+  "builtin": true,
+  "source": "platform",
+  "tags": [
+    "office",
+    "开箱"
+  ],
+  "docs": [
+    {
+      "file": "01-报销自查.md",
+      "title": "报销自查"
+    },
+    {
+      "file": "02-不可报项.md",
+      "title": "不可报项"
+    }
+  ],
+  "qa": [
+    {
+      "q": "报销要注意什么",
+      "a": "发票、抬头、事由一致、附件齐全。"
+    },
+    {
+      "q": "什么不能报",
+      "a": "个人罚款与无关消费。"
+    }
+  ]
+}

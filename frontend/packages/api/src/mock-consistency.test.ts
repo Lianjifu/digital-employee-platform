@@ -60,7 +60,7 @@ describe('mock data-flow consistency', () => {
         if (item.includes('知识包')) expect(knowledge.has(item), `${employee.id} knowledge ${item}`).toBe(true);
       }
       for (const item of caps.workflows ?? []) {
-        if (item.includes('流程技能') || item.includes('cache-oom') || item === '生产变更协同') {
+        if (item.includes('流程技能') || item.includes('cache-oom') || item.includes('入职办理') || item === '生产变更协同') {
           expect(workflows.has(item), `${employee.id} workflow ${item}`).toBe(true);
         }
       }

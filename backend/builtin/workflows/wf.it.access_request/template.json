@@ -1,0 +1,202 @@
+{
+  "id": "wf.it.access_request",
+  "name": "权限申请",
+  "version": "1.0.0",
+  "certification": "certified",
+  "library": "default",
+  "department": "it",
+  "audience": "全体员工 / IT 服务台",
+  "industryTags": [
+    "all"
+  ],
+  "description": "权限申请、影响评估、审批开通/时限授权与到期回收。",
+  "antiPatterns": "不替代生产变更门禁（请用发版门禁）。",
+  "owner": "平台内置",
+  "risk": "L2",
+  "suggestedExpertRole": "IT 支持专员",
+  "sequence": [
+    "event",
+    "retrieve",
+    "decision",
+    "approval",
+    "execute",
+    "schedule",
+    "audit",
+    "notify"
+  ],
+  "variables": [
+    {
+      "key": "account",
+      "label": "账号",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "key": "permission_set",
+      "label": "权限集",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "key": "expire_days",
+      "label": "授权天数",
+      "required": false,
+      "type": "number",
+      "default": 90
+    }
+  ],
+  "connectors": [
+    {
+      "slot": "identity.provision",
+      "label": "权限变更",
+      "required": true,
+      "capability": "identity.provision",
+      "defaultBinding": "sandbox:identity.mock"
+    },
+    {
+      "slot": "notify.send",
+      "label": "通知渠道",
+      "required": true,
+      "capability": "notify.send"
+    }
+  ],
+  "policy": {
+    "approvalRoles": [
+      "it_admin",
+      "manager"
+    ],
+    "requireAudit": true,
+    "timeBoundAccess": true
+  },
+  "fixtures": [
+    {
+      "name": "sandbox-access",
+      "variables": {
+        "account": "zhangsan",
+        "permission_set": "vpn-basic",
+        "expire_days": 30
+      }
+    }
+  ],
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-08-21",
+      "note": "出厂 Certified 首发"
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "event",
+        "label": "触发",
+        "position": {
+          "x": 80,
+          "y": 80
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "retrieve",
+        "label": "知识检索",
+        "position": {
+          "x": 300,
+          "y": 80
+        }
+      },
+      {
+        "id": "n3",
+        "kind": "decision",
+        "label": "研判",
+        "position": {
+          "x": 520,
+          "y": 80
+        }
+      },
+      {
+        "id": "n4",
+        "kind": "approval",
+        "label": "审批",
+        "position": {
+          "x": 740,
+          "y": 80
+        }
+      },
+      {
+        "id": "n5",
+        "kind": "execute",
+        "label": "执行",
+        "position": {
+          "x": 80,
+          "y": 220
+        }
+      },
+      {
+        "id": "n6",
+        "kind": "schedule",
+        "label": "定时",
+        "position": {
+          "x": 300,
+          "y": 220
+        }
+      },
+      {
+        "id": "n7",
+        "kind": "audit",
+        "label": "审计",
+        "position": {
+          "x": 520,
+          "y": 220
+        }
+      },
+      {
+        "id": "n8",
+        "kind": "notify",
+        "label": "通知",
+        "position": {
+          "x": 740,
+          "y": 220
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1-2",
+        "source": "n1",
+        "target": "n2"
+      },
+      {
+        "id": "e2-3",
+        "source": "n2",
+        "target": "n3"
+      },
+      {
+        "id": "e3-4",
+        "source": "n3",
+        "target": "n4"
+      },
+      {
+        "id": "e4-5",
+        "source": "n4",
+        "target": "n5"
+      },
+      {
+        "id": "e5-6",
+        "source": "n5",
+        "target": "n6"
+      },
+      {
+        "id": "e6-7",
+        "source": "n6",
+        "target": "n7"
+      },
+      {
+        "id": "e7-8",
+        "source": "n7",
+        "target": "n8"
+      }
+    ]
+  },
+  "nodes": 8
+}

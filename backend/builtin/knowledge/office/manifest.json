@@ -1,0 +1,35 @@
+{
+  "version": "1.0.0",
+  "packs": [
+    {
+      "id": "kp.office.handbook",
+      "name": "员工手册与制度问答",
+      "version": "1.0.0"
+    },
+    {
+      "id": "kp.office.meeting",
+      "name": "会议与纪要规范",
+      "version": "1.0.0"
+    },
+    {
+      "id": "kp.office.writing",
+      "name": "公文与材料规范",
+      "version": "1.0.0"
+    },
+    {
+      "id": "kp.office.leave_travel",
+      "name": "假勤与差旅标准",
+      "version": "1.0.0"
+    },
+    {
+      "id": "kp.office.expense_lite",
+      "name": "报销常识（轻量）",
+      "version": "1.0.0"
+    },
+    {
+      "id": "kp.office.it_selfservice",
+      "name": "IT 自助服务",
+      "version": "1.0.0"
+    }
+  ]
+}

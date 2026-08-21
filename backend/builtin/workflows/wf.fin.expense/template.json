@@ -1,0 +1,242 @@
+{
+  "id": "wf.fin.expense",
+  "name": "费用报销",
+  "version": "1.0.0",
+  "certification": "certified",
+  "library": "default",
+  "department": "finance",
+  "audience": "报销人 / 财务共享",
+  "industryTags": [
+    "all",
+    "saas",
+    "retail"
+  ],
+  "description": "票据校验、预算核验、分级审批；无付款连接器时可降级为仅审批闭环。",
+  "antiPatterns": "大额资本开支请用采购申请。",
+  "owner": "平台内置",
+  "risk": "L3",
+  "suggestedExpertRole": "财务专员",
+  "degrade": {
+    "whenMissingSlots": [
+      "payment.initiate"
+    ],
+    "mode": "approval_only",
+    "hint": "未绑定付款连接器：本模板以降级模式运行（仅审批与归档，不发起付款）。"
+  },
+  "sequence": [
+    "event",
+    "retrieve",
+    "decision",
+    "policy",
+    "approval",
+    "execute",
+    "compensate",
+    "audit",
+    "notify"
+  ],
+  "variables": [
+    {
+      "key": "amount",
+      "label": "报销金额",
+      "required": true,
+      "type": "number"
+    },
+    {
+      "key": "cost_center",
+      "label": "成本中心",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "key": "invoice_ids",
+      "label": "票据编号",
+      "required": true,
+      "type": "string"
+    }
+  ],
+  "connectors": [
+    {
+      "slot": "knowledge.retrieve",
+      "label": "财务制度检索",
+      "required": false,
+      "capability": "knowledge.retrieve",
+      "defaultBinding": "builtin:knowledge.retrieve"
+    },
+    {
+      "slot": "payment.initiate",
+      "label": "付款执行",
+      "required": false,
+      "capability": "payment.initiate"
+    },
+    {
+      "slot": "notify.send",
+      "label": "通知渠道",
+      "required": true,
+      "capability": "notify.send"
+    }
+  ],
+  "policy": {
+    "approvalRoles": [
+      "finance_manager"
+    ],
+    "requireAudit": true,
+    "amountThresholds": [
+      {
+        "lte": 1000,
+        "approvers": 1
+      },
+      {
+        "gt": 1000,
+        "approvers": 2
+      }
+    ],
+    "sod": [
+      "requester_cannot_approve"
+    ]
+  },
+  "fixtures": [
+    {
+      "name": "sandbox-expense",
+      "variables": {
+        "amount": 320,
+        "cost_center": "CC-HR",
+        "invoice_ids": "INV-1"
+      }
+    }
+  ],
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-08-21",
+      "note": "出厂 Certified；支持付款槽位降级"
+    }
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "event",
+        "label": "触发",
+        "position": {
+          "x": 80,
+          "y": 80
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "retrieve",
+        "label": "知识检索",
+        "position": {
+          "x": 300,
+          "y": 80
+        }
+      },
+      {
+        "id": "n3",
+        "kind": "decision",
+        "label": "研判",
+        "position": {
+          "x": 520,
+          "y": 80
+        }
+      },
+      {
+        "id": "n4",
+        "kind": "policy",
+        "label": "策略",
+        "position": {
+          "x": 740,
+          "y": 80
+        }
+      },
+      {
+        "id": "n5",
+        "kind": "approval",
+        "label": "审批",
+        "position": {
+          "x": 80,
+          "y": 220
+        }
+      },
+      {
+        "id": "n6",
+        "kind": "execute",
+        "label": "执行",
+        "position": {
+          "x": 300,
+          "y": 220
+        }
+      },
+      {
+        "id": "n7",
+        "kind": "compensate",
+        "label": "补偿",
+        "position": {
+          "x": 520,
+          "y": 220
+        }
+      },
+      {
+        "id": "n8",
+        "kind": "audit",
+        "label": "审计",
+        "position": {
+          "x": 740,
+          "y": 220
+        }
+      },
+      {
+        "id": "n9",
+        "kind": "notify",
+        "label": "通知",
+        "position": {
+          "x": 80,
+          "y": 360
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1-2",
+        "source": "n1",
+        "target": "n2"
+      },
+      {
+        "id": "e2-3",
+        "source": "n2",
+        "target": "n3"
+      },
+      {
+        "id": "e3-4",
+        "source": "n3",
+        "target": "n4"
+      },
+      {
+        "id": "e4-5",
+        "source": "n4",
+        "target": "n5"
+      },
+      {
+        "id": "e5-6",
+        "source": "n5",
+        "target": "n6"
+      },
+      {
+        "id": "e6-7",
+        "source": "n6",
+        "target": "n7"
+      },
+      {
+        "id": "e7-8",
+        "source": "n7",
+        "target": "n8"
+      },
+      {
+        "id": "e8-9",
+        "source": "n8",
+        "target": "n9"
+      }
+    ]
+  },
+  "nodes": 9
+}

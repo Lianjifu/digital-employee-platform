@@ -1,0 +1,34 @@
+{
+  "id": "kp.office.handbook",
+  "name": "员工手册与制度问答",
+  "version": "1.0.0",
+  "description": "员工手册摘要、通用制度 FAQ 与红线提示，支撑制度问答流程。",
+  "domain": "办公",
+  "classification": "internal",
+  "builtin": true,
+  "source": "platform",
+  "tags": [
+    "office",
+    "开箱"
+  ],
+  "docs": [
+    {
+      "file": "01-员工手册摘要.md",
+      "title": "员工手册摘要"
+    },
+    {
+      "file": "02-制度 FAQ.md",
+      "title": "制度 FAQ"
+    }
+  ],
+  "qa": [
+    {
+      "q": "年假怎么请",
+      "a": "通过请假申请流程提交，直属经理审批。"
+    },
+    {
+      "q": "保密红线",
+      "a": "客户数据与未公开财报不得外传。"
+    }
+  ]
+}

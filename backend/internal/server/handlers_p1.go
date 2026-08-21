@@ -200,12 +200,6 @@ func (s *Server) workflowByID(r *http.Request) (any, error) {
 	return nil, apperr.NotFoundErr(apperr.NotFound, "未知流程动作")
 }
 
-func (s *Server) listWorkflowTemplates(r *http.Request) (any, error) {
-	s.Store.RLock()
-	defer s.Store.RUnlock()
-	return s.Store.WorkflowTpls, nil
-}
-
 func (s *Server) listWorkflowGenerations(r *http.Request) (any, error) {
 	s.Store.RLock()
 	defer s.Store.RUnlock()

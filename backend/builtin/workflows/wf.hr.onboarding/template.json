@@ -1,0 +1,219 @@
+{
+  "id": "wf.hr.onboarding",
+  "name": "员工入职开通",
+  "version": "1.0.0",
+  "certification": "certified",
+  "library": "default",
+  "department": "hr",
+  "audience": "新员工 / HRBP / IT",
+  "industryTags": [
+    "all",
+    "saas",
+    "manufacturing",
+    "retail"
+  ],
+  "description": "入职申请、材料核验、账号开通、权限分配与欢迎通知；跨行业通用。",
+  "antiPatterns": "不适用于外包临时访客的分钟级开通（请用权限申请模板）。",
+  "owner": "平台内置",
+  "risk": "L2",
+  "suggestedExpertRole": "人事经理",
+  "sequence": [
+    "event",
+    "retrieve",
+    "decision",
+    "approval",
+    "execute",
+    "task",
+    "audit",
+    "notify"
+  ],
+  "graph": {
+    "nodes": [
+      {
+        "id": "n1",
+        "kind": "event",
+        "label": "触发",
+        "position": {
+          "x": 80,
+          "y": 80
+        }
+      },
+      {
+        "id": "n2",
+        "kind": "retrieve",
+        "label": "知识检索",
+        "position": {
+          "x": 300,
+          "y": 80
+        }
+      },
+      {
+        "id": "n3",
+        "kind": "decision",
+        "label": "研判",
+        "position": {
+          "x": 520,
+          "y": 80
+        }
+      },
+      {
+        "id": "n4",
+        "kind": "approval",
+        "label": "审批",
+        "position": {
+          "x": 740,
+          "y": 80
+        }
+      },
+      {
+        "id": "n5",
+        "kind": "execute",
+        "label": "执行",
+        "position": {
+          "x": 80,
+          "y": 220
+        }
+      },
+      {
+        "id": "n6",
+        "kind": "task",
+        "label": "任务",
+        "position": {
+          "x": 300,
+          "y": 220
+        }
+      },
+      {
+        "id": "n7",
+        "kind": "audit",
+        "label": "审计",
+        "position": {
+          "x": 520,
+          "y": 220
+        }
+      },
+      {
+        "id": "n8",
+        "kind": "notify",
+        "label": "通知",
+        "position": {
+          "x": 740,
+          "y": 220
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "e1-2",
+        "source": "n1",
+        "target": "n2"
+      },
+      {
+        "id": "e2-3",
+        "source": "n2",
+        "target": "n3"
+      },
+      {
+        "id": "e3-4",
+        "source": "n3",
+        "target": "n4"
+      },
+      {
+        "id": "e4-5",
+        "source": "n4",
+        "target": "n5"
+      },
+      {
+        "id": "e5-6",
+        "source": "n5",
+        "target": "n6"
+      },
+      {
+        "id": "e6-7",
+        "source": "n6",
+        "target": "n7"
+      },
+      {
+        "id": "e7-8",
+        "source": "n7",
+        "target": "n8"
+      }
+    ]
+  },
+  "variables": [
+    {
+      "key": "employee_name",
+      "label": "入职人姓名",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "key": "start_date",
+      "label": "入职日期",
+      "required": true,
+      "type": "date"
+    },
+    {
+      "key": "role_profile",
+      "label": "岗位画像",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "key": "permission_set",
+      "label": "权限集",
+      "required": true,
+      "type": "string"
+    }
+  ],
+  "connectors": [
+    {
+      "slot": "identity.provision",
+      "label": "账号开通",
+      "required": true,
+      "capability": "identity.provision",
+      "defaultBinding": "sandbox:identity.mock"
+    },
+    {
+      "slot": "knowledge.retrieve",
+      "label": "制度知识检索",
+      "required": false,
+      "capability": "knowledge.retrieve",
+      "defaultBinding": "builtin:knowledge.retrieve"
+    },
+    {
+      "slot": "notify.send",
+      "label": "通知渠道",
+      "required": true,
+      "capability": "notify.send"
+    }
+  ],
+  "policy": {
+    "approvalRoles": [
+      "hr_manager"
+    ],
+    "requireAudit": true,
+    "sod": [
+      "requester_cannot_approve"
+    ]
+  },
+  "fixtures": [
+    {
+      "name": "sandbox-onboarding",
+      "variables": {
+        "employee_name": "张三",
+        "start_date": "2026-09-01",
+        "role_profile": "研发工程师",
+        "permission_set": "dev-standard"
+      }
+    }
+  ],
+  "changelog": [
+    {
+      "version": "1.0.0",
+      "date": "2026-08-21",
+      "note": "出厂 Certified 首发"
+    }
+  ],
+  "nodes": 8
+}

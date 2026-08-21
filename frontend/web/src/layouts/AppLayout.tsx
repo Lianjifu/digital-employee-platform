@@ -5,7 +5,8 @@
  * - 用户信息在左下角
  */
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ComponentType } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ComponentType } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Home, MessageSquare, ListChecks, Building2, BriefcaseBusiness, Workflow,
   BookOpen, Wrench, Brain, BrainCircuit, Send,
@@ -29,6 +30,13 @@ const NAV_ICONS: Record<string, ComponentType<{ className?: string }>> = {
   BookOpen, Wrench, Brain, BrainCircuit, Send, ShieldAlert, ScrollText,
 };
 
+const ROLE_LABEL: Record<string, string> = {
+  admin: '管理员',
+  operator: '业务构建者',
+  auditor: '合规审计员',
+  viewer: '只读成员',
+};
+
 export function AppLayout() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -39,10 +47,13 @@ export function AppLayout() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [userMenuPos, setUserMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const userTriggerRef = useRef<HTMLButtonElement>(null);
+  const userPanelRef = useRef<HTMLDivElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
 
-  const { data: workspaces } = useApiQuery<Workspace[]>(['workspaces'], '/api/workspaces');
+  const { data: workspaces, refetch: refetchWorkspaces } = useApiQuery<Workspace[]>(['workspaces'], '/api/workspaces');
   // v3：三角色侧栏 IA（待办/核查/审计主航）升版，已完成 v2 的账号再展示一次。
   const onboardingStorageKey = user ? `de-onboarding-completed:v3:${user.id}` : null;
 
@@ -62,21 +73,72 @@ export function AppLayout() {
   useEffect(() => {
     if (workspaces && workspaces.length) {
       setList(workspaces);
-      if (!current) setCurrent(workspaces[0]);
+      if (!current || !workspaces.some((item) => item.id === current.id)) {
+        const preferred = workspaces.find((item) => item.id === 'w1') ?? workspaces[0];
+        setCurrent(preferred);
+      }
+      return;
     }
-  }, [workspaces, current, setCurrent, setList]);
+    // 列表成功但为空时，再拉一次以触发后端 ensure 默认工作区
+    if (Array.isArray(workspaces) && workspaces.length === 0) {
+      const timer = window.setTimeout(() => { void refetchWorkspaces(); }, 300);
+      return () => window.clearTimeout(timer);
+    }
+  }, [workspaces, current, setCurrent, setList, refetchWorkspaces]);
+
+  useLayoutEffect(() => {
+    if (!userMenuOpen || !userTriggerRef.current) {
+      setUserMenuPos(null);
+      return;
+    }
+    const place = () => {
+      const rect = userTriggerRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const menuWidth = 248;
+      const gap = 8;
+      const panelH = userPanelRef.current?.offsetHeight || 300;
+      let top = rect.top - panelH - gap;
+      if (top < 12) top = Math.min(rect.bottom + gap, window.innerHeight - panelH - 12);
+      let left = sidebarCollapsed ? rect.right + gap : rect.left;
+      if (left + menuWidth > window.innerWidth - 12) left = Math.max(12, rect.right - menuWidth);
+      left = Math.min(Math.max(12, left), window.innerWidth - menuWidth - 12);
+      setUserMenuPos({ top: Math.max(12, top), left, width: menuWidth });
+    };
+    place();
+    const raf = window.requestAnimationFrame(place);
+    window.addEventListener('resize', place);
+    window.addEventListener('scroll', place, true);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener('resize', place);
+      window.removeEventListener('scroll', place, true);
+    };
+  }, [userMenuOpen, sidebarCollapsed]);
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
-        setUserMenuOpen(false);
-      }
-      if (workspaceMenuRef.current && !workspaceMenuRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const inTrigger = userMenuRef.current?.contains(target);
+      const inPanel = userPanelRef.current?.contains(target);
+      if (!inTrigger && !inPanel) setUserMenuOpen(false);
+      if (workspaceMenuRef.current && !workspaceMenuRef.current.contains(target)) {
         setWorkspaceMenuOpen(false);
       }
     };
-    if (userMenuOpen || workspaceMenuOpen) document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setUserMenuOpen(false);
+        setWorkspaceMenuOpen(false);
+      }
+    };
+    if (userMenuOpen || workspaceMenuOpen) {
+      document.addEventListener('mousedown', handler);
+      document.addEventListener('keydown', onKey);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handler);
+      document.removeEventListener('keydown', onKey);
+    };
   }, [userMenuOpen, workspaceMenuOpen]);
 
   const onLogout = () => {
@@ -143,7 +205,24 @@ export function AppLayout() {
                 <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{t('workspace.switch.desc')}</div>
               </div>
               <div className="max-h-[280px] overflow-y-auto p-1.5">
-                {(workspaces ?? []).map((workspace) => (
+                {(workspaces ?? []).length === 0 ? (
+                  <div className="space-y-2 px-2.5 py-3">
+                    <p className="text-[11px] text-[var(--text-muted)]">暂无可用工作区。系统将自动初始化默认工作区。</p>
+                    {user?.role === 'admin' && (
+                      <button
+                        type="button"
+                        className="w-full rounded-md bg-[var(--brand)] px-2.5 py-2 text-xs font-semibold text-white hover:opacity-90"
+                        onClick={() => {
+                          setWorkspaceMenuOpen(false);
+                          navigate('/workspaces');
+                        }}
+                      >
+                        打开工作区管理
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  (workspaces ?? []).map((workspace) => (
                   <button
                     key={workspace.id}
                     type="button"
@@ -156,7 +235,8 @@ export function AppLayout() {
                     <span className="min-w-0 flex-1"><span className="block truncate text-xs font-semibold">{workspace.name}</span><span className="block text-[10px] text-[var(--text-muted)]">{workspace.region} · {workspace.memberCount} 成员 · 合规 {workspace.complianceScore}</span></span>
                     {workspace.id === current?.id && <CheckCircle2 className="h-4 w-4 shrink-0 text-[var(--brand)]" />}
                   </button>
-                ))}
+                  ))
+                )}
               </div>
               {user?.role === 'admin' && (
                 <div className="border-t border-[var(--border)] p-1.5">
@@ -224,39 +304,63 @@ export function AppLayout() {
         </nav>
 
         {user && (
-          <div ref={userMenuRef} className={cn('relative', sidebarCollapsed ? 'w-full' : '')}>
+          <div ref={userMenuRef} className={cn('relative shrink-0', sidebarCollapsed ? 'w-full' : '')}>
             {sidebarCollapsed ? (
               <button
+                ref={userTriggerRef}
+                type="button"
                 onClick={() => setUserMenuOpen((v) => !v)}
                 className={cn('user-trigger justify-center h-14', userMenuOpen && 'user-trigger--open')}
-                title={user.name}
+                title={`${user.name} · ${ROLE_LABEL[user.role] ?? user.role}`}
+                aria-haspopup="menu"
+                aria-expanded={userMenuOpen}
               >
                 <Avatar name={user.name} size={30} />
               </button>
             ) : (
               <button
+                ref={userTriggerRef}
+                type="button"
                 onClick={() => setUserMenuOpen((v) => !v)}
                 className={cn('user-trigger', userMenuOpen && 'user-trigger--open')}
+                aria-haspopup="menu"
+                aria-expanded={userMenuOpen}
+                title={`${user.name} · ${ROLE_LABEL[user.role] ?? user.role} · ${current?.name ?? ''}`}
               >
                 <Avatar name={user.name} size={32} />
                 <div className="user-trigger__info">
                   <div className="user-trigger__name">{user.name}</div>
                   <div className="user-trigger__meta">
-                    {user.role.toUpperCase()} · {current?.name ?? 'ACME 生产'}
+                    {ROLE_LABEL[user.role] ?? user.role.toUpperCase()}
+                    {current?.name ? ` · ${current.name}` : ''}
                   </div>
                 </div>
                 <ChevronDown className={cn('user-trigger__chevron h-4 w-4', userMenuOpen && 'user-trigger__chevron--open')} />
               </button>
             )}
 
-            {userMenuOpen && (
+            {userMenuOpen && userMenuPos && createPortal(
               <div
-                className={cn(
-                  'user-menu absolute z-50',
-                  sidebarCollapsed ? 'left-full ml-2 bottom-0' : 'left-2 right-2 bottom-full mb-2',
-                )}
-                style={sidebarCollapsed ? { bottom: 0 } : undefined}
+                ref={userPanelRef}
+                role="menu"
+                className="user-menu user-menu--portal"
+                style={{
+                  position: 'fixed',
+                  top: userMenuPos.top,
+                  left: userMenuPos.left,
+                  width: userMenuPos.width,
+                  zIndex: 80,
+                }}
               >
+                <div className="user-menu__identity">
+                  <Avatar name={user.name} size={36} />
+                  <div className="min-w-0">
+                    <div className="user-menu__identity-name">{user.name}</div>
+                    <div className="user-menu__identity-meta">
+                      {ROLE_LABEL[user.role] ?? user.role} · {current?.name ?? '未选择工作区'}
+                    </div>
+                  </div>
+                </div>
                 <div className="user-menu__group-title">{t('account.preferences')}</div>
                 {user.role === 'admin' && (
                   <UserMenuItem
@@ -268,17 +372,20 @@ export function AppLayout() {
                 )}
                 {user.role === 'admin' && (
                   <button
+                    type="button"
+                    role="menuitem"
                     className="user-menu__item"
                     onClick={() => { setUserMenuOpen(false); navigate('/workspaces'); }}
                   >
                     <span className="user-menu__icon-box"><Building2 className="h-3.5 w-3.5" /></span>
                     <span className="user-menu__label">{t('workspace.manage')}</span>
-                    <span className="user-menu__value">{current?.name ?? 'ACME'}</span>
-                    <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
+                    <span className="user-menu__value">{current?.name ?? '—'}</span>
                   </button>
                 )}
                 <UserMenuItem icon={Sparkles} label="启用向导" onClick={() => { setUserMenuOpen(false); setOnboardingOpen(true); }} />
                 <button
+                  type="button"
+                  role="menuitem"
                   className="user-menu__item"
                   onClick={() => { setLocale(locale === 'zh-CN' ? 'en-US' : 'zh-CN'); setUserMenuOpen(false); }}
                   title={locale === 'zh-CN' ? 'Switch to English' : '切换为简体中文'}
@@ -286,27 +393,31 @@ export function AppLayout() {
                   <span className="user-menu__icon-box"><Languages className="h-3.5 w-3.5" /></span>
                   <span className="user-menu__label">{t('account.language')}</span>
                   <span className="user-menu__value">{locale === 'zh-CN' ? t('common.lang.zh') : t('common.lang.en')}</span>
-                  <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                 </button>
 
                 <div className="user-menu__divider" />
 
-                <button className="user-menu__item" onClick={() => { toggleTheme(); setUserMenuOpen(false); }}>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="user-menu__item"
+                  onClick={() => { toggleTheme(); setUserMenuOpen(false); }}
+                >
                   <span className="user-menu__icon-box">
                     {theme === 'light' ? <Moon className="h-3.5 w-3.5" /> : <Sun className="h-3.5 w-3.5" />}
                   </span>
                   <span className="user-menu__label">{t('account.theme')}</span>
                   <span className="user-menu__value">{theme === 'light' ? t('common.theme.light') : t('common.theme.dark')}</span>
-                  <ChevronDown className="h-3.5 w-3.5 text-[var(--text-muted)]" />
                 </button>
 
                 <div className="user-menu__divider" />
 
-                <button onClick={onLogout} className="user-menu__item user-menu__item--danger">
+                <button type="button" role="menuitem" onClick={onLogout} className="user-menu__item user-menu__item--danger">
                   <span className="user-menu__icon-box"><LogOut className="h-3.5 w-3.5" /></span>
                   <span className="user-menu__label">{t('account.signOut')}</span>
                 </button>
-              </div>
+              </div>,
+              document.body,
             )}
           </div>
         )}
@@ -329,7 +440,7 @@ function UserMenuItem({
   onClick?: () => void;
 }) {
   return (
-    <button onClick={onClick} className="user-menu__item">
+    <button type="button" role="menuitem" onClick={onClick} className="user-menu__item">
       <span className="user-menu__icon-box">
         <Icon className="h-3.5 w-3.5" />
       </span>

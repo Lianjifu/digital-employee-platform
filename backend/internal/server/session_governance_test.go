@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
@@ -88,5 +89,32 @@ func TestAssertSessionWritable(t *testing.T) {
 	var handoff *apperr.AppError
 	if !errors.As(err, &handoff) || handoff.Code != apperr.SessionHandoff {
 		t.Fatalf("want E_SESSION_HANDOFF, got %v", err)
+	}
+}
+
+func TestResolveRunModeAndPromptClause(t *testing.T) {
+	if resolveRunMode("ask", "plan", sessionModeExecute) != "ask" {
+		t.Fatal("body runMode should win")
+	}
+	if resolveRunMode("", "agent", sessionModeInvestigate) != "agent" {
+		t.Fatal("session runMode should win when body empty")
+	}
+	if resolveRunMode("", "", sessionModeExecute) != "agent" {
+		t.Fatal("execute ABI should map to agent")
+	}
+	if resolveRunMode("", "", sessionModeInvestigate) != "plan" {
+		t.Fatal("investigate ABI should default to plan")
+	}
+	ask := runModePromptClause("ask")
+	if !strings.Contains(ask, "「问答」") || strings.Contains(ask, "研判模式：") {
+		t.Fatalf("ask clause=%q", ask)
+	}
+	plan := runModePromptClause("plan")
+	if !strings.Contains(plan, "「方案」") {
+		t.Fatalf("plan clause=%q", plan)
+	}
+	agent := runModePromptClause("agent")
+	if !strings.Contains(agent, "「执行」") {
+		t.Fatalf("agent clause=%q", agent)
 	}
 }

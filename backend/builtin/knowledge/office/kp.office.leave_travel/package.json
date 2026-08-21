@@ -1,0 +1,34 @@
+{
+  "id": "kp.office.leave_travel",
+  "name": "假勤与差旅标准",
+  "version": "1.0.0",
+  "description": "假种说明、请假口径与差旅档位摘要。",
+  "domain": "办公",
+  "classification": "internal",
+  "builtin": true,
+  "source": "platform",
+  "tags": [
+    "office",
+    "开箱"
+  ],
+  "docs": [
+    {
+      "file": "01-假勤说明.md",
+      "title": "假勤说明"
+    },
+    {
+      "file": "02-差旅摘要.md",
+      "title": "差旅摘要"
+    }
+  ],
+  "qa": [
+    {
+      "q": "事假要说明吗",
+      "a": "需要说明事由并由主管审批。"
+    },
+    {
+      "q": "差旅超标",
+      "a": "超标须事前审批。"
+    }
+  ]
+}
