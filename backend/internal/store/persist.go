@@ -35,6 +35,7 @@ var DurableCollections = []string{
 	"model_secrets",
 	"workflows",
 	"workflow_runs",
+	"workflow_templates",
 	"employees",
 	"backups",
 	"tasks",
@@ -209,6 +210,8 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 		return s.Workflows
 	case "workflow_runs":
 		return s.WorkflowRuns
+	case "workflow_templates":
+		return s.WorkflowTpls
 	case "employees":
 		return s.Employees
 	case "backups":
@@ -419,6 +422,8 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 		s.Workflows = items
 	case "workflow_runs":
 		s.WorkflowRuns = items
+	case "workflow_templates":
+		s.WorkflowTpls = items
 	case "employees":
 		s.Employees = items
 	case "backups":

@@ -381,6 +381,7 @@ func (s *Server) createWorkflowTemplate(r *http.Request) (any, error) {
 	}
 	s.Store.WorkflowTpls = append(s.Store.WorkflowTpls, tpl)
 	s.Store.AppendAudit(ws, id.Name, "创建个人流程模板", tplID, "success", "")
+	s.afterWriteLocked("workflow_templates")
 	return tpl, nil
 }
 
@@ -396,7 +397,6 @@ func (s *Server) deleteWorkflowTemplate(r *http.Request) (any, error) {
 	}
 	ws := s.workspaceID(r)
 	s.Store.Lock()
-	defer s.Store.Unlock()
 	idx := -1
 	var item map[string]any
 	for i, t := range s.Store.WorkflowTpls {
@@ -407,20 +407,27 @@ func (s *Server) deleteWorkflowTemplate(r *http.Request) (any, error) {
 		}
 	}
 	if idx < 0 {
+		s.Store.Unlock()
 		return nil, apperr.NotFoundErr(apperr.NotFound, "模板不存在")
 	}
 	if workflowTemplateOrigin(item) != "personal" {
+		s.Store.Unlock()
 		return nil, apperr.Forbidden(apperr.RoleForbidden, "平台内置模板不可删除")
 	}
 	ownerID, _ := item["ownerId"].(string)
 	itemWS, _ := item["workspaceId"].(string)
 	if itemWS != "" && itemWS != ws {
+		s.Store.Unlock()
 		return nil, apperr.Forbidden(apperr.WorkspaceScope, "无权删除其他工作区模板")
 	}
 	if ownerID != "" && ownerID != id.ID && id.Role != "admin" {
+		s.Store.Unlock()
 		return nil, apperr.Forbidden(apperr.RoleForbidden, "仅可删除本人创建的个人模板")
 	}
 	s.Store.WorkflowTpls = append(s.Store.WorkflowTpls[:idx], s.Store.WorkflowTpls[idx+1:]...)
 	s.Store.AppendAudit(ws, id.Name, "删除个人流程模板", tplID, "success", "")
+	s.Store.Unlock()
+	s.durableDeleteSync("workflow_templates", tplID)
+	s.afterWrite("workflow_templates")
 	return map[string]any{"ok": true, "id": tplID}, nil
 }

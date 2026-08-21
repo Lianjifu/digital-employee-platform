@@ -31,6 +31,10 @@ func TestHardDeletePersistsDeleteHooks(t *testing.T) {
 	st.SkillHealth = []map[string]any{{
 		"id": "sh-sk-del-1", "skillId": "sk-del-1", "name": "s",
 	}}
+	st.WorkflowTpls = []map[string]any{{
+		"id": "wt-del-1", "workspaceId": "w1", "name": "personal tpl",
+		"builtin": false, "source": "personal", "ownerId": "u1",
+	}}
 
 	var mu sync.Mutex
 	deleted := map[string][]string{}
@@ -59,6 +63,7 @@ func TestHardDeletePersistsDeleteHooks(t *testing.T) {
 	admin(http.MethodDelete, "/api/model-providers/mp-del-1")
 	admin(http.MethodDelete, "/api/channel-control/deployments/cd-del-1")
 	admin(http.MethodPost, "/api/skills/sk-del-1/uninstall")
+	admin(http.MethodDelete, "/api/workflow-templates/wt-del-1")
 
 	mu.Lock()
 	defer mu.Unlock()
@@ -76,6 +81,7 @@ func TestHardDeletePersistsDeleteHooks(t *testing.T) {
 	assertDeleted("channel_deploys", "cd-del-1")
 	assertDeleted("skills", "sk-del-1")
 	assertDeleted("skill_health", "sh-sk-del-1")
+	assertDeleted("workflow_templates", "wt-del-1")
 }
 
 func TestIdsBeyondKeep(t *testing.T) {

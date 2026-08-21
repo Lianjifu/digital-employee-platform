@@ -1,0 +1,135 @@
+name: backend-contract
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "frontend/packages/api/**"
+      - "frontend/packages/types/**"
+      - ".github/workflows/backend-contract.yml"
+  push:
+    branches: [main, master]
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-contract.yml"
+  workflow_dispatch:
+
+jobs:
+  go-test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Go test
+        env:
+          # Isolate unit tests from any accidental local FastAPI RAG.
+          DE_RAG_URL: http://127.0.0.1:1
+        run: go test ./... -count=1
+      - name: Proto presence (Connect IDL)
+        run: |
+          test -f api/proto/de/collab/v1/collab.proto
+          test -f api/proto/de/rag/v1/rag.proto
+          test -f api/proto/de/runtime/v1/runtime.proto
+          test -f api/proto/de/employee/v1/employee.proto
+          test -f buf.yaml
+          test -f buf.gen.yaml
+          test -f gen/de/rag/v1/rag.pb.go
+          test -f gen/de/collab/v1/collab.pb.go
+          test -f gen/de/rag/v1/ragv1connect/rag.connect.go
+          test -f deploy/dex/config.yaml
+          test -f deploy/envoy/envoy.mtls.yaml
+          test -f deploy/certs/generate.sh
+          grep -q 'profiles: \["milvus"\]' deploy/compose.yml
+          grep -q 'milvusdb/milvus' deploy/compose.yml
+          grep -q 'profiles: \["apps"\]' deploy/compose.yml
+          grep -q 'profiles: \["opa"\]' deploy/compose.yml
+          grep -q 'profiles: \["search"\]' deploy/compose.yml
+          grep -q 'profiles: \["authentik"\]' deploy/compose.yml
+          grep -q 'profiles: \["obs"\]' deploy/compose.yml
+          grep -q 'profiles: \["spiffe"\]' deploy/compose.yml
+          grep -q 'profiles: \["split"\]' deploy/compose.yml
+          grep -q 'profiles: \["policy"\]' deploy/compose.yml
+          grep -q 'profiles: \["audit"\]' deploy/compose.yml
+          grep -q 'de_exec_net' deploy/compose.yml
+          test -f cmd/de-policy/main.go
+          test -f cmd/de-audit/main.go
+          test -f cmd/de-workflow/main.go
+          test -f deploy/de-policy/README.md
+          test -f deploy/de-audit/README.md
+          test -f deploy/opa/policies/de/authz.rego
+          test -f deploy/authentik/README.md
+          test -f deploy/obs/prometheus.yml
+          test -f deploy/obs/alerts.yml
+          test -f deploy/.env.staging
+          grep -q 'compose-up-staging' Makefile
+          grep -q 'DeCoreCopilotStreamErrorRate' deploy/obs/alerts.yml
+          grep -q 'DeCoreAuditWriteFailures' deploy/obs/alerts.yml
+          test -f deploy/envoy/envoy.spiffe.yaml
+          test -f deploy/envoy/envoy.split.yaml
+          test -f deploy/spiffe/README.md
+          test -f deploy/de-skill-runtime/seccomp.json
+          test -f Dockerfile
+          test -f runtimes/Dockerfile
+          test -f runtimes/de_rag/requirements.txt
+          test ! -d go
+          test ! -d python
+      - name: Error code surface
+        run: |
+          grep -q 'E_WORKSPACE_SCOPE' pkg/errors/errors.go
+          grep -q 'E_SOD_SELF_APPROVAL' pkg/errors/errors.go
+          grep -q 'E_EGRESS_BLOCKED' pkg/errors/errors.go
+          grep -q 'E_DIGITAL_EMPLOYEE_PROFILE_INCOMPLETE' pkg/errors/errors.go
+          grep -q 'E_DIGITAL_EMPLOYEE_CONFIGURATION_REQUIRED' pkg/errors/errors.go
+      - name: RAG vector smoke
+        run: python3 runtimes/de_rag/test_vector.py
+      - name: Skill RunToken smoke
+        run: python3 runtimes/de_skill_runtime/test_runtoken.py
+
+  contract-routes:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - name: Critical FE routes documented
+        run: |
+          test -f api/routes.md
+          grep -q '/api/copilot/conversations' api/routes.md || grep -q 'copilot' api/routes.md
+          grep -q 'contract-gap' api/contract-gap.md
+
+  # Full monolith smoke needs compose (Postgres/Redis/gateway). Manual / scheduled only.
+  smoke-monolith:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Start monolith stack
+        run: make compose-up-monolith
+      - name: Wait for gateway
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8089/healthz >/dev/null; then
+              echo "gateway ready"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "gateway not ready"
+          exit 1
+      - name: Smoke
+        run: make smoke-monolith
+      - name: Tear down
+        if: always()
+        run: make compose-down || true

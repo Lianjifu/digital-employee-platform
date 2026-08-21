@@ -531,12 +531,14 @@ digital-employee-platform/
 │   ├── images/
 │   │   ├── brand/                 # 产品主轴 / 三支柱 / 能力地图 / 五中心
 │   │   └── product/               # 控制台截图 2.0
-│   ├── adr/                       # 架构决策记录
+│   ├── adr/                       # ADR-013 内核 · ADR-014 作用域三层 …
+│   ├── 实施方案-对齐生产写路径.md  # 近端五项工作流
+│   ├── 审计-硬删PersistDelete覆盖.md
 │   ├── 环境与数据模式.md
 │   ├── 数字工作伙伴平台-架构文档.md
 │   ├── 数字工作伙伴平台-功能模块文档.md
 │   └── …                          # 后端规划 · 规格 · 视觉等
-└── .github/workflows/             # CI（如 backend-contract）
+└── .github/workflows/             # backend-contract（test + 契约；smoke 手动）
 ```
 
 | 路径 | 说明 |
@@ -546,6 +548,7 @@ digital-employee-platform/
 | `backend/bin/` | 本机常驻栈二进制；改 Go 后须 `make build` |
 | `scripts/dev-stack/` | LaunchAgent 联调（默认 `DE_STACK=monolith`） |
 | `docs/images/` | README 内联概念图与产品截图 |
+| `docs/实施方案-对齐生产写路径.md` | 近端：作用域 / 写路径 / IdP / 计量 / CI |
 
 出厂包入口：[`backend/builtin/workflows/README.md`](backend/builtin/workflows/README.md) · [`backend/builtin/knowledge/office/README.md`](backend/builtin/knowledge/office/README.md) · [`backend/builtin/scenarios/office/README.md`](backend/builtin/scenarios/office/README.md) · [`backend/README.md`](backend/README.md)。
 
@@ -688,6 +691,8 @@ flowchart LR
 | **运行时** | 进程内 Harness；技能沙箱独立；流式 SSE；单人审核主路径 |
 
 ### 近端（对齐生产写路径）
+
+详细拆解、依赖顺序与验收见 **[docs/实施方案-对齐生产写路径.md](docs/实施方案-对齐生产写路径.md)**（含 [ADR-014 作用域三层](docs/adr/ADR-014-scope-layers.md)、[硬删审计表](docs/审计-硬删PersistDelete覆盖.md)）。
 
 | 方向 | 目标 | 对应支柱 |
 |------|------|----------|

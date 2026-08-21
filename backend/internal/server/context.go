@@ -194,8 +194,7 @@ func hasMockIdentityHeaders(r *http.Request) bool {
 
 // resolveWorkspaceCtx picks an allowed workspace from membership.
 // If header is empty → identity.WorkspaceID (or first membership).
-// If header is stale / not yet granted (common before default workspace bootstrap),
-// soft-fallback to the preferred allowed workspace instead of hard-403.
+// If header is set but not in membership → hard 403 (cannot forge).
 func resolveWorkspaceCtx(id *auth.Identity, headerWS string) (*WorkspaceCtx, error) {
 	if id == nil {
 		return nil, apperr.UnauthorizedErr("未登录")
@@ -223,6 +222,9 @@ func resolveWorkspaceCtx(id *auth.Identity, headerWS string) (*WorkspaceCtx, err
 		}
 	}
 	if !ok {
+		if strings.TrimSpace(headerWS) != "" {
+			return nil, apperr.Forbidden(apperr.WorkspaceScope, "无权访问其他工作区资源")
+		}
 		ws = preferredWorkspaceID(allowed)
 	}
 	return &WorkspaceCtx{

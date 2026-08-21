@@ -74,9 +74,10 @@ var collectionDomain = map[string]Domain{
 	"channel_audit":            DomainCap,
 	"channel_inbound":          DomainCap,
 
-	"workflows":       DomainWorkflow,
-	"workflow_runs":   DomainWorkflow,
-	"workflow_skills": DomainWorkflow,
+	"workflows":          DomainWorkflow,
+	"workflow_runs":      DomainWorkflow,
+	"workflow_skills":    DomainWorkflow,
+	"workflow_templates": DomainWorkflow,
 }
 
 // AbsorbCrosscutting is the R5 default: de-sys still hydrates/serves policy+audit
