@@ -36,6 +36,9 @@ Thumbs.db
 *.pid
 *.seed
 
+# Runtime skill/knowledge install artifacts (source of truth: backend/builtin/)
+/data/
+
 # Local worktrees and agent/brainstorm artifacts
 .worktrees/
 .superpowers/

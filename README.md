@@ -24,8 +24,8 @@
 - [能力地图](#能力地图)
 - [办公开箱](#办公开箱)
 - [能力供给（五中心）](#能力供给五中心)
-- [功能模块](#功能模块)
-- [技术架构](#技术架构)
+- [功能模块](#功能模块)（含 [交互图](#功能模块交互图)）
+- [技术架构](#技术架构)（含 [部署架构图](#部署架构图) · [逻辑拓扑](#逻辑拓扑) · [数据流时序图](#数据流时序图)）
 - [本地部署](#本地部署)
 - [验证与常见问题](#验证与常见问题)
 - [文档索引](#文档索引)
@@ -186,28 +186,95 @@ cd ../frontend && pnpm install && pnpm --filter web dev
 
 ## 功能模块
 
-侧栏按用户工作顺序组织；底层 Agent **不作**一级入口。细则见 [`docs/数字工作伙伴平台-功能模块文档.md`](docs/数字工作伙伴平台-功能模块文档.md)。
+侧栏按**用户工作顺序**组织；底层 Agent 只作执行内核，**不作**一级入口。  
+细则见 [`docs/数字工作伙伴平台-功能模块文档.md`](docs/数字工作伙伴平台-功能模块文档.md)。
+
+### 导航信息架构
 
 ```text
-运营总览
-协作：专家协作 → 任务中心
-编排：数字工作伙伴 → 工作流程
-能力：模型 → 知识 → 技能 → 记忆 → 渠道
-账号：工作区 · 平台设置（访问控制 / 持续验证 / 审计中心）
+运营总览                                              ← 度量入口
+协作：专家协作 → 任务中心                              ← 人机处置
+编排：数字工作伙伴 → 工作流程                          ← 岗位与确定性路径
+能力：模型 → 知识 → 技能 → 记忆 → 渠道                 ← 已发布资产供给
+账号：工作区 · 平台设置
+        └─ 访问控制 · 持续验证 · 审计中心              ← 信任治理
 ```
 
-| ID | 模块 | 路由 | 一句话 |
-|----|------|------|--------|
-| M01 | 运营总览 | `/home` | 直播 KPI、需关注、投入产出、工作记录 |
-| M02 | 专家协作 | `/copilot` | 与在岗伙伴会话；研判/执行、审核、交接 |
-| M03 | 任务中心 | `/tasks` | 任务生命周期、复核与 SLA |
-| M04 | 工作区 | `/workspaces` | 业务域隔离、环境与配额 |
-| M05 | 数字工作伙伴 | `/partners` | 岗位装配与上岗；含 `de-office` |
-| M06 | 工作流程 | `/workflows` | 办公开箱/部门/个人模板；画布与发布 |
-| M07–M11 | 五中心 | `/models` … `/channels` | 已发布资产供给 |
-| M12–M15 | 设置与治理 | `/settings` 等 | 组织壳、授权、零信任、审计 |
+角色可见性（摘要）：`admin` 全量；`user` 侧重协作 / 已授权伙伴；`auditor` 侧重审计只读。
 
-典型闭环：能力接入 → 装配上岗 → 受控协同 → 运营复盘 / 审计。办公快捷路径：流程模板（办公通用）或直接与 `de-office` 对话。
+### 功能模块交互图
+
+能力中心**发布版本**，编排模块**只引用**；协同与流程受审核 / 零信任约束，结果回写运营与审计。
+
+```mermaid
+flowchart TB
+  subgraph Supply["能力供给 · 五中心"]
+    M07[模型服务]
+    M08[知识中心]
+    M09[技能中心]
+    M10[记忆中心]
+    M11[消息渠道]
+  end
+
+  subgraph Orch["编排"]
+    M05[数字工作伙伴<br/>含 de-office]
+    M06[工作流程<br/>办公开箱 / 个人模板]
+  end
+
+  subgraph Collab["协作"]
+    M02[专家协作]
+    M03[任务中心]
+  end
+
+  subgraph Gov["治理与度量"]
+    M13[访问控制]
+    M14[持续验证]
+    M15[审计中心]
+    M01[运营总览]
+    M04[工作区]
+    M12[平台设置]
+  end
+
+  M07 & M08 & M09 & M10 & M11 -->|"已发布版本引用"| M05
+  M06 -->|"发布为流程技能"| M09
+  M05 -->|"上岗后选用"| M02
+  M05 --> M06
+  M02 -->|"任务化 / SLA"| M03
+  M02 & M03 & M06 -->|"高风险门禁"| M13 & M14
+  M02 & M03 & M06 -->|"证据回写"| M15
+  M02 & M03 & M05 -->|"live-aggregate"| M01
+  M04 -.->|"作用域 x-workspace-id"| M05 & M02 & M08
+  M12 --> M13 & M14 & M15
+```
+
+典型闭环：
+
+1. **能力接入** → 五中心配置并发布（办公开箱已预置知识 / 技能）  
+2. **装配上岗** → 伙伴绑定已发布版本（可直接用 `de-office`）  
+3. **受控协同** → 专家协作或任务 / 流程处置；高风险走审核  
+4. **复盘治理** → 运营总览看结果；审计中心留证据  
+
+办公快捷路径：流程模板（办公通用）或直接与 `de-office` 对话。
+
+### 模块一览
+
+| ID | 模块 | 路由 | 分组 | 一句话 |
+|----|------|------|------|--------|
+| M01 | 运营总览 | `/home` | 运营 | 直播 KPI、需关注、投入产出、工作记录 |
+| M02 | 专家协作 | `/copilot` | 协作 | 与在岗伙伴会话；研判 / 执行、审核、交接 |
+| M03 | 任务中心 | `/tasks` | 协作 | 任务生命周期、复核与 SLA |
+| M04 | 工作区 | `/workspaces` | 账号 | 业务域隔离、环境与配额 |
+| M05 | 数字工作伙伴 | `/partners` | 编排 | 岗位装配与上岗；含 `de-office` |
+| M06 | 工作流程 | `/workflows` | 编排 | 办公开箱 / 部门 / 个人模板；画布与发布 |
+| M07 | 模型服务 | `/models` | 能力 | 供应商、路由发布 / 回滚、治理审计 |
+| M08 | 知识中心 | `/knowledge` | 能力 | 资产与知识包；含办公开箱 `kp.office.*` |
+| M09 | 技能中心 | `/skills` | 能力 | 清单 / 商店 / 岗位包（含 `office`）/ 流程技能 |
+| M10 | 记忆中心 | `/memory` | 能力 | 三层记忆、晋升候选 |
+| M11 | 消息渠道 | `/channels` | 能力 | 飞书 / 钉钉 / 企微等接入与投递 |
+| M12 | 平台设置 | `/settings` | 账号 | 组织壳与运营设置 |
+| M13 | 访问控制 | settings / 独立 | 治理 | 授权、发布审批、SoD |
+| M14 | 持续验证 | settings / 独立 | 治理 | 零信任策略与临时授权 |
+| M15 | 审计中心 | settings / 独立 | 治理 | 只读追溯与脱敏导出 |
 
 ---
 
@@ -242,6 +309,66 @@ cd ../frontend && pnpm install && pnpm --filter web dev
 | **执行面不混部** | skill-runtime 必须独立；agent / rag 按需或 coarse 才启 |
 | **能力只引用已发布** | 伙伴装配模型 / 知识 / 技能 / 渠道的已发布版本 |
 | **可观测默认开** | 各服务 `/metrics`（含 `service` label） |
+
+### 部署架构图
+
+本机 / SME 默认 **Compose monolith**；规模化可切 coarse。浏览器只认网关 `:8089`。
+
+```mermaid
+flowchart TB
+  subgraph Client["客户端"]
+    Browser["浏览器 · Vite :5173"]
+  end
+
+  subgraph Edge["入口层"]
+    GW["de-gateway :8089<br/>Envoy / gateway-proxy"]
+  end
+
+  subgraph Control["控制面 · Go"]
+    APP["de-app :8100<br/>monolith：sys + collab + cap"]
+    SYS["de-sys :8100"]
+    COL["de-collab :8101"]
+    CAP["de-cap :8102"]
+    WF["de-workflow :8103<br/>可选"]
+  end
+
+  subgraph Exec["执行面"]
+    SK["de-skill-runtime :8093<br/>必须独立"]
+    AG["de-agent :8091<br/>按需"]
+    RAG["de-rag :8092<br/>按需"]
+  end
+
+  subgraph Data["数据与缓存"]
+    PG[("de-postgres :5432<br/>Postgres 16 · Docker only")]
+    RD[("de-redis :6379")]
+  end
+
+  subgraph Obs["可观测 · 可选"]
+    PROM[Prometheus / Grafana]
+  end
+
+  Browser -->|"同源 /api"| GW
+  GW -->|"默认 monolith"| APP
+  GW -->|"coarse"| SYS & COL & CAP & WF
+
+  APP --> SK
+  APP -.-> AG & RAG
+  APP --> WF
+  CAP --> SK
+  COL -.-> AG
+
+  APP & SYS & COL & CAP --> PG
+  APP & SYS & COL & CAP --> RD
+  APP & SK -.->|"/metrics"| PROM
+```
+
+| 形态 | 组成 | 适用 |
+|------|------|------|
+| **monolith（默认）** | gateway + de-app + skill-runtime（± workflow） | 本地联调 / SME |
+| **coarse** | gateway + sys/collab/cap/workflow + skill（± agent/rag） | 规模化对照 |
+| **staging 拓扑** | coarse + Dex + OPA + OpenSearch + obs | 预发验收 |
+
+启动：`make compose-up-monolith` 或 LaunchAgent（`scripts/dev-stack/run-stack.sh`）。改 Go 后须 `make build` 再重启栈。细则见 [`backend/deploy/topology-split.md`](backend/deploy/topology-split.md)。
 
 ### 逻辑拓扑
 
