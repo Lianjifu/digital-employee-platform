@@ -55,6 +55,12 @@ func (s *Server) runHarnessTurn(ctx context.Context, in reactTurnInput) reactTur
 	out.PolicyLevel = usedLevel
 	out.PolicyID = policyID
 
-	streamHarnessAnswer(in.Emit, out.Text, coalesce(out.ModelID, in.ModelID), out.Resolved, out.Mode, out.Steps)
+	streamOpts := &streamAnswerOpts{
+		ReplyMode: in.ReplyMode, CorrelationID: in.CorrelationID,
+		FirstMessageID: in.FirstMessageID, IDGen: defaultSegmentIDGen(s),
+		PreSegments: append(stepSegmentsSlice(in.StepSegments), out.StepSegments...),
+	}
+	out.Segments = streamHarnessAnswer(in.Emit, out.Text, coalesce(out.ModelID, in.ModelID), out.Resolved, out.Mode, out.Steps, streamOpts)
+	out.ReplyMode = in.ReplyMode
 	return out
 }

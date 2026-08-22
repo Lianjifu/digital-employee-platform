@@ -42,6 +42,9 @@ type reactTurnInput struct {
 	SnapshotID      string
 	Binding         map[string]any
 	MemoryProvenance []map[string]any
+	ReplyMode        string
+	FirstMessageID   string
+	StepSegments     *[]AssistantSegment
 }
 
 type reactTurnResult struct {
@@ -58,6 +61,9 @@ type reactTurnResult struct {
 	Agents        []map[string]any
 	PolicyLevel   string
 	PolicyID      string
+	StepSegments  []AssistantSegment
+	Segments      []AssistantSegment
+	ReplyMode     string
 }
 
 // runReactTurn executes a bounded Reason→Act→Observe loop, then optionally streams the final answer.
@@ -227,7 +233,17 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 	}
 
 	if !in.SkipStream {
-		streamHarnessAnswer(in.Emit, finalText, resolvedModel, lastRT, modeReact, steps)
+		streamOpts := &streamAnswerOpts{
+			ReplyMode: in.ReplyMode, CorrelationID: in.CorrelationID,
+			FirstMessageID: in.FirstMessageID, IDGen: defaultSegmentIDGen(s),
+			PreSegments: stepSegmentsSlice(in.StepSegments),
+		}
+		segs := streamHarnessAnswer(in.Emit, finalText, resolvedModel, lastRT, modeReact, steps, streamOpts)
+		return reactTurnResult{
+			Text: finalText, Resolved: lastRT, ModelID: resolvedModel,
+			ToolCalls: toolCalls, Citations: dedupeCitations(citations),
+			Steps: steps, Mode: modeReact, Segments: segs, ReplyMode: in.ReplyMode,
+		}
 	}
 
 	return reactTurnResult{

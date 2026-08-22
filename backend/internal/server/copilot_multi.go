@@ -289,7 +289,17 @@ func (s *Server) runMultiAgentTurn(ctx context.Context, in reactTurnInput) react
 	in.Emit("agent", "multi", map[string]any{"status": "completed", "specialists": len(picks)})
 
 	if !in.SkipStream {
-		streamHarnessAnswer(in.Emit, finalText, resolvedModel, lastRT, modeMultiAgent, len(picks))
+		streamOpts := &streamAnswerOpts{
+			ReplyMode: in.ReplyMode, CorrelationID: in.CorrelationID,
+			FirstMessageID: in.FirstMessageID, IDGen: defaultSegmentIDGen(s),
+			PreSegments: stepSegmentsSlice(in.StepSegments),
+		}
+		segs := streamHarnessAnswer(in.Emit, finalText, resolvedModel, lastRT, modeMultiAgent, len(picks), streamOpts)
+		return reactTurnResult{
+			Text: finalText, Resolved: lastRT, ModelID: resolvedModel,
+			ToolCalls: toolCalls, Steps: len(picks), Mode: modeMultiAgent,
+			Agents: specialistMaps(picks), Segments: segs, ReplyMode: in.ReplyMode,
+		}
 	}
 
 	return reactTurnResult{

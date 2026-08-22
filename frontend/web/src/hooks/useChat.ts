@@ -24,6 +24,7 @@ import { getApiClient } from '@de/web-api';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useAuthStore } from '@/stores/authStore';
 import { isMockChatMode, streamCopilotTurn, type CopilotSSEEvent } from '@/features/copilot/copilot-stream';
+import { applySegmentSSEEvent, createSegmentRouter } from '@/features/copilot/copilot-segment-router';
 import { capSessionMessages } from '@/features/copilot/context-limits';
 import { dedupeConversationMessages } from '@/features/copilot/conversation-merge';
 import { clearCopilotLastSession, rememberCopilotSession } from '@/lib/copilot-workspace';
@@ -1047,7 +1048,7 @@ export function useChat(agentMeta?: { name: string }) {
       ctrl: AbortController,
       correlationIdStr: string,
       digitalEmployeeId?: string,
-      opts?: { skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string; sessionMode?: 'investigate' | 'execute'; runMode?: 'ask' | 'plan' | 'agent'; reasoningEffort?: 'off' | 'standard' | 'deep'; riskLevel?: 'low' | 'medium' | 'high'; attachmentIds?: string[]; clientMsgId?: string },
+      opts?: { skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string; sessionMode?: 'investigate' | 'execute'; runMode?: 'ask' | 'plan' | 'agent'; reasoningEffort?: 'off' | 'standard' | 'deep'; riskLevel?: 'low' | 'medium' | 'high'; attachmentIds?: string[]; clientMsgId?: string; replyMode?: 'single' | 'segmented' | 'stepwise' },
     ) => {
       const agentName = opts?.agentName ?? '岗位专家';
       const modelId = opts?.modelId ?? '';
@@ -1073,6 +1074,71 @@ export function useChat(agentMeta?: { name: string }) {
       const startedAt = Date.now();
       let firstChunkAt = 0;
       let content = '';
+      const segmentRouter = createSegmentRouter(replyId);
+      const segmentPlaceholders = new Map<string, ChatMessageEx>();
+      segmentPlaceholders.set(replyId, placeholder);
+      const ensureSegment = (messageId?: string) => {
+        const mid = messageId?.trim() || replyId;
+        if (!segmentPlaceholders.has(mid)) {
+          const segPlaceholder: ChatMessageEx = {
+            id: mid,
+            role: 'assistant',
+            agentName,
+            content: '',
+            reasoningSteps: [],
+            toolCalls: [],
+            citations: [],
+            clientMsgId: placeholder.clientMsgId,
+            correlationId: correlationIdStr,
+            status: 'streaming',
+            metrics: { model: modelId, provider: 'de-core' },
+            createdAt: new Date().toISOString(),
+          };
+          segmentPlaceholders.set(mid, segPlaceholder);
+          if (mid !== replyId) {
+            dispatch({ type: 'append_msg', sid, msg: segPlaceholder });
+          }
+        }
+        return mid;
+      };
+      let reasoningMid = replyId;
+      const patchSegment = (mid: string, status: ChatMessageEx['status'] = 'streaming') => {
+        const body = segmentRouter.segments.get(mid)?.content ?? '';
+        const base = segmentPlaceholders.get(mid) ?? placeholder;
+        dispatch({
+          type: 'replace_msg',
+          sid,
+          mid,
+          msg: {
+            ...base,
+            content: body,
+            reasoningSteps: [...reasoningSteps],
+            toolCalls: [...toolCalls],
+            citations: [...citations],
+            status,
+          },
+        });
+      };
+      const failAllSegments = (message: string, category: ErrorCategory) => {
+        for (const mid of segmentRouter.segments.keys()) {
+          const body = segmentRouter.segments.get(mid)?.content ?? '';
+          const base = segmentPlaceholders.get(mid) ?? placeholder;
+          dispatch({
+            type: 'replace_msg',
+            sid,
+            mid,
+            msg: {
+              ...base,
+              content: body || `请求失败：${message}`,
+              reasoningSteps: [...reasoningSteps],
+              toolCalls: [...toolCalls],
+              citations: [...citations],
+              status: 'failed',
+              error: { category, message, retryable: category === 'network' || category === 'timeout' },
+            },
+          });
+        }
+      };
       const reasoningSteps: ReasoningStep[] = [];
       const toolCalls: ToolCall[] = [];
       const citations: Citation[] = [];
@@ -1100,20 +1166,7 @@ export function useChat(agentMeta?: { name: string }) {
       });
 
       const finishError = (message: string, category: ErrorCategory = 'internal') => {
-        dispatch({
-          type: 'replace_msg',
-          sid,
-          mid: replyId,
-          msg: {
-            ...placeholder,
-            content: content || `请求失败：${message}`,
-            reasoningSteps,
-            toolCalls,
-            citations,
-            status: 'failed',
-            error: { category, message, retryable: category === 'network' || category === 'timeout' },
-          },
-        });
+        failAllSegments(message, category);
         dispatch({
           type: 'update_request',
           id: reqId,
@@ -1154,7 +1207,7 @@ export function useChat(agentMeta?: { name: string }) {
               startedAt: new Date().toISOString(),
             };
             reasoningSteps.push(step);
-            dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+            dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
             return;
           }
           const step: ReasoningStep = {
@@ -1165,7 +1218,7 @@ export function useChat(agentMeta?: { name: string }) {
             startedAt: new Date().toISOString(),
           };
           reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
           return;
         }
         if (typ === 'evolve') {
@@ -1177,7 +1230,7 @@ export function useChat(agentMeta?: { name: string }) {
             startedAt: new Date().toISOString(),
           };
           reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
           return;
         }
         if (typ === 'route') {
@@ -1193,7 +1246,7 @@ export function useChat(agentMeta?: { name: string }) {
             startedAt: new Date().toISOString(),
           };
           reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
           return;
         }
         if (typ === 'agent') {
@@ -1217,7 +1270,7 @@ export function useChat(agentMeta?: { name: string }) {
             startedAt: new Date().toISOString(),
           };
           reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
           return;
         }
         if (typ === 'plan') {
@@ -1236,7 +1289,7 @@ export function useChat(agentMeta?: { name: string }) {
             startedAt: new Date().toISOString(),
           };
           reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
           return;
         }
         if (typ === 'reflect') {
@@ -1248,7 +1301,7 @@ export function useChat(agentMeta?: { name: string }) {
             startedAt: new Date().toISOString(),
           };
           reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
           return;
         }
         if (typ === 'authorization') {
@@ -1298,7 +1351,7 @@ export function useChat(agentMeta?: { name: string }) {
             startedAt: new Date().toISOString(),
           };
           reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: replyId, step });
+          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
           return;
         }
         if (typ === 'tool') {
@@ -1345,30 +1398,38 @@ export function useChat(agentMeta?: { name: string }) {
               score: typeof h.score === 'number' ? h.score : 0.5,
             });
           }
-          dispatch({
-            type: 'replace_msg',
-            sid,
-            mid: replyId,
-            msg: { ...placeholder, content, reasoningSteps: [...reasoningSteps], toolCalls: [...toolCalls], citations: [...citations], status: 'streaming' },
-          });
+          patchSegment(reasoningMid);
+          return;
+        }
+        if (typ === 'message_start' && data.messageId) {
+          const applied = applySegmentSSEEvent(segmentRouter, data);
+          if (applied.kind === 'start' && applied.isNew) {
+            ensureSegment(applied.messageId);
+          }
+          reasoningMid = segmentRouter.reasoningMid;
+          return;
+        }
+        if (typ === 'message_delta' && data.text) {
+          const applied = applySegmentSSEEvent(segmentRouter, data);
+          if (applied.kind !== 'delta') return;
+          if (!firstChunkAt) firstChunkAt = Date.now();
+          reasoningMid = applied.messageId;
+          content = applied.content;
+          patchSegment(applied.messageId);
+          return;
+        }
+        if (typ === 'message_done' && data.messageId) {
+          applySegmentSSEEvent(segmentRouter, data);
+          patchSegment(data.messageId, 'succeeded');
           return;
         }
         if (typ === 'delta' && data.text) {
+          const applied = applySegmentSSEEvent(segmentRouter, data);
+          if (applied.kind !== 'delta') return;
           if (!firstChunkAt) firstChunkAt = Date.now();
-          content += data.text;
-          dispatch({
-            type: 'replace_msg',
-            sid,
-            mid: replyId,
-            msg: {
-              ...placeholder,
-              content,
-              reasoningSteps: [...reasoningSteps],
-              toolCalls: [...toolCalls],
-              citations: [...citations],
-              status: 'streaming',
-            },
-          });
+          reasoningMid = applied.messageId;
+          content = applied.content;
+          patchSegment(applied.messageId);
           return;
         }
         if (typ === 'error') {
@@ -1377,31 +1438,37 @@ export function useChat(agentMeta?: { name: string }) {
           return;
         }
         if (typ === 'done') {
+          applySegmentSSEEvent(segmentRouter, data);
           const provenance = Array.isArray(data.memoryProvenance) ? data.memoryProvenance : undefined;
-          const finalMsg: ChatMessageEx = {
-            ...placeholder,
-            content,
-            reasoningSteps: [...reasoningSteps],
-            toolCalls: [...toolCalls],
-            citations: [...citations],
+          const metrics: MessageMetrics = {
+            model: resolvedModel,
+            provider: resolvedSource ? `${resolvedProvider}/${resolvedSource}` : resolvedProvider,
+            ttftMs: firstChunkAt ? firstChunkAt - startedAt : Date.now() - startedAt,
+            durationMs: Date.now() - startedAt,
+            completionTokens: Math.round(content.length * 0.4),
+            memoryHits: typeof data.memoryHits === 'number' ? data.memoryHits : provenance?.length,
+            ragHits: typeof data.ragHits === 'number' ? data.ragHits : undefined,
+            snapshotId: typeof data.snapshotId === 'string' ? data.snapshotId : undefined,
             memoryProvenance: provenance,
-            metrics: {
-              model: resolvedModel,
-              provider: resolvedSource ? `${resolvedProvider}/${resolvedSource}` : resolvedProvider,
-              ttftMs: firstChunkAt ? firstChunkAt - startedAt : Date.now() - startedAt,
-              durationMs: Date.now() - startedAt,
-              completionTokens: Math.round(content.length * 0.4),
-              memoryHits: typeof data.memoryHits === 'number' ? data.memoryHits : provenance?.length,
-              ragHits: typeof data.ragHits === 'number' ? data.ragHits : undefined,
-              snapshotId: typeof data.snapshotId === 'string' ? data.snapshotId : undefined,
-              memoryProvenance: provenance,
-            },
-            status: 'succeeded',
-            serverMsgId: (typeof data.messageId === 'string' && data.messageId)
-              || (typeof data.id === 'string' && data.id)
-              || uid('srv_'),
           };
-          dispatch({ type: 'replace_msg', sid, mid: replyId, msg: finalMsg });
+          for (const mid of segmentRouter.segments.keys()) {
+            const body = segmentRouter.segments.get(mid)?.content ?? '';
+            const base = segmentPlaceholders.get(mid) ?? placeholder;
+            const finalMsg: ChatMessageEx = {
+              ...base,
+              content: body,
+              reasoningSteps: mid === reasoningMid ? [...reasoningSteps] : base.reasoningSteps ?? [],
+              toolCalls: mid === reasoningMid ? [...toolCalls] : base.toolCalls ?? [],
+              citations: mid === reasoningMid ? [...citations] : base.citations ?? [],
+              memoryProvenance: mid === reasoningMid ? provenance : base.memoryProvenance,
+              metrics,
+              status: 'succeeded',
+              serverMsgId: (mid === replyId && typeof data.messageId === 'string' && data.messageId)
+                ? data.messageId
+                : base.serverMsgId ?? uid('srv_'),
+            };
+            dispatch({ type: 'replace_msg', sid, mid, msg: finalMsg });
+          }
           dispatch({
             type: 'update_request',
             id: reqId,
@@ -1435,12 +1502,16 @@ export function useChat(agentMeta?: { name: string }) {
         riskLevel: opts?.riskLevel,
         attachmentIds: opts?.attachmentIds,
         clientMsgId: opts?.clientMsgId,
+        firstMessageId: replyId,
+        replyMode: opts?.replyMode,
         signal: ctrl.signal,
         onEvent,
       }).catch((err: unknown) => {
         if (ctrl.signal.aborted) {
           dispatch({ type: 'update_request', id: reqId, patch: { status: 'aborted', durationMs: Date.now() - startedAt } });
-          dispatch({ type: 'set_msg_status', sid, mid: replyId, status: 'cancelled' });
+          for (const mid of segmentRouter.segments.keys()) {
+            dispatch({ type: 'set_msg_status', sid, mid, status: 'cancelled' });
+          }
           dispatch({ type: 'set_typing', typing: false });
           dispatch({ type: 'set_abort', ctrl: null });
           return;
@@ -1460,7 +1531,7 @@ export function useChat(agentMeta?: { name: string }) {
       ctrl: AbortController,
       corr: string,
       digitalEmployeeId?: string,
-      opts?: { replyId?: string; skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string; sessionMode?: 'investigate' | 'execute'; runMode?: 'ask' | 'plan' | 'agent'; reasoningEffort?: 'off' | 'standard' | 'deep'; riskLevel?: 'low' | 'medium' | 'high'; attachmentIds?: string[]; clientMsgId?: string },
+      opts?: { replyId?: string; skipAppend?: boolean; agentName?: string; modelId?: string; enabledTools?: string[]; conversationId?: string; modeHint?: string; reflectHint?: string; sessionMode?: 'investigate' | 'execute'; runMode?: 'ask' | 'plan' | 'agent'; reasoningEffort?: 'off' | 'standard' | 'deep'; riskLevel?: 'low' | 'medium' | 'high'; attachmentIds?: string[]; clientMsgId?: string; replyMode?: 'single' | 'segmented' | 'stepwise' },
     ) => {
       const replyId = opts?.replyId ?? uid('m_');
       if (isMockChatMode()) {
@@ -1481,6 +1552,7 @@ export function useChat(agentMeta?: { name: string }) {
           riskLevel: opts?.riskLevel,
           attachmentIds: opts?.attachmentIds,
           clientMsgId: opts?.clientMsgId,
+          replyMode: opts?.replyMode,
         });
       }
     },
@@ -1813,7 +1885,7 @@ export function useChat(agentMeta?: { name: string }) {
     const modelId = opts?.modelId ?? opts?.model ?? sess?.modelId;
     const enabledTools = opts?.enabledTools ?? sess?.enabledTools;
     // 仅打元数据补丁，禁止 sync 整表（否则会用 append 前的 stale messages 冲掉刚插入的用户气泡）
-    if (sess && (opts?.modelId || opts?.enabledTools || opts?.sessionMode || opts?.riskLevel || opts?.runMode || opts?.reasoningEffort)) {
+    if (sess && (opts?.modelId || opts?.enabledTools || opts?.sessionMode || opts?.riskLevel || opts?.runMode || opts?.reasoningEffort || opts?.replyMode)) {
       const patch: Partial<ChatSession> = {};
       if (opts?.modelId || opts?.model) patch.modelId = modelId ?? sess.modelId;
       if (opts?.enabledTools) patch.enabledTools = enabledTools ?? sess.enabledTools;
@@ -1821,6 +1893,7 @@ export function useChat(agentMeta?: { name: string }) {
       if (opts?.runMode) patch.runMode = opts.runMode;
       if (opts?.reasoningEffort) patch.reasoningEffort = opts.reasoningEffort;
       if (opts?.riskLevel) patch.riskLevel = opts.riskLevel;
+      if (opts?.replyMode) patch.replyMode = opts.replyMode;
       dispatch({ type: 'update_session', sid: state.activeId, patch });
     }
     setTimeout(() => {
@@ -1835,6 +1908,7 @@ export function useChat(agentMeta?: { name: string }) {
         runMode: opts?.runMode ?? sess?.runMode,
         reasoningEffort: opts?.reasoningEffort ?? sess?.reasoningEffort,
         riskLevel: opts?.riskLevel ?? sess?.riskLevel,
+        replyMode: opts?.replyMode ?? sess?.replyMode,
         attachmentIds: opts?.attachmentIds,
         clientMsgId: userMsg.clientMsgId,
       });

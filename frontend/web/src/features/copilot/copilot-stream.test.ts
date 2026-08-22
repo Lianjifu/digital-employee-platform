@@ -56,6 +56,25 @@ describe('parseSSEChunk', () => {
     expect(events).toEqual([{ type: 'done', snapshotId: 'snap-1' }]);
   });
 
+  it('parses multi-segment SSE events', () => {
+    const events: string[] = [];
+    parseSSEChunk(
+      [
+        'event: message_start',
+        'data: {"type":"message_start","messageId":"m2","segmentIndex":1}',
+        '',
+        'event: message_delta',
+        'data: {"type":"message_delta","messageId":"m2","text":"第二段"}',
+        '',
+        'event: done',
+        'data: {"type":"done","ok":true,"messageIds":["m1","m2"],"segmentCount":2}',
+        '',
+      ].join('\n'),
+      (_event, data) => events.push(data.type),
+    );
+    expect(events).toEqual(['message_start', 'message_delta', 'done']);
+  });
+
   it('gates mock identity headers on VITE_USE_MOCK', () => {
     const headers = mockIdentityHeaders({
       role: 'admin',

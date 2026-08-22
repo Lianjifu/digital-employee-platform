@@ -12,6 +12,7 @@ import {
 
 export type RunMode = 'ask' | 'plan' | 'agent';
 export type ReasoningEffort = 'off' | 'standard' | 'deep';
+export type ReplyMode = 'single' | 'segmented' | 'stepwise';
 
 export const RUN_MODE_OPTIONS: Array<{
   value: RunMode;
@@ -34,6 +35,22 @@ export const REASONING_EFFORT_OPTIONS: Array<{
 
 export const DEFAULT_RUN_MODE: RunMode = 'plan';
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'standard';
+export const DEFAULT_REPLY_MODE: ReplyMode = 'segmented';
+
+export const REPLY_MODE_OPTIONS: Array<{ value: ReplyMode; label: string }> = [
+  { value: 'single', label: '单条' },
+  { value: 'segmented', label: '分段' },
+  { value: 'stepwise', label: '步骤' },
+];
+
+export function parseReplyMode(v: unknown): ReplyMode | null {
+  if (v === 'single' || v === 'segmented' || v === 'stepwise') return v;
+  return null;
+}
+
+export function replyModeLabel(mode: ReplyMode): string {
+  return REPLY_MODE_OPTIONS.find((o) => o.value === mode)?.label ?? mode;
+}
 
 const ASK_READ_TOOL_RE = /retrieve|recall|skill\.read|time\.now|read_file|glob|grep|^builtin:(knowledge|memory|skill|time)/i;
 

@@ -107,39 +107,48 @@ func idempotencyKey(cid, clientMsgID string) string {
 }
 
 func rememberIdempotentReply(s *Server, cid, clientMsgID string, assistant map[string]any) {
-	if clientMsgID == "" {
+	rememberIdempotentTurn(s, cid, clientMsgID, []map[string]any{assistant})
+}
+
+func rememberIdempotentTurn(s *Server, cid, clientMsgID string, messages []map[string]any) {
+	if clientMsgID == "" || len(messages) == 0 {
 		return
 	}
 	key := idempotencyKey(cid, clientMsgID)
-	streamIdempot.Store(key, assistant)
+	rec := map[string]any{"v": 2, "messages": messages}
+	streamIdempot.Store(key, rec)
 	if s != nil && s.Store != nil {
 		if s.Store.CopilotIdempotency == nil {
 			s.Store.CopilotIdempotency = map[string]map[string]any{}
 		}
 		cp := map[string]any{}
-		for k, v := range assistant {
+		for k, v := range rec {
 			cp[k] = v
 		}
 		s.Store.CopilotIdempotency[key] = cp
 	}
 }
 
-func (s *Server) loadIdempotentReply(cid, clientMsgID string) map[string]any {
+func (s *Server) loadIdempotentTurn(cid, clientMsgID string) []map[string]any {
 	if clientMsgID == "" {
 		return nil
 	}
 	key := idempotencyKey(cid, clientMsgID)
 	if v, ok := streamIdempot.Load(key); ok {
 		if m, ok := v.(map[string]any); ok {
-			return m
+			if msgs := idempotentMessagesFromRecord(m); len(msgs) > 0 {
+				return msgs
+			}
 		}
 	}
 	if s != nil && s.Store != nil {
 		s.Store.RLock()
 		if s.Store.CopilotIdempotency != nil {
 			if m, ok := s.Store.CopilotIdempotency[key]; ok && m != nil {
-				s.Store.RUnlock()
-				return m
+				if msgs := idempotentMessagesFromRecord(m); len(msgs) > 0 {
+					s.Store.RUnlock()
+					return msgs
+				}
 			}
 		}
 		msgs := append([]map[string]any{}, s.Store.Messages[cid]...)
@@ -148,19 +157,69 @@ func (s *Server) loadIdempotentReply(cid, clientMsgID string) map[string]any {
 			if str(m["clientMsgId"]) != clientMsgID || str(m["role"]) != "user" {
 				continue
 			}
+			corr := str(m["correlationId"])
+			out := make([]map[string]any, 0, 4)
 			for j := i + 1; j < len(msgs); j++ {
-				if str(msgs[j]["role"]) == "assistant" {
-					cp := map[string]any{}
-					for k, v := range msgs[j] {
-						cp[k] = v
-					}
-					streamIdempot.Store(key, cp)
-					return cp
+				if str(msgs[j]["role"]) == "user" {
+					break
 				}
+				if str(msgs[j]["role"]) != "assistant" {
+					continue
+				}
+				if corr != "" && str(msgs[j]["correlationId"]) != corr {
+					continue
+				}
+				cp := map[string]any{}
+				for k, v := range msgs[j] {
+					cp[k] = v
+				}
+				out = append(out, cp)
+			}
+			if len(out) > 0 {
+				rememberIdempotentTurn(s, cid, clientMsgID, out)
+				return out
 			}
 		}
 	}
 	return nil
+}
+
+func idempotentMessagesFromRecord(rec map[string]any) []map[string]any {
+	if rec == nil {
+		return nil
+	}
+	if raw, ok := rec["messages"].([]map[string]any); ok && len(raw) > 0 {
+		out := make([]map[string]any, 0, len(raw))
+		for _, m := range raw {
+			cp := map[string]any{}
+			for k, v := range m {
+				cp[k] = v
+			}
+			out = append(out, cp)
+		}
+		return out
+	}
+	if raw, ok := rec["messages"].([]any); ok && len(raw) > 0 {
+		out := make([]map[string]any, 0, len(raw))
+		for _, item := range raw {
+			if m, ok := item.(map[string]any); ok {
+				out = append(out, m)
+			}
+		}
+		return out
+	}
+	if str(rec["role"]) == "assistant" {
+		return []map[string]any{rec}
+	}
+	return nil
+}
+
+func (s *Server) loadIdempotentReply(cid, clientMsgID string) map[string]any {
+	msgs := s.loadIdempotentTurn(cid, clientMsgID)
+	if len(msgs) == 0 {
+		return nil
+	}
+	return msgs[len(msgs)-1]
 }
 
 func (s *Server) cancelCopilotTurn(r *http.Request) (any, error) {

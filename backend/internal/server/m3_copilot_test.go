@@ -337,3 +337,55 @@ func TestListSessionsFiltersByWorkspaceHeader(t *testing.T) {
 		t.Fatalf("w2 list missing w2 session: %s", rr.Body.String())
 	}
 }
+
+func TestCopilotStreamSegmentedMode(t *testing.T) {
+	h := server.New(store.New()).Handler()
+	body := `{"content":"第一段足够长的内容用于分段测试，超过四十个字。\n---\n第二段同样足够长，用于验证多气泡落库与 SSE。","correlationId":"corr-seg-1","replyMode":"segmented","firstMessageId":"msg-seg-0","modelId":"sonnet-4"}`
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/copilot/conversations/conv-seg/stream", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("stream %d %s", rr.Code, rr.Body.String())
+	}
+	sse := rr.Body.String()
+	if !strings.Contains(sse, "message_start") {
+		t.Fatalf("missing message_start in segmented SSE: %s", sse)
+	}
+	if !strings.Contains(sse, `"segmentCount"`) && !strings.Contains(sse, `"messageIds"`) {
+		t.Fatalf("missing segment metadata in done: %s", sse)
+	}
+}
+
+func TestCopilotStreamIdempotentMultiMessage(t *testing.T) {
+	st := store.New()
+	h := server.New(st).Handler()
+	payload := `{"content":"hello","correlationId":"corr-idem-1","clientMsgId":"c-idem-1","replyMode":"segmented","firstMessageId":"msg-idem-0","modelId":"sonnet-4"}`
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/copilot/conversations/conv-idem/stream", bytes.NewBufferString(payload))
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("first stream %d %s", rr.Code, rr.Body.String())
+	}
+
+	rr2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodPost, "/api/copilot/conversations/conv-idem/stream", bytes.NewBufferString(payload))
+	req2.Header.Set("Authorization", "Bearer mock-admin-token")
+	req2.Header.Set("X-Workspace-Id", "w1")
+	req2.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr2, req2)
+	if rr2.Code != 200 {
+		t.Fatalf("idempotent stream %d %s", rr2.Code, rr2.Body.String())
+	}
+	if !strings.Contains(rr2.Body.String(), `"stage":"idempotent"`) {
+		t.Fatalf("expected idempotent replay: %s", rr2.Body.String())
+	}
+	if !strings.Contains(rr2.Body.String(), "message_start") {
+		t.Fatalf("idempotent replay should re-emit segments: %s", rr2.Body.String())
+	}
+}

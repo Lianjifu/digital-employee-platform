@@ -287,6 +287,8 @@ export interface ChatSession {
   reasoningEffort?: 'off' | 'standard' | 'deep';
   /** 会话风险等级 */
   riskLevel?: 'low' | 'medium' | 'high';
+  /** 回复分段：单条 / 语义分段 / 步骤播报 */
+  replyMode?: 'single' | 'segmented' | 'stepwise';
   /** 人工交接 */
   handoff?: { active?: boolean; ownerId?: string; ownerName?: string; at?: string; note?: string };
   /** 结案摘要 */
@@ -340,7 +342,8 @@ export interface SendMessageInput {
   reasoningEffort?: 'off' | 'standard' | 'deep';
   /** 风险等级 */
   riskLevel?: 'low' | 'medium' | 'high';
-  /** 已上传附件 id */
+  /** 回复分段模式 */
+  replyMode?: 'single' | 'segmented' | 'stepwise';
   attachmentIds?: string[];
   /** 客户端幂等键 */
   clientMsgId?: string;

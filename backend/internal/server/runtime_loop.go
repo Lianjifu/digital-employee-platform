@@ -103,6 +103,9 @@ func (s *Server) runRemoteRuntime(ctx context.Context, in reactTurnInput) reactT
 
 	var full strings.Builder
 	var lastMode, lastModel string
+	replyMode := normalizeReplyMode(in.ReplyMode)
+	segmentedRemote := replyMode != replyModeSingle
+	var sawMessageStart bool
 	onEvent := func(typ string, payload map[string]any) {
 		if typ == "" {
 			typ = str(payload["type"])
@@ -110,9 +113,12 @@ func (s *Server) runRemoteRuntime(ctx context.Context, in reactTurnInput) reactT
 		if typ == "" {
 			return
 		}
+		if typ == contract.StreamMessageStart {
+			sawMessageStart = true
+		}
 		stage := coalesce(str(payload["stage"]), "runtime")
-		if t := str(payload["text"]); t != "" && (typ == contract.StreamDelta || typ == contract.StreamDone) {
-			if typ == contract.StreamDelta {
+		if t := str(payload["text"]); t != "" && (typ == contract.StreamDelta || typ == contract.StreamMessageDelta || typ == contract.StreamDone) {
+			if typ == contract.StreamDelta || typ == contract.StreamMessageDelta {
 				full.WriteString(t)
 			} else if full.Len() == 0 {
 				full.WriteString(t)
@@ -131,6 +137,9 @@ func (s *Server) runRemoteRuntime(ctx context.Context, in reactTurnInput) reactT
 					"snapshotId": in.SnapshotID, "mode": coalesce(lastMode, contract.LoopDirect),
 				})
 			}
+			return
+		}
+		if segmentedRemote && !sawMessageStart && typ == contract.StreamDelta {
 			return
 		}
 		extra := map[string]any{}
@@ -152,7 +161,7 @@ func (s *Server) runRemoteRuntime(ctx context.Context, in reactTurnInput) reactT
 	if text == "" {
 		return reactTurnResult{Err: apperr.Unavailable(apperr.RuntimeUnavailable, "agent-runtime 未返回 Loop 文本")}
 	}
-	return reactTurnResult{
+	out := reactTurnResult{
 		Text:    text,
 		ModelID: coalesce(lastModel, in.ModelID),
 		Mode:    coalesce(lastMode, contract.LoopDirect),
@@ -160,7 +169,19 @@ func (s *Server) runRemoteRuntime(ctx context.Context, in reactTurnInput) reactT
 			ProviderID: "de-agent-runtime", Source: runtimeModeRemote, ModelID: coalesce(lastModel, in.ModelID),
 		},
 		ToolCalls: []map[string]any{},
+		ReplyMode: replyMode,
 	}
+	if segmentedRemote && !sawMessageStart && in.Emit != nil {
+		idGen := defaultSegmentIDGen(s)
+		segs := buildSegmentsFromTurn(text, reactTurnResult{}, replyMode, in.FirstMessageID, idGen, nil)
+		if len(segs) > 1 {
+			out.Segments = streamHarnessAnswer(in.Emit, text, coalesce(lastModel, in.ModelID), out.Resolved, out.Mode, 0, &streamAnswerOpts{
+				ReplyMode: replyMode, CorrelationID: in.CorrelationID,
+				FirstMessageID: in.FirstMessageID, IDGen: idGen,
+			})
+		}
+	}
+	return out
 }
 
 func runtimeLoopPayload(in reactTurnInput) map[string]any {
@@ -176,6 +197,8 @@ func runtimeLoopPayload(in reactTurnInput) map[string]any {
 		"maxSteps":      in.MaxSteps,
 		"loopMode":      coalesce(in.ModeHint, contract.LoopReact),
 		"correlationId": in.CorrelationID,
+		"replyMode":     in.ReplyMode,
+		"firstMessageId": in.FirstMessageID,
 		"envelope": map[string]any{
 			"tenantId": tenant, "workspaceId": in.WorkspaceID, "actorId": actor,
 			"sessionId": in.ConversationID, "employeeId": in.DigitalEmployee,

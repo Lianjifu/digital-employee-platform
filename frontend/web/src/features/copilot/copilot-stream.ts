@@ -4,6 +4,8 @@
 import { useAuthStore } from '@/stores/authStore';
 import { resolveWorkspaceHeader } from '@/lib/workspace-header';
 
+export type ReplyMode = 'single' | 'segmented' | 'stepwise';
+
 export type CopilotSSEEvent = {
   type: string;
   stage?: string;
@@ -73,6 +75,13 @@ export type CopilotSSEEvent = {
   approvalRequest?: unknown;
   moderated?: boolean;
   reasons?: string[];
+  segmentIndex?: number;
+  segmentTotal?: number;
+  segmentKind?: 'ack' | 'body' | 'summary' | 'step';
+  segmentCount?: number;
+  messageIds?: string[];
+  replyMode?: ReplyMode;
+  messages?: unknown[];
 };
 
 export function isMockChatMode(): boolean {
@@ -141,6 +150,8 @@ export type StreamTurnInput = {
   riskLevel?: 'low' | 'medium' | 'high';
   attachmentIds?: string[];
   clientMsgId?: string;
+  firstMessageId?: string;
+  replyMode?: ReplyMode;
   signal?: AbortSignal;
   onEvent: (event: string, data: CopilotSSEEvent) => void;
 };
@@ -177,6 +188,8 @@ export async function streamCopilotTurn(input: StreamTurnInput): Promise<void> {
         riskLevel: input.riskLevel,
         attachmentIds: input.attachmentIds,
         clientMsgId: input.clientMsgId,
+        firstMessageId: input.firstMessageId,
+        replyMode: input.replyMode,
       }),
       signal: input.signal,
     },

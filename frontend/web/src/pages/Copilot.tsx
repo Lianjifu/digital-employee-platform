@@ -57,18 +57,22 @@ import { buildExpertSuggestions, type ExpertSuggestionIcon } from '@/features/co
 import { approvalToolKeys, buildExpertTools, defaultEnabledToolKeys, ensureDefaultSkillsEnabled, isWriteExecutionIntent, toolsForExecuteMode } from '@/features/copilot/expert-tools';
 import { ComposerRunModeMenu } from '@/features/copilot/composer-run-mode';
 import { ComposerReasoningMenu } from '@/features/copilot/composer-reasoning';
+import { ComposerReplyModeMenu } from '@/features/copilot/composer-reply-mode';
 import { ComposerContextUsage } from '@/features/copilot/composer-context-usage';
 import { ComposerInsertMenu } from '@/features/copilot/composer-insert';
 import { ThoughtPanel } from '@/features/copilot/thought-panel';
 import {
   DEFAULT_RUN_MODE,
   DEFAULT_REASONING_EFFORT,
+  DEFAULT_REPLY_MODE,
   deriveReasoningEffort,
   deriveRunMode,
   mapRunModeToDispatch,
   parseReasoningEffort,
+  parseReplyMode,
   parseRunMode,
   type ReasoningEffort,
+  type ReplyMode,
   type RunMode,
 } from '@/features/copilot/composer-mode';
 import { computeContextUsage } from '@/features/copilot/composer-context';
@@ -331,6 +335,7 @@ export default function Copilot() {
   // Composer 协作控件：本地即时切换，避免 sessions 列表回灌冲掉选择
   const [runMode, setRunMode] = useState<RunMode>(DEFAULT_RUN_MODE);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(DEFAULT_REASONING_EFFORT);
+  const [replyMode, setReplyMode] = useState<ReplyMode>(DEFAULT_REPLY_MODE);
   const [riskLevel, setRiskLevel] = useState<'low' | 'medium' | 'high'>('medium');
   const [closeoutOpen, setCloseoutOpen] = useState(false);
   const [handoffOpen, setHandoffOpen] = useState(false);
@@ -521,6 +526,7 @@ export default function Copilot() {
     if (!activeSession) {
       setRunMode(DEFAULT_RUN_MODE);
       setReasoningEffort(DEFAULT_REASONING_EFFORT);
+      setReplyMode(DEFAULT_REPLY_MODE);
       return;
     }
     setRunMode(deriveRunMode({
@@ -534,6 +540,7 @@ export default function Copilot() {
         sessionMode: activeSession.sessionMode,
       }),
     }));
+    setReplyMode(parseReplyMode(activeSession.replyMode) ?? DEFAULT_REPLY_MODE);
   }, [activeSession?.id]);
 
   // 切会话时恢复会话级模型
@@ -1325,6 +1332,7 @@ export default function Copilot() {
         sessionMode: mode,
         runMode,
         reasoningEffort,
+        replyMode,
         modeHint,
         riskLevel: risk,
         attachmentIds: attachmentIds.length ? attachmentIds : undefined,
@@ -2608,6 +2616,16 @@ export default function Copilot() {
                   value={reasoningEffort}
                   disabled={isClosed || handoffActive || !canMutate}
                   onChange={handleReasoningChange}
+                />
+                <ComposerReplyModeMenu
+                  value={replyMode}
+                  disabled={isClosed || handoffActive || !canMutate}
+                  onChange={(mode) => {
+                    setReplyMode(mode);
+                    if (activeSession) {
+                      void chat.persistSession({ ...activeSession, replyMode: mode }).catch(() => undefined);
+                    }
+                  }}
                 />
                 <span className="copilot-composer__controls-sep" aria-hidden="true" />
                 <ComposerInsertMenu

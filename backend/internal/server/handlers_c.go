@@ -381,6 +381,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		corr = s.Store.ID("corr")
 	}
 	clientMsgID := strings.TrimSpace(str(body["clientMsgId"]))
+	firstMessageID := strings.TrimSpace(str(body["firstMessageId"]))
 	ws := s.workspaceID(r)
 	deID := coalesce(str(body["digitalEmployeeId"]), "")
 	requestedModel := coalesce(str(body["modelId"]), coalesce(str(body["model"]), ""))
@@ -486,7 +487,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if clientMsgID != "" {
-		if prev := s.loadIdempotentReply(cid, clientMsgID); prev != nil {
+		if prev := s.loadIdempotentTurn(cid, clientMsgID); len(prev) > 0 {
 			flusher, ok := w.(http.Flusher)
 			if !ok {
 				writeErr(w, apperr.New(apperr.Unknown, 500, "流式不支持"))
@@ -495,9 +496,21 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("x-correlation-id", corr)
+			replayStoredSegments(func(typ, stage string, extra map[string]any) {
+				payload := map[string]any{"type": typ, "stage": stage, "correlationId": corr}
+				for k, v := range extra {
+					payload[k] = v
+				}
+				writeSSE(w, typ, payload)
+				flusher.Flush()
+			}, prev, modelIDFromStoredMessage(prev[len(prev)-1]), corr)
+			ids := make([]string, 0, len(prev))
+			for _, m := range prev {
+				ids = append(ids, str(m["id"]))
+			}
 			writeSSE(w, "done", map[string]any{
 				"type": "done", "stage": "idempotent", "correlationId": corr,
-				"message": prev, "replay": true,
+				"message": prev[0], "messages": prev, "messageIds": ids, "replay": true,
 			})
 			flusher.Flush()
 			IncCopilotStream(true)
@@ -623,6 +636,8 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 
 	system := buildCopilotSystemPromptWithEffort(empMap, ragHits, memoryHits, reasoningEffort)
 	system += runModePromptClause(runMode)
+	replyMode := resolveReplyMode(body, empMap)
+	system += replyModePromptClause(replyMode)
 
 	chatMessages := assembleCopilotChatMessages(historySnapshot)
 	if len(chatMessages) == 0 {
@@ -656,13 +671,30 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		"runtimeMode": runtimeMode(),
 		"sessionMode": sessionMode, "riskLevel": riskLevel,
 		"enabledTools": enabledToolKeys(registry), "historyTurns": len(chatMessages),
+		"replyMode": replyMode,
 	})
+	segIDGen := defaultSegmentIDGen(s)
+	if firstMessageID == "" {
+		firstMessageID = segIDGen()
+	}
+	var ackPersisted []map[string]any
+	if ack, ok := buildAckSegment(userMsg, len(attachmentIDs) > 0); ok && normalizeReplyMode(replyMode) != replyModeSingle {
+		ack.ID = segIDGen()
+		ack.Index = 0
+		emitSegmentStream(emit, []AssistantSegment{ack}, modelID, corr, replyMode)
+		ackNow := time.Now().UTC().Format(time.RFC3339)
+		ackPersisted = assistantMessagesFromSegments([]AssistantSegment{ack}, corr, replyMode, ackNow, nil, false, nil, nil, 0)
+		s.Store.Lock()
+		s.Store.Messages[cid] = append(s.Store.Messages[cid], ackPersisted...)
+		s.Store.Unlock()
+	}
 	streamCtx, streamCancel := context.WithTimeout(r.Context(), copilotStreamTimeout())
 	registerStreamCancel(corr, streamCancel)
 	defer func() {
 		clearStreamCancel(corr)
 		streamCancel()
 	}()
+	var stepSegSink []AssistantSegment
 	reactOut := s.runRuntimeTurn(streamCtx, reactTurnInput{
 		Request: r, WorkspaceID: ws, ModelID: modelID, System: system,
 		Messages: chatMessages, Registry: registry, UserMessage: userMsg,
@@ -670,7 +702,9 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		Viewer: id, Emit: emit, ModeHint: modeHint, ReflectHint: reflectHint,
 		SessionMode: sessionMode, RiskLevel: riskLevel, RAGPrefetched: ragCount > 0,
 		SnapshotID: snapID, Binding: binding, MemoryProvenance: memoryProvenanceMaps(memoryHits),
+		ReplyMode: replyMode, FirstMessageID: firstMessageID, StepSegments: &stepSegSink,
 	})
+	_ = stepSegSink
 	if reactOut.Err != nil {
 		fallback := ""
 		if allowRuntimeStub() {
@@ -730,14 +764,18 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	s.recordUsageWS(ws, "copilot", units, corr)
 	emit("stage", "meter", map[string]any{"status": "ok", "units": units})
 
-	assistantMsgID := s.Store.ID("msg")
-	assistantMsg := map[string]any{
-		"id": assistantMsgID, "role": "assistant", "content": full,
-		"createdAt": time.Now().UTC().Format(time.RFC3339), "correlationId": corr,
-		"toolCalls": toolCalls,
+	segments := reactOut.Segments
+	if len(segments) == 0 {
+		segments = buildSegmentsFromTurn(full, reactOut, replyMode, firstMessageID, segIDGen, nil)
+	}
+	if len(segments) == 0 && strings.TrimSpace(full) != "" {
+		segments = []AssistantSegment{{ID: firstMessageID, Kind: segmentKindBody, Content: full}}
+	}
+	assistantNow := time.Now().UTC().Format(time.RFC3339)
+	sharedMeta := map[string]any{
 		"metrics": map[string]any{
 			"model": modelID, "provider": coalesce(rt.ProviderID, "de-runtime"),
-			"source":     coalesce(rt.Source, mode),
+			"source": coalesce(rt.Source, mode), "replyMode": replyMode,
 			"memoryHits": len(memoryHits), "historyTurns": len(chatMessages), "ragHits": ragCount,
 			"reactSteps": reactOut.Steps, "mode": mode, "reflectRounds": reactOut.ReflectRounds,
 			"policyLevel": reactOut.PolicyLevel, "policyId": reactOut.PolicyID,
@@ -746,14 +784,11 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 	if safeOut.Redacted || safeOut.Blocked {
-		assistantMsg["moderated"] = true
-		assistantMsg["moderationReasons"] = safeOut.Reasons
+		sharedMeta["moderated"] = true
+		sharedMeta["moderationReasons"] = safeOut.Reasons
 	}
 	if prov := memoryProvenanceMaps(memoryHits); len(prov) > 0 {
-		assistantMsg["memoryProvenance"] = prov
-	}
-	if len(citations) > 0 {
-		assistantMsg["citations"] = citations
+		sharedMeta["memoryProvenance"] = prov
 	}
 	if len(reactOut.Plan.Steps) > 0 {
 		planSteps := make([]map[string]any, 0, len(reactOut.Plan.Steps))
@@ -762,15 +797,20 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 				"id": st.ID, "title": st.Title, "action": st.Action, "tool": st.Tool,
 			})
 		}
-		assistantMsg["plan"] = map[string]any{"goal": reactOut.Plan.Goal, "steps": planSteps}
+		sharedMeta["plan"] = map[string]any{"goal": reactOut.Plan.Goal, "steps": planSteps}
 	}
 	if len(reactOut.Agents) > 0 {
-		assistantMsg["agents"] = reactOut.Agents
+		sharedMeta["agents"] = reactOut.Agents
+	}
+	assistantMsgs := assistantMessagesFromSegments(segments, corr, replyMode, assistantNow, sharedMeta, true, toolCalls, citations, len(ackPersisted))
+	assistantMsgID := firstMessageID
+	if len(assistantMsgs) > 0 {
+		assistantMsgID = str(assistantMsgs[len(assistantMsgs)-1]["id"])
 	}
 	s.Store.Lock()
-	s.Store.Messages[cid] = append(s.Store.Messages[cid], assistantMsg)
+	s.Store.Messages[cid] = append(s.Store.Messages[cid], assistantMsgs...)
 	preview := truncateRunes(full, 80)
-	s.touchSessionLocked(resolvedWS, rawID, cid, preview, time.Now().UTC().Format(time.RFC3339), modelID, resolvedDE, id.ID)
+	s.touchSessionLocked(resolvedWS, rawID, cid, preview, assistantNow, modelID, resolvedDE, id.ID)
 	s.Store.AppendAudit(ws, id.Name, "协作回合", cid, "success", corr)
 	if resolvedDE != "" {
 		turnOK := true
@@ -823,7 +863,8 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	s.Store.Persist("sessions")
 	s.Store.Persist("conversations")
 	s.Store.Persist("employees")
-	rememberIdempotentReply(s, cid, clientMsgID, assistantMsg)
+	allTurnMsgs := append(append([]map[string]any{}, ackPersisted...), assistantMsgs...)
+	rememberIdempotentTurn(s, cid, clientMsgID, allTurnMsgs)
 	if s.ownsCapRuntime() {
 		go s.persistEvolve()
 	} else {
@@ -858,7 +899,9 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	}
 	emit("done", "done", map[string]any{
 		"ok": true, "modelId": modelID, "mode": mode,
-		"messageId": assistantMsgID, "sessionMode": sessionMode, "riskLevel": riskLevel,
+		"messageId": assistantMsgID, "messageIds": append(segmentIDsFromMessages(ackPersisted), segmentMessageIDs(segments)...),
+		"replyMode": replyMode, "segmentCount": len(segments) + len(ackPersisted),
+		"sessionMode": sessionMode, "riskLevel": riskLevel,
 		"memoryHits": len(memoryHits), "historyTurns": len(chatMessages), "ragHits": ragCount,
 		"memoryProvenance": memoryProvenanceMaps(memoryHits),
 		"reactSteps":       reactOut.Steps, "toolCount": len(toolCalls),

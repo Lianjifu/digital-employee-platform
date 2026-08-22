@@ -83,4 +83,8 @@ func TestEnsureOfficeEmployee(t *testing.T) {
 			t.Fatalf("office skills too few: %#v", caps["skills"])
 		}
 	}
+	rt, _ := emp["runtime"].(map[string]any)
+	if str(rt["replyMode"]) != "segmented" {
+		t.Fatalf("de-office replyMode=%v want segmented", rt["replyMode"])
+	}
 }

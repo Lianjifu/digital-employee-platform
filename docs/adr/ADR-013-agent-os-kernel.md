@@ -58,7 +58,9 @@ Replay **禁止**再调用模型或工具；只返回 snapshot + 已落盘 Loop/
 
 对外 SSE 与对内 Connect `StreamTurn` / `Runtime.Run` 共用事件类型词表：
 
-`stage | delta | tool | route | evidence | done | error`
+`stage | delta | message_start | message_delta | message_done | tool | route | evidence | done | error`
+
+同一 `correlationId` 下可通过 `message_start` / `message_delta` / `message_done` 产生多条 assistant 气泡；无 `messageId` 的 `delta` 保持单气泡兼容。
 
 `done` 必须携带 `correlationId`；生产路径应携带 `snapshotId`。
 

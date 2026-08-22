@@ -30,13 +30,20 @@ const (
 	// ChannelEmail is reserved for proto round-trip only; not an inbound or delivery channel.
 	ChannelEmail = "email"
 
-	StreamStage    = "stage"
-	StreamDelta    = "delta"
-	StreamTool     = "tool"
-	StreamRoute    = "route"
-	StreamEvidence = "evidence"
-	StreamDone     = "done"
-	StreamError    = "error"
+	StreamStage        = "stage"
+	StreamDelta        = "delta"
+	StreamMessageStart = "message_start"
+	StreamMessageDelta = "message_delta"
+	StreamMessageDone  = "message_done"
+	StreamTool         = "tool"
+	StreamRoute        = "route"
+	StreamEvidence     = "evidence"
+	StreamDone         = "done"
+	StreamError        = "error"
+
+	ReplyModeSingle    = "single"
+	ReplyModeSegmented = "segmented"
+	ReplyModeStepwise  = "stepwise"
 
 	LoopDirect     = "direct"
 	LoopReact      = "react"
@@ -61,7 +68,13 @@ var RiskLevels = []string{RiskLevelLow, RiskLevelMedium, RiskLevelHigh}
 var InboundChannels = []string{ChannelWeb, ChannelAPI, ChannelFeishu, ChannelWecom, ChannelDingtalk}
 
 // StreamEventTypes 为 SSE / Connect 共用事件词表。
-var StreamEventTypes = []string{StreamStage, StreamDelta, StreamTool, StreamRoute, StreamEvidence, StreamDone, StreamError}
+var StreamEventTypes = []string{
+	StreamStage, StreamDelta, StreamMessageStart, StreamMessageDelta, StreamMessageDone,
+	StreamTool, StreamRoute, StreamEvidence, StreamDone, StreamError,
+}
+
+// ReplyModes 为专家协作回复分段模式。
+var ReplyModes = []string{ReplyModeSingle, ReplyModeSegmented, ReplyModeStepwise}
 
 // AgentOSErrorCodes 为本阶段冻结的内核错误码。
 var AgentOSErrorCodes = []apperr.Code{
@@ -222,6 +235,12 @@ func StreamEventTypeFromProto(t commonv1.StreamEventType) string {
 		return StreamStage
 	case commonv1.StreamEventType_STREAM_EVENT_TYPE_DELTA:
 		return StreamDelta
+	case commonv1.StreamEventType_STREAM_EVENT_TYPE_MESSAGE_START:
+		return StreamMessageStart
+	case commonv1.StreamEventType_STREAM_EVENT_TYPE_MESSAGE_DELTA:
+		return StreamMessageDelta
+	case commonv1.StreamEventType_STREAM_EVENT_TYPE_MESSAGE_DONE:
+		return StreamMessageDone
 	case commonv1.StreamEventType_STREAM_EVENT_TYPE_TOOL:
 		return StreamTool
 	case commonv1.StreamEventType_STREAM_EVENT_TYPE_ROUTE:
@@ -243,6 +262,12 @@ func StreamEventTypeToProto(v string) commonv1.StreamEventType {
 		return commonv1.StreamEventType_STREAM_EVENT_TYPE_STAGE
 	case StreamDelta:
 		return commonv1.StreamEventType_STREAM_EVENT_TYPE_DELTA
+	case StreamMessageStart:
+		return commonv1.StreamEventType_STREAM_EVENT_TYPE_MESSAGE_START
+	case StreamMessageDelta:
+		return commonv1.StreamEventType_STREAM_EVENT_TYPE_MESSAGE_DELTA
+	case StreamMessageDone:
+		return commonv1.StreamEventType_STREAM_EVENT_TYPE_MESSAGE_DONE
 	case StreamTool:
 		return commonv1.StreamEventType_STREAM_EVENT_TYPE_TOOL
 	case StreamRoute:

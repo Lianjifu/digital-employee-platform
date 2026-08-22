@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/digital-employee-platform/backend/internal/modelprov"
 )
@@ -151,6 +150,10 @@ func (s *Server) runPlanExecuteTurn(ctx context.Context, in reactTurnInput) reac
 	in.Emit("plan", "plan", map[string]any{
 		"goal": plan.Goal, "steps": stepMaps, "status": "ready",
 	})
+	if normalizeReplyMode(in.ReplyMode) == replyModeStepwise {
+		appendStepSegment(in.StepSegments, defaultSegmentIDGen(s), segmentKindStep, "计划就绪",
+			fmt.Sprintf("已制定 %d 步计划：%s", len(plan.Steps), coalesce(plan.Goal, in.UserMessage)))
+	}
 
 	var observations []string
 	observations = append(observations, "目标："+coalesce(plan.Goal, in.UserMessage))
@@ -202,6 +205,10 @@ func (s *Server) runPlanExecuteTurn(ctx context.Context, in reactTurnInput) reac
 			obs := coalesce(res.Output, coalesce(res.Error, res.Status))
 			observations = append(observations, fmt.Sprintf("步骤%s「%s」·%s：\n%s", st.ID, st.Title, res.Status, obs))
 			in.Emit("plan", "plan", map[string]any{"status": "step_done", "stepId": st.ID, "toolStatus": res.Status})
+			if normalizeReplyMode(in.ReplyMode) == replyModeStepwise {
+				appendStepSegment(in.StepSegments, defaultSegmentIDGen(s), segmentKindStep, st.Title,
+					truncateRunes(obs, 280))
+			}
 
 		default: // answer — defer to aggregator
 			observations = append(observations, fmt.Sprintf("步骤%s「%s」：待综合回答", st.ID, st.Title))
@@ -242,24 +249,22 @@ func (s *Server) runPlanExecuteTurn(ctx context.Context, in reactTurnInput) reac
 	in.Emit("plan", "plan", map[string]any{"status": "completed", "goal": plan.Goal})
 
 	if !in.SkipStream {
-		streamHarnessAnswer(in.Emit, finalText, resolvedModel, lastRT, modePlanExec, len(plan.Steps))
+		streamOpts := &streamAnswerOpts{
+			ReplyMode: in.ReplyMode, CorrelationID: in.CorrelationID,
+			FirstMessageID: in.FirstMessageID, IDGen: defaultSegmentIDGen(s),
+			PreSegments: stepSegmentsSlice(in.StepSegments),
+		}
+		segs := streamHarnessAnswer(in.Emit, finalText, resolvedModel, lastRT, modePlanExec, len(plan.Steps), streamOpts)
+		return reactTurnResult{
+			Text: finalText, Resolved: lastRT, ModelID: resolvedModel,
+			ToolCalls: toolCalls, Citations: dedupeCitations(citations),
+			Steps: len(plan.Steps), Mode: modePlanExec, Plan: plan, Segments: segs, ReplyMode: in.ReplyMode,
+		}
 	}
 
 	return reactTurnResult{
 		Text: finalText, Resolved: lastRT, ModelID: resolvedModel,
 		ToolCalls: toolCalls, Citations: dedupeCitations(citations),
 		Steps: len(plan.Steps), Mode: modePlanExec, Plan: plan,
-	}
-}
-
-func streamHarnessAnswer(emit reactEmitFunc, finalText, modelID string, rt resolvedTurn, mode string, steps int) {
-	emit("stage", "runtime", map[string]any{
-		"status": "ok", "modelId": coalesce(rt.ModelID, modelID),
-		"providerId": rt.ProviderID, "source": coalesce(rt.Source, mode),
-		"modelName": rt.ModelName, "mode": mode, "steps": steps,
-	})
-	for _, c := range chunkText(finalText, 28) {
-		emit("delta", "runtime", map[string]any{"text": c, "modelId": modelID})
-		time.Sleep(4 * time.Millisecond)
 	}
 }

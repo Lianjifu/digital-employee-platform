@@ -26,6 +26,7 @@ func assembleCopilotChatMessages(stored []map[string]any) []modelprov.ChatMessag
 	if len(stored) == 0 {
 		return nil
 	}
+	stored = mergeStoredAssistantTurns(stored)
 	start := 0
 	if len(stored) > copilotHistoryMaxMessages {
 		start = len(stored) - copilotHistoryMaxMessages

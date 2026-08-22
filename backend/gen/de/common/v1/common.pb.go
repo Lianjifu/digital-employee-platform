@@ -251,6 +251,9 @@ const (
 	StreamEventType_STREAM_EVENT_TYPE_EVIDENCE    StreamEventType = 5 // wire: evidence
 	StreamEventType_STREAM_EVENT_TYPE_DONE        StreamEventType = 6 // wire: done
 	StreamEventType_STREAM_EVENT_TYPE_ERROR       StreamEventType = 7 // wire: error
+	StreamEventType_STREAM_EVENT_TYPE_MESSAGE_START StreamEventType = 8 // wire: message_start
+	StreamEventType_STREAM_EVENT_TYPE_MESSAGE_DELTA StreamEventType = 9 // wire: message_delta
+	StreamEventType_STREAM_EVENT_TYPE_MESSAGE_DONE  StreamEventType = 10 // wire: message_done
 )
 
 // Enum value maps for StreamEventType.
@@ -264,6 +267,9 @@ var (
 		5: "STREAM_EVENT_TYPE_EVIDENCE",
 		6: "STREAM_EVENT_TYPE_DONE",
 		7: "STREAM_EVENT_TYPE_ERROR",
+		8: "STREAM_EVENT_TYPE_MESSAGE_START",
+		9: "STREAM_EVENT_TYPE_MESSAGE_DELTA",
+		10: "STREAM_EVENT_TYPE_MESSAGE_DONE",
 	}
 	StreamEventType_value = map[string]int32{
 		"STREAM_EVENT_TYPE_UNSPECIFIED": 0,
@@ -274,6 +280,9 @@ var (
 		"STREAM_EVENT_TYPE_EVIDENCE":    5,
 		"STREAM_EVENT_TYPE_DONE":        6,
 		"STREAM_EVENT_TYPE_ERROR":       7,
+		"STREAM_EVENT_TYPE_MESSAGE_START": 8,
+		"STREAM_EVENT_TYPE_MESSAGE_DELTA": 9,
+		"STREAM_EVENT_TYPE_MESSAGE_DONE":  10,
 	}
 )
 

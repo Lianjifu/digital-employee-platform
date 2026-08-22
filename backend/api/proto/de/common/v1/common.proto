@@ -46,6 +46,9 @@ enum StreamEventType {
   STREAM_EVENT_TYPE_EVIDENCE = 5; // wire: evidence
   STREAM_EVENT_TYPE_DONE = 6; // wire: done
   STREAM_EVENT_TYPE_ERROR = 7; // wire: error
+  STREAM_EVENT_TYPE_MESSAGE_START = 8; // wire: message_start
+  STREAM_EVENT_TYPE_MESSAGE_DELTA = 9; // wire: message_delta
+  STREAM_EVENT_TYPE_MESSAGE_DONE = 10; // wire: message_done
 }
 
 enum LoopMode {
