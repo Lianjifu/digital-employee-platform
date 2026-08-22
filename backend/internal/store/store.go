@@ -749,6 +749,7 @@ func (s *Store) seed() {
 	s.WebhooksConfig = []map[string]any{
 		{"id": "wh-1", "url": "https://example.com/hooks/de", "events": []string{"task.completed"}, "enabled": true},
 	}
+	s.ensureEmployeesReplyModeDefaultsLocked()
 }
 
 // EnsureDocxSkillReady installs the builtin docx skill and binds it to HR employee when missing

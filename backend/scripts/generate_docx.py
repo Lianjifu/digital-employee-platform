@@ -144,13 +144,66 @@ def generate_docx(path: Path, title: str, content: str) -> None:
     doc.save(str(path))
 
 
+def _paragraph_block(paragraph) -> dict:
+    text = (paragraph.text or "").strip()
+    if not text:
+        return {"type": "blank"}
+    style = (paragraph.style.name or "").lower()
+    if "heading 1" in style:
+        return {"type": "h1", "text": text}
+    if "heading 2" in style:
+        return {"type": "h2", "text": text}
+    if "heading 3" in style:
+        return {"type": "h3", "text": text}
+    if "list bullet" in style:
+        return {"type": "li", "text": text, "ordered": False}
+    if "list number" in style:
+        return {"type": "li", "text": text, "ordered": True}
+    return {"type": "p", "text": text}
+
+
+def preview_docx(path: Path) -> dict:
+    """Extract structured blocks from an existing .docx for UI preview."""
+    try:
+        from docx import Document
+    except ImportError as exc:  # pragma: no cover
+        raise SystemExit(f"python-docx is required: {exc}") from exc
+
+    doc = Document(str(path))
+    blocks: list[dict] = []
+    title = ""
+    for paragraph in doc.paragraphs:
+        block = _paragraph_block(paragraph)
+        if block["type"] == "blank":
+            continue
+        if not title and block["type"] == "h1":
+            title = block["text"]
+        blocks.append(block)
+    if not title:
+        title = normalize_title(path.stem)
+    return {
+        "title": title,
+        "filename": path.name,
+        "blocks": blocks,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Generate a Word (.docx) artifact")
-    parser.add_argument("--out", required=True, help="Output .docx path")
+    parser.add_argument("--out", help="Output .docx path")
+    parser.add_argument("--preview-json", help="Read .docx and print preview JSON to stdout")
     parser.add_argument("--title", default="生成文档")
     parser.add_argument("--content-file", help="Read body text from file (UTF-8)")
     parser.add_argument("--content", default="", help="Body text (ignored if --content-file set)")
     args = parser.parse_args()
+    if args.preview_json:
+        import json
+
+        payload = preview_docx(Path(args.preview_json))
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0
+    if not args.out:
+        parser.error("--out is required unless --preview-json is set")
     content = args.content
     if args.content_file:
         content = Path(args.content_file).read_text(encoding="utf-8")

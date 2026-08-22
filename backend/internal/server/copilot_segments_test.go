@@ -7,7 +7,7 @@ import (
 )
 
 func TestSplitAssistantSegmentsDelimiter(t *testing.T) {
-	text := "我先确认一下。\n---\n这是正文。\n---\n这是结论。"
+	text := "我先确认一下。<<<NEXT>>>这是正文。<<<NEXT>>>这是结论。"
 	segs := splitAssistantSegments(text, segmentSplitConfig{MinRunes: 10, MaxSegments: 5})
 	if len(segs) != 3 {
 		t.Fatalf("expected 3 segments, got %d: %#v", len(segs), segs)
@@ -15,20 +15,47 @@ func TestSplitAssistantSegmentsDelimiter(t *testing.T) {
 }
 
 func TestBuildSegmentsFromTurnSingle(t *testing.T) {
-	segs := buildSegmentsFromTurn("hello", reactTurnResult{}, replyModeSingle, "m1", func() string { return "x" }, nil)
+	segs := buildSegmentsFromTurn("hello", reactTurnResult{}, replyModeSingle, segmentPolicyDocument, "m1", func() string { return "x" }, nil)
 	if len(segs) != 1 || segs[0].ID != "m1" {
 		t.Fatalf("single segment: %#v", segs)
 	}
 }
 
+func TestBuildSegmentsFromTurnSegmentedNoImplicitSplit(t *testing.T) {
+	text := "段一内容足够长，超过四十个字以便触发分段逻辑。\n\n段二也有足够长的内容，同样超过四十个字。"
+	segs := buildSegmentsFromTurn(text, reactTurnResult{}, replyModeSegmented, segmentPolicyDocument, "m1", func() string { return "x" }, nil)
+	if len(segs) != 1 {
+		t.Fatalf("expected single segment without <<<NEXT>>> delimiter, got %#v", segs)
+	}
+}
+
 func TestBuildSegmentsFromTurnSegmented(t *testing.T) {
-	text := "段一内容足够长，超过四十个字以便触发分段逻辑。\n---\n段二也有足够长的内容，同样超过四十个字。"
-	segs := buildSegmentsFromTurn(text, reactTurnResult{}, replyModeSegmented, "m1", func() string { return "x" }, nil)
-	if len(segs) < 2 {
-		t.Fatalf("expected >=2 segments, got %#v", segs)
+	text := "段一内容足够长，超过四十个字以便触发分段逻辑。<<<NEXT>>>段二也有足够长的内容，同样超过四十个字。"
+	segs := buildSegmentsFromTurn(text, reactTurnResult{}, replyModeSegmented, segmentPolicyDocument, "m1", func() string { return "x" }, nil)
+	if len(segs) != 1 {
+		t.Fatalf("document policy should merge <<<NEXT>>> chunks, got %#v", segs)
+	}
+}
+
+func TestBuildSegmentsFromTurnSegmentedConversational(t *testing.T) {
+	text := "好的，收到。<<<NEXT>>>段二也有足够长的内容，同样超过四十个字以便作为正文展示。"
+	segs := buildSegmentsFromTurn(text, reactTurnResult{}, replyModeSegmented, segmentPolicyConversational, "m1", func() string { return "x" }, nil)
+	if len(segs) != 2 {
+		t.Fatalf("expected 2 conversational segments, got %#v", segs)
 	}
 	if segs[0].ID != "m1" {
 		t.Fatalf("first segment should reuse firstMessageID, got %s", segs[0].ID)
+	}
+}
+
+func TestBuildSegmentsFromTurnArtifactBubble(t *testing.T) {
+	full := "# 模板\n正文\n下载链接：/api/skill-artifacts/x-招聘岗位模板.docx"
+	segs := buildSegmentsFromTurn(full, reactTurnResult{}, replyModeSegmented, segmentPolicyDocument, "m1", func() string { return "m2" }, nil)
+	if len(segs) != 2 {
+		t.Fatalf("want body+artifact, got %#v", segs)
+	}
+	if segs[1].Kind != segmentKindArtifact {
+		t.Fatalf("artifact kind=%s", segs[1].Kind)
 	}
 }
 
@@ -77,12 +104,35 @@ func TestRememberIdempotentTurnMultiMessage(t *testing.T) {
 	}
 }
 
-func TestResolveReplyModeOfficeEmployee(t *testing.T) {
+func TestResolveReplyModeDefaults(t *testing.T) {
+	if got := resolveReplyMode(nil, nil); got != replyModeSegmented {
+		t.Fatalf("platform default got %s want segmented", got)
+	}
 	emp := map[string]any{"runtime": map[string]any{"replyMode": "segmented"}}
 	if got := resolveReplyMode(nil, emp); got != replyModeSegmented {
-		t.Fatalf("got %s", got)
+		t.Fatalf("employee segmented got %s", got)
 	}
 	if got := resolveReplyMode(map[string]any{"replyMode": "stepwise"}, emp); got != replyModeStepwise {
+		t.Fatalf("body override got %s", got)
+	}
+	if got := resolveReplyMode(map[string]any{"replyMode": "single"}, emp); got != replyModeSingle {
+		t.Fatalf("body single override got %s", got)
+	}
+	empSingle := map[string]any{"runtime": map[string]any{"replyMode": "single"}}
+	if got := resolveReplyMode(nil, empSingle); got != replyModeSingle {
+		t.Fatalf("employee single got %s", got)
+	}
+}
+
+func TestResolveSegmentPolicyDefaults(t *testing.T) {
+	if got := resolveSegmentPolicy(nil, nil); got != segmentPolicyDocument {
+		t.Fatalf("default policy got %s", got)
+	}
+	emp := map[string]any{"runtime": map[string]any{"segmentPolicy": "conversational"}}
+	if got := resolveSegmentPolicy(nil, emp); got != segmentPolicyConversational {
+		t.Fatalf("employee policy got %s", got)
+	}
+	if got := resolveSegmentPolicy(map[string]any{"segmentPolicy": "document"}, emp); got != segmentPolicyDocument {
 		t.Fatalf("body override got %s", got)
 	}
 }

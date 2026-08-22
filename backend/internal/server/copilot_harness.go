@@ -27,6 +27,10 @@ func (s *Server) runHarnessTurn(ctx context.Context, in reactTurnInput) reactTur
 	})
 	in.SkipRoute = true
 
+	idGen := defaultSegmentIDGen(s)
+	live := newLiveAnswerStream(in.Emit, in.ReplyMode, in.SegmentPolicy, in.CorrelationID, in.FirstMessageID, in.ModelID, idGen)
+	in.LiveStream = live
+
 	var out reactTurnResult
 	switch decision.Mode {
 	case modeMultiAgent:
@@ -56,9 +60,10 @@ func (s *Server) runHarnessTurn(ctx context.Context, in reactTurnInput) reactTur
 	out.PolicyID = policyID
 
 	streamOpts := &streamAnswerOpts{
-		ReplyMode: in.ReplyMode, CorrelationID: in.CorrelationID,
-		FirstMessageID: in.FirstMessageID, IDGen: defaultSegmentIDGen(s),
+		ReplyMode: in.ReplyMode, SegmentPolicy: in.SegmentPolicy, CorrelationID: in.CorrelationID,
+		FirstMessageID: in.FirstMessageID, IDGen: idGen,
 		PreSegments: append(stepSegmentsSlice(in.StepSegments), out.StepSegments...),
+		LiveStream: live,
 	}
 	out.Segments = streamHarnessAnswer(in.Emit, out.Text, coalesce(out.ModelID, in.ModelID), out.Resolved, out.Mode, out.Steps, streamOpts)
 	out.ReplyMode = in.ReplyMode

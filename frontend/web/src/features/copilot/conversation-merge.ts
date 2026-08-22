@@ -2,6 +2,7 @@
  * 会话消息合并：在线回合本地权威，空闲时按 id/clientMsgId upsert 服务端终态。
  */
 import type { ChatMessageEx } from '@/hooks/types';
+import { orderAssistantSegments } from './segment-message-order';
 
 export type ConversationMergeReason =
   | 'apply'
@@ -82,7 +83,7 @@ export function dedupeConversationMessages(messages: ChatMessageEx[]): ChatMessa
     }
     byId.set(message.id, mergeMessagePair(existing, message, stamp(message) >= stamp(existing)));
   }
-  return order.map((id) => byId.get(id)!);
+  return orderAssistantSegments(order.map((id) => byId.get(id)!));
 }
 
 function isStreaming(message: ChatMessageEx): boolean {
@@ -161,7 +162,7 @@ export function mergeConversationMessages(
   for (const message of local) put(message, false);
   for (const message of server) put(message, true);
 
-  return dedupeConversationMessages(order.map((key) => byKey.get(key)!).filter(Boolean));
+  return orderAssistantSegments(order.map((key) => byKey.get(key)!).filter(Boolean));
 }
 
 export function resolveHydratedMessages(opts: {
@@ -174,7 +175,7 @@ export function resolveHydratedMessages(opts: {
     return { messages: opts.localMessages, reason: skip, applied: false };
   }
   return {
-    messages: mergeConversationMessages(opts.localMessages, opts.serverMessages),
+    messages: orderAssistantSegments(mergeConversationMessages(opts.localMessages, opts.serverMessages)),
     reason: 'apply',
     applied: true,
   };

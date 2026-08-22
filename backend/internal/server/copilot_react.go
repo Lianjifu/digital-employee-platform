@@ -42,9 +42,11 @@ type reactTurnInput struct {
 	SnapshotID      string
 	Binding         map[string]any
 	MemoryProvenance []map[string]any
+	SegmentPolicy   string
 	ReplyMode        string
 	FirstMessageID   string
 	StepSegments     *[]AssistantSegment
+	LiveStream       *liveAnswerStream
 }
 
 type reactTurnResult struct {
@@ -147,6 +149,9 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 				resolvedModel = mid
 			}
 			buf.WriteString(chunk)
+			if in.LiveStream != nil {
+				in.LiveStream.OnDelta(chunk, buf.String())
+			}
 			return nil
 		})
 		if err != nil {
@@ -215,6 +220,9 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 					resolvedModel = mid
 				}
 				finalBuf.WriteString(chunk)
+				if in.LiveStream != nil {
+					in.LiveStream.OnDelta(chunk, finalBuf.String())
+				}
 				return nil
 			})
 			if err2 == nil {
@@ -234,7 +242,7 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 
 	if !in.SkipStream {
 		streamOpts := &streamAnswerOpts{
-			ReplyMode: in.ReplyMode, CorrelationID: in.CorrelationID,
+			ReplyMode: in.ReplyMode, SegmentPolicy: in.SegmentPolicy, CorrelationID: in.CorrelationID,
 			FirstMessageID: in.FirstMessageID, IDGen: defaultSegmentIDGen(s),
 			PreSegments: stepSegmentsSlice(in.StepSegments),
 		}

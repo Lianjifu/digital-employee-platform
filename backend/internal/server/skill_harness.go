@@ -537,7 +537,7 @@ func (s *Server) skillRunDocxBuiltin(
 	result, runtimeErr := s.callSkillRuntime(body)
 	ms := int(time.Since(started).Milliseconds())
 	if runtimeErr != nil {
-		filename, download, err := generateDocxArtifactLocal(title, content)
+		filename, download, err := ensureDocxArtifactOnDisk(title, content, "")
 		if err == nil {
 			track(ms, true, "Copilot · docx 本地回退")
 			return toolExecResult{
@@ -552,14 +552,27 @@ func (s *Server) skillRunDocxBuiltin(
 			Output: "skill:docx 调用失败：" + runtimeErr.Error(),
 		}
 	}
-	out := coalesce(str(result["stdout"]), fmt.Sprintf("%v", result))
-	if str(result["downloadPath"]) != "" {
-		storage := coalesce(str(result["filename"]), strings.TrimPrefix(str(result["downloadPath"]), "/api/skill-artifacts/"))
-		displayTitle := coalesce(str(result["title"]), title)
-		out = formatDocxToolOutput(displayTitle, storage, str(result["downloadPath"]), false)
-	}
-	status := "success"
+	preferred := coalesce(str(result["filename"]), strings.TrimPrefix(str(result["downloadPath"]), "/api/skill-artifacts/"))
+	localFallback := false
 	if ok, isBool := result["ok"].(bool); isBool && !ok {
+		preferred = ""
+	}
+	if preferred == "" || !skillArtifactExists(preferred) {
+		localFallback = true
+	}
+	filename, download, err := ensureDocxArtifactOnDisk(title, content, preferred)
+	if err != nil {
+		track(ms, false, "Copilot · docx 落盘失败")
+		return toolExecResult{
+			Status: "failed", DurationMs: ms,
+			Error:  err.Error(),
+			Output: "docx 生成失败：" + err.Error(),
+		}
+	}
+	displayTitle := coalesce(str(result["title"]), title)
+	out := formatDocxToolOutput(displayTitle, filename, download, localFallback)
+	status := "success"
+	if ok, isBool := result["ok"].(bool); isBool && !ok && !localFallback {
 		status = "failed"
 	}
 	track(ms, status == "success", "Copilot · docx entry")

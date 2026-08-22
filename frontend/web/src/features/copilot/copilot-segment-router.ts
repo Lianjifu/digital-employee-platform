@@ -38,7 +38,7 @@ export type SegmentEventResult =
   | { kind: 'noop' }
   | { kind: 'start'; messageId: string; isNew: boolean }
   | { kind: 'delta'; messageId: string; text: string; content: string }
-  | { kind: 'done'; messageId: string }
+  | { kind: 'done'; messageId: string; content?: string }
   | { kind: 'finalize_all' };
 
 export function applySegmentSSEEvent(
@@ -61,8 +61,13 @@ export function applySegmentSSEEvent(
   if (typ === 'message_done' && data.messageId) {
     const mid = ensureSegment(state, data.messageId);
     const cur = state.segments.get(mid);
-    if (cur) state.segments.set(mid, { ...cur, status: 'succeeded' });
-    return { kind: 'done', messageId: mid };
+    const finalContent = typeof data.content === 'string'
+      ? data.content
+      : typeof data.text === 'string'
+        ? data.text
+        : cur?.content ?? '';
+    state.segments.set(mid, { id: mid, content: finalContent, status: 'succeeded' });
+    return { kind: 'done', messageId: mid, content: finalContent };
   }
   if (typ === 'delta' && data.text) {
     const mid = ensureSegment(state, data.messageId ?? state.defaultId);

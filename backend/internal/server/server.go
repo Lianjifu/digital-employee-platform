@@ -486,6 +486,9 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.listSkillAudit(r)
 	case path == "/api/skills/execute" && method == http.MethodPost:
 		data, err = s.executeSkill(r)
+	case strings.HasPrefix(path, "/api/skill-artifacts/") && strings.HasSuffix(path, "/preview") && (method == http.MethodGet || method == http.MethodHead):
+		s.serveSkillArtifactPreview(w, r)
+		return
 	case strings.HasPrefix(path, "/api/skill-artifacts/") && (method == http.MethodGet || method == http.MethodHead):
 		s.serveSkillArtifact(w, r)
 		return

@@ -77,11 +77,13 @@ export type CopilotSSEEvent = {
   reasons?: string[];
   segmentIndex?: number;
   segmentTotal?: number;
-  segmentKind?: 'ack' | 'body' | 'summary' | 'step';
+  segmentKind?: 'ack' | 'body' | 'summary' | 'step' | 'artifact';
   segmentCount?: number;
   messageIds?: string[];
   replyMode?: ReplyMode;
+  segmentPolicy?: 'document' | 'conversational';
   messages?: unknown[];
+  content?: string;
 };
 
 export function isMockChatMode(): boolean {

@@ -61,6 +61,7 @@ func runDemo(ctx context.Context, opts Options, domain store.Domain) error {
 	if domain == store.DomainAll || domain == store.DomainCollab {
 		st.EnsureGeneralEmployee()
 		st.EnsureOfficeEmployee()
+		st.EnsureEmployeesReplyModeDefaults()
 	}
 	srv := server.New(st)
 	srv.Mode = opts.Mode
@@ -232,6 +233,7 @@ func runDurable(ctx context.Context, opts Options, domain store.Domain, rt runti
 	if (domain == store.DomainAll || domain == store.DomainCollab) && rt.EnsureGeneralEmployeeAllowed() {
 		st.EnsureGeneralEmployee()
 		st.EnsureOfficeEmployee()
+		st.EnsureEmployeesReplyModeDefaults()
 		if rt.PersistEnabled() && st.CanWrite("employees") {
 			st.Persist("employees")
 		}

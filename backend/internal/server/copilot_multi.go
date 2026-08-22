@@ -290,7 +290,7 @@ func (s *Server) runMultiAgentTurn(ctx context.Context, in reactTurnInput) react
 
 	if !in.SkipStream {
 		streamOpts := &streamAnswerOpts{
-			ReplyMode: in.ReplyMode, CorrelationID: in.CorrelationID,
+			ReplyMode: in.ReplyMode, SegmentPolicy: in.SegmentPolicy, CorrelationID: in.CorrelationID,
 			FirstMessageID: in.FirstMessageID, IDGen: defaultSegmentIDGen(s),
 			PreSegments: stepSegmentsSlice(in.StepSegments),
 		}

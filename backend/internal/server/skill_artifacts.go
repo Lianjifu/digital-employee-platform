@@ -1,7 +1,9 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
+	"github.com/digital-employee-platform/backend/pkg/response"
 )
 
 var (
@@ -114,6 +117,215 @@ func docxDisplayNameFromStorage(storage string) string {
 	return docxDownloadBasename(name)
 }
 
+func skillArtifactStorageName(raw string) string {
+	name := filepath.Base(strings.TrimSpace(raw))
+	name = strings.Trim(name, "`\"'")
+	if decoded, err := url.PathUnescape(name); err == nil && decoded != "" {
+		name = decoded
+	}
+	return name
+}
+
+func skillArtifactFilePath(storageName string) string {
+	return filepath.Join(skillArtifactDir(), skillArtifactStorageName(storageName))
+}
+
+func skillArtifactExists(storageName string) bool {
+	storageName = skillArtifactStorageName(storageName)
+	if storageName == "" {
+		return false
+	}
+	st, err := os.Stat(skillArtifactFilePath(storageName))
+	return err == nil && !st.IsDir()
+}
+
+func fetchSkillArtifactFromRuntime(storageName string) error {
+	storageName = skillArtifactStorageName(storageName)
+	if storageName == "" {
+		return fmt.Errorf("empty artifact name")
+	}
+	client := &http.Client{Timeout: 8 * time.Second}
+	runtimeURL := strings.TrimRight(envOr("DE_SKILL_RUNTIME_URL", "http://127.0.0.1:8093"), "/")
+	reqURL := runtimeURL + "/v1/artifacts/" + url.PathEscape(storageName)
+	resp, err := client.Get(reqURL)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("runtime artifact status %d", resp.StatusCode)
+	}
+	dir := skillArtifactDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	outPath := filepath.Join(dir, storageName)
+	f, err := os.Create(outPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := io.Copy(f, resp.Body); err != nil {
+		_ = os.Remove(outPath)
+		return err
+	}
+	return nil
+}
+
+// ensureDocxArtifactOnDisk guarantees a .docx exists in the local artifact dir.
+func ensureDocxArtifactOnDisk(title, content, preferredStorage string) (storageName, downloadPath string, err error) {
+	preferredStorage = skillArtifactStorageName(preferredStorage)
+	if preferredStorage != "" && skillArtifactExists(preferredStorage) {
+		return preferredStorage, "/api/skill-artifacts/" + preferredStorage, nil
+	}
+	if preferredStorage != "" {
+		if fetchErr := fetchSkillArtifactFromRuntime(preferredStorage); fetchErr == nil && skillArtifactExists(preferredStorage) {
+			return preferredStorage, "/api/skill-artifacts/" + preferredStorage, nil
+		}
+	}
+	return generateDocxArtifactLocal(title, content)
+}
+
+func replaceSkillArtifactPath(output, oldStorage, newStorage string) string {
+	if oldStorage == "" || newStorage == "" || oldStorage == newStorage {
+		return output
+	}
+	oldPath := "/api/skill-artifacts/" + oldStorage
+	newPath := "/api/skill-artifacts/" + newStorage
+	out := strings.ReplaceAll(output, oldPath, newPath)
+	encOld := "/api/skill-artifacts/" + url.PathEscape(oldStorage)
+	encNew := "/api/skill-artifacts/" + url.PathEscape(newStorage)
+	return strings.ReplaceAll(out, encOld, encNew)
+}
+
+// ensureSkillArtifactsInOutput materializes missing .docx artifacts referenced in tool output.
+func ensureSkillArtifactsInOutput(output, title, content string) string {
+	if strings.TrimSpace(output) == "" {
+		return output
+	}
+	re := regexp.MustCompile(`/api/skill-artifacts/([^\s)\]"'` + "`" + `<>]+)`)
+	matches := re.FindAllStringSubmatch(output, -1)
+	if len(matches) == 0 {
+		return output
+	}
+	displayTitle := normalizeDocxTitle(title)
+	body := strings.TrimSpace(content)
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		storage := skillArtifactStorageName(m[1])
+		if storage == "" || !strings.HasSuffix(strings.ToLower(storage), ".docx") {
+			continue
+		}
+		if skillArtifactExists(storage) {
+			continue
+		}
+		ensured, download, err := ensureDocxArtifactOnDisk(displayTitle, body, storage)
+		if err != nil {
+			continue
+		}
+		output = replaceSkillArtifactPath(output, storage, ensured)
+		if download != "" {
+			_ = download
+		}
+	}
+	return output
+}
+
+func resolveDocxBodyFromExecution(args map[string]any, userMessage, output string, plan map[string]any) string {
+	if args != nil {
+		if body := strings.TrimSpace(coalesce(str(args["content"]), str(args["input"]))); body != "" {
+			return body
+		}
+	}
+	if plan != nil {
+		for _, st := range skillTurnSteps(plan) {
+			stepArgs, _ := st["args"].(map[string]any)
+			if stepArgs == nil {
+				continue
+			}
+			if body := strings.TrimSpace(coalesce(str(stepArgs["content"]), str(stepArgs["input"]))); body != "" {
+				return body
+			}
+		}
+	}
+	if body := extractDocxBodyFromSkillOutput(output); body != "" {
+		return body
+	}
+	return strings.TrimSpace(userMessage)
+}
+
+func extractDocxBodyFromSkillOutput(output string) string {
+	lines := strings.Split(output, "\n")
+	var body []string
+	capture := false
+	for _, line := range lines {
+		trim := strings.TrimSpace(line)
+		if strings.Contains(trim, "—— 步骤") || strings.Contains(trim, "—— 授权后执行结果") {
+			capture = true
+			continue
+		}
+		if !capture {
+			continue
+		}
+		if strings.HasPrefix(trim, "已生成 Word 文档") ||
+			strings.HasPrefix(trim, "文件名：") ||
+			strings.HasPrefix(trim, "下载链接：") ||
+			strings.Contains(trim, "/api/skill-artifacts/") ||
+			strings.HasPrefix(trim, "【Skill Turn】") ||
+			strings.HasPrefix(trim, "请把下载链接") {
+			continue
+		}
+		if trim == "" && len(body) == 0 {
+			continue
+		}
+		body = append(body, line)
+	}
+	return strings.TrimSpace(strings.Join(body, "\n"))
+}
+
+func findGenerateDocxScript() (string, error) {
+	candidates := []string{
+		filepath.Join("scripts", "generate_docx.py"),
+		filepath.Join("..", "scripts", "generate_docx.py"),
+		"/Users/LIANJIFU/ops/digital-employee-platform/backend/scripts/generate_docx.py",
+	}
+	for _, c := range candidates {
+		if st, e := os.Stat(c); e == nil && !st.IsDir() {
+			return c, nil
+		}
+	}
+	return "", fmt.Errorf("找不到 generate_docx.py")
+}
+
+func previewDocxArtifact(storageName string) (map[string]any, error) {
+	storageName = skillArtifactStorageName(storageName)
+	if storageName == "" {
+		return nil, fmt.Errorf("无效产物名")
+	}
+	if !skillArtifactExists(storageName) {
+		return nil, fmt.Errorf("产物不存在")
+	}
+	scriptPath, err := findGenerateDocxScript()
+	if err != nil {
+		return nil, err
+	}
+	path := skillArtifactFilePath(storageName)
+	cmd := exec.Command("python3", scriptPath, "--preview-json", path)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("docx 预览失败: %v (%s)", err, truncateRunes(string(out), 240))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		return nil, fmt.Errorf("docx 预览解析失败: %w", err)
+	}
+	payload["filename"] = storageName
+	payload["downloadName"] = docxDisplayNameFromStorage(storageName)
+	return payload, nil
+}
+
 func generateDocxArtifactLocal(title, content string) (storageName, downloadPath string, err error) {
 	dir := skillArtifactDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -124,20 +336,9 @@ func generateDocxArtifactLocal(title, content string) (storageName, downloadPath
 	storageName = docxStorageName(downloadName)
 	outPath := filepath.Join(dir, storageName)
 
-	candidates := []string{
-		filepath.Join("scripts", "generate_docx.py"),
-		filepath.Join("..", "scripts", "generate_docx.py"),
-		"/Users/LIANJIFU/ops/digital-employee-platform/backend/scripts/generate_docx.py",
-	}
-	var scriptPath string
-	for _, c := range candidates {
-		if st, e := os.Stat(c); e == nil && !st.IsDir() {
-			scriptPath = c
-			break
-		}
-	}
-	if scriptPath == "" {
-		return "", "", fmt.Errorf("找不到 generate_docx.py")
+	scriptPath, err := findGenerateDocxScript()
+	if err != nil {
+		return "", "", err
 	}
 
 	contentFile, err := os.CreateTemp("", "de-docx-*.txt")
@@ -195,6 +396,30 @@ func contentDispositionAttachment(name string) string {
 		ascii,
 		url.PathEscape(display),
 	)
+}
+
+func (s *Server) serveSkillArtifactPreview(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/skill-artifacts/")
+	path = strings.TrimSuffix(path, "/preview")
+	name := filepath.Base(strings.TrimSpace(path))
+	if decoded, err := url.PathUnescape(name); err == nil && decoded != "" {
+		name = decoded
+	}
+	name = skillArtifactStorageName(name)
+	if name == "" || !strings.HasSuffix(strings.ToLower(name), ".docx") {
+		writeErr(w, apperr.BadReq(apperr.BadRequest, "仅支持 .docx 预览"))
+		return
+	}
+	payload, err := previewDocxArtifact(name)
+	if err != nil {
+		writeErr(w, apperr.NotFoundErr(apperr.NotFound, err.Error()))
+		return
+	}
+	writeJSON(w, payload)
+}
+
+func writeJSON(w http.ResponseWriter, payload any) {
+	response.OK(w, payload)
 }
 
 func (s *Server) serveSkillArtifact(w http.ResponseWriter, r *http.Request) {

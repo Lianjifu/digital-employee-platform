@@ -319,8 +319,8 @@ func TestRemoteRuntimeForwardsToolLoopEvents(t *testing.T) {
 	if !strings.Contains(body, `"type":"tool"`) {
 		t.Fatalf("remote must forward tool LoopEvent: %s", body)
 	}
-	if !strings.Contains(body, `"text":"parity-"`) {
-		t.Fatalf("missing remote delta: %s", body)
+	if !strings.Contains(body, "parity-ok") {
+		t.Fatalf("missing remote reply text: %s", body)
 	}
 	if !strings.Contains(body, `"snapshotId"`) {
 		t.Fatalf("missing snapshotId: %s", body)

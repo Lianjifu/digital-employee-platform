@@ -173,13 +173,10 @@ func (s *Server) runRemoteRuntime(ctx context.Context, in reactTurnInput) reactT
 	}
 	if segmentedRemote && !sawMessageStart && in.Emit != nil {
 		idGen := defaultSegmentIDGen(s)
-		segs := buildSegmentsFromTurn(text, reactTurnResult{}, replyMode, in.FirstMessageID, idGen, nil)
-		if len(segs) > 1 {
-			out.Segments = streamHarnessAnswer(in.Emit, text, coalesce(lastModel, in.ModelID), out.Resolved, out.Mode, 0, &streamAnswerOpts{
-				ReplyMode: replyMode, CorrelationID: in.CorrelationID,
-				FirstMessageID: in.FirstMessageID, IDGen: idGen,
-			})
-		}
+		out.Segments = streamHarnessAnswer(in.Emit, text, coalesce(lastModel, in.ModelID), out.Resolved, out.Mode, 0, &streamAnswerOpts{
+			ReplyMode: replyMode, SegmentPolicy: in.SegmentPolicy, CorrelationID: in.CorrelationID,
+			FirstMessageID: in.FirstMessageID, IDGen: idGen,
+		})
 	}
 	return out
 }

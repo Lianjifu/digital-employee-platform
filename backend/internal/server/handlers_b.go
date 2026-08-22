@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
+	"github.com/digital-employee-platform/backend/internal/store"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
@@ -92,6 +93,7 @@ func (s *Server) createEmployee(r *http.Request) (any, error) {
 	if item["capabilities"] == nil {
 		item["capabilities"] = map[string]any{"model": "企业通用路由 v2", "knowledge": []string{}, "skills": []string{}, "tools": []string{}, "workflows": []string{}, "channels": []string{"Web"}}
 	}
+	store.ApplyDefaultReplyModeRuntime(item)
 	s.Store.Lock()
 	defer s.Store.Unlock()
 	s.Store.Employees = append([]map[string]any{item}, s.Store.Employees...)

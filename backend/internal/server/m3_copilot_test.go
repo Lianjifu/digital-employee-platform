@@ -338,6 +338,24 @@ func TestListSessionsFiltersByWorkspaceHeader(t *testing.T) {
 	}
 }
 
+func TestCopilotStreamDefaultSegmented(t *testing.T) {
+	h := server.New(store.New()).Handler()
+	body := `{"content":"第一段足够长的内容用于分段测试，超过四十个字。\n---\n第二段同样足够长，用于验证默认分段。","correlationId":"corr-seg-default","firstMessageId":"msg-seg-def-0","modelId":"sonnet-4","digitalEmployeeId":"de-1"}`
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/copilot/conversations/conv-seg-default/stream", bytes.NewBufferString(body))
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("stream %d %s", rr.Code, rr.Body.String())
+	}
+	sse := rr.Body.String()
+	if !strings.Contains(sse, "message_start") {
+		t.Fatalf("missing message_start in default segmented SSE: %s", sse)
+	}
+}
+
 func TestCopilotStreamSegmentedMode(t *testing.T) {
 	h := server.New(store.New()).Handler()
 	body := `{"content":"第一段足够长的内容用于分段测试，超过四十个字。\n---\n第二段同样足够长，用于验证多气泡落库与 SSE。","correlationId":"corr-seg-1","replyMode":"segmented","firstMessageId":"msg-seg-0","modelId":"sonnet-4"}`

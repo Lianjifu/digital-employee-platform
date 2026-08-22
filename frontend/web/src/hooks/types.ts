@@ -234,6 +234,8 @@ export interface ChatMessageEx {
   linkedTaskId?: string;
   /** 最近一次编辑时间 */
   editedAt?: string;
+  /** 多段回复序号（同一 correlationId 内从 0 递增） */
+  segmentIndex?: number;
 }
 
 /* ---------- 会话 ---------- */
@@ -310,6 +312,8 @@ export interface ChatSession {
   metrics?: ChatSessionMetrics;
   /** 最近一次活跃（用于侧栏排序） */
   lastActiveAt?: number;
+  /** 已 POST /api/sessions 创建，等待列表 API 收录前勿 reconcile 删除 */
+  pendingServerSync?: boolean;
   /** 分享 token（仅查看） */
   shareToken?: string;
 }

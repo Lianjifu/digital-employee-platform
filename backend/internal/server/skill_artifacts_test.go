@@ -3,6 +3,7 @@ package server
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -83,6 +84,34 @@ func TestInferDocxTitleFromMessage(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 	if got := inferDocxTitleFromMessage("帮我出一份招聘岗位 JD 模板"); got != "招聘岗位模板" {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestEnsureSkillArtifactsInOutput(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DE_SKILL_ARTIFACT_DIR", dir)
+	missing := "abc123-招聘岗位模板.docx"
+	output := "已生成 Word 文档\n下载链接：/api/skill-artifacts/" + missing
+	got := ensureSkillArtifactsInOutput(output, "招聘岗位模板", "一、基本信息\n岗位名称：人事专员")
+	if !strings.Contains(got, "/api/skill-artifacts/") {
+		t.Fatalf("missing link: %s", got)
+	}
+	re := regexp.MustCompile(`/api/skill-artifacts/([^\s]+)`)
+	m := re.FindStringSubmatch(got)
+	if len(m) < 2 {
+		t.Fatalf("no storage in %s", got)
+	}
+	st, err := os.Stat(filepath.Join(dir, m[1]))
+	if err != nil || st.Size() < 500 {
+		t.Fatalf("artifact not materialized: %v", err)
+	}
+}
+
+func TestExtractDocxBodyFromSkillOutput(t *testing.T) {
+	output := "【Skill Turn】\n\n—— 授权后执行结果 ——\n\n—— 步骤 run ——\n一、岗位职责\n1. 招聘\n\n已生成 Word 文档"
+	got := extractDocxBodyFromSkillOutput(output)
+	if !strings.Contains(got, "一、岗位职责") {
 		t.Fatalf("got %q", got)
 	}
 }

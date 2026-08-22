@@ -407,7 +407,10 @@ func (s *Server) runCopilotTool(ctx toolRunContext, t *registeredTool, call tool
 		}
 
 	case t.Kind == "tool":
-		if isRuntimeTool(t.Name) || isPlatformPilotdeckTool(t.Name) {
+		if isRuntimeTool(t.Name) {
+			return s.runRuntimeTool(ctx, t, call, started)
+		}
+		if isPlatformPilotdeckTool(t.Name) {
 			return s.runPilotdeckTool(ctx, t, call, started)
 		}
 		// Display-name enterprise tools without a concrete executor: honest failure, not fake success.

@@ -57,10 +57,17 @@ func (s *Server) runPilotdeckTool(ctx toolRunContext, t *registeredTool, call to
 		return s.runtimeListMCPResources(ctx, started)
 	case "read_mcp_resource":
 		return s.runtimeReadMCPResource(ctx, call, started)
+	case "read_file":
+		return s.runtimeReadFile(ctx, call, started)
+	case "glob":
+		return s.runtimeGlob(ctx, call, started)
+	case "grep":
+		return s.runtimeGrep(ctx, call, started)
+	case "bash":
+		return s.runtimeBash(ctx, t, call, started)
+	case "web_fetch":
+		return s.runtimeWebFetch(ctx, call, started)
 	default:
-		if isRuntimeTool(name) {
-			return s.runRuntimeTool(ctx, t, call, started)
-		}
 		return toolExecResult{Status: "failed", Error: "未知运行时工具: " + name, DurationMs: int(time.Since(started).Milliseconds())}
 	}
 }

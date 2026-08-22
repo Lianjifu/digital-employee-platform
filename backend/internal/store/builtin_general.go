@@ -102,6 +102,7 @@ func applyGeneralEmployeeCaps(emp map[string]any, skills, tools []string) {
 	for _, rt := range []string{"read_file", "glob", "grep", "web_search", "web_fetch", "task_create", "task_list", "task_output", "task_wait", "list_mcp_resources", "read_mcp_resource", "send_attachment"} {
 		setMode("tool", rt, "execute")
 	}
+	ApplyDefaultReplyModeRuntime(emp)
 }
 
 var officePackSkillNames = []string{
@@ -155,7 +156,7 @@ func (s *Store) EnsureOfficeEmployeeLocked() {
 				"channels": []string{"Web"},
 			},
 			"memoryPolicy": map[string]any{"shortTermHours": 24, "workingDays": 7, "longTermCadence": "daily", "knowledgePromotion": "approval_required"},
-			"runtime":      map[string]any{"calls24h": 0, "successRate": 1, "p95Ms": 0, "costToday": 0, "handoffs24h": 0, "anomalies": 0, "replyMode": "segmented"},
+			"runtime":      map[string]any{"calls24h": 0, "successRate": 1, "p95Ms": 0, "costToday": 0, "handoffs24h": 0, "anomalies": 0, "replyMode": "segmented", "segmentPolicy": "document"},
 			"evaluation":   map[string]any{"status": "passed", "score": 92.0, "lastRunAt": "2026-08-21T00:00:00Z"},
 			"release":      map[string]any{"status": "released", "releasedAt": "2026-08-21T00:00:00Z", "requestedBy": "平台管理员", "requestedById": "u1", "approver": "平台管理员", "approverId": "u1"},
 			"updatedAt":    "2026-08-21T00:00:00Z",
@@ -202,12 +203,5 @@ func applyOfficeEmployeeCaps(emp map[string]any, skills, tools []string) {
 	for _, t := range tools {
 		setMode("tool", t, "execute")
 	}
-	rt, _ := emp["runtime"].(map[string]any)
-	if rt == nil {
-		rt = map[string]any{}
-		emp["runtime"] = rt
-	}
-	if str(rt["replyMode"]) == "" {
-		rt["replyMode"] = "segmented"
-	}
+	ApplyDefaultReplyModeRuntime(emp)
 }

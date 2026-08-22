@@ -5,7 +5,13 @@ import { describe, expect, it } from 'vitest';
  * （reducer 未导出，此处锁定契约行为）
  */
 function reconcileSessions(
-  sessions: Record<string, { id: string; workspaceId?: string }>,
+  sessions: Record<string, {
+    id: string;
+    workspaceId?: string;
+    pendingServerSync?: boolean;
+    messages?: { id: string }[];
+    createdAt?: number;
+  }>,
   activeId: string,
   workspaceId: string,
   serverIds: string[],
@@ -15,6 +21,7 @@ function reconcileSessions(
     return { sessions, activeId };
   }
   const server = new Set(serverIds);
+  const now = Date.now();
   const next = { ...sessions };
   for (const id of Object.keys(next)) {
     const session = next[id];
@@ -22,6 +29,10 @@ function reconcileSessions(
     if (ws !== workspaceId) continue;
     if (/^s_/.test(id)) continue;
     if (server.has(id)) continue;
+    if (activeId === id) continue;
+    if (session.pendingServerSync) continue;
+    if ((session.messages?.length ?? 0) > 0) continue;
+    if (typeof session.createdAt === 'number' && now - session.createdAt < 5 * 60_000) continue;
     delete next[id];
   }
   const activeStill = Boolean(activeId && next[activeId]);
@@ -84,14 +95,14 @@ describe('chat session reconcile', () => {
         gone: { id: 'gone', workspaceId: 'w1' },
         s_local: { id: 's_local', workspaceId: 'w1' },
       },
-      'gone',
+      's1',
       'w1',
       ['s1'],
     );
     expect(result.sessions.s1).toBeDefined();
     expect(result.sessions.gone).toBeUndefined();
     expect(result.sessions.s_local).toBeDefined();
-    expect(result.activeId).toBe('');
+    expect(result.activeId).toBe('s1');
   });
 
   it('keeps activeId when session still on server', () => {
@@ -103,6 +114,34 @@ describe('chat session reconcile', () => {
     );
     expect(result.sessions.s1).toBeDefined();
     expect(result.activeId).toBe('s1');
+  });
+
+  it('keeps pending server sync session even when missing from server list', () => {
+    const result = reconcileSessions(
+      {
+        s1: { id: 's1', workspaceId: 'w1' },
+        fresh: { id: 'fresh', workspaceId: 'w1', pendingServerSync: true },
+      },
+      'fresh',
+      'w1',
+      ['s1'],
+    );
+    expect(result.sessions.fresh).toBeDefined();
+    expect(result.activeId).toBe('fresh');
+  });
+
+  it('keeps session with local messages when missing from server list', () => {
+    const result = reconcileSessions(
+      {
+        s1: { id: 's1', workspaceId: 'w1' },
+        chatting: { id: 'chatting', workspaceId: 'w1', messages: [{ id: 'm1' }] },
+      },
+      'chatting',
+      'w1',
+      ['s1'],
+    );
+    expect(result.sessions.chatting).toBeDefined();
+    expect(result.activeId).toBe('chatting');
   });
 });
 

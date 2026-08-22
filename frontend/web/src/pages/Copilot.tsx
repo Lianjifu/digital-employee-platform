@@ -92,7 +92,8 @@ import {
   slashHelpText,
   type SlashUiAction,
 } from '@/features/copilot/slash-commands';
-import { extractSkillArtifacts, stripArtifactNoise } from '@/features/copilot/artifact-links';
+import { extractSkillArtifacts, stripArtifactNoise, type SkillArtifactLink } from '@/features/copilot/artifact-links';
+import { DocumentPreviewPanel } from '@/features/copilot/document-preview';
 import { sortSessionsByRecency } from '@/features/copilot/session-sort';
 import { resolveHydratedMessages } from '@/features/copilot/conversation-merge';
 import { readCopilotLastSession } from '@/lib/copilot-workspace';
@@ -218,6 +219,7 @@ type ContextSelection = {
   scope: 'message' | 'session';
   tab: WorkbenchContextTab;
   messageId?: string;
+  artifact?: SkillArtifactLink;
   pinned: boolean;
 };
 
@@ -682,6 +684,9 @@ export default function Copilot() {
   useEffect(() => {
     if (conversationMissing || !activeConversation || !chat.state.activeId || !conversationFetchId) return;
     if (activeConversation.id !== conversationFetchId && activeConversation.id !== chat.state.activeId) return;
+    const active = chat.state.sessions[chat.state.activeId];
+    const activeConv = active?.conversationId ?? chat.state.activeId;
+    if (activeConv && activeConversation.id !== activeConv && activeConversation.id !== chat.state.activeId) return;
     const summary = sessionHistory.find((item) => item.id === chat.state.activeId)
       ?? sessionHistory.find((item) => item.conversationId === activeConversation.id);
     if (!summary) return;
@@ -1586,9 +1591,18 @@ export default function Copilot() {
     return { tokens, priced };
   }, [currentSession, riskLevel]);
   useEffect(() => {
-    const visible = Object.values(chat.state.sessions).filter((session) => sessionInWorkspace(session, currentWorkspaceId));
     if (!historyReady || sessionsLoading) return;
+    if (chat.state.typing) return;
+    const visible = Object.values(chat.state.sessions).filter((session) => sessionInWorkspace(session, currentWorkspaceId));
     if (chat.state.activeId && visible.some((session) => session.id === chat.state.activeId)) return;
+    // 深链会话尚在本地（刚创建、列表未收录），勿抢切到历史首条
+    if (routeSessionId) {
+      const routeLocal = chat.state.sessions[routeSessionId];
+      if (routeLocal && sessionInWorkspace(routeLocal, currentWorkspaceId)) {
+        if (chat.state.activeId !== routeSessionId) chat.switchSession(routeSessionId);
+        return;
+      }
+    }
     const remembered = readCopilotLastSession(currentWorkspaceId);
     if (remembered && visible.some((session) => session.id === remembered)) {
       chat.switchSession(remembered);
@@ -1608,7 +1622,7 @@ export default function Copilot() {
     // 无可见会话：清空主区残留，避免侧栏 0 条仍显示旧对话
     if (chat.state.activeId) chat.clearActive();
     if (routeSessionId) navigate('/copilot', { replace: true });
-  }, [chat.state.activeId, chat.state.sessions, currentWorkspaceId, historyReady, sessionsLoading, chat.switchSession, chat.clearActive, navigate, routeSessionId]);
+  }, [chat.state.activeId, chat.state.sessions, chat.state.typing, currentWorkspaceId, historyReady, sessionsLoading, chat.switchSession, chat.clearActive, navigate, routeSessionId]);
   const sessionSignals = useMemo(() => {
     const messages = currentSession?.messages ?? [];
     const executions = messages.reduce((total, message) => total + (message.toolCalls?.length ?? 0), 0);
@@ -1647,33 +1661,85 @@ export default function Copilot() {
     () => (selectedContextMessage ? deriveExpertContextOverview([selectedContextMessage]) : null),
     [selectedContextMessage],
   );
-  const hasSessionContext = workbench.evidence + workbench.linkedTasks + workbench.pendingApprovals + workbench.executions > 0;
+  const hasSessionContext = workbench.evidence + workbench.linkedTasks + workbench.pendingApprovals + workbench.executions + workbench.documents > 0;
   const hasStreamingAssistant = Boolean(
     currentSession?.messages.some((message) => message.role === 'assistant' && message.status === 'streaming'),
   );
   const showTypingFallback = chat.state.typing && !hasStreamingAssistant;
-  const canOpenExpertContext = Boolean(currentSession && (activeEmployee || currentSession.digitalEmployeeId || hasSessionContext));
-  const hasSelectedContext = !!selectedContextMessage && (
-    (selectedContextMessage.citations?.length ?? 0) > 0
-    || (selectedContextMessage.toolCalls?.length ?? 0) > 0
-    || !!selectedContextMessage.approvalRequest
-    || !!selectedContextMessage.linkedTaskId
+  const renderMessageBubble = (m: ChatMessageEx) => (
+    <MessageBubble
+      key={m.id}
+      m={m}
+      expandedArgs={expandedArgs}
+      setExpandedArgs={setExpandedArgs}
+      expandedApproval={expandedApproval}
+      setExpandedApproval={setExpandedApproval}
+      onApprove={(mid) => setShowApproval({ messageId: mid, signerIndex: 0 })}
+      onContinueRun={async (mid) => {
+        try {
+          await chat.continueSkillTurn(mid);
+          toast.success('已继续执行 run');
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : '续跑失败');
+        }
+      }}
+      onCitation={(citation) => openCitation(citation, m.id)}
+      onRetry={(name) => chat.regenerate(m.id, { modelId: sendModelId, enabledTools: enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools) })}
+      onCopy={copyMessage}
+      onEdit={(message) => { setEditingMessageId(message.id); chat.setDraft(message.content); inputRef.current?.focus(); }}
+      onRegenerate={(mid) => chat.regenerate(mid, { modelId: sendModelId, enabledTools: enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools) })}
+      onDelete={(mid) => chat.delMessage(mid)}
+      onRetryMessage={(mid) => chat.retryMessage(mid)}
+      onFeedback={(mid, kind) => {
+        if (kind === null) {
+          chat.setFeedback(mid, { kind: null });
+        } else {
+          setFeedbackOpen(mid);
+        }
+      }}
+      onApproveSigner={(mid, signerIndex) => setShowApproval({ messageId: mid, signerIndex })}
+      onRequestReject={(mid, idx) => setRejectionReason({ mid, idx, open: true })}
+      currentUser={currentUser}
+      hoverMsgId={hoverMsgId}
+      setHoverMsgId={setHoverMsgId}
+      copiedId={copiedId}
+      agentName={expertName}
+      expertRole={expertMeta ?? undefined}
+      expert={activeEmployee ?? { id: 'assistant', name: expertName }}
+      onOpenContext={openContext}
+      selectedContextMessageId={contextSelection.scope === 'message' ? contextSelection.messageId : undefined}
+      messageRef={(element) => { messageRefs.current[m.id] = element; }}
+    />
   );
-  const openContext = (tab: WorkbenchContextTab, messageId?: string) => {
+  const canOpenExpertContext = Boolean(currentSession && (activeEmployee || currentSession.digitalEmployeeId || hasSessionContext));
+  const selectedDocumentArtifact = useMemo(() => {
+    if (contextSelection.artifact) return contextSelection.artifact;
+    for (const message of contextMessages) {
+      if (!message.content || message.role === 'user' || message.role === 'tool') continue;
+      const items = extractSkillArtifacts(message.content);
+      if (items.length > 0) return items[0];
+    }
+    return undefined;
+  }, [contextMessages, contextSelection.artifact]);
+  const messageHasContext = (message?: ChatMessageEx) => !!message && (
+    (message.citations?.length ?? 0) > 0
+    || (message.toolCalls?.length ?? 0) > 0
+    || !!message.approvalRequest
+    || !!message.linkedTaskId
+    || (!!message.content && message.role !== 'user' && message.role !== 'tool' && extractSkillArtifacts(message.content).length > 0)
+  );
+  const hasSelectedContext = !!selectedContextMessage && messageHasContext(selectedContextMessage);
+  const openContext = (tab: WorkbenchContextTab, messageId?: string, artifact?: SkillArtifactLink) => {
     const target = messageId ? currentSession?.messages.find((message) => message.id === messageId) : undefined;
     if (messageId && !target) return;
-    if (messageId && !(
-      (target?.citations?.length ?? 0) > 0
-      || (target?.toolCalls?.length ?? 0) > 0
-      || !!target?.approvalRequest
-      || !!target?.linkedTaskId
-    )) return;
+    if (messageId && !messageHasContext(target)) return;
     if (tab !== 'evidence' || messageId !== contextSelection.messageId) setFocusedCitation(null);
     setContextSelection((selection) => ({
       open: true,
       scope: messageId ? 'message' : 'session',
       tab,
       messageId,
+      artifact: tab === 'document' ? artifact : undefined,
       pinned: selection.pinned,
     }));
     setSessionsOpen(false);
@@ -1684,7 +1750,7 @@ export default function Copilot() {
   };
   const setContextTab = (tab: WorkbenchContextTab) => {
     if (tab !== 'evidence') setFocusedCitation(null);
-    setContextSelection((selection) => ({ ...selection, open: true, tab }));
+    setContextSelection((selection) => ({ ...selection, open: true, tab, artifact: tab === 'document' ? selection.artifact : undefined }));
   };
   const jumpToMessage = (messageId?: string) => {
     if (!messageId) return;
@@ -1694,6 +1760,7 @@ export default function Copilot() {
   };
   const visibleContextTabs: { tab: WorkbenchContextTab; label: string; count?: number }[] = [
     { tab: 'overview', label: '概览' },
+    ...(contextSummary.documents > 0 ? [{ tab: 'document' as const, label: '文档', count: contextSummary.documents }] : []),
     ...(contextSummary.evidence > 0 ? [{ tab: 'evidence' as const, label: '证据', count: contextSummary.evidence }] : []),
     ...(contextSummary.linkedTasks > 0 ? [{ tab: 'tasks' as const, label: '任务', count: contextSummary.linkedTasks }] : []),
     ...(contextSummary.pendingApprovals > 0 ? [{ tab: 'approvals' as const, label: '审批', count: contextSummary.pendingApprovals }] : []),
@@ -1712,9 +1779,9 @@ export default function Copilot() {
       const savedMessage = saved.messageId ? currentSession.messages.find((message) => message.id === saved.messageId) : undefined;
       const hasSavedContext = saved.scope === 'session'
         ? hasSessionContext
-        : !!savedMessage && ((savedMessage.citations?.length ?? 0) > 0 || (savedMessage.toolCalls?.length ?? 0) > 0 || !!savedMessage.approvalRequest || !!savedMessage.linkedTaskId);
+        : !!savedMessage && messageHasContext(savedMessage);
       if (!hasSavedContext) return;
-      const validTabs: WorkbenchContextTab[] = ['overview', 'evidence', 'tasks', 'approvals', 'audit', 'admin'];
+      const validTabs: WorkbenchContextTab[] = ['overview', 'document', 'evidence', 'tasks', 'approvals', 'audit', 'admin'];
       setContextSelection({
         open: true,
         scope: saved.scope,
@@ -2077,51 +2144,7 @@ export default function Copilot() {
                 )}
 
                 <div className="copilot-message-list px-4 sm:px-8 md:px-12 py-4">
-                  {currentSession.messages.map((m) => (
-                    <MessageBubble
-                      key={m.id}
-                      m={m}
-                      expandedArgs={expandedArgs}
-                      setExpandedArgs={setExpandedArgs}
-                      expandedApproval={expandedApproval}
-                      setExpandedApproval={setExpandedApproval}
-                      onApprove={(mid) => setShowApproval({ messageId: mid, signerIndex: 0 })}
-                      onContinueRun={async (mid) => {
-                        try {
-                          await chat.continueSkillTurn(mid);
-                          toast.success('已继续执行 run');
-                        } catch (err) {
-                          toast.error(err instanceof Error ? err.message : '续跑失败');
-                        }
-                      }}
-                      onCitation={(citation) => openCitation(citation, m.id)}
-                      onRetry={(name) => chat.regenerate(m.id, { modelId: sendModelId, enabledTools: enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools) })}
-                      onCopy={copyMessage}
-                      onEdit={(message) => { setEditingMessageId(message.id); chat.setDraft(message.content); inputRef.current?.focus(); }}
-                      onRegenerate={(mid) => chat.regenerate(mid, { modelId: sendModelId, enabledTools: enabledTools.length ? enabledTools : defaultEnabledToolKeys(availableTools) })}
-                      onDelete={(mid) => chat.delMessage(mid)}
-                      onRetryMessage={(mid) => chat.retryMessage(mid)}
-                      onFeedback={(mid, kind) => {
-                        if (kind === null) {
-                          chat.setFeedback(mid, { kind: null });
-                        } else {
-                          setFeedbackOpen(mid);
-                        }
-                      }}
-                      onApproveSigner={(mid, signerIndex) => setShowApproval({ messageId: mid, signerIndex })}
-                      onRequestReject={(mid, idx) => setRejectionReason({ mid, idx, open: true })}
-                      currentUser={currentUser}
-                      hoverMsgId={hoverMsgId}
-                      setHoverMsgId={setHoverMsgId}
-                      copiedId={copiedId}
-                      agentName={expertName}
-                      expertRole={expertMeta ?? undefined}
-                      expert={activeEmployee ?? { id: 'assistant', name: expertName }}
-                      onOpenContext={openContext}
-                      selectedContextMessageId={contextSelection.scope === 'message' ? contextSelection.messageId : undefined}
-                      messageRef={(element) => { messageRefs.current[m.id] = element; }}
-                    />
-                  ))}
+                  {currentSession.messages.map((m) => renderMessageBubble(m))}
                 </div>
 
                 {showTypingFallback && (
@@ -2816,7 +2839,7 @@ export default function Copilot() {
               </section>
             )}
             {contextTab !== 'overview' && contextTab !== 'admin' && (
-              <ContextDrawerPanel tab={contextTab} messages={contextMessages} onCitation={openCitation} focusedCitation={focusedCitation} />
+              <ContextDrawerPanel tab={contextTab} messages={contextMessages} onCitation={openCitation} focusedCitation={focusedCitation} artifact={selectedDocumentArtifact} />
             )}
             {contextTab === 'overview' && (
               <ExpertContextPanel
@@ -3222,7 +3245,7 @@ function MessageCapabilityTrace({
   onToggle,
 }: {
   message: ChatMessageEx;
-  onOpenContext: (tab: WorkbenchContextTab, messageId?: string) => void;
+  onOpenContext: (tab: WorkbenchContextTab, messageId?: string, artifact?: SkillArtifactLink) => void;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -3269,13 +3292,14 @@ function RiskDecisionCard({ onOpenContext, messageId }: { onOpenContext: (tab: W
 }
 
 function SkillArtifactDownloadCard({
-  href, filename, downloadName, title, kind,
+  href, filename, downloadName, title, kind, onView,
 }: {
   href: string;
   filename: string;
   downloadName: string;
   title: string;
   kind: 'docx' | 'file';
+  onView?: () => void;
 }) {
   const label = kind === 'docx' ? 'Word 文档' : '文件';
   const saveAs = downloadName || filename;
@@ -3283,6 +3307,7 @@ function SkillArtifactDownloadCard({
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     if (busy) return;
     setBusy(true);
     try {
@@ -3312,14 +3337,23 @@ function SkillArtifactDownloadCard({
     }
   };
 
+  const handleOpen = () => {
+    onView?.();
+  };
+
   return (
-    <a
-      href={href}
-      download={saveAs}
-      onClick={handleDownload}
-      className="copilot-artifact-card group flex max-w-[420px] items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3.5 py-3 no-underline transition-colors hover:border-[var(--brand)]/45 hover:bg-[var(--brand-light)]/40"
-      aria-label={`下载 ${title}`}
-      aria-busy={busy}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={handleOpen}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          handleOpen();
+        }
+      }}
+      className="copilot-artifact-card group flex max-w-[420px] cursor-pointer items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3.5 py-3 transition-colors hover:border-[var(--brand)]/45 hover:bg-[var(--brand-light)]/40"
+      aria-label={`查看 ${title}`}
     >
       <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--brand-light)] text-[var(--brand)]">
         <FileText className="h-5 w-5" />
@@ -3328,11 +3362,17 @@ function SkillArtifactDownloadCard({
         <span className="block truncate text-[13px] font-semibold text-[var(--text)]">{title}</span>
         <span className="mt-0.5 block truncate text-[11px] text-[var(--text-muted)]">{label} · {saveAs}</span>
       </span>
-      <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[var(--brand)] px-2.5 py-1.5 text-[11px] font-medium text-white shadow-sm group-hover:bg-[var(--brand-hover)]">
+      <button
+        type="button"
+        onClick={handleDownload}
+        className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[var(--brand)] px-2.5 py-1.5 text-[11px] font-medium text-white shadow-sm group-hover:bg-[var(--brand-hover)]"
+        aria-label={`下载 ${title}`}
+        aria-busy={busy}
+      >
         <Download className="h-3.5 w-3.5" />
         {busy ? '下载中…' : '下载'}
-      </span>
-    </a>
+      </button>
+    </div>
   );
 }
 
@@ -3367,7 +3407,7 @@ function MessageBubble({
   agentName?: string;
   expertRole?: string;
   expert?: Pick<DigitalEmployee, 'id' | 'name' | 'department' | 'avatarUrl'> | { id: string; name: string; department?: string; avatarUrl?: string };
-  onOpenContext: (tab: WorkbenchContextTab, messageId?: string) => void;
+  onOpenContext: (tab: WorkbenchContextTab, messageId?: string, artifact?: SkillArtifactLink) => void;
   selectedContextMessageId?: string;
   messageRef?: (element: HTMLDivElement | null) => void;
   currentUser: { id: string; name: string; role: 'user' | 'admin' | 'auditor' } | null;
@@ -3516,7 +3556,14 @@ function MessageBubble({
                   <div className="flex flex-col gap-2" role="list" aria-label="可下载产物">
                     {artifacts.map((a) => (
                       <div key={a.href} role="listitem">
-                        <SkillArtifactDownloadCard href={a.href} filename={a.filename} downloadName={a.downloadName} title={a.title} kind={a.kind} />
+                        <SkillArtifactDownloadCard
+                          href={a.href}
+                          filename={a.filename}
+                          downloadName={a.downloadName}
+                          title={a.title}
+                          kind={a.kind}
+                          onView={() => onOpenContext('document', m.id, a)}
+                        />
                       </div>
                     ))}
                   </div>
@@ -3865,7 +3912,7 @@ function MessageBubble({
   );
 }
 
-function ContextDrawerPanel({ tab, messages, onCitation, focusedCitation }: { tab: Exclude<WorkbenchContextTab, 'overview' | 'admin'>; messages: ChatMessageEx[]; onCitation: (citation: any, messageId?: string) => void; focusedCitation?: any | null }) {
+function ContextDrawerPanel({ tab, messages, onCitation, focusedCitation, artifact }: { tab: Exclude<WorkbenchContextTab, 'overview' | 'admin'>; messages: ChatMessageEx[]; onCitation: (citation: any, messageId?: string) => void; focusedCitation?: any | null; artifact?: SkillArtifactLink }) {
   const evidence = messages.flatMap((message) => (message.citations ?? []).map((citation) => ({ ...citation, __messageId: message.id })));
   const tasks = messages.flatMap((message) => {
     const id = message.linkedTaskId ?? message.approvalRequest?.ticketId;
@@ -3877,6 +3924,7 @@ function ContextDrawerPanel({ tab, messages, onCitation, focusedCitation }: { ta
     ...(message.approvalRequest ? [{ id: `${message.id}-approval`, time: message.createdAt, text: `审批 · ${message.approvalRequest.decision}`, tone: message.approvalRequest.decision === 'rejected' ? 'error' : 'success' as const }] : []),
   ]);
   const meta = {
+    document: { label: '生成文档', hint: '阅读已落盘的 Word 文档预览', icon: FileText },
     evidence: { label: '证据引用', hint: '回答所依据的可追溯来源', icon: Link2 },
     tasks: { label: '关联任务', hint: '需要持续跟进的执行事项', icon: ListChecksIcon },
     approvals: { label: '审批队列', hint: '涉及人工确认的受控动作', icon: ShieldCheck },
@@ -3885,6 +3933,11 @@ function ContextDrawerPanel({ tab, messages, onCitation, focusedCitation }: { ta
   const PanelIcon = meta.icon;
   const empty = (label: string) => <div className="copilot-details-empty"><span className="copilot-details-empty__icon"><PanelIcon className="h-4 w-4" /></span><strong>暂无{label}</strong><span>当前会话还没有可展示的记录</span></div>;
 
+  if (tab === 'document') {
+    return artifact
+      ? <DocumentPreviewPanel artifact={artifact} />
+      : empty('生成文档');
+  }
   if (tab === 'evidence') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4" />{meta.label}</div><div>{meta.hint}</div></div>{focusedCitation && <div className="copilot-citation-focus"><div className="copilot-citation-focus__header"><span><Hash className="mr-1 inline h-3 w-3 text-[var(--text-muted)]" />当前引用</span><span className="font-mono text-[10px] text-[var(--text-muted)]">{focusedCitation.page ? `p.${focusedCitation.page}` : '可追溯'}</span></div><div className="mt-2 flex items-center gap-2"><span className={cn('nav-pill text-[9px]', SOURCE_COLOR[focusedCitation.source] ?? 'text-[var(--text-secondary)] bg-[var(--bg-elevated)]')}>{focusedCitation.source ?? focusedCitation.src ?? '来源'}</span><span className="truncate text-xs font-semibold">{focusedCitation.docId ?? focusedCitation.src ?? focusedCitation.source ?? '关联文档'}</span></div><div className="mt-2 flex items-center gap-2 text-[10px]"><span className="text-[var(--text-muted)]">相关度</span><span className="copilot-confidence-bar"><span style={{ width: `${(focusedCitation.score ?? 0) * 100}%` }} /></span><span className="font-mono text-[var(--success)]">{((focusedCitation.score ?? 0) * 100).toFixed(0)}%</span></div><div className="copilot-citation-focus__text">{focusedCitation.text ?? '已定位到该来源。当前引用由会话检索结果生成，可继续回到中栏查看关联消息。'}</div></div>}{evidence.length ? <div className="copilot-details-list">{evidence.map((citation) => <button key={citation.id} type="button" onClick={() => onCitation(citation, citation.__messageId)} className={cn('copilot-context-item copilot-context-item--button', focusedCitation?.id === citation.id && 'is-focused')}><div className="flex min-w-0 items-center gap-2"><span className={cn('nav-pill text-[9px]', SOURCE_COLOR[citation.source] ?? 'text-[var(--text-secondary)] bg-[var(--bg-elevated)]')}>{citation.source}</span><span className="truncate text-xs font-semibold">{citation.docId || citation.source}</span></div><div className="mt-2 flex items-center gap-2 text-[10px]"><span className="text-[var(--text-muted)]">置信度</span><span className="copilot-confidence-bar"><span style={{ width: `${citation.score * 100}%` }} /></span><span className="font-mono text-[var(--text-secondary)]">{(citation.score * 100).toFixed(0)}%</span><span className="ml-auto text-[var(--text-muted)]">{citation.page ? `p.${citation.page}` : '可追溯'}</span></div></button>)}</div> : empty('证据')}</section>;
   if (tab === 'tasks') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4" />{meta.label}</div><div>{meta.hint}</div></div>{tasks.length ? <div className="copilot-details-list">{tasks.map((task) => <div key={task.id} className="copilot-context-item"><div className="flex items-start justify-between gap-2"><span className="min-w-0 truncate text-xs font-semibold">{task.title}</span><Badge tone={task.status === 'approved' ? 'success' : 'warn'}>{task.status === 'approved' ? '已通过' : '待处理'}</Badge></div><div className="mt-2 flex items-center gap-1.5 text-[10px] text-[var(--text-muted)]"><span>任务 ID</span><span className="font-mono">{task.id}</span></div></div>)}</div> : empty('关联任务')}</section>;
   if (tab === 'approvals') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4" />{meta.label}</div><div>{meta.hint}</div></div>{approvals.length ? <div className="copilot-details-list">{approvals.map(({ id, approval }) => <div key={id} className="copilot-context-item copilot-context-item--approval"><div className="flex items-start justify-between gap-2"><span className="text-xs font-semibold">受控审批</span><Badge tone={approval.decision === 'approved' ? 'success' : approval.decision === 'rejected' ? 'error' : 'warn'}>{approval.decision === 'approved' ? '已通过' : approval.decision === 'rejected' ? '已拒绝' : '待审批'}</Badge></div><p className="mt-2 break-words text-[11px] leading-5 text-[var(--text-secondary)]">{approval.action}</p><div className="mt-2 flex items-center justify-between text-[10px] text-[var(--text-muted)]"><span>签署进度</span><span className="font-mono">{approval.signed}/{approval.required} 已签</span></div></div>)}</div> : empty('待审批事项')}</section>;

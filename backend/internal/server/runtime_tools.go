@@ -68,7 +68,23 @@ func (s *Server) runSkillReadTool(ctx toolRunContext, call toolCallRequest, star
 }
 
 func (s *Server) runRuntimeTool(ctx toolRunContext, t *registeredTool, call toolCallRequest, started time.Time) toolExecResult {
-	return s.runPilotdeckTool(ctx, t, call, started)
+	switch strings.ToLower(strings.TrimSpace(t.Name)) {
+	case "read_file":
+		return s.runtimeReadFile(ctx, call, started)
+	case "glob":
+		return s.runtimeGlob(ctx, call, started)
+	case "grep":
+		return s.runtimeGrep(ctx, call, started)
+	case "bash":
+		return s.runtimeBash(ctx, t, call, started)
+	case "web_fetch":
+		return s.runtimeWebFetch(ctx, call, started)
+	default:
+		return toolExecResult{
+			Status: "failed", Error: "未知运行时工具: " + t.Name,
+			DurationMs: int(time.Since(started).Milliseconds()),
+		}
+	}
 }
 
 func (s *Server) resolveRuntimeSkill(ctx toolRunContext, call toolCallRequest) map[string]any {

@@ -404,6 +404,11 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 	if output == "" {
 		output = lastRes.Output
 	}
+	docTitle := normalizeDocxTitle(coalesce(str(args["title"]), coalesce(str(args["filename"]), toolName)))
+	docBody := resolveDocxBodyFromExecution(args, runCtx.UserMessage, output, plan)
+	if strings.Contains(output, "/api/skill-artifacts/") || isDocxSkillName(toolName) {
+		output = ensureSkillArtifactsInOutput(output, docTitle, docBody)
+	}
 	if plan != nil {
 		progress := formatSkillTurnProgress(plan)
 		if progress != "" {

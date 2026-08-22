@@ -637,7 +637,8 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	system := buildCopilotSystemPromptWithEffort(empMap, ragHits, memoryHits, reasoningEffort)
 	system += runModePromptClause(runMode)
 	replyMode := resolveReplyMode(body, empMap)
-	system += replyModePromptClause(replyMode)
+	segmentPolicy := resolveSegmentPolicy(body, empMap)
+	system += replyModePromptClause(replyMode, segmentPolicy)
 
 	chatMessages := assembleCopilotChatMessages(historySnapshot)
 	if len(chatMessages) == 0 {
@@ -671,7 +672,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		"runtimeMode": runtimeMode(),
 		"sessionMode": sessionMode, "riskLevel": riskLevel,
 		"enabledTools": enabledToolKeys(registry), "historyTurns": len(chatMessages),
-		"replyMode": replyMode,
+		"replyMode": replyMode, "segmentPolicy": segmentPolicy,
 	})
 	segIDGen := defaultSegmentIDGen(s)
 	if firstMessageID == "" {
@@ -702,7 +703,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		Viewer: id, Emit: emit, ModeHint: modeHint, ReflectHint: reflectHint,
 		SessionMode: sessionMode, RiskLevel: riskLevel, RAGPrefetched: ragCount > 0,
 		SnapshotID: snapID, Binding: binding, MemoryProvenance: memoryProvenanceMaps(memoryHits),
-		ReplyMode: replyMode, FirstMessageID: firstMessageID, StepSegments: &stepSegSink,
+		ReplyMode: replyMode, SegmentPolicy: segmentPolicy, FirstMessageID: firstMessageID, StepSegments: &stepSegSink,
 	})
 	_ = stepSegSink
 	if reactOut.Err != nil {
@@ -720,7 +721,6 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		reactOut.Text = fallback
 		for _, c := range chunkText(fallback, 24) {
 			emit("delta", "runtime", map[string]any{"text": c, "modelId": modelID})
-			time.Sleep(8 * time.Millisecond)
 		}
 		emit("stage", "runtime", map[string]any{"status": "degraded", "modelId": modelID, "warning": reactOut.Err.Error()})
 	}
@@ -766,7 +766,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 
 	segments := reactOut.Segments
 	if len(segments) == 0 {
-		segments = buildSegmentsFromTurn(full, reactOut, replyMode, firstMessageID, segIDGen, nil)
+		segments = buildSegmentsFromTurn(full, reactOut, replyMode, segmentPolicy, firstMessageID, segIDGen, nil)
 	}
 	if len(segments) == 0 && strings.TrimSpace(full) != "" {
 		segments = []AssistantSegment{{ID: firstMessageID, Kind: segmentKindBody, Content: full}}

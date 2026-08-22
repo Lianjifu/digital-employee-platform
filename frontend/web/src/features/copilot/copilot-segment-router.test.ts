@@ -45,4 +45,12 @@ describe('copilot-segment-router', () => {
     expect(state.segments.get('m1')?.status).toBe('succeeded');
     expect(state.segments.get('m2')?.status).toBe('succeeded');
   });
+
+  it('message_done replaces content when provided', () => {
+    const state = createSegmentRouter('m1');
+    applySegmentSSEEvent(state, { type: 'message_delta', messageId: 'm1', text: '全文草稿' });
+    applySegmentSSEEvent(state, { type: 'message_done', messageId: 'm1', content: '仅第一段' });
+    expect(state.segments.get('m1')?.content).toBe('仅第一段');
+    expect(state.segments.get('m1')?.status).toBe('succeeded');
+  });
 });

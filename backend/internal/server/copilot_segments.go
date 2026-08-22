@@ -12,10 +12,18 @@ const (
 	replyModeSegmented = "segmented"
 	replyModeStepwise  = "stepwise"
 
-	segmentKindAck     = "ack"
-	segmentKindBody    = "body"
-	segmentKindSummary = "summary"
-	segmentKindStep    = "step"
+	segmentKindAck      = "ack"
+	segmentKindBody     = "body"
+	segmentKindSummary  = "summary"
+	segmentKindStep     = "step"
+	segmentKindArtifact = "artifact"
+
+	segmentDelimiter = "<<<NEXT>>>"
+
+	segmentPolicyDocument       = "document"
+	segmentPolicyConversational = "conversational"
+
+	segmentLeadInMaxRunes = 120
 )
 
 type AssistantSegment struct {
@@ -29,16 +37,19 @@ type AssistantSegment struct {
 }
 
 type segmentSplitConfig struct {
-	MinRunes    int
-	MaxSegments int
+	MinRunes              int
+	MaxSegments           int
+	ExplicitDelimiterOnly bool
 }
 
 type streamAnswerOpts struct {
 	ReplyMode      string
+	SegmentPolicy  string
 	CorrelationID  string
 	FirstMessageID string
 	IDGen          func() string
 	PreSegments    []AssistantSegment
+	LiveStream     *liveAnswerStream
 }
 
 func normalizeReplyMode(v string) string {
@@ -52,24 +63,49 @@ func normalizeReplyMode(v string) string {
 
 func resolveReplyMode(body map[string]any, emp map[string]any) string {
 	if body != nil {
-		if m := normalizeReplyMode(str(body["replyMode"])); m != replyModeSingle {
-			return m
+		if raw := strings.TrimSpace(str(body["replyMode"])); raw != "" {
+			return normalizeReplyMode(raw)
 		}
 	}
-	if env := strings.ToLower(strings.TrimSpace(lookupEnv("DE_COPILOT_REPLY_MODE"))); env == replyModeSegmented || env == replyModeStepwise {
-		return env
-	}
-	if strings.ToLower(strings.TrimSpace(lookupEnv("DE_COPILOT_REPLY_MODE"))) == replyModeSingle {
-		return replyModeSingle
+	if env := strings.ToLower(strings.TrimSpace(lookupEnv("DE_COPILOT_REPLY_MODE"))); env != "" {
+		switch env {
+		case replyModeSegmented, replyModeStepwise, replyModeSingle:
+			return env
+		}
 	}
 	if emp != nil {
 		if rt, ok := emp["runtime"].(map[string]any); ok {
-			if m := normalizeReplyMode(str(rt["replyMode"])); m != replyModeSingle {
-				return m
+			if raw := strings.TrimSpace(str(rt["replyMode"])); raw != "" {
+				return normalizeReplyMode(raw)
 			}
 		}
 	}
-	return replyModeSingle
+	return replyModeSegmented
+}
+
+func normalizeSegmentPolicy(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case segmentPolicyConversational:
+		return segmentPolicyConversational
+	default:
+		return segmentPolicyDocument
+	}
+}
+
+func resolveSegmentPolicy(body map[string]any, emp map[string]any) string {
+	if body != nil {
+		if raw := strings.TrimSpace(str(body["segmentPolicy"])); raw != "" {
+			return normalizeSegmentPolicy(raw)
+		}
+	}
+	if emp != nil {
+		if rt, ok := emp["runtime"].(map[string]any); ok {
+			if raw := strings.TrimSpace(str(rt["segmentPolicy"])); raw != "" {
+				return normalizeSegmentPolicy(raw)
+			}
+		}
+	}
+	return segmentPolicyDocument
 }
 
 func segmentAckEnabled() bool {
@@ -94,9 +130,12 @@ func splitAssistantSegments(text string, cfg segmentSplitConfig) []string {
 	if cfg.MaxSegments <= 0 {
 		cfg.MaxSegments = 5
 	}
-	parts := strings.Split(text, "\n---\n")
+	parts := strings.Split(text, segmentDelimiter)
 	explicitDelimiter := len(parts) > 1
 	if !explicitDelimiter {
+		if cfg.ExplicitDelimiterOnly {
+			return []string{text}
+		}
 		parts = strings.Split(text, "\n\n")
 	}
 	merged := make([]string, 0, len(parts))
@@ -172,7 +211,38 @@ func appendStepSegment(sink *[]AssistantSegment, idGen func() string, kind, titl
 	})
 }
 
-func buildSegmentsFromTurn(full string, reactOut reactTurnResult, replyMode, firstMessageID string, idGen func() string, pre []AssistantSegment) []AssistantSegment {
+func buildIntentSegments(chunks []string, policy string) []AssistantSegment {
+	if len(chunks) == 0 {
+		return nil
+	}
+	policy = normalizeSegmentPolicy(policy)
+	trimmed := make([]string, 0, len(chunks))
+	for _, c := range chunks {
+		c = strings.TrimSpace(c)
+		if c != "" {
+			trimmed = append(trimmed, c)
+		}
+	}
+	if len(trimmed) == 0 {
+		return nil
+	}
+	if policy == segmentPolicyDocument || len(trimmed) == 1 {
+		joined := strings.TrimSpace(strings.Join(trimmed, "\n\n"))
+		return []AssistantSegment{{Kind: segmentKindBody, Content: joined}}
+	}
+	first := trimmed[0]
+	rest := strings.TrimSpace(strings.Join(trimmed[1:], "\n\n"))
+	if len(trimmed) > 1 && len([]rune(first)) <= segmentLeadInMaxRunes && rest != "" {
+		return []AssistantSegment{
+			{Kind: segmentKindBody, Content: first},
+			{Kind: segmentKindBody, Content: rest},
+		}
+	}
+	joined := strings.TrimSpace(strings.Join(trimmed, "\n\n"))
+	return []AssistantSegment{{Kind: segmentKindBody, Content: joined}}
+}
+
+func buildSegmentsFromTurn(full string, reactOut reactTurnResult, replyMode, segmentPolicy, firstMessageID string, idGen func() string, pre []AssistantSegment) []AssistantSegment {
 	replyMode = normalizeReplyMode(replyMode)
 	if idGen == nil {
 		idGen = func() string { return "msg_" + time.Now().UTC().Format("150405.000000") }
@@ -201,17 +271,9 @@ func buildSegmentsFromTurn(full string, reactOut reactTurnResult, replyMode, fir
 			out = append(out, AssistantSegment{Kind: segmentKindSummary, Title: "结论", Content: summary})
 		}
 	case replyModeSegmented:
-		chunks := splitAssistantSegments(full, segmentSplitConfig{})
-		for i, c := range chunks {
-			kind := segmentKindBody
-			if i == 0 && len(out) == 0 {
-				kind = segmentKindBody
-			}
-			if i == len(chunks)-1 && len(chunks) > 1 {
-				kind = segmentKindSummary
-			}
-			out = append(out, AssistantSegment{Kind: kind, Content: c})
-		}
+		chunks := splitAssistantSegments(full, segmentSplitConfig{ExplicitDelimiterOnly: true})
+		intent := buildIntentSegments(chunks, segmentPolicy)
+		out = append(out, intent...)
 	default:
 		if strings.TrimSpace(full) == "" {
 			return nil
@@ -229,7 +291,7 @@ func buildSegmentsFromTurn(full string, reactOut reactTurnResult, replyMode, fir
 	if firstMessageID != "" && len(out) > 0 {
 		// 首段正文复用客户端 replyId（跳过 ack 段）
 		for i := range out {
-			if out[i].Kind != segmentKindAck {
+			if out[i].Kind != segmentKindAck && out[i].Kind != segmentKindArtifact {
 				out[i].ID = firstMessageID
 				break
 			}
@@ -237,6 +299,12 @@ func buildSegmentsFromTurn(full string, reactOut reactTurnResult, replyMode, fir
 	}
 	for i := range out {
 		out[i].Index = i
+	}
+	if normalizeReplyMode(replyMode) == replyModeSegmented {
+		out = appendArtifactSegments(out, full, idGen)
+		for i := range out {
+			out[i].Index = i
+		}
 	}
 	if len(out) == 1 {
 		return out
@@ -262,11 +330,10 @@ func emitSegmentStream(emit reactEmitFunc, segments []AssistantSegment, modelID,
 			emit(contract.StreamMessageDelta, "runtime", map[string]any{
 				"type": contract.StreamMessageDelta, "messageId": seg.ID, "text": c, "modelId": modelID,
 			})
-			time.Sleep(4 * time.Millisecond)
 		}
 		emit(contract.StreamMessageDone, "runtime", map[string]any{
 			"type": contract.StreamMessageDone, "messageId": seg.ID, "segmentIndex": i,
-			"kind": seg.Kind, "title": seg.Title,
+			"kind": seg.Kind, "title": seg.Title, "content": seg.Content,
 		})
 	}
 }
@@ -278,22 +345,44 @@ func streamHarnessAnswer(emit reactEmitFunc, finalText, modelID string, rt resol
 		"modelName": rt.ModelName, "mode": mode, "steps": steps,
 	})
 	replyMode := replyModeSingle
+	var segmentPolicy string
 	var firstID string
 	var idGen func() string
 	var pre []AssistantSegment
 	var corr string
 	if opts != nil {
 		replyMode = normalizeReplyMode(opts.ReplyMode)
+		segmentPolicy = normalizeSegmentPolicy(opts.SegmentPolicy)
 		firstID = opts.FirstMessageID
 		idGen = opts.IDGen
 		pre = opts.PreSegments
 		corr = opts.CorrelationID
 	}
-	segs := buildSegmentsFromTurn(finalText, reactTurnResult{}, replyMode, firstID, idGen, pre)
+	var live *liveAnswerStream
+	if opts != nil {
+		live = opts.LiveStream
+	}
+	if live != nil && live.Active() {
+		streamed := live.StreamedSegmentCount()
+		live.FinishOpenSegment()
+		segs := buildSegmentsFromTurn(finalText, reactTurnResult{}, replyMode, segmentPolicy, firstID, idGen, pre)
+		model := coalesce(rt.ModelID, modelID)
+		for i := 0; i < streamed && i < len(segs); i++ {
+			seg := segs[i]
+			emit(contract.StreamMessageDone, "runtime", map[string]any{
+				"type": contract.StreamMessageDone, "messageId": seg.ID, "segmentIndex": i,
+				"kind": seg.Kind, "title": seg.Title, "content": seg.Content,
+			})
+		}
+		if len(segs) > streamed {
+			emitSegmentStream(emit, segs[streamed:], model, corr, replyMode)
+		}
+		return segs
+	}
+	segs := buildSegmentsFromTurn(finalText, reactTurnResult{}, replyMode, segmentPolicy, firstID, idGen, pre)
 	if len(segs) <= 1 && replyMode == replyModeSingle {
 		for _, c := range chunkText(finalText, 28) {
 			emit("delta", "runtime", map[string]any{"text": c, "modelId": modelID})
-			time.Sleep(4 * time.Millisecond)
 		}
 		if len(segs) == 1 {
 			return segs
@@ -304,7 +393,6 @@ func streamHarnessAnswer(emit reactEmitFunc, finalText, modelID string, rt resol
 		// 拆段失败，降级单气泡
 		for _, c := range chunkText(finalText, 28) {
 			emit("delta", "runtime", map[string]any{"text": c, "modelId": modelID})
-			time.Sleep(4 * time.Millisecond)
 		}
 		return segs
 	}
@@ -437,10 +525,17 @@ func mergeStoredAssistantTurns(stored []map[string]any) []map[string]any {
 	return out
 }
 
-func replyModePromptClause(replyMode string) string {
+func replyModePromptClause(replyMode, segmentPolicy string) string {
 	switch normalizeReplyMode(replyMode) {
 	case replyModeSegmented, replyModeStepwise:
-		return "\n若需多次面向用户的短回复，请用单独一行的 --- 分隔各段；第一段可先简短确认已理解任务（不超过 2 句），再展开后续段。\n"
+		policy := normalizeSegmentPolicy(segmentPolicy)
+		clause := "\n完整文档、模板、报告请在同一连续输出中给出，章节请用 Markdown 标题（##），不要用 --- 分隔。\n"
+		if policy == segmentPolicyConversational {
+			clause += "仅当需要先说一句极短确认（不超过 2 句）再展开正文时，在确认句后单独一行写 <<<NEXT>>>，再写正文。\n"
+		} else {
+			clause += "不要使用 <<<NEXT>>>；正文应在一个气泡内完整呈现。\n"
+		}
+		return clause
 	default:
 		return ""
 	}

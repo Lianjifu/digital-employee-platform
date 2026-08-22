@@ -724,6 +724,7 @@ func (s *Server) adoptTemplate(r *http.Request) (any, error) {
 		"evaluation":   map[string]any{"status": "not_started"}, "release": map[string]any{"status": "not_released"},
 		"templateId": tid, "templateVersion": tpl["version"], "updatedAt": time.Now().UTC().Format(time.RFC3339),
 	}
+	store.ApplyDefaultReplyModeRuntime(emp)
 	s.Store.Employees = append([]map[string]any{emp}, s.Store.Employees...)
 	tpl["adoptionCount"] = intFrom(tpl["adoptionCount"]) + 1
 	s.Store.TemplateAdoptions = append([]map[string]any{{
