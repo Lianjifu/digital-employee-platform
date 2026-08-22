@@ -22,6 +22,18 @@ func TestWorkspaceForgeForbidden(t *testing.T) {
 	}
 }
 
+func TestWorkspaceForgeAllowedOnListWorkspaces(t *testing.T) {
+	h := server.New(store.New()).Handler()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/workspaces", nil)
+	req.Header.Set("Authorization", "Bearer mock-user-token")
+	req.Header.Set("x-workspace-id", "w3")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("expected 200 for workspace list bootstrap, got %d %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestWorkspaceAllowedHeader(t *testing.T) {
 	h := server.New(store.New()).Handler()
 	rr := httptest.NewRecorder()

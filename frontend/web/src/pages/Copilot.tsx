@@ -91,6 +91,7 @@ import {
 import { extractSkillArtifacts, stripArtifactNoise } from '@/features/copilot/artifact-links';
 import { sortSessionsByRecency } from '@/features/copilot/session-sort';
 import { resolveHydratedMessages } from '@/features/copilot/conversation-merge';
+import { readCopilotLastSession } from '@/lib/copilot-workspace';
 import { getApiClient } from '@de/web-api';
 import { deriveExpertContextOverview } from '@/features/copilot/expert-context';
 import { ExpertContextPanel } from '@/features/copilot/expert-context-panel';
@@ -483,9 +484,23 @@ export default function Copilot() {
   const sessionHistory = useMemo(() => sessionHistoryData ?? [], [sessionHistoryData]);
   const chat = useChat({ name: '岗位专家' });
   const currentWorkspaceId = useWorkspaceStore((state) => state.currentWorkspaceId ?? 'w1');
+  const prevWorkspaceRef = useRef(currentWorkspaceId);
   const activeSession = chat.activeSession;
   const sessionMode: 'investigate' | 'execute' = activeSession?.sessionMode === 'execute' ? 'execute' : 'investigate';
   const typingWasRef = useRef(false);
+
+  // 切换工作区：清空跨区 active、重拉会话列表与对话详情缓存
+  useEffect(() => {
+    if (prevWorkspaceRef.current === currentWorkspaceId) return;
+    prevWorkspaceRef.current = currentWorkspaceId;
+    setHistoryReady(false);
+    chat.clearActive();
+    void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    void queryClient.invalidateQueries({
+      predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'conversation',
+    });
+    if (routeSessionId) navigate('/copilot', { replace: true });
+  }, [currentWorkspaceId, chat.clearActive, queryClient, routeSessionId, navigate]);
 
   // 专家工具链：必须在任何引用它的 effect / 回调之前初始化，避免 TDZ
   const activeEmployeeId = activeSession?.digitalEmployeeId ?? employeeIdFromQuery ?? undefined;
@@ -540,12 +555,12 @@ export default function Copilot() {
     || (serverSession ? (serverSession.conversationId || serverSession.id) : undefined);
   const canFetchConversation = Boolean(conversationFetchId)
     && !/^s_/.test(conversationFetchId ?? '')
-    && !chat.isConversationDeleted(conversationFetchId);
+    && !chat.isConversationDeleted(conversationFetchId)
+    && sessionInWorkspace(activeSession, currentWorkspaceId);
   const { data: activeConversation, isError: conversationMissing } = useApiQuery<any>(
-    ['conversation', conversationFetchId],
+    ['conversation', conversationFetchId, currentWorkspaceId],
     `/api/conversations/${conversationFetchId ?? '__none__'}`,
     undefined,
-    // 在线会话不使用长 stale：回合结束后需尽快对齐终态；hydrate 门禁防止冲掉流式
     { enabled: canFetchConversation, retry: false, staleTime: 0 },
   );
 
@@ -693,9 +708,9 @@ export default function Copilot() {
     typingWasRef.current = chat.state.typing;
     if (!wasTyping || chat.state.typing) return;
     if (!conversationFetchId || /^s_/.test(conversationFetchId)) return;
-    void queryClient.invalidateQueries({ queryKey: ['conversation', conversationFetchId] });
+    void queryClient.invalidateQueries({ queryKey: ['conversation', conversationFetchId, currentWorkspaceId] });
     void queryClient.invalidateQueries({ queryKey: ['sessions'] });
-  }, [chat.state.typing, conversationFetchId, queryClient]);
+  }, [chat.state.typing, conversationFetchId, currentWorkspaceId, queryClient]);
 
   // 深链：URL → state（仅当路由会话在当前工作区有效时）
   useEffect(() => {
@@ -1566,6 +1581,12 @@ export default function Copilot() {
     const visible = Object.values(chat.state.sessions).filter((session) => sessionInWorkspace(session, currentWorkspaceId));
     if (!historyReady || sessionsLoading) return;
     if (chat.state.activeId && visible.some((session) => session.id === chat.state.activeId)) return;
+    const remembered = readCopilotLastSession(currentWorkspaceId);
+    if (remembered && visible.some((session) => session.id === remembered)) {
+      chat.switchSession(remembered);
+      if (routeSessionId !== remembered) navigate(`/copilot/${remembered}`, { replace: true });
+      return;
+    }
     // 优先采纳当前路由中的有效会话，避免与深链互相覆盖
     if (routeSessionId && visible.some((session) => session.id === routeSessionId)) {
       chat.switchSession(routeSessionId);

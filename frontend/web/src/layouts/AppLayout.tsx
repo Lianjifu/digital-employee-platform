@@ -23,6 +23,7 @@ import { cn } from '@de/web-utils';
 import { useApiQuery } from '@/services/query';
 import { OnboardingGuide } from '@/features/onboarding/OnboardingGuide';
 import { getRoleNavGroups, navLabelKeyForPath } from '@/features/role-nav/role-nav';
+import { useQueryClient } from '@tanstack/react-query';
 import type { Workspace } from '@de/web-types';
 
 const NAV_ICONS: Record<string, ComponentType<{ className?: string }>> = {
@@ -52,8 +53,16 @@ export function AppLayout() {
   const userTriggerRef = useRef<HTMLButtonElement>(null);
   const userPanelRef = useRef<HTMLDivElement>(null);
   const workspaceMenuRef = useRef<HTMLDivElement>(null);
+  const queryClient = useQueryClient();
 
-  const { data: workspaces, refetch: refetchWorkspaces } = useApiQuery<Workspace[]>(['workspaces'], '/api/workspaces');
+  const selectWorkspace = (workspace: Workspace) => {
+    setCurrent(workspace);
+    setWorkspaceMenuOpen(false);
+    void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+    void queryClient.invalidateQueries({ predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'conversation' });
+  };
+
+  const { data: workspaces, refetch: refetchWorkspaces, isError: workspacesError } = useApiQuery<Workspace[]>(['workspaces'], '/api/workspaces');
   // v3：三角色侧栏 IA（待办/核查/审计主航）升版，已完成 v2 的账号再展示一次。
   const onboardingStorageKey = user ? `de-onboarding-completed:v3:${user.id}` : null;
 
@@ -205,7 +214,22 @@ export function AppLayout() {
                 <div className="mt-0.5 text-[10px] text-[var(--text-muted)]">{t('workspace.switch.desc')}</div>
               </div>
               <div className="max-h-[280px] overflow-y-auto p-1.5">
-                {(workspaces ?? []).length === 0 ? (
+                {workspacesError ? (
+                  <div className="space-y-2 px-2.5 py-3">
+                    <p className="text-[11px] text-[var(--text-muted)]">工作区列表加载失败（登录可能已过期）。请重新登录后重试。</p>
+                    <button
+                      type="button"
+                      className="w-full rounded-md border border-[var(--border)] px-2.5 py-2 text-xs font-semibold text-[var(--text)] hover:bg-[var(--bg-hover)]"
+                      onClick={() => {
+                        setWorkspaceMenuOpen(false);
+                        useAuthStore.getState().logout();
+                        navigate('/login');
+                      }}
+                    >
+                      重新登录
+                    </button>
+                  </div>
+                ) : (workspaces ?? []).length === 0 ? (
                   <div className="space-y-2 px-2.5 py-3">
                     <p className="text-[11px] text-[var(--text-muted)]">暂无可用工作区。系统将自动初始化默认工作区。</p>
                     {user?.role === 'admin' && (
@@ -228,7 +252,7 @@ export function AppLayout() {
                     type="button"
                     role="menuitemradio"
                     aria-checked={workspace.id === current?.id}
-                    onClick={() => { setCurrent(workspace); setWorkspaceMenuOpen(false); }}
+                    onClick={() => selectWorkspace(workspace)}
                     className={cn('flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left transition-colors hover:bg-[var(--bg-hover)]', workspace.id === current?.id && 'bg-[var(--brand-light)]')}
                   >
                     <span className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-md', workspace.id === current?.id ? 'bg-[var(--brand)] text-white' : 'bg-[var(--bg-elevated)] text-[var(--text-muted)]')}><Building2 className="h-3.5 w-3.5" /></span>

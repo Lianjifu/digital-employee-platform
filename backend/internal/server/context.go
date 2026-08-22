@@ -143,7 +143,7 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			}
 		}
 
-		wsCtx, err := resolveWorkspaceCtx(id, r.Header.Get("x-workspace-id"))
+		wsCtx, err := resolveWorkspaceCtx(id, r.Header.Get("x-workspace-id"), r.URL.Path, r.Method)
 		if err != nil {
 			writeErr(w, err)
 			return
@@ -194,8 +194,10 @@ func hasMockIdentityHeaders(r *http.Request) bool {
 
 // resolveWorkspaceCtx picks an allowed workspace from membership.
 // If header is empty → identity.WorkspaceID (or first membership).
-// If header is set but not in membership → hard 403 (cannot forge).
-func resolveWorkspaceCtx(id *auth.Identity, headerWS string) (*WorkspaceCtx, error) {
+// If header is set but not in membership → hard 403 (cannot forge), except
+// workspace-bootstrap routes (GET /api/workspaces) which soft-fallback so the
+// client can recover a valid selection.
+func resolveWorkspaceCtx(id *auth.Identity, headerWS, path, method string) (*WorkspaceCtx, error) {
 	if id == nil {
 		return nil, apperr.UnauthorizedErr("未登录")
 	}
@@ -222,7 +224,7 @@ func resolveWorkspaceCtx(id *auth.Identity, headerWS string) (*WorkspaceCtx, err
 		}
 	}
 	if !ok {
-		if strings.TrimSpace(headerWS) != "" {
+		if strings.TrimSpace(headerWS) != "" && !workspaceBootstrapPath(path, method) {
 			return nil, apperr.Forbidden(apperr.WorkspaceScope, "无权访问其他工作区资源")
 		}
 		ws = preferredWorkspaceID(allowed)
@@ -233,6 +235,10 @@ func resolveWorkspaceCtx(id *auth.Identity, headerWS string) (*WorkspaceCtx, err
 		ActorID:     id.ID,
 		Role:        id.Role,
 	}, nil
+}
+
+func workspaceBootstrapPath(path, method string) bool {
+	return method == http.MethodGet && path == "/api/workspaces"
 }
 
 func preferredWorkspaceID(allowed []string) string {

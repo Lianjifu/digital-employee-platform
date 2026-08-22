@@ -10,6 +10,7 @@ import { setApiClient, ApiClient, mockHandler } from '@de/web-api';
 import { useWorkspaceStore } from './stores/workspaceStore';
 import { useAuthStore } from './stores/authStore';
 import { apiBaseURL, isDemoApiMode } from './lib/api-mode';
+import { resolveWorkspaceHeader } from './lib/workspace-header';
 
 function installApiClient() {
   // 默认真实 API；仅演示模式注入本地 Handler。
@@ -21,7 +22,7 @@ function installApiClient() {
       () => {
         const user = useAuthStore.getState().user;
         return {
-          'x-workspace-id': useWorkspaceStore.getState().currentWorkspaceId ?? user?.workspaceId ?? 'w1',
+          'x-workspace-id': resolveWorkspaceHeader(),
           ...(user ? {
             'x-tenant-id': user.tenantId,
             ...(isDemoApiMode() ? {
@@ -32,6 +33,12 @@ function installApiClient() {
             } : {}),
           } : {}),
         };
+      },
+      () => {
+        useAuthStore.getState().logout();
+        if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+          window.location.assign('/login');
+        }
       },
     ),
   );

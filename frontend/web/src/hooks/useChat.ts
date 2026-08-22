@@ -26,6 +26,7 @@ import { useAuthStore } from '@/stores/authStore';
 import { isMockChatMode, streamCopilotTurn, type CopilotSSEEvent } from '@/features/copilot/copilot-stream';
 import { capSessionMessages } from '@/features/copilot/context-limits';
 import { dedupeConversationMessages } from '@/features/copilot/conversation-merge';
+import { clearCopilotLastSession, rememberCopilotSession } from '@/lib/copilot-workspace';
 import type {
   ChatMessageEx,
   ChatSession,
@@ -135,8 +136,8 @@ type Action =
 const STORAGE_KEY = 'de-chat-state';
 /** 已删除会话 tombstone，刷新/重启后仍阻止服务端列表回灌 */
 const DELETED_TOMBSTONES_KEY = 'de-chat-deleted-tombstones';
-/** v7：清理侧栏已空但仍占用 activeId 的残留会话（如 Redis OOM） */
-const STORAGE_VERSION = 7;
+/** v8：专家协助按工作区隔离 active；升级时丢弃全局 activeId */
+const STORAGE_VERSION = 8;
 const MAX_SESSIONS = 200; // 总会话上限
 const MAX_MESSAGES_PER_SESSION = 500; // 单会话消息上限
 const MAX_REQUESTS = 200; // 请求日志上限
@@ -789,6 +790,7 @@ function loadState(): State | null {
         draftInput: typeof parsed.draftInput === 'string' ? parsed.draftInput : '',
         inputHistory: Array.isArray(parsed.inputHistory) ? parsed.inputHistory.filter((x: unknown) => typeof x === 'string') : [],
         schemaVersion: STORAGE_VERSION,
+        activeId: '',
       };
     }
     return {
@@ -1541,6 +1543,7 @@ export function useChat(agentMeta?: { name: string }) {
         const sess = buildLocal(created.id, created.conversationId || created.id);
         if (created.modelId) sess.modelId = created.modelId;
         dispatch({ type: 'new_session', session: sess });
+        rememberCopilotSession(sess.workspaceId ?? 'w1', sess.id);
         return created.id;
       } catch (err) {
         // Do not fall back to local-only s_* sessions — they create orphan memory without /api/sessions rows.
@@ -1549,7 +1552,9 @@ export function useChat(agentMeta?: { name: string }) {
     }
 
     const id = uid('s_');
-    dispatch({ type: 'new_session', session: buildLocal(id, id) });
+    const session = buildLocal(id, id);
+    dispatch({ type: 'new_session', session });
+    rememberCopilotSession(session.workspaceId ?? 'w1', session.id);
     return id;
   }, [agentMeta?.name]);
 
@@ -1706,9 +1711,11 @@ export function useChat(agentMeta?: { name: string }) {
 
   const delSession = useCallback(async (id: string) => {
     if (!id) return;
+    const removed = state.sessions[id];
     deletedSessionIdsRef.current.add(id);
-    const convId = state.sessions[id]?.conversationId;
+    const convId = removed?.conversationId;
     if (convId) deletedConversationIdsRef.current.add(convId);
+    if (removed) clearCopilotLastSession(removed.workspaceId ?? 'w1', id);
     saveDeletedTombstones(deletedSessionIdsRef.current, deletedConversationIdsRef.current);
     dispatch({ type: 'del_session', id });
     if (isMockChatMode()) return;
@@ -1723,7 +1730,13 @@ export function useChat(agentMeta?: { name: string }) {
       // 保留 tombstone，避免服务端仍有记录时回灌
     }
   }, [state.sessions]);
-  const switchSession = useCallback((id: string) => dispatch({ type: 'switch', id }), []);
+  const switchSession = useCallback((id: string) => {
+    const target = state.sessions[id];
+    if (target) {
+      rememberCopilotSession(target.workspaceId ?? 'w1', id);
+    }
+    dispatch({ type: 'switch', id });
+  }, [state.sessions]);
   const togglePin = useCallback((id: string) => {
     const sess = state.sessions[id];
     if (!sess) return;

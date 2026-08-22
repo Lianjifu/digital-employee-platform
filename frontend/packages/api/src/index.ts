@@ -62,6 +62,7 @@ export class ApiClient {
     private getAuthToken: () => string | null = () => null,
     private mockHandler?: (path: string, opts: RequestOptions) => Promise<unknown>,
     private getContextHeaders: () => Record<string, string> = () => ({}),
+    private onUnauthorized?: () => void,
   ) {}
 
   async request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
@@ -109,7 +110,11 @@ export class ApiClient {
         throw new ApiError('E_BAD_RESPONSE', `控制面返回非 JSON（HTTP ${res.status}）`, res.status);
       }
       if (!res.ok || !json.ok) {
-        throw new ApiError(json.error?.code ?? 'E_UNKNOWN', json.error?.message ?? '请求失败', res.status);
+        const code = json.error?.code ?? 'E_UNKNOWN';
+        if (res.status === 401 || code === 'E_IDENTITY_MOCK_FORBIDDEN') {
+          this.onUnauthorized?.();
+        }
+        throw new ApiError(code, json.error?.message ?? '请求失败', res.status);
       }
       // 后端偶发返回 data: null（Go nil slice）；对数组消费方统一兜底为 []，避免 .filter 崩溃
       return (json.data ?? null) as T;
@@ -184,7 +189,11 @@ export class ApiClient {
         throw new ApiError('E_BAD_RESPONSE', `控制面返回非 JSON（HTTP ${res.status}）`, res.status);
       }
       if (!res.ok || !json.ok) {
-        throw new ApiError(json.error?.code ?? 'E_UNKNOWN', json.error?.message ?? '上传失败', res.status);
+        const code = json.error?.code ?? 'E_UNKNOWN';
+        if (res.status === 401 || code === 'E_IDENTITY_MOCK_FORBIDDEN') {
+          this.onUnauthorized?.();
+        }
+        throw new ApiError(code, json.error?.message ?? '上传失败', res.status);
       }
       return (json.data ?? null) as T;
     } finally {

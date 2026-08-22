@@ -10,6 +10,7 @@ import (
 
 	"github.com/digital-employee-platform/backend/internal/auth"
 	"github.com/digital-employee-platform/backend/internal/policy"
+	"github.com/digital-employee-platform/backend/internal/store"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
@@ -777,7 +778,11 @@ func (s *Server) listSessions(r *http.Request) (any, error) {
 	defer s.Store.RUnlock()
 	out := make([]map[string]any, 0)
 	for _, sess := range s.Store.Sessions {
-		if str(sess["workspaceId"]) != ws {
+		sessWS := str(sess["workspaceId"])
+		if sessWS == "" {
+			sessWS = store.DefaultWorkspaceID
+		}
+		if sessWS != ws {
 			continue
 		}
 		// Owner scope: non-admin only sees own sessions (and legacy rows without ownerId).
@@ -1103,18 +1108,10 @@ func (s *Server) getConversation(r *http.Request) (any, error) {
 	s.Store.RLock()
 	defer s.Store.RUnlock()
 
-	tryOrder := []string{ws}
-	for _, alt := range allowedWorkspaceIDs(id) {
-		if alt != ws {
-			tryOrder = append(tryOrder, alt)
-		}
-	}
-	for _, targetWS := range tryOrder {
-		if cp, forbidden := s.resolveConversationDetailLocked(id, targetWS, cid); forbidden {
-			return nil, apperr.Forbidden(apperr.WorkspaceScope, "无权查看他人会话")
-		} else if cp != nil {
-			return cp, nil
-		}
+	if cp, forbidden := s.resolveConversationDetailLocked(id, ws, cid); forbidden {
+		return nil, apperr.Forbidden(apperr.WorkspaceScope, "无权查看他人会话")
+	} else if cp != nil {
+		return cp, nil
 	}
 
 	return nil, apperr.NotFoundErr(apperr.NotFound, "会话不存在")

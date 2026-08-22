@@ -286,7 +286,7 @@ func TestGetConversationForbiddenForOtherOwner(t *testing.T) {
 	}
 }
 
-func TestGetConversationResolvesAcrossMemberWorkspaces(t *testing.T) {
+func TestGetConversationRejectsCrossWorkspaceHeader(t *testing.T) {
 	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "1")
 	st := store.New()
 	now := "2026-08-19T12:00:00Z"
@@ -307,10 +307,33 @@ func TestGetConversationResolvesAcrossMemberWorkspaces(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer mock-admin-token")
 	req.Header.Set("X-Workspace-Id", "w2")
 	h.ServeHTTP(rr, req)
-	if rr.Code != 200 {
-		t.Fatalf("cross-workspace get %d %s", rr.Code, rr.Body.String())
+	if rr.Code != 404 {
+		t.Fatalf("cross-workspace get should 404, got %d %s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "hello") {
-		t.Fatalf("missing messages: %s", rr.Body.String())
+}
+
+func TestListSessionsFiltersByWorkspaceHeader(t *testing.T) {
+	t.Setenv("DE_ALLOW_MOCK_IDENTITY", "1")
+	st := store.New()
+	now := "2026-08-19T12:00:00Z"
+	st.Sessions = []map[string]any{
+		{"id": "sess-w1", "workspaceId": "w1", "ownerId": "u1", "title": "w1", "updatedAt": now},
+		{"id": "sess-w2", "workspaceId": "w2", "ownerId": "u1", "title": "w2", "updatedAt": now},
+	}
+	h := server.New(st).Handler()
+
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions", nil)
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w2")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("list sessions %d %s", rr.Code, rr.Body.String())
+	}
+	if strings.Contains(rr.Body.String(), "sess-w1") {
+		t.Fatalf("w2 list must not include w1 session: %s", rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "sess-w2") {
+		t.Fatalf("w2 list missing w2 session: %s", rr.Body.String())
 	}
 }

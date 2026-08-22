@@ -2,7 +2,7 @@
  * Copilot SSE client — 对接 de-core /api/copilot/conversations/:id/stream
  */
 import { useAuthStore } from '@/stores/authStore';
-import { useWorkspaceStore } from '@/stores/workspaceStore';
+import { resolveWorkspaceHeader } from '@/lib/workspace-header';
 
 export type CopilotSSEEvent = {
   type: string;
@@ -148,8 +148,7 @@ export type StreamTurnInput = {
 export async function streamCopilotTurn(input: StreamTurnInput): Promise<void> {
   const token = localStorage.getItem('token');
   const user = useAuthStore.getState().user;
-  const workspaceId =
-    useWorkspaceStore.getState().currentWorkspaceId ?? user?.workspaceId ?? 'w1';
+  const workspaceId = resolveWorkspaceHeader();
 
   const res = await fetch(
     `/api/copilot/conversations/${encodeURIComponent(input.conversationId)}/stream`,
