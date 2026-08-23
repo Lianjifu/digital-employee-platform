@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  collapseDuplicateTurns,
   dedupeConversationMessages,
   mergeConversationMessages,
   resolveHydratedMessages,
@@ -106,5 +107,16 @@ describe('conversation-merge', () => {
     ]);
     expect(merged).toHaveLength(1);
     expect(merged[0]?.content).toBe('b');
+  });
+
+  it('collapses adjacent duplicate turns with same user text', () => {
+    const merged = collapseDuplicateTurns([
+      msg({ id: 'u1', clientMsgId: 'c1', role: 'user', content: '生成 Word' }),
+      msg({ id: 'a1', correlationId: 'corr1', role: 'assistant', content: '旧', status: 'cancelled' }),
+      msg({ id: 'u2', clientMsgId: 'c1', role: 'user', content: '生成 Word' }),
+      msg({ id: 'a2', correlationId: 'corr2', role: 'assistant', content: '新文档', status: 'succeeded' }),
+    ]);
+    expect(merged).toHaveLength(2);
+    expect(merged[1]?.content).toBe('新文档');
   });
 });

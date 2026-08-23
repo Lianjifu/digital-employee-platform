@@ -392,6 +392,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.listConversations(r)
 	case path == "/api/copilot/conversations" && method == http.MethodPost:
 		data, err = s.createConversation(r)
+	case strings.HasPrefix(path, "/api/copilot/conversations/") && strings.Contains(path, "/turns/") && strings.HasSuffix(path, "/status") && method == http.MethodGet:
+		data, err = s.getCopilotTurnStatus(r)
 	case strings.HasPrefix(path, "/api/copilot/conversations/") && strings.Contains(path, "/turns/") && strings.HasSuffix(path, "/replay") && method == http.MethodGet:
 		data, err = s.replayCopilotTurn(r)
 	case strings.HasPrefix(path, "/api/copilot/conversations/") && strings.HasSuffix(path, "/cancel") && method == http.MethodPost:

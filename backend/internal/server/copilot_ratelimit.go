@@ -229,5 +229,6 @@ func (s *Server) cancelCopilotTurn(r *http.Request) (any, error) {
 		return nil, apperr.BadReq(apperr.BadRequest, "缺少 correlationId")
 	}
 	ok := cancelStreamByCorrelation(corr)
-	return map[string]any{"ok": ok, "correlationId": corr}, nil
+	markCopilotTurnCancelled(corr)
+	return map[string]any{"ok": ok, "correlationId": corr, "status": turnStatusCancelled}, nil
 }

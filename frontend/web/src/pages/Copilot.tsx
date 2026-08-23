@@ -724,6 +724,31 @@ export default function Copilot() {
     void queryClient.invalidateQueries({ queryKey: ['sessions'] });
   }, [chat.state.typing, conversationFetchId, currentWorkspaceId, queryClient]);
 
+  // 刷新后恢复进行中回合：轮询 turn status，完成后拉取 conversation 终态
+  useEffect(() => {
+    if (!historyReady || !chat.state.activeId) return;
+    const sess = chat.state.sessions[chat.state.activeId];
+    if (!sess) return;
+    const needsRecovery = Boolean(sess.pendingTurn)
+      || sess.messages.some((m) => m.status === 'in_flight');
+    if (!needsRecovery || chat.state.typing) return;
+    void chat.recoverPendingTurn(chat.state.activeId).then((outcome) => {
+      if (outcome === 'done' && conversationFetchId && !/^s_/.test(conversationFetchId)) {
+        void queryClient.invalidateQueries({ queryKey: ['conversation', conversationFetchId, currentWorkspaceId] });
+        void queryClient.invalidateQueries({ queryKey: ['sessions'] });
+      }
+    });
+  }, [
+    chat.recoverPendingTurn,
+    chat.state.activeId,
+    chat.state.sessions,
+    chat.state.typing,
+    conversationFetchId,
+    currentWorkspaceId,
+    historyReady,
+    queryClient,
+  ]);
+
   // 深链：URL → state（仅当路由会话在当前工作区有效时）
   useEffect(() => {
     if (!historyReady || !routeSessionId) return;
@@ -1663,9 +1688,10 @@ export default function Copilot() {
   );
   const hasSessionContext = workbench.evidence + workbench.linkedTasks + workbench.pendingApprovals + workbench.executions + workbench.documents > 0;
   const hasStreamingAssistant = Boolean(
-    currentSession?.messages.some((message) => message.role === 'assistant' && message.status === 'streaming'),
+    currentSession?.messages.some((message) => message.role === 'assistant' && (message.status === 'streaming' || message.status === 'in_flight')),
   );
-  const isGenerating = chat.state.typing || hasStreamingAssistant;
+  const hasPendingTurn = Boolean(currentSession?.pendingTurn);
+  const isGenerating = chat.state.typing || hasStreamingAssistant || hasPendingTurn;
   const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
   const [generationTick, setGenerationTick] = useState(0);
   useEffect(() => {
@@ -1682,7 +1708,7 @@ export default function Copilot() {
     : 0;
   void generationTick;
   const streamingAssistant = useMemo(
-    () => currentSession?.messages.find((message) => message.role === 'assistant' && message.status === 'streaming'),
+    () => currentSession?.messages.find((message) => message.role === 'assistant' && (message.status === 'streaming' || message.status === 'in_flight')),
     [currentSession?.messages],
   );
   const latestReasoningTitle = streamingAssistant?.reasoningSteps?.[streamingAssistant.reasoningSteps.length - 1]?.title;
@@ -1936,6 +1962,8 @@ export default function Copilot() {
                 <div className="copilot-sessions__list">
                   {grouped[g].map((s) => {
                     const active = s.id === chat.state.activeId;
+                    const sessionGenerating = Boolean(s.pendingTurn)
+                      || s.messages.some((m) => m.status === 'streaming' || m.status === 'in_flight' || m.status === 'queued');
                     return (
                       <div key={s.id} className="copilot-session-item__wrap group">
                         <button
@@ -1944,7 +1972,7 @@ export default function Copilot() {
                           onDoubleClick={() => chat.togglePin(s.id)}
                           className={cn('session-item copilot-session-item', active && 'session-item--active')}
                           aria-current={active ? 'page' : undefined}
-                          aria-label={`${s.title}，${s.status === 'active' ? '进行中' : '已完成'}${s.unread ? `，${s.unread} 条未读` : ''}`}
+                          aria-label={`${s.title}，${sessionGenerating ? '生成中' : s.status === 'active' ? '进行中' : '已完成'}${s.unread ? `，${s.unread} 条未读` : ''}`}
                         >
                           <div className="session-item__top">
                             <div className="session-item__title">
@@ -1960,8 +1988,8 @@ export default function Copilot() {
                           <div className="session-item__preview">{s.preview || '暂无消息'}</div>
                           <div className="session-item__meta">
                             <span className="session-item__agent">{s.agent}</span>
-                            <Badge tone={s.status === 'active' ? 'brand' : 'success'} className="text-[10px]">
-                              {s.status === 'active' ? '进行中' : '已完成'}
+                            <Badge tone={sessionGenerating ? 'info' : s.status === 'active' ? 'brand' : 'success'} className="text-[10px]">
+                              {sessionGenerating ? '生成中' : s.status === 'active' ? '进行中' : '已完成'}
                             </Badge>
                           </div>
                         </button>
@@ -3472,7 +3500,7 @@ function MessageBubble({
   const isUser = m.role === 'user';
   const isTool = m.role === 'tool';
   const isEmpty = !m.content;
-  const isStreaming = m.status === 'streaming';
+  const isStreaming = m.status === 'streaming' || m.status === 'in_flight';
   const agentDisplayName = agentName || m.agentName || (isUser ? '王昊' : isTool ? '能力调用' : '助手');
   const [traceOpen, setTraceOpen] = useState(false);
   const needsDecision = !isUser && /CVE|高危|高风险|影响资产/.test(m.content ?? '');

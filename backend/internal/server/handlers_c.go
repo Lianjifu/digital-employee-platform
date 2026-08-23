@@ -363,6 +363,54 @@ func (s *Server) listMessages(r *http.Request) (any, error) {
 	return msgs, nil
 }
 
+func (s *Server) hasAssistantForCorrelation(cid, corr string) bool {
+	if corr == "" || cid == "" {
+		return false
+	}
+	s.Store.RLock()
+	defer s.Store.RUnlock()
+	for _, m := range s.Store.Messages[cid] {
+		if str(m["role"]) == "assistant" && str(m["correlationId"]) == corr {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) getCopilotTurnStatus(r *http.Request) (any, error) {
+	id := identityFrom(r.Context())
+	if id == nil {
+		return nil, apperr.UnauthorizedErr("请先登录")
+	}
+	rawID := conversationIDFromPath(r.URL.Path)
+	corr := correlationIDFromTurnSubPath(r.URL.Path, "status")
+	if rawID == "" || corr == "" {
+		return nil, apperr.BadReq(apperr.BadRequest, "缺少会话或 correlationId")
+	}
+	ws := s.workspaceID(r)
+	s.Store.RLock()
+	cid := s.resolveMessageBucketID(ws, rawID)
+	s.Store.RUnlock()
+
+	status := turnStatusRunning
+	clientMsgID := ""
+	if rec, ok := lookupCopilotTurn(corr); ok {
+		status = rec.Status
+		clientMsgID = rec.ClientMsgID
+	} else if s.hasAssistantForCorrelation(cid, corr) {
+		status = turnStatusDone
+	} else {
+		return nil, apperr.NotFoundErr(apperr.NotFound, "回合不存在或已过期")
+	}
+	return map[string]any{
+		"correlationId":     corr,
+		"conversationId":    rawID,
+		"status":            status,
+		"clientMsgId":       clientMsgID,
+		"hasAssistantReply": s.hasAssistantForCorrelation(cid, corr),
+	}, nil
+}
+
 func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	id := identityFrom(r.Context())
 	rawID := conversationIDFromPath(r.URL.Path)
@@ -465,6 +513,8 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	runMode = resolveRunMode(runMode, "", sessionMode)
 	s.Store.RUnlock()
 
+	registerCopilotTurn(cid, corr, clientMsgID)
+
 	eval, err := s.evaluateZeroTrust(id, "session", "write", "internal", false, corr)
 	if err != nil {
 		writeErr(w, err)
@@ -545,9 +595,12 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		for k, v := range extra {
 			payload[k] = v
 		}
+		rec.Add(typ, stage, extra)
+		if r.Context().Err() != nil {
+			return
+		}
 		writeSSE(w, typ, payload)
 		flusher.Flush()
-		rec.Add(typ, stage, extra)
 	}
 
 	// 1) policy（求值已在开流前完成；deny 不会进入 SSE）
@@ -689,7 +742,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		s.Store.Messages[cid] = append(s.Store.Messages[cid], ackPersisted...)
 		s.Store.Unlock()
 	}
-	streamCtx, streamCancel := context.WithTimeout(r.Context(), copilotStreamTimeout())
+	streamCtx, streamCancel := context.WithTimeout(context.Background(), copilotStreamTimeout())
 	registerStreamCancel(corr, streamCancel)
 	defer func() {
 		clearStreamCancel(corr)
@@ -706,6 +759,14 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		ReplyMode: replyMode, SegmentPolicy: segmentPolicy, FirstMessageID: firstMessageID, StepSegments: &stepSegSink,
 	})
 	_ = stepSegSink
+	if isCopilotTurnCancelled(corr) {
+		emit("done", "done", map[string]any{
+			"type": "done", "ok": false, "cancelled": true, "correlationId": corr,
+		})
+		finishCopilotTurn(corr, turnStatusCancelled)
+		streamOK = true
+		return
+	}
 	if reactOut.Err != nil {
 		fallback := ""
 		if allowRuntimeStub() {
@@ -716,6 +777,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		}
 		if fallback == "" {
 			emit("error", "runtime", map[string]any{"message": formatModelInvokeUserMessage(reactOut.Err)})
+			finishCopilotTurn(corr, turnStatusFailed)
 			return
 		}
 		reactOut.Text = fallback
@@ -763,6 +825,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	s.Store.Unlock()
 	if budgetErr != nil {
 		emit("error", "meter", map[string]any{"message": budgetErr.Error()})
+		finishCopilotTurn(corr, turnStatusFailed)
 		return
 	}
 	s.recordUsageWS(ws, "copilot", units, corr)
@@ -773,6 +836,16 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		segments = []AssistantSegment{{ID: firstMessageID, Kind: segmentKindBody, Content: full}}
 	}
 	for i, seg := range segments {
+		skipDone := false
+		if i < len(reactOut.Segments) {
+			streamed := reactOut.Segments[i]
+			if streamed.ID == seg.ID && streamed.Content == seg.Content && normalizeReplyMode(replyMode) != replyModeSingle {
+				skipDone = true
+			}
+		}
+		if skipDone {
+			continue
+		}
 		emit(contract.StreamMessageDone, "runtime", map[string]any{
 			"type": contract.StreamMessageDone, "messageId": seg.ID,
 			"segmentIndex": len(ackPersisted) + i, "kind": seg.Kind, "title": seg.Title,
@@ -814,6 +887,14 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	assistantMsgID := firstMessageID
 	if len(assistantMsgs) > 0 {
 		assistantMsgID = str(assistantMsgs[len(assistantMsgs)-1]["id"])
+	}
+	if isCopilotTurnCancelled(corr) {
+		emit("done", "done", map[string]any{
+			"type": "done", "ok": false, "cancelled": true, "correlationId": corr,
+		})
+		finishCopilotTurn(corr, turnStatusCancelled)
+		streamOK = true
+		return
 	}
 	s.Store.Lock()
 	s.Store.Messages[cid] = append(s.Store.Messages[cid], assistantMsgs...)
@@ -919,6 +1000,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		"snapshotId":       snapID,
 		"runtimeMode":      runtimeMode(),
 	})
+	finishCopilotTurn(corr, turnStatusDone)
 	streamOK = true
 }
 

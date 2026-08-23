@@ -250,6 +250,16 @@ export interface ChatSessionMetrics {
   feedbackDislike: number;
 }
 
+/** 刷新后可恢复的进行中回合元数据 */
+export interface PendingTurn {
+  correlationId: string;
+  clientMsgId: string;
+  replyId?: string;
+  userMessageId?: string;
+  content: string;
+  startedAt: string;
+}
+
 export interface ChatSession {
   /* 兼容字段 */
   id: string;
@@ -314,6 +324,8 @@ export interface ChatSession {
   lastActiveAt?: number;
   /** 已 POST /api/sessions 创建，等待列表 API 收录前勿 reconcile 删除 */
   pendingServerSync?: boolean;
+  /** 进行中回合（刷新后可恢复轮询） */
+  pendingTurn?: PendingTurn;
   /** 分享 token（仅查看） */
   shareToken?: string;
 }

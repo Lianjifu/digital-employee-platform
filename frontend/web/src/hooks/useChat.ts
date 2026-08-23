@@ -27,12 +27,14 @@ import { isMockChatMode, streamCopilotTurn, type CopilotSSEEvent } from '@/featu
 import { applySegmentSSEEvent, createSegmentRouter } from '@/features/copilot/copilot-segment-router';
 import { orderAssistantSegments } from '@/features/copilot/segment-message-order';
 import { DEFAULT_REPLY_MODE } from '@/features/copilot/composer-mode';
+import { fetchCopilotTurnStatus, TURN_RECOVERY_POLL_MS } from '@/features/copilot/pending-turn-recovery';
 import { capSessionMessages } from '@/features/copilot/context-limits';
 import { dedupeConversationMessages } from '@/features/copilot/conversation-merge';
 import { clearCopilotLastSession, rememberCopilotSession } from '@/lib/copilot-workspace';
 import type {
   ChatMessageEx,
   ChatSession,
+  PendingTurn,
   SendMessageInput,
   MessageStatus,
   ErrorCategory,
@@ -141,7 +143,7 @@ const STORAGE_KEY = 'de-chat-state';
 /** 已删除会话 tombstone，刷新/重启后仍阻止服务端列表回灌 */
 const DELETED_TOMBSTONES_KEY = 'de-chat-deleted-tombstones';
 /** v8：专家协助按工作区隔离 active；升级时丢弃全局 activeId */
-const STORAGE_VERSION = 8;
+const STORAGE_VERSION = 9;
 const MAX_SESSIONS = 200; // 总会话上限
 const MAX_MESSAGES_PER_SESSION = 500; // 单会话消息上限
 const MAX_REQUESTS = 200; // 请求日志上限
@@ -793,6 +795,12 @@ function now(): string {
   return new Date().toISOString();
 }
 
+function sessionHasActiveTurn(sess?: ChatSession): boolean {
+  if (!sess) return false;
+  if (sess.pendingTurn) return true;
+  return sess.messages.some((m) => m.status === 'streaming' || m.status === 'in_flight' || m.status === 'queued');
+}
+
 /* ============ 持久化 ============ */
 
 function loadState(): State | null {
@@ -804,6 +812,29 @@ function loadState(): State | null {
     // 版本升级：丢弃本地会话缓存（保留输入草稿），由 /api/sessions 重新灌入，
     // 避免 mock 时代的 s1/s_* 与 de-core 会话 id 错位引发深链振荡与 404。
     if ((parsed.schemaVersion ?? 1) < STORAGE_VERSION) {
+      if ((parsed.schemaVersion ?? 1) === 8 && parsed.sessions) {
+        return {
+          ...parsed,
+          inputHistory: Array.isArray(parsed.inputHistory) ? parsed.inputHistory.filter((x: unknown) => typeof x === 'string') : [],
+          schemaVersion: STORAGE_VERSION,
+          activeCorrelationId: null,
+          typing: false,
+          abortRef: { current: null },
+          sessions: Object.fromEntries(
+            Object.entries(parsed.sessions as Record<string, ChatSession>).map(([id, sess]) => [
+              id,
+              {
+                ...sess,
+                messages: (sess.messages ?? []).map((m) => (
+                  m.status === 'streaming'
+                    ? { ...m, status: 'in_flight' as const }
+                    : m
+                )),
+              },
+            ]),
+          ),
+        } as State;
+      }
       return {
         ...initial,
         draftInput: typeof parsed.draftInput === 'string' ? parsed.draftInput : '',
@@ -827,11 +858,7 @@ function loadState(): State | null {
             ...sess,
             messages: (sess.messages ?? []).map((m) => (
               m.status === 'streaming'
-                ? {
-                  ...m,
-                  status: 'cancelled' as const,
-                  error: m.error ?? { category: 'network' as const, message: '页面刷新导致生成中断', retryable: true },
-                }
+                ? { ...m, status: 'in_flight' as const }
                 : m
             )),
           },
@@ -942,6 +969,7 @@ export function useChat(agentMeta?: { name: string }) {
 
   // 超时监控：超时自动 abort + 写错误
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const turnRecoveryRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const initialTombstones = loadDeletedTombstones();
   const deletedSessionIdsRef = useRef<Set<string>>(initialTombstones.sessions);
   const deletedConversationIdsRef = useRef<Set<string>>(initialTombstones.conversations);
@@ -1106,6 +1134,15 @@ export function useChat(agentMeta?: { name: string }) {
       if (!opts?.skipAppend) {
         dispatch({ type: 'append_msg', sid, msg: placeholder });
       }
+
+      const pendingTurn: PendingTurn = {
+        correlationId: correlationIdStr,
+        clientMsgId: opts?.clientMsgId ?? placeholder.clientMsgId!,
+        replyId,
+        content: text,
+        startedAt: new Date().toISOString(),
+      };
+      dispatch({ type: 'update_session', sid, patch: { pendingTurn } });
 
       const reqId = uid('req_');
       const startedAt = Date.now();
@@ -1548,6 +1585,7 @@ export function useChat(agentMeta?: { name: string }) {
         dispatch({ type: 'set_typing', typing: false });
         dispatch({ type: 'set_abort', ctrl: null });
         dispatch({ type: 'set_active_correlation', id: null });
+        dispatch({ type: 'update_session', sid, patch: { pendingTurn: undefined } });
         if (timeoutRef.current) clearTimeout(timeoutRef.current);
       };
 
@@ -1901,7 +1939,7 @@ export function useChat(agentMeta?: { name: string }) {
       const sid = state.activeId;
       const sess = state.sessions[sid];
       if (sess) {
-        const streaming = sess.messages.filter((x) => x.correlationId === corr && x.status === 'streaming');
+        const streaming = sess.messages.filter((x) => x.correlationId === corr && (x.status === 'streaming' || x.status === 'in_flight'));
         for (const m of streaming) {
           dispatch({ type: 'set_msg_status', sid, mid: m.id, status: 'cancelled' });
         }
@@ -1909,6 +1947,7 @@ export function useChat(agentMeta?: { name: string }) {
           const m = sess.messages.find((x) => x.correlationId === corr);
           if (m) dispatch({ type: 'set_msg_status', sid, mid: m.id, status: 'cancelled' });
         }
+        dispatch({ type: 'update_session', sid, patch: { pendingTurn: undefined } });
       }
       dispatch({ type: 'set_active_correlation', id: null });
       if (!isMockChatMode()) {
@@ -1924,7 +1963,9 @@ export function useChat(agentMeta?: { name: string }) {
   const send = useCallback((content: string, opts?: Partial<SendMessageInput>) => {
     const sid = state.activeId;
     const text = (opts?.text ?? content).trim();
+    const sess = state.sessions[sid];
     if (!text || !sid || state.typing) return;
+    if (sessionHasActiveTurn(sess)) return;
 
     dispatch({ type: 'push_history', value: text });
 
@@ -1954,7 +1995,6 @@ export function useChat(agentMeta?: { name: string }) {
       ctrl.abort();
     }, DEFAULT_TIMEOUT_MS);
 
-    const sess = state.sessions[sid];
     const deId = opts?.digitalEmployeeId ?? sess?.digitalEmployeeId;
     const replyName = sess?.digitalEmployeeId
       ? (sess.digitalEmployeeName ?? sess.agent ?? '岗位专家')
@@ -2078,9 +2118,62 @@ export function useChat(agentMeta?: { name: string }) {
         sessionMode: opts?.sessionMode ?? sess.sessionMode,
         runMode: opts?.runMode ?? sess.runMode,
         reasoningEffort: opts?.reasoningEffort ?? sess.reasoningEffort,
+        clientMsgId: userMsg.clientMsgId,
       });
     }, isMockChatMode() ? 200 : 0);
   }, [state.activeId, state.sessions, launchReply]);
+
+  const clearTurnRecovery = useCallback(() => {
+    if (turnRecoveryRef.current) {
+      clearInterval(turnRecoveryRef.current);
+      turnRecoveryRef.current = null;
+    }
+  }, []);
+
+  const recoverPendingTurn = useCallback(async (sid: string): Promise<'running' | 'done' | 'cancelled' | 'idle'> => {
+    if (isMockChatMode()) return 'idle';
+    const sess = state.sessions[sid];
+    if (!sess) return 'idle';
+    const pending = sess.pendingTurn;
+    const inflightCorr = sess.messages.find((m) => m.status === 'in_flight')?.correlationId;
+    const corr = pending?.correlationId ?? inflightCorr;
+    if (!corr) return 'idle';
+    const convId = sess.conversationId ?? sid;
+    if (/^s_/.test(convId)) return 'idle';
+
+    const applyStatus = (status: Awaited<ReturnType<typeof fetchCopilotTurnStatus>>) => {
+      if (!status) return 'running' as const;
+      if (status.status === 'running' && !status.hasAssistantReply) {
+        dispatch({ type: 'set_typing', typing: true });
+        return 'running' as const;
+      }
+      if (status.status === 'done' || status.hasAssistantReply) {
+        dispatch({ type: 'update_session', sid, patch: { pendingTurn: undefined } });
+        dispatch({ type: 'set_typing', typing: false });
+        clearTurnRecovery();
+        return 'done' as const;
+      }
+      if (status.status === 'cancelled' || status.status === 'failed') {
+        dispatch({ type: 'update_session', sid, patch: { pendingTurn: undefined } });
+        dispatch({ type: 'set_typing', typing: false });
+        clearTurnRecovery();
+        return 'cancelled' as const;
+      }
+      return 'running' as const;
+    };
+
+    const outcome = applyStatus(await fetchCopilotTurnStatus(convId, corr));
+    if (outcome !== 'running') return outcome;
+    if (!turnRecoveryRef.current) {
+      turnRecoveryRef.current = setInterval(() => {
+        void fetchCopilotTurnStatus(convId, corr).then((status) => {
+          const next = applyStatus(status);
+          if (next !== 'running') clearTurnRecovery();
+        });
+      }, TURN_RECOVERY_POLL_MS);
+    }
+    return 'running';
+  }, [clearTurnRecovery, state.sessions]);
 
   const delMessage = useCallback((mid: string) => {
     if (state.activeId) dispatch({ type: 'del_msg', sid: state.activeId, mid });
@@ -2462,6 +2555,7 @@ export function useChat(agentMeta?: { name: string }) {
     replaceAndSend,
     stop,
     regenerate,
+    recoverPendingTurn,
     delMessage,
     appendLocalAssistant,
     clearActiveMessages,

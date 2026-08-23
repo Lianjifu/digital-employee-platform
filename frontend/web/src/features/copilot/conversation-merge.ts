@@ -97,6 +97,44 @@ function stamp(message: ChatMessageEx): number {
   return Number.isFinite(t) ? t : 0;
 }
 
+function sameText(a?: string, b?: string): boolean {
+  return (a ?? '').trim() === (b ?? '').trim();
+}
+
+/** 折叠相邻重复回合（同用户文案 + 同助手 correlationId 或正文）。 */
+export function collapseDuplicateTurns(messages: ChatMessageEx[]): ChatMessageEx[] {
+  if (messages.length < 4) return messages;
+  const out: ChatMessageEx[] = [];
+  for (let i = 0; i < messages.length; i += 1) {
+    const u1 = messages[i];
+    const a1 = messages[i + 1];
+    const u2 = messages[i + 2];
+    const a2 = messages[i + 3];
+    if (
+      u1?.role === 'user'
+      && a1?.role === 'assistant'
+      && u2?.role === 'user'
+      && a2?.role === 'assistant'
+      && sameText(u1.content, u2.content)
+      && (
+        (u1.correlationId && u1.correlationId === u2.correlationId)
+        || (u1.clientMsgId && u1.clientMsgId === u2.clientMsgId)
+        || sameText(a1.content, a2.content)
+        || (a1.correlationId && a1.correlationId === a2.correlationId)
+      )
+    ) {
+      const keepAssistant = a2.status === 'succeeded' || (a1.status !== 'succeeded' && stamp(a2) >= stamp(a1))
+        ? a2
+        : a1;
+      out.push(u1, keepAssistant);
+      i += 3;
+      continue;
+    }
+    out.push(u1);
+  }
+  return out;
+}
+
 /** 是否应跳过用服务端快照整表覆盖本地（在线回合保护）。 */
 export function shouldSkipConversationHydrate(opts: {
   typing?: boolean;
@@ -175,7 +213,7 @@ export function resolveHydratedMessages(opts: {
     return { messages: opts.localMessages, reason: skip, applied: false };
   }
   return {
-    messages: orderAssistantSegments(mergeConversationMessages(opts.localMessages, opts.serverMessages)),
+    messages: orderAssistantSegments(collapseDuplicateTurns(mergeConversationMessages(opts.localMessages, opts.serverMessages))),
     reason: 'apply',
     applied: true,
   };
