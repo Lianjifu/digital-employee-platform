@@ -88,6 +88,30 @@ func officeSkillName(name string) bool {
 		strings.Contains(n, "幻灯") || strings.Contains(n, "表格")
 }
 
+// isSandboxArtifactSkillInvocation identifies skill runs that only materialize downloadable
+// artifacts in the skill sandbox (e.g. builtin docx), safe in plan/investigate mode.
+func isSandboxArtifactSkillInvocation(tool *registeredTool, sk map[string]any, call toolCallRequest, action string) bool {
+	if tool == nil || tool.Kind != "skill" || action != skillActionRun {
+		return false
+	}
+	cmd := skillCommandFromArgs(call.Args)
+	if looksLikeSkillScriptCommand(cmd) {
+		return false
+	}
+	name := coalesce(str(sk["name"]), tool.Name)
+	if isDocxSkillName(tool.Name) || isDocxSkillName(name) {
+		return str(call.Args["content"]) != "" || str(call.Args["title"]) != "" ||
+			str(call.Args["input"]) != "" || str(call.Args["command"]) == ""
+	}
+	if sk != nil {
+		enrichSkillMetadata(sk)
+		if boolFrom(sk["producesArtifacts"]) && (isDocxSkillName(name) || officeSkillName(name)) {
+			return str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != ""
+		}
+	}
+	return false
+}
+
 func skillInvocationNeedsApproval(sessionMode string, tool *registeredTool, sk map[string]any, call toolCallRequest) bool {
 	if tool == nil || tool.Kind != "skill" {
 		return false
@@ -104,6 +128,9 @@ func skillInvocationNeedsApproval(sessionMode string, tool *registeredTool, sk m
 		}
 	}
 	if action == skillActionOpen || action == skillActionArtifacts {
+		return false
+	}
+	if isSandboxArtifactSkillInvocation(tool, sk, call, action) {
 		return false
 	}
 	if normalizeSessionMode(sessionMode) != sessionModeExecute {
@@ -178,7 +205,12 @@ func (s *Server) runSkillTool(ctx toolRunContext, t *registeredTool, call toolCa
 	}
 
 	if (action == skillActionRun || action == skillActionWrite) && normalizeSessionMode(ctx.SessionMode) == sessionModeInvestigate {
-		return denySkillWriteInInvestigate()
+		if action == skillActionWrite || looksLikeSkillScriptCommand(skillCommandFromArgs(call.Args)) {
+			return denySkillWriteInInvestigate()
+		}
+		if !isSandboxArtifactSkillInvocation(t, nil, call, action) {
+			return denySkillWriteInInvestigate()
+		}
 	}
 
 	sk := s.resolveSkillForTool(ws, t, skillID)

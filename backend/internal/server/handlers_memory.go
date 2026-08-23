@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
+	"github.com/digital-employee-platform/backend/internal/store"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
@@ -611,7 +612,7 @@ func (s *Server) listMemoryAudits(r *http.Request) (any, error) {
 	if out == nil {
 		out = []map[string]any{}
 	}
-	return out, nil
+	return store.DedupeMapsByID(out), nil
 }
 
 type runtimeMemoryInput struct {

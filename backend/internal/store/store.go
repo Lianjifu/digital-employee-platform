@@ -160,10 +160,17 @@ func (s *Store) ID(prefix string) string {
 
 // BumpSeqFromPrefixedIDs advances the ID counter past existing "{prefix}-N" values (post-hydrate).
 func (s *Store) BumpSeqFromPrefixedIDs(prefix string) {
+	s.bumpSeqFromMaps(prefix, s.Skills)
+}
+
+func (s *Store) bumpSeqFromMaps(prefix string, items []map[string]any) {
 	prefixDash := prefix + "-"
 	var max uint64
-	for _, sk := range s.Skills {
-		id := str(sk["id"])
+	if cur := s.seq.Load(); cur > max {
+		max = cur
+	}
+	for _, item := range items {
+		id := str(item["id"])
 		if !strings.HasPrefix(id, prefixDash) {
 			continue
 		}

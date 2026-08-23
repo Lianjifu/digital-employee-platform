@@ -239,6 +239,7 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 	if finalText == "" {
 		finalText = "（未生成回复）"
 	}
+	finalText = enrichCopilotFinalText(finalText, toolCalls, in.UserMessage)
 
 	if !in.SkipStream {
 		streamOpts := &streamAnswerOpts{

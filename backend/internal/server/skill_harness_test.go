@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/digital-employee-platform/backend/internal/auth"
+	"github.com/digital-employee-platform/backend/internal/store"
 )
 
 func TestNormalizeSkillActionAndScriptCommand(t *testing.T) {
@@ -92,13 +95,33 @@ func TestSkillRunNeedsInstructionWithoutScript(t *testing.T) {
 func TestInvestigateDeniesSkillRun(t *testing.T) {
 	s := &Server{}
 	tool := &registeredTool{Name: "pptx", Kind: "skill", Key: "skill:pptx"}
-	// Without skill in store, resolve fails — still should deny write in investigate before resolve for action=run
-	// Actually runSkillTool checks investigate before resolve... after action resolve. Good.
-	// Need skill in findWorkspaceSkill — without store it fails "技能不存在" after investigate check.
 	res := s.runSkillTool(toolRunContext{WorkspaceID: "w-none", SessionMode: sessionModeInvestigate}, tool, toolCallRequest{
 		Name: "pptx", Args: map[string]any{"action": "run", "command": "scripts/a.py"},
 	}, time.Now())
 	if res.Status != "denied" || res.Permission != "session_mode" {
 		t.Fatalf("expected session_mode deny, got %#v", res)
+	}
+}
+
+func TestInvestigateAllowsDocxBuiltinRun(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DE_SKILL_ARTIFACT_DIR", dir)
+	s := &Server{Store: store.New()}
+	s.Store.EnsureDocxSkillReady()
+	tool := &registeredTool{Name: "docx", Kind: "skill", Key: "skill:docx", Mode: toolModeExecute, Enabled: true}
+	res := s.runSkillTool(toolRunContext{
+		WorkspaceID: "w1", SessionMode: sessionModeInvestigate,
+		Viewer: &auth.Identity{ID: "u1", Name: "测试"},
+		UserMessage: "生成入职材料清单通知",
+	}, tool, toolCallRequest{
+		Name: "docx", Args: map[string]any{
+			"action": "run", "title": "入职材料清单通知", "content": "一、材料清单\n1. 身份证",
+		},
+	}, time.Now())
+	if res.Status != "success" {
+		t.Fatalf("docx builtin should succeed in investigate, got %#v", res)
+	}
+	if !strings.Contains(res.Output, "/api/skill-artifacts/") {
+		t.Fatalf("missing artifact link: %s", res.Output)
 	}
 }

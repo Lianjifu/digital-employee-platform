@@ -17,9 +17,12 @@ func TestNormalizeSessionModeAndFilter(t *testing.T) {
 		{Key: "skill:docx", Name: "docx", Kind: "skill", Mode: toolModeApproval, Enabled: true, RequiresApproval: true},
 	}
 	out := filterRegistryBySessionMode(reg, sessionModeInvestigate)
+	if len(out) != 2 {
+		t.Fatalf("investigate should keep docx allowlist skill, got %d", len(out))
+	}
 	for _, t0 := range out {
-		if t0.RequiresApproval && t0.Kind == "skill" {
-			t.Fatalf("investigate should strip approval skills")
+		if t0.Key == "skill:docx" && !t0.Enabled {
+			t.Fatalf("docx should stay enabled in investigate for sandbox artifact runs")
 		}
 	}
 	out2 := filterRegistryBySessionMode(reg, sessionModeExecute)

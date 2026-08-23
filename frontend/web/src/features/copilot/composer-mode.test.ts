@@ -55,6 +55,17 @@ describe('composer-mode', () => {
     expect(d.enabledTools).toContain('skill:obsidian');
   });
 
+  it('keeps approval-required office skills enabled in plan mode', () => {
+    const withOffice: CopilotToolDef[] = [
+      ...tools,
+      { key: 'skill:docx', name: 'docx', desc: '', kind: 'skill', group: 'skill', requiresApproval: true },
+      { key: 'skill:pptx', name: 'pptx', desc: '', kind: 'skill', group: 'skill', requiresApproval: true },
+    ];
+    const d = mapRunModeToDispatch('plan', withOffice, ['skill:docx', 'skill:pptx']);
+    expect(d.enabledTools).toContain('skill:docx');
+    expect(d.enabledTools).toContain('skill:pptx');
+  });
+
   it('maps agent to execute + react with approval tools', () => {
     const d = mapRunModeToDispatch('agent', tools, ['read_file']);
     expect(d.sessionMode).toBe('execute');

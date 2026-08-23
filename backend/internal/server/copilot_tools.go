@@ -319,7 +319,8 @@ func authorizeToolCall(reg []registeredTool, call toolCallRequest) (*registeredT
 			Status: "denied", Error: "工具未在本会话启用：" + t.Name, Permission: "disabled",
 		}
 	}
-	if t.RequiresApproval {
+	// Skill approval is per-action (open vs run/write) in dispatchAuthorizedTool.
+	if t.RequiresApproval && t.Kind != "skill" {
 		return t, &toolExecResult{
 			Status: "denied", Error: "工具需要人工审核授权后才能执行：" + t.Name, Permission: "approval_required",
 		}

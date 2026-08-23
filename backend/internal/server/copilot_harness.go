@@ -59,6 +59,8 @@ func (s *Server) runHarnessTurn(ctx context.Context, in reactTurnInput) reactTur
 	out.PolicyLevel = usedLevel
 	out.PolicyID = policyID
 
+	out.Text = enrichCopilotFinalText(out.Text, out.ToolCalls, in.UserMessage)
+
 	streamOpts := &streamAnswerOpts{
 		ReplyMode: in.ReplyMode, SegmentPolicy: in.SegmentPolicy, CorrelationID: in.CorrelationID,
 		FirstMessageID: in.FirstMessageID, IDGen: idGen,

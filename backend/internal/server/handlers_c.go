@@ -749,6 +749,10 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	if toolCalls == nil {
 		toolCalls = []map[string]any{}
 	}
+	full = enrichCopilotFinalText(full, toolCalls, userMsg)
+	docTitle := normalizeDocxTitle(coalesce(inferDocxTitleFromMessage(userMsg), inferDocxTitleFromMessage(full)))
+	docBody := resolveDocxBodyFromExecution(nil, userMsg, full, nil)
+	full = ensureSkillArtifactsInOutput(full, docTitle, docBody)
 	mode := coalesce(reactOut.Mode, modeReact)
 
 	// 5) meter (+ optional model budget hard gate)
@@ -764,12 +768,16 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	s.recordUsageWS(ws, "copilot", units, corr)
 	emit("stage", "meter", map[string]any{"status": "ok", "units": units})
 
-	segments := reactOut.Segments
-	if len(segments) == 0 {
-		segments = buildSegmentsFromTurn(full, reactOut, replyMode, segmentPolicy, firstMessageID, segIDGen, nil)
-	}
+	segments := buildSegmentsFromTurn(full, reactOut, replyMode, segmentPolicy, firstMessageID, segIDGen, nil)
 	if len(segments) == 0 && strings.TrimSpace(full) != "" {
 		segments = []AssistantSegment{{ID: firstMessageID, Kind: segmentKindBody, Content: full}}
+	}
+	for i, seg := range segments {
+		emit(contract.StreamMessageDone, "runtime", map[string]any{
+			"type": contract.StreamMessageDone, "messageId": seg.ID,
+			"segmentIndex": len(ackPersisted) + i, "kind": seg.Kind, "title": seg.Title,
+			"content": seg.Content,
+		})
 	}
 	assistantNow := time.Now().UTC().Format(time.RFC3339)
 	sharedMeta := map[string]any{

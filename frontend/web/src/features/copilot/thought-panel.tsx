@@ -26,6 +26,17 @@ export function ThoughtPanel({ message, streaming }: Props) {
     else setExpanded(false);
   }, [streaming, message.id]);
 
+  if (!hasContent && streaming) {
+    return (
+      <div className="copilot-message__thought max-w-[920px] rounded-md border border-dashed border-[var(--border)] bg-[var(--bg-elevated)]/60 px-3 py-2 text-[11px] text-[var(--text-muted)]">
+        <span className="inline-flex items-center gap-2">
+          <Brain className="h-3 w-3 shrink-0 text-[var(--brand)]" />
+          正在准备推理与工具调用，复杂任务可能需要数十秒…
+        </span>
+      </div>
+    );
+  }
+
   if (!hasContent) return null;
 
   const durationLabel = formatDuration(message.metrics?.durationMs);

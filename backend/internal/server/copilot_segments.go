@@ -362,7 +362,7 @@ func streamHarnessAnswer(emit reactEmitFunc, finalText, modelID string, rt resol
 	if opts != nil {
 		live = opts.LiveStream
 	}
-	if live != nil && live.Active() {
+	if live != nil && live.started {
 		streamed := live.StreamedSegmentCount()
 		live.FinishOpenSegment()
 		segs := buildSegmentsFromTurn(finalText, reactTurnResult{}, replyMode, segmentPolicy, firstID, idGen, pre)
@@ -390,10 +390,7 @@ func streamHarnessAnswer(emit reactEmitFunc, finalText, modelID string, rt resol
 		return []AssistantSegment{{ID: coalesce(firstID, ""), Kind: segmentKindBody, Content: finalText}}
 	}
 	if len(segs) <= 1 && replyMode != replyModeSingle {
-		// 拆段失败，降级单气泡
-		for _, c := range chunkText(finalText, 28) {
-			emit("delta", "runtime", map[string]any{"text": c, "modelId": modelID})
-		}
+		emitSegmentStream(emit, segs, coalesce(rt.ModelID, modelID), corr, replyMode)
 		return segs
 	}
 	emitSegmentStream(emit, segs, coalesce(rt.ModelID, modelID), corr, replyMode)

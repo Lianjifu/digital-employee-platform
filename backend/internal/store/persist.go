@@ -487,7 +487,8 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 			s.MemoryPolicies[ws] = p
 		}
 	case "memory_audits":
-		s.MemoryAudits = items
+		s.MemoryAudits = dedupeMapsByID(items)
+		s.bumpSeqFromMaps("ma", items)
 	case "channel_dlq":
 		s.ChannelDLQ = items
 	case "channel_deploys":

@@ -7,6 +7,7 @@ import {
   approvalToolKeys,
   defaultEnabledToolKeys,
   ensureDefaultSkillsEnabled,
+  isOfficeDocumentTool,
   toolsForExecuteMode,
 } from './expert-tools';
 
@@ -115,7 +116,9 @@ export function mapRunModeToDispatch(
     case 'plan': {
       const filtered = (currentEnabled ?? []).filter((k) => {
         const t = available.find((x) => x.key === k);
-        return t && !t.requiresApproval && !t.unavailable;
+        if (!t || t.unavailable) return false;
+        if (!t.requiresApproval) return true;
+        return isOfficeDocumentTool(t);
       });
       return {
         sessionMode: 'investigate',

@@ -1665,6 +1665,36 @@ export default function Copilot() {
   const hasStreamingAssistant = Boolean(
     currentSession?.messages.some((message) => message.role === 'assistant' && message.status === 'streaming'),
   );
+  const isGenerating = chat.state.typing || hasStreamingAssistant;
+  const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
+  const [generationTick, setGenerationTick] = useState(0);
+  useEffect(() => {
+    if (!isGenerating) {
+      setGenerationStartedAt(null);
+      return;
+    }
+    setGenerationStartedAt((prev) => prev ?? Date.now());
+    const timer = window.setInterval(() => setGenerationTick((v) => v + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, [isGenerating]);
+  const generationElapsedSec = generationStartedAt
+    ? Math.max(0, Math.floor((Date.now() - generationStartedAt) / 1000))
+    : 0;
+  void generationTick;
+  const streamingAssistant = useMemo(
+    () => currentSession?.messages.find((message) => message.role === 'assistant' && message.status === 'streaming'),
+    [currentSession?.messages],
+  );
+  const latestReasoningTitle = streamingAssistant?.reasoningSteps?.[streamingAssistant.reasoningSteps.length - 1]?.title;
+  const generationHint = !isGenerating
+    ? ''
+    : latestReasoningTitle
+      ? `正在执行：${latestReasoningTitle}`
+      : generationElapsedSec >= 20
+        ? '任务较复杂，仍在处理中。可继续等待，或点击停止后重试。'
+        : generationElapsedSec >= 6
+          ? '模型与工具链处理中，首段内容即将出现…'
+          : '已收到请求，正在连接模型与准备上下文…';
   const showTypingFallback = chat.state.typing && !hasStreamingAssistant;
   const renderMessageBubble = (m: ChatMessageEx) => (
     <MessageBubble
@@ -2030,7 +2060,9 @@ export default function Copilot() {
               <div className="min-w-0">
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
                   <span className="copilot-work-title truncate font-semibold">{workbench.title}</span>
-                  <Badge tone={workbench.tone === 'warning' ? 'warn' : 'brand'} className="shrink-0 text-[10px]">{workbench.pendingApprovals ? '待处置' : runMode === 'agent' ? '执行中' : runMode === 'ask' ? '问答中' : '方案中'}</Badge>
+                  <Badge tone={workbench.tone === 'warning' ? 'warn' : isGenerating ? 'info' : 'brand'} className="shrink-0 text-[10px]">
+                    {workbench.pendingApprovals ? '待处置' : isGenerating ? '生成中' : runMode === 'agent' ? '执行模式' : runMode === 'ask' ? '问答中' : '方案中'}
+                  </Badge>
                   {riskLevel !== 'low' && <Badge tone={riskLevel === 'high' ? 'error' : 'warn'} className="shrink-0 text-[10px]">{riskLevel === 'high' ? '高风险' : '中风险'}</Badge>}
                 </div>
                 {(workbench.nextAction || handoffActive) && (
@@ -2140,6 +2172,31 @@ export default function Copilot() {
                     role="status"
                   >
                     模型上下文仅保留最近约 {COPILOT_LLM_HISTORY_TURNS} 轮对话；更早消息仍可在列表中浏览，跨会话要点会写入工作记忆供后续检索。
+                  </div>
+                )}
+
+                {isGenerating && (
+                  <div
+                    className="mx-4 sm:mx-8 md:mx-12 mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--brand)]/25 bg-[var(--brand-light)]/35 px-3 py-2 text-[11px] leading-relaxed text-[var(--text-secondary)]"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <div className="inline-flex min-w-0 items-center gap-2">
+                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--brand)]" />
+                      <span className="truncate">{generationHint}</span>
+                      {generationElapsedSec > 0 && (
+                        <span className="font-mono text-[10px] text-[var(--text-muted)]">{generationElapsedSec}s</span>
+                      )}
+                    </div>
+                    {chat.state.typing && (
+                      <button
+                        type="button"
+                        onClick={() => chat.stop()}
+                        className="shrink-0 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-[10px] font-medium text-[var(--text)] hover:border-[var(--danger)]/40 hover:text-[var(--danger)]"
+                      >
+                        停止生成
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -2805,7 +2862,7 @@ export default function Copilot() {
             </div>
             <div className="copilot-agent-details__status-row">
               <span className={cn('copilot-agent-details__status-dot', handoffActive || runMode === 'agent' ? 'copilot-agent-details__status-dot--warning' : 'copilot-agent-details__status-dot--active')} aria-hidden="true" />
-              <Badge tone={handoffActive || runMode === 'agent' ? 'warn' : 'brand'} className="text-[10px]">{handoffActive ? '人工接管中' : runMode === 'agent' ? '执行中' : runMode === 'ask' ? '问答中' : '方案中'}</Badge>
+              <Badge tone={handoffActive || runMode === 'agent' ? 'warn' : isGenerating ? 'info' : 'brand'} className="text-[10px]">{handoffActive ? '人工接管中' : isGenerating ? '生成中' : runMode === 'agent' ? '执行模式' : runMode === 'ask' ? '问答中' : '方案中'}</Badge>
               <span className={cn('copilot-agent-details__risk', riskLevel === 'high' ? 'copilot-agent-details__risk--high' : riskLevel === 'medium' ? 'copilot-agent-details__risk--medium' : 'copilot-agent-details__risk--low')}>
                 风险 {riskLevel === 'high' ? '高' : riskLevel === 'medium' ? '中' : '低'}
               </span>
@@ -3580,7 +3637,7 @@ function MessageBubble({
                 <span key={i} style={{ animationDelay: `${i * 0.15}s` }} />
               ))}
             </span>
-            <span>正在思考</span>
+            <span>{(m.reasoningSteps?.length ?? 0) > 0 ? '正在生成回复…' : '正在思考'}</span>
           </div>
         ) : null}
 

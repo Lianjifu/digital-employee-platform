@@ -22,6 +22,7 @@ import {
   readMemoryPageSize,
   sortMemoryRecordsByRecency,
 } from '@/features/memory/record-list';
+import { dedupeMemoryAudits, memoryAuditReactKey } from '@/features/memory/audit-list';
 
 type Tab = 'overview' | 'short_term' | 'working' | 'long_term' | 'candidates' | 'governance';
 type StatusFilter = 'active' | 'all' | MemoryStatus;
@@ -119,6 +120,7 @@ export default function Memory() {
   const evolveCands = useApiQuery<EvolveCandidate[]>(['evolve', 'candidates'], '/api/evolve/candidates');
   const policy = useApiQuery<MemoryPolicy>(['memory', 'policy'], '/api/memory/policy');
   const audit = useApiQuery<MemoryAuditEvent[]>(['memory', 'audit'], '/api/memory/audit');
+  const auditItems = useMemo(() => dedupeMemoryAudits(audit.data ?? []), [audit.data]);
   const employees = useApiQuery<DigitalEmployee[]>(['digital-employees'], '/api/digital-employees');
 
   const expire = useApiMutation<MemoryRecord, { id: string }>(({ id }) => `/api/memory/records/${id}/expire`);
@@ -236,7 +238,7 @@ export default function Memory() {
             <Overview
               records={records.data ?? []}
               policy={activePolicy}
-              audit={audit.data ?? []}
+              audit={auditItems}
               employees={employees.data ?? []}
               employeeFilter={employeeFilter}
               selectedEmployee={selectedEmployee}
@@ -285,7 +287,7 @@ export default function Memory() {
           {tab === 'governance' && (
             <GovernanceProgressive
               policy={policy.data}
-              audit={audit.data ?? []}
+              audit={auditItems}
               evolveItems={evolveCands.data ?? []}
               canMutate={canMutate}
               onUpdate={(patch) => updatePolicy.mutate(patch, { onSuccess: () => toast.success('记忆策略已更新并写入审计'), onError: report })}
@@ -483,8 +485,8 @@ function Overview({
           </div>
           {audit.length ? (
             <div className="memory-audit-list">
-              {audit.slice(0, 4).map((event) => (
-                <div key={event.id} className="memory-audit-item">
+              {audit.slice(0, 4).map((event, index) => (
+                <div key={memoryAuditReactKey(event, index)} className="memory-audit-item">
                   <div>
                     <strong>{event.action}</strong>
                     <p>{event.target}</p>
@@ -1012,8 +1014,8 @@ function GovernanceProgressive({
         </div>
         {audit.length ? (
           <div className="memory-audit-list memory-audit-list--tall">
-            {audit.map((event) => (
-              <div key={event.id} className="memory-audit-item">
+            {audit.map((event, index) => (
+              <div key={memoryAuditReactKey(event, index)} className="memory-audit-item">
                 <div>
                   <strong>{event.action}</strong>
                   <p>{event.target}</p>

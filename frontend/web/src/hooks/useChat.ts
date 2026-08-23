@@ -820,6 +820,23 @@ function loadState(): State | null {
       activeCorrelationId: null,
       typing: false,
       abortRef: { current: null },
+      sessions: Object.fromEntries(
+        Object.entries(parsed.sessions as Record<string, ChatSession>).map(([id, sess]) => [
+          id,
+          {
+            ...sess,
+            messages: (sess.messages ?? []).map((m) => (
+              m.status === 'streaming'
+                ? {
+                  ...m,
+                  status: 'cancelled' as const,
+                  error: m.error ?? { category: 'network' as const, message: '页面刷新导致生成中断', retryable: true },
+                }
+                : m
+            )),
+          },
+        ]),
+      ),
     } as State;
   } catch {
     return null;
@@ -1135,6 +1152,7 @@ export function useChat(agentMeta?: { name: string }) {
         return mid;
       };
       let reasoningMid = replyId;
+      let streamCompleted = false;
       const patchSegment = (mid: string, status: ChatMessageEx['status'] = 'streaming') => {
         const body = segmentRouter.segments.get(mid)?.content ?? '';
         const base = segmentPlaceholders.get(mid) ?? placeholder;
@@ -1473,54 +1491,64 @@ export function useChat(agentMeta?: { name: string }) {
           return;
         }
         if (typ === 'done') {
-          applySegmentSSEEvent(segmentRouter, data);
-          const provenance = Array.isArray(data.memoryProvenance) ? data.memoryProvenance : undefined;
-          const metrics: MessageMetrics = {
-            model: resolvedModel,
-            provider: resolvedSource ? `${resolvedProvider}/${resolvedSource}` : resolvedProvider,
-            ttftMs: firstChunkAt ? firstChunkAt - startedAt : Date.now() - startedAt,
-            durationMs: Date.now() - startedAt,
-            completionTokens: Math.round(content.length * 0.4),
-            memoryHits: typeof data.memoryHits === 'number' ? data.memoryHits : provenance?.length,
-            ragHits: typeof data.ragHits === 'number' ? data.ragHits : undefined,
-            snapshotId: typeof data.snapshotId === 'string' ? data.snapshotId : undefined,
-            memoryProvenance: provenance,
-          };
-          for (const mid of segmentRouter.segments.keys()) {
-            const body = segmentRouter.segments.get(mid)?.content ?? '';
-            const base = segmentPlaceholders.get(mid) ?? placeholder;
-            const finalMsg: ChatMessageEx = {
-              ...base,
-              content: body,
-              reasoningSteps: mid === reasoningMid ? [...reasoningSteps] : base.reasoningSteps ?? [],
-              toolCalls: mid === reasoningMid ? [...toolCalls] : base.toolCalls ?? [],
-              citations: mid === reasoningMid ? [...citations] : base.citations ?? [],
-              memoryProvenance: mid === reasoningMid ? provenance : base.memoryProvenance,
-              metrics,
-              status: 'succeeded',
-              serverMsgId: (mid === replyId && typeof data.messageId === 'string' && data.messageId)
-                ? data.messageId
-                : base.serverMsgId ?? uid('srv_'),
-            };
-            dispatch({ type: 'replace_msg', sid, mid, msg: finalMsg });
-          }
-          dispatch({ type: 'order_segment_messages', sid, correlationId: correlationIdStr });
-          dispatch({
-            type: 'update_request',
-            id: reqId,
-            patch: {
-              status: 'success',
-              durationMs: Date.now() - startedAt,
-              ttftMs: firstChunkAt ? firstChunkAt - startedAt : 0,
-              completionTokens: Math.round(content.length * 0.4),
-              model: resolvedModel,
-            },
-          });
-          dispatch({ type: 'set_typing', typing: false });
-          dispatch({ type: 'set_abort', ctrl: null });
-          dispatch({ type: 'set_active_correlation', id: null });
-          if (timeoutRef.current) clearTimeout(timeoutRef.current);
+          completeStream(data);
+          return;
         }
+      };
+
+      const completeStream = (data: CopilotSSEEvent = {}) => {
+        if (streamCompleted) return;
+        streamCompleted = true;
+        applySegmentSSEEvent(segmentRouter, data);
+        const provenance = Array.isArray(data.memoryProvenance) ? data.memoryProvenance : undefined;
+        const metrics: MessageMetrics = {
+          model: resolvedModel,
+          provider: resolvedSource ? `${resolvedProvider}/${resolvedSource}` : resolvedProvider,
+          ttftMs: firstChunkAt ? firstChunkAt - startedAt : Date.now() - startedAt,
+          durationMs: Date.now() - startedAt,
+          completionTokens: Math.round(content.length * 0.4),
+          memoryHits: typeof data.memoryHits === 'number' ? data.memoryHits : provenance?.length,
+          ragHits: typeof data.ragHits === 'number' ? data.ragHits : undefined,
+          snapshotId: typeof data.snapshotId === 'string' ? data.snapshotId : undefined,
+          memoryProvenance: provenance,
+        };
+        const segmentIds = segmentRouter.segments.size > 0
+          ? [...segmentRouter.segments.keys()]
+          : [replyId];
+        for (const mid of segmentIds) {
+          const body = segmentRouter.segments.get(mid)?.content ?? '';
+          const base = segmentPlaceholders.get(mid) ?? placeholder;
+          const finalMsg: ChatMessageEx = {
+            ...base,
+            content: body,
+            reasoningSteps: mid === reasoningMid ? [...reasoningSteps] : base.reasoningSteps ?? [],
+            toolCalls: mid === reasoningMid ? [...toolCalls] : base.toolCalls ?? [],
+            citations: mid === reasoningMid ? [...citations] : base.citations ?? [],
+            memoryProvenance: mid === reasoningMid ? provenance : base.memoryProvenance,
+            metrics,
+            status: 'succeeded',
+            serverMsgId: (mid === replyId && typeof data.messageId === 'string' && data.messageId)
+              ? data.messageId
+              : base.serverMsgId ?? uid('srv_'),
+          };
+          dispatch({ type: 'replace_msg', sid, mid, msg: finalMsg });
+        }
+        dispatch({ type: 'order_segment_messages', sid, correlationId: correlationIdStr });
+        dispatch({
+          type: 'update_request',
+          id: reqId,
+          patch: {
+            status: 'success',
+            durationMs: Date.now() - startedAt,
+            ttftMs: firstChunkAt ? firstChunkAt - startedAt : 0,
+            completionTokens: Math.round(content.length * 0.4),
+            model: resolvedModel,
+          },
+        });
+        dispatch({ type: 'set_typing', typing: false });
+        dispatch({ type: 'set_abort', ctrl: null });
+        dispatch({ type: 'set_active_correlation', id: null });
+        if (timeoutRef.current) clearTimeout(timeoutRef.current);
       };
 
       void streamCopilotTurn({
@@ -1542,6 +1570,10 @@ export function useChat(agentMeta?: { name: string }) {
         replyMode: opts?.replyMode ?? DEFAULT_REPLY_MODE,
         signal: ctrl.signal,
         onEvent,
+      }).then(() => {
+        if (!streamCompleted) {
+          completeStream({});
+        }
       }).catch((err: unknown) => {
         if (ctrl.signal.aborted) {
           dispatch({ type: 'update_request', id: reqId, patch: { status: 'aborted', durationMs: Date.now() - startedAt } });
@@ -1869,8 +1901,14 @@ export function useChat(agentMeta?: { name: string }) {
       const sid = state.activeId;
       const sess = state.sessions[sid];
       if (sess) {
-        const m = sess.messages.find((x) => x.correlationId === corr);
-        if (m) dispatch({ type: 'set_msg_status', sid, mid: m.id, status: 'cancelled' });
+        const streaming = sess.messages.filter((x) => x.correlationId === corr && x.status === 'streaming');
+        for (const m of streaming) {
+          dispatch({ type: 'set_msg_status', sid, mid: m.id, status: 'cancelled' });
+        }
+        if (!streaming.length) {
+          const m = sess.messages.find((x) => x.correlationId === corr);
+          if (m) dispatch({ type: 'set_msg_status', sid, mid: m.id, status: 'cancelled' });
+        }
       }
       dispatch({ type: 'set_active_correlation', id: null });
       if (!isMockChatMode()) {

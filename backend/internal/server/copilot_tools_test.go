@@ -37,8 +37,12 @@ func TestBuildToolRegistry_DenyDisabledAndProhibited(t *testing.T) {
 		t.Fatal("docx listed in enabledTools stays in registry as enabled; authorize must deny")
 	}
 	_, deny := authorizeToolCall(reg, toolCallRequest{Name: "docx", Args: map[string]any{}})
-	if deny == nil || deny.Permission != "approval_required" {
-		t.Fatalf("expected approval_required deny, got %#v", deny)
+	if deny != nil {
+		t.Fatalf("skill open should pass authorize; approval is per-action, got %#v", deny)
+	}
+	_, denyRun := authorizeToolCall(reg, toolCallRequest{Name: "docx", Args: map[string]any{"action": "run", "title": "测试", "content": "正文"}})
+	if denyRun != nil {
+		t.Fatalf("sandbox docx run should pass authorize, got %#v", denyRun)
 	}
 	if !by["builtin:knowledge.retrieve"].Enabled {
 		t.Fatal("builtin knowledge should stay enabled when only employee tools are selected")

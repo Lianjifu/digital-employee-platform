@@ -205,6 +205,10 @@ func filterRegistryBySessionMode(reg []registeredTool, mode string) []registered
 		}
 		// investigate: keep builtins + recommend/execute non-approval skills
 		if t.Kind == "skill" && t.RequiresApproval {
+			if isAllowlistedExecutableTool(t.Name, t.Kind) {
+				t.Enabled = true
+				out = append(out, t)
+			}
 			continue
 		}
 		out = append(out, t)
