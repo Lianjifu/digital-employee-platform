@@ -16,6 +16,9 @@ import (
 var generalPackSkillNames = []string{
 	"weather", "summarize", "github", "docx", "pdf", "pptx",
 	"frontend-design", "web-design-guidelines", "diagram-maker", "gog",
+	"general-logic-thinking-assistant",
+	"general-problem-solving-analysis-assistant",
+	"general-creative-decision-assistant",
 }
 
 var tierDOptInSkillNames = []string{"browser-use", "1password"}
@@ -469,6 +472,7 @@ func (s *Server) EnsureBuiltinSkillsReady() {
 		}
 	}
 	s.Store.Unlock()
+	s.ensureAllEmployeesCognitiveSkills()
 	if len(removedCatalog) > 0 {
 		s.Store.PersistDelete("skill_catalog", removedCatalog...)
 	}
@@ -482,6 +486,30 @@ func (s *Server) EnsureBuiltinSkillsReady() {
 		s.Store.PersistDelete("skill_health", removedHealth...)
 	}
 	go s.persistSkills()
+}
+
+// ensureAllEmployeesCognitiveSkills merges base cognitive skills into every employee.
+func (s *Server) ensureAllEmployeesCognitiveSkills() {
+	s.Store.Lock()
+	defer s.Store.Unlock()
+	changed := false
+	for _, emp := range s.Store.Employees {
+		before := ""
+		if caps, _ := emp["capabilities"].(map[string]any); caps != nil {
+			before = fmt.Sprintf("%v", caps["skills"])
+		}
+		ensureEmployeeCognitiveSkills(emp)
+		after := ""
+		if caps, _ := emp["capabilities"].(map[string]any); caps != nil {
+			after = fmt.Sprintf("%v", caps["skills"])
+		}
+		if before != after {
+			changed = true
+		}
+	}
+	if changed {
+		go s.Store.Persist("employees")
+	}
 }
 
 func (s *Server) ensureBuiltinCatalogLocked(manifest builtinManifest) {
@@ -525,6 +553,8 @@ func (s *Server) ensureBuiltinCatalogLocked(manifest builtinManifest) {
 			"builtinSkillName": dirName, "tier": tier,
 			"defaultPack": inGeneral, "defaultPackId": manifest.PackID,
 			"packIds": packIds, "hasScripts": meta.HasScripts,
+			"cognitive": isCognitiveSkillName(dirName),
+			"producesArtifacts": meta.HasScripts,
 			"availability": dep["availability"], "externalBins": dep["externalBins"],
 		}
 		if old, ok := existing[key]; ok {

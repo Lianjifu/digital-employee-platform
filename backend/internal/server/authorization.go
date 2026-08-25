@@ -339,6 +339,11 @@ func (s *Server) approveActionSingle(r *http.Request) (any, error) {
 	s.Store.Actions[actionID] = action
 
 	if cid != "" {
+		plan, _ := authReq["skillTurn"].(map[string]any)
+		planSummary := ""
+		if plan != nil {
+			planSummary = str(plan["summary"])
+		}
 		for i, m := range s.Store.Messages[cid] {
 			if str(m["actionId"]) == actionID {
 				m["authorizationRequest"] = authReq
@@ -346,6 +351,10 @@ func (s *Server) approveActionSingle(r *http.Request) (any, error) {
 				m["approvalRequest"] = map[string]any{
 					"action": authReq["action"], "resource": cid, "reason": authReq["reason"],
 					"required": 1, "signed": 1, "decision": "approved",
+					"skillTurn": plan, "planSummary": planSummary,
+					"approverRoleHint": authReq["approverRoleHint"],
+					"approverCandidateIds": authReq["approverCandidateIds"],
+					"approverCandidateNames": authReq["approverCandidateNames"],
 					"signers": []map[string]any{{
 						"userId": id.ID, "name": id.Name, "role": "approver",
 						"signed": true, "signedAt": now, "signatureHash": sig,

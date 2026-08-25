@@ -26,15 +26,53 @@ def artifact_dir() -> Path:
     return path
 
 
+def looks_like_code_as_docx_body(content: str) -> bool:
+    s = (content or "").strip()
+    if not s:
+        return False
+    lower = s.lower()
+    strong = (
+        "from docx import",
+        "import docx",
+        "document()",
+        "qn('w:eastasia')",
+        "wd_align_paragraph",
+        "python-docx",
+        "```python",
+        "add_heading(",
+        "add_paragraph(",
+    )
+    if any(sig in lower for sig in strong):
+        return True
+    code_lines = 0
+    for line in s.split("\n"):
+        trim = line.strip()
+        if not trim:
+            continue
+        if trim.startswith(("import ", "from ", "def ", "class ")):
+            code_lines += 1
+    return code_lines >= 2
+
+
+def looks_like_placeholder_as_docx_body(content: str) -> bool:
+    s = (content or "").strip()
+    if not s:
+        return False
+    if re.match(r"(?i)^\s*title\s*=\s*.+\s*,\s*content\s*=", s):
+        return True
+    lower = s.lower()
+    if len(s) < 160:
+        for hint in ("可编辑", "摘要", "按检索", "整理的正文", "整理的可编辑", "模板正文"):
+            if hint in lower:
+                return True
+    if len(s) < 80 and not any(m in s for m in ("一、", "岗位职责", "任职要求", "##")):
+        return True
+    return False
+
+
 def is_docx_request(data: dict, skill_id: str | None) -> bool:
     action = str(data.get("action") or "").strip().lower()
-    if action in {"generate_docx", "docx"}:
-        return True
-    name = str(data.get("skillName") or data.get("name") or "").strip().lower()
-    if name in {"docx", "word", "文档生成", "word文档"}:
-        return True
-    sid = str(skill_id or data.get("skillId") or "").strip().lower()
-    return "docx" in sid or sid.endswith("-docx")
+    return action in {"generate_docx", "docx"}
 
 
 def safe_download_basename(title: str) -> str:
@@ -58,6 +96,24 @@ def build_docx_artifact(data: dict, skill_id: str | None) -> dict:
         or data.get("body")
         or ""
     )
+    if looks_like_code_as_docx_body(content):
+        return {
+            "ok": False,
+            "runtime": "docx-local",
+            "skillId": skill_id,
+            "error": "docx 正文无效：不能是 Python 生成脚本，请传入人话正文",
+            "stdout": "",
+            "durationMs": 0,
+        }
+    if looks_like_placeholder_as_docx_body(content):
+        return {
+            "ok": False,
+            "runtime": "docx-local",
+            "skillId": skill_id,
+            "error": "docx 正文无效：不能是摘要或 title=content= 占位符，请传入完整模板正文",
+            "stdout": "",
+            "durationMs": 0,
+        }
     artifact_id = uuid.uuid4().hex[:12]
     download_name = safe_download_basename(title)
     filename = f"{artifact_id}-{download_name}"

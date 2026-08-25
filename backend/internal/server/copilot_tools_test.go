@@ -78,12 +78,29 @@ func TestParseToolCall(t *testing.T) {
 	if call.Name != "knowledge.retrieve" || str(call.Args["query"]) != "入职" {
 		t.Fatalf("%#v", call)
 	}
-	if stripToolCallMarkers(text) == "" {
-		// may still have 先查一下
-	}
 	cleaned := stripToolCallMarkers(text)
 	if strings.Contains(cleaned, "<<<TOOL>>>") {
 		t.Fatalf("strip failed: %q", cleaned)
+	}
+}
+
+func TestParseXMLToolCall(t *testing.T) {
+	text := "<skill.read>\n{\"skill\":\"pptx\",\"action\":\"open\",\"path\":\"SKILL.md\"}\n</skill.read>"
+	call, ok := parseToolCall(text)
+	if !ok {
+		t.Fatal("xml parse failed")
+	}
+	if call.Name != "pptx" {
+		t.Fatalf("want pptx open, got %#v", call)
+	}
+	if str(call.Args["action"]) != skillActionOpen {
+		t.Fatalf("action=%v", call.Args["action"])
+	}
+	if looksLikeLeakedToolMarkup(text) && stripToolCallMarkers(text) != "" {
+		t.Fatalf("strip should clear xml tool block")
+	}
+	if stripToolCallMarkers(text) != "" {
+		t.Fatalf("strip left %q", stripToolCallMarkers(text))
 	}
 }
 
@@ -98,5 +115,15 @@ func TestToolRegistryPrompt_ListsEnabledOnly(t *testing.T) {
 	}
 	if strings.Contains(p, "- CMDB（") {
 		t.Fatal("disabled tool should not appear in prompt", p)
+	}
+}
+
+func TestToolRegistryPrompt_IncludesDocxGuidance(t *testing.T) {
+	reg := []registeredTool{
+		{Key: "skill:docx", Name: "docx", Kind: "skill", Enabled: true, Description: "word"},
+	}
+	p := toolRegistryPrompt(reg)
+	if !strings.Contains(p, "【Word / docx】") || !strings.Contains(p, "完整可落盘正文") {
+		t.Fatalf("missing docx guidance: %s", p)
 	}
 }

@@ -4,7 +4,10 @@
   "packName": "通用",
   "generalPackSkills": [
     "weather", "summarize", "github", "docx", "pdf", "pptx",
-    "frontend-design", "web-design-guidelines", "diagram-maker", "gog"
+    "frontend-design", "web-design-guidelines", "diagram-maker", "gog",
+    "general-logic-thinking-assistant",
+    "general-problem-solving-analysis-assistant",
+    "general-creative-decision-assistant"
   ],
   "tierDOptIn": ["browser-use", "1password"],
   "packs": {
@@ -13,7 +16,10 @@
       "phase": "P0",
       "autoInstall": true,
       "skills": [
-        "summarize", "docx", "pdf", "pptx", "spreadsheets", "diagram-maker"
+        "summarize", "docx", "pdf", "pptx", "spreadsheets", "diagram-maker",
+        "general-logic-thinking-assistant",
+        "general-problem-solving-analysis-assistant",
+        "general-creative-decision-assistant"
       ]
     },
     "general": {
@@ -22,7 +28,10 @@
       "autoInstall": true,
       "skills": [
         "weather", "summarize", "github", "docx", "pdf", "pptx",
-        "frontend-design", "web-design-guidelines", "diagram-maker", "gog"
+        "frontend-design", "web-design-guidelines", "diagram-maker", "gog",
+        "general-logic-thinking-assistant",
+        "general-problem-solving-analysis-assistant",
+        "general-creative-decision-assistant"
       ]
     },
     "collab-ext": {

@@ -210,3 +210,63 @@ func ensureSkillTurnHasRunStep(plan map[string]any, runCmd string) {
 		plan["summary"] = sum + " → 执行脚本生成产物"
 	}
 }
+
+func isSkillWorkspaceWriteCall(call toolCallRequest, tool *registeredTool) bool {
+	if tool == nil {
+		return false
+	}
+	name := strings.ToLower(strings.TrimSpace(tool.Name))
+	switch name {
+	case "write_file", "edit_file":
+		path := filepathToSlash(coalesce(str(call.Args["path"]), str(call.Args["file"])))
+		return strings.Contains(path, ".copilot-ws/")
+	case "pptx", "pdf", "spreadsheets", "xlsx":
+		return tool.Kind == "skill" && normalizeSkillAction(call.Args) == skillActionWrite
+	default:
+		if tool.Kind != "skill" || normalizeSkillAction(call.Args) != skillActionWrite {
+			return false
+		}
+		path := skillWritePathFromArgs(call.Args)
+		return path != "" && (strings.HasPrefix(path, ".copilot-ws/") || strings.HasPrefix(path, "scripts/"))
+	}
+}
+
+func shouldAutoRunAfterSkillWrite(res toolExecResult, runCmd string) bool {
+	if res.Status != "success" {
+		return false
+	}
+	runCmd = strings.TrimSpace(runCmd)
+	if runCmd == "" {
+		return false
+	}
+	if looksLikeSkillScriptCommand(runCmd) {
+		return strings.Contains(runCmd, ".copilot-ws/") || strings.Contains(runCmd, "scripts/")
+	}
+	if !strings.HasPrefix(runCmd, ".copilot-ws/") && !strings.HasPrefix(runCmd, "scripts/") {
+		return false
+	}
+	low := strings.ToLower(runCmd)
+	return strings.HasSuffix(low, ".js") || strings.HasSuffix(low, ".mjs") ||
+		strings.HasSuffix(low, ".ts") || strings.HasSuffix(low, ".py") || strings.HasSuffix(low, ".sh")
+}
+
+func buildAutoRunToolCallAfterWrite(reg []registeredTool, tool *registeredTool, writeCall toolCallRequest, runCmd string) toolCallRequest {
+	runCmd = strings.TrimSpace(runCmd)
+	args := map[string]any{"action": skillActionRun, "command": runCmd}
+	if skillID := strings.TrimSpace(str(writeCall.Args["skillId"])); skillID != "" {
+		args["skillId"] = skillID
+	}
+	if tool != nil && tool.Kind == "skill" {
+		return toolCallRequest{Name: tool.Name, Args: args}
+	}
+	for i := range reg {
+		t := &reg[i]
+		if !t.Enabled || t.Kind != "skill" {
+			continue
+		}
+		if officeSkillName(t.Name) {
+			return toolCallRequest{Name: t.Name, Args: args}
+		}
+	}
+	return toolCallRequest{Name: "bash", Args: map[string]any{"command": runCmd}}
+}

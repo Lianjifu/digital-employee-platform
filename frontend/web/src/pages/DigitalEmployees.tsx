@@ -116,6 +116,9 @@ function preservedCapabilities(employee: DigitalEmployee): DigitalEmployee['capa
     tools: [...employee.capabilities.tools],
     workflows: [...employee.capabilities.workflows],
     channels: [...employee.capabilities.channels],
+    cognitive: employee.capabilities.cognitive
+      ? { ...employee.capabilities.cognitive }
+      : undefined,
   };
 }
 
@@ -2253,6 +2256,80 @@ function CapabilityAssemblySelector({ catalog, capabilities, policy, onChangeCap
 
       {catalog && (
         <>
+          <section className="rounded-xl border border-[var(--border)] bg-[var(--bg)] px-3.5 py-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-sm font-semibold">认知思路模型</h3>
+                <p className="mt-0.5 text-[11px] text-[var(--text-muted)]">
+                  对话中自动选用逻辑思考 / 问题解决 / 创意决策骨架；可关闭或设部门偏好。
+                </p>
+              </div>
+              <label className="inline-flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+                <input
+                  type="checkbox"
+                  checked={capabilities.cognitive?.enabled !== false}
+                  onChange={(event) => onChangeCapabilities({
+                    ...capabilities,
+                    cognitive: {
+                      enabled: event.target.checked,
+                      defaultPack: capabilities.cognitive?.defaultPack ?? 'base-cognitive-v1',
+                      allowOverride: capabilities.cognitive?.allowOverride ?? true,
+                      maxFrameworksPerTurn: capabilities.cognitive?.maxFrameworksPerTurn ?? 2,
+                      preferredFramework: capabilities.cognitive?.preferredFramework,
+                    },
+                  })}
+                />
+                启用
+              </label>
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="grid gap-1.5 text-xs font-medium">
+                默认偏好框架
+                <select
+                  value={capabilities.cognitive?.preferredFramework ?? ''}
+                  disabled={capabilities.cognitive?.enabled === false}
+                  onChange={(event) => onChangeCapabilities({
+                    ...capabilities,
+                    cognitive: {
+                      enabled: capabilities.cognitive?.enabled !== false,
+                      defaultPack: capabilities.cognitive?.defaultPack ?? 'base-cognitive-v1',
+                      allowOverride: capabilities.cognitive?.allowOverride ?? true,
+                      maxFrameworksPerTurn: capabilities.cognitive?.maxFrameworksPerTurn ?? 2,
+                      preferredFramework: event.target.value || undefined,
+                    },
+                  })}
+                  className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs font-normal outline-none focus:border-[var(--brand)] disabled:opacity-50"
+                >
+                  <option value="">自动（按问题信号）</option>
+                  <option value="logic">逻辑思考分析</option>
+                  <option value="problem">问题解决分析</option>
+                  <option value="creative">创意决策分析</option>
+                </select>
+              </label>
+              <label className="grid gap-1.5 text-xs font-medium">
+                每回合最多框架数
+                <select
+                  value={String(capabilities.cognitive?.maxFrameworksPerTurn ?? 2)}
+                  disabled={capabilities.cognitive?.enabled === false}
+                  onChange={(event) => onChangeCapabilities({
+                    ...capabilities,
+                    cognitive: {
+                      enabled: capabilities.cognitive?.enabled !== false,
+                      defaultPack: capabilities.cognitive?.defaultPack ?? 'base-cognitive-v1',
+                      allowOverride: capabilities.cognitive?.allowOverride ?? true,
+                      maxFrameworksPerTurn: Number(event.target.value) || 2,
+                      preferredFramework: capabilities.cognitive?.preferredFramework,
+                    },
+                  })}
+                  className="h-9 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] px-2 text-xs font-normal outline-none focus:border-[var(--brand)] disabled:opacity-50"
+                >
+                  <option value="1">1（仅主框架）</option>
+                  <option value="2">2（主 + 辅）</option>
+                </select>
+              </label>
+            </div>
+          </section>
+
           <section className="space-y-2.5">
             <div className="flex items-end justify-between gap-3">
               <div>
@@ -2332,7 +2409,11 @@ function CapabilityContent({ employee }: { employee: DigitalEmployee }) {
     { label: '工作流', values: employee.capabilities.workflows },
     { label: '渠道', values: employee.capabilities.channels },
   ];
-  return <div className="space-y-3"><p className="text-xs leading-5 text-[var(--text-muted)]">仅绑定工作区内已发布、经治理批准的能力版本。能力本体仍由模型、知识、技能、工作流和渠道中心独立治理。</p>{employee.capabilities.agentId && <p className="rounded-lg px-3 py-2 text-[11px] text-[var(--text-muted)]" style={{ boxShadow: 'var(--saas-ring)' }}>执行运行时已绑定（内部），不作为对外岗位身份。</p>}{rows.map((row) => <div key={row.label} className="rounded-lg bg-[var(--bg)] p-3" style={{ boxShadow: 'var(--saas-ring)' }}><div className="text-xs font-semibold">{row.label}</div><div className="mt-2 flex flex-wrap gap-1.5">{row.values.length ? row.values.map((value) => <Badge key={value} tone="neutral">{value}</Badge>) : <span className="text-xs text-[var(--text-muted)]">未绑定</span>}</div></div>)}</div>;
+  const cog = employee.capabilities.cognitive;
+  const cogLabel = cog?.enabled === false
+    ? '已关闭'
+    : `已启用 · 偏好 ${cog?.preferredFramework === 'problem' ? '问题解决' : cog?.preferredFramework === 'creative' ? '创意决策' : cog?.preferredFramework === 'logic' ? '逻辑思考' : '自动'} · 最多 ${cog?.maxFrameworksPerTurn ?? 2} 框架`;
+  return <div className="space-y-3"><p className="text-xs leading-5 text-[var(--text-muted)]">仅绑定工作区内已发布、经治理批准的能力版本。能力本体仍由模型、知识、技能、工作流和渠道中心独立治理。</p>{employee.capabilities.agentId && <p className="rounded-lg px-3 py-2 text-[11px] text-[var(--text-muted)]" style={{ boxShadow: 'var(--saas-ring)' }}>执行运行时已绑定（内部），不作为对外岗位身份。</p>}<div className="rounded-lg bg-[var(--bg)] p-3" style={{ boxShadow: 'var(--saas-ring)' }}><div className="text-xs font-semibold">认知思路模型</div><div className="mt-2 text-xs text-[var(--text-secondary)]">{cogLabel}</div></div>{rows.map((row) => <div key={row.label} className="rounded-lg bg-[var(--bg)] p-3" style={{ boxShadow: 'var(--saas-ring)' }}><div className="text-xs font-semibold">{row.label}</div><div className="mt-2 flex flex-wrap gap-1.5">{row.values.length ? row.values.map((value) => <Badge key={value} tone="neutral">{value}</Badge>) : <span className="text-xs text-[var(--text-muted)]">未绑定</span>}</div></div>)}</div>;
 }
 function MemoryContent({ employee }: { employee: DigitalEmployee }) { const policy = employee.memoryPolicy; return <div className="space-y-4"><div><h3 className="text-sm font-semibold">三层记忆策略</h3><p className="mt-1 text-xs leading-5 text-[var(--text-muted)]">会话短期记忆、岗位工作记忆和经审核的长期记忆彼此分层，长期记忆不会自动成为企业知识。</p></div><div className="grid grid-cols-2 gap-3"><Metric label="短期记忆" value={policy.shortTermHours} sub="小时" /><Metric label="工作记忆" value={policy.workingDays} sub="天" /><Metric label="长期提炼" value={policy.longTermCadence === 'daily' ? '每日' : '每周'} /><Metric label="转知识" value={policy.knowledgePromotion === 'approval_required' ? '需审核' : '已关闭'} /></div><div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3 text-xs leading-5 text-[var(--text-secondary)]"><Database className="mr-1 inline h-3.5 w-3.5 text-[var(--brand)]" />长期记忆按策略提炼为知识候选，审核通过后才进入知识中心的权威资产目录。</div></div>; }
 function RuntimeContent({ employee }: { employee: DigitalEmployee }) { const runtime = employee.runtime; return <div className="space-y-4"><div className="grid grid-cols-2 gap-3"><Metric label="24 小时调用" value={runtime.calls24h} /><Metric label="成功率" value={runtime.calls24h > 0 ? `${(runtime.successRate * 100).toFixed(1)}%` : '—'} /><Metric label="P95 延迟" value={runtime.p95Ms || '—'} sub={runtime.p95Ms ? 'ms' : undefined} /><Metric label="今日成本" value={`¥${Number(runtime.costToday || 0).toFixed(2)}`} /><Metric label="人工交接" value={runtime.handoffs24h} sub="次" /><Metric label="异常信号" value={runtime.anomalies} sub="项" /></div><div className="rounded-lg border border-[var(--border)] bg-[var(--bg)] p-3 text-xs leading-5 text-[var(--text-secondary)]"><HeartPulse className="mr-1 inline h-3.5 w-3.5 text-[var(--success)]" />运行运营聚焦业务服务质量；模型、工具与渠道的深度技术指标分别在其所属控制面查看。</div></div>; }

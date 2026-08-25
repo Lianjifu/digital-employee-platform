@@ -1,6 +1,7 @@
 package server
 
 import (
+	"archive/zip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -20,12 +22,148 @@ import (
 )
 
 var (
-	reSkillDocxPrefix = regexp.MustCompile(`(?i)^skill[_-]?docx[_-]*`)
-	reDocxSuffix      = regexp.MustCompile(`(?i)(_docx|\.docx)$`)
-	reArtifactIDPref  = regexp.MustCompile(`(?i)^[a-z0-9]{6,12}-`)
-	reMultiSpace      = regexp.MustCompile(`\s+`)
-	reMultiUnderscore = regexp.MustCompile(`_+`)
+	reSkillDocxPrefix    = regexp.MustCompile(`(?i)^skill[_-]?docx[_-]*`)
+	reDocxSuffix         = regexp.MustCompile(`(?i)(_docx|\.docx)$`)
+	reArtifactIDPref     = regexp.MustCompile(`(?i)^[a-z0-9]{6,12}-`)
+	reMultiSpace         = regexp.MustCompile(`\s+`)
+	reMultiUnderscore    = regexp.MustCompile(`_+`)
+	reDocxPlaceholderKV  = regexp.MustCompile(`(?i)^\s*title\s*=\s*.+\s*,\s*content\s*=`)
 )
+
+// looksLikeCodeAsDocxBody detects python-docx scripts mistaken for document body.
+func looksLikeCodeAsDocxBody(content string) bool {
+	s := strings.TrimSpace(content)
+	if s == "" {
+		return false
+	}
+	lower := strings.ToLower(s)
+	strong := []string{
+		"from docx import",
+		"import docx",
+		"document()",
+		"qn('w:eastasia')",
+		"wd_align_paragraph",
+		"python-docx",
+		"```python",
+		"add_heading(",
+		"add_paragraph(",
+	}
+	for _, sig := range strong {
+		if strings.Contains(lower, sig) {
+			return true
+		}
+	}
+	lines := strings.Split(s, "\n")
+	codeLines := 0
+	for _, line := range lines {
+		trim := strings.TrimSpace(line)
+		if trim == "" {
+			continue
+		}
+		if strings.HasPrefix(trim, "import ") || strings.HasPrefix(trim, "from ") ||
+			strings.HasPrefix(trim, "def ") || strings.HasPrefix(trim, "class ") {
+			codeLines++
+		}
+	}
+	return codeLines >= 2
+}
+
+// looksLikeDocxPlaceholderBody detects LLM summary / title=content= strings mistaken for document body.
+func looksLikeDocxPlaceholderBody(content string) bool {
+	s := strings.TrimSpace(content)
+	if s == "" {
+		return false
+	}
+	if reDocxPlaceholderKV.MatchString(s) {
+		return true
+	}
+	runes := len([]rune(s))
+	if runes >= 160 && looksLikeStructuredDocxBody(s) {
+		return false
+	}
+	lower := strings.ToLower(s)
+	for _, hint := range []string{
+		"可编辑", "摘要", "按检索", "整理的正文", "整理的可编辑", "占位", "placeholder",
+		"待生成", "模板正文", "正文内容", "详见", "如下所示",
+	} {
+		if strings.Contains(lower, hint) && runes < 160 {
+			return true
+		}
+	}
+	if runes < 80 && !looksLikeStructuredDocxBody(s) {
+		return true
+	}
+	return false
+}
+
+func looksLikeStructuredDocxBody(s string) bool {
+	for _, marker := range []string{
+		"一、", "二、", "三、", "（一）", "##", "###",
+		"岗位职责", "任职要求", "招聘信息", "基本信息", "任职资格",
+	} {
+		if strings.Contains(s, marker) {
+			return true
+		}
+	}
+	return strings.Count(s, "\n") >= 4
+}
+
+func sanitizeDocxBody(content string) string {
+	if looksLikeCodeAsDocxBody(content) || looksLikeDocxPlaceholderBody(content) || looksLikeClarificationSpeech(content) {
+		return ""
+	}
+	return strings.TrimSpace(content)
+}
+
+// docxToolSucceeded reports whether a docx-class tool completed successfully this turn.
+func docxToolSucceeded(toolCalls []map[string]any) bool {
+	for i := len(toolCalls) - 1; i >= 0; i-- {
+		tc := toolCalls[i]
+		name := strings.ToLower(str(tc["name"]))
+		if !isDocxSkillName(name) && !strings.Contains(name, "docx") {
+			continue
+		}
+		st := strings.ToLower(strings.TrimSpace(str(tc["status"])))
+		if st == "" || st == "success" || st == "ok" || st == "succeeded" {
+			return true
+		}
+	}
+	return false
+}
+
+func docxPreviewText(payload map[string]any) string {
+	raw, ok := payload["blocks"].([]any)
+	if !ok {
+		return ""
+	}
+	var b strings.Builder
+	for _, item := range raw {
+		m, _ := item.(map[string]any)
+		b.WriteString(str(m["text"]))
+		b.WriteByte('\n')
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func docxPreviewLooksLikeCode(payload map[string]any) bool {
+	return looksLikeCodeAsDocxBody(docxPreviewText(payload))
+}
+
+func docxPreviewLooksLikePlaceholder(payload map[string]any) bool {
+	return looksLikeDocxPlaceholderBody(docxPreviewText(payload))
+}
+
+func docxPreviewSubstantiallyShorterThan(payload map[string]any, body string) bool {
+	preview := docxPreviewText(payload)
+	if preview == "" || body == "" {
+		return false
+	}
+	pr, br := len([]rune(preview)), len([]rune(body))
+	if looksLikeDocxPlaceholderBody(preview) {
+		return br > pr+20
+	}
+	return br >= 200 && pr < br/3
+}
 
 func skillArtifactDir() string {
 	if v := strings.TrimSpace(os.Getenv("DE_SKILL_ARTIFACT_DIR")); v != "" {
@@ -37,6 +175,12 @@ func skillArtifactDir() string {
 func isDocxSkillName(name string) bool {
 	n := strings.ToLower(strings.TrimSpace(name))
 	return n == "docx" || n == "word" || strings.Contains(n, "docx") || n == "文档生成" || n == "word文档"
+}
+
+func isPptxSkillName(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return n == "pptx" || n == "ppt" || strings.Contains(n, "pptx") ||
+		strings.Contains(n, "幻灯") || n == "演示文稿" || n == "ppt生成"
 }
 
 // normalizeDocxTitle turns LLM / tool noise into a short readable Chinese title.
@@ -175,13 +319,31 @@ func fetchSkillArtifactFromRuntime(storageName string) error {
 // ensureDocxArtifactOnDisk guarantees a .docx exists in the local artifact dir.
 func ensureDocxArtifactOnDisk(title, content, preferredStorage string) (storageName, downloadPath string, err error) {
 	preferredStorage = skillArtifactStorageName(preferredStorage)
+	body := sanitizeDocxBody(content)
 	if preferredStorage != "" && skillArtifactExists(preferredStorage) {
-		return preferredStorage, "/api/skill-artifacts/" + preferredStorage, nil
+		replace := false
+		if payload, previewErr := loadDocxPreviewPayload(preferredStorage); previewErr == nil {
+			if docxPreviewLooksLikeCode(payload) || docxPreviewLooksLikePlaceholder(payload) {
+				replace = true
+			} else if body != "" && docxPreviewSubstantiallyShorterThan(payload, body) {
+				replace = true
+			}
+		}
+		if replace && body != "" {
+			_ = os.Remove(skillArtifactFilePath(preferredStorage))
+		} else if !replace {
+			return preferredStorage, "/api/skill-artifacts/" + preferredStorage, nil
+		} else {
+			return preferredStorage, "/api/skill-artifacts/" + preferredStorage, nil
+		}
 	}
 	if preferredStorage != "" {
 		if fetchErr := fetchSkillArtifactFromRuntime(preferredStorage); fetchErr == nil && skillArtifactExists(preferredStorage) {
 			return preferredStorage, "/api/skill-artifacts/" + preferredStorage, nil
 		}
+	}
+	if body != "" && preferredStorage != "" && strings.HasSuffix(strings.ToLower(preferredStorage), ".docx") {
+		return generateDocxArtifactLocalNamed(title, content, preferredStorage)
 	}
 	return generateDocxArtifactLocal(title, content)
 }
@@ -198,18 +360,43 @@ func replaceSkillArtifactPath(output, oldStorage, newStorage string) string {
 	return strings.ReplaceAll(out, encOld, encNew)
 }
 
-// ensureSkillArtifactsInOutput materializes missing .docx artifacts referenced in tool output.
+// ensureSkillArtifactsInOutput materializes or syncs .docx artifacts referenced in assistant output.
 func ensureSkillArtifactsInOutput(output, title, content string) string {
 	if strings.TrimSpace(output) == "" {
 		return output
 	}
+	// 已有 pptx 产物时不要再旁路生成 Word，避免「生成 PPT」回合双文件。
+	if hasPptxArtifactText(output) {
+		re := regexp.MustCompile(`/api/skill-artifacts/([^\s)\]"'` + "`" + `<>]+)`)
+		hasDocxLink := false
+		for _, m := range re.FindAllStringSubmatch(output, -1) {
+			if len(m) >= 2 && strings.HasSuffix(strings.ToLower(skillArtifactStorageName(m[1])), ".docx") {
+				hasDocxLink = true
+				break
+			}
+		}
+		if !hasDocxLink {
+			return output
+		}
+	}
 	re := regexp.MustCompile(`/api/skill-artifacts/([^\s)\]"'` + "`" + `<>]+)`)
 	matches := re.FindAllStringSubmatch(output, -1)
-	if len(matches) == 0 {
+	displayTitle := normalizeDocxTitle(title)
+	body := sanitizeDocxBody(content)
+	if body == "" {
 		return output
 	}
-	displayTitle := normalizeDocxTitle(title)
-	body := strings.TrimSpace(content)
+	if len(matches) == 0 {
+		storage, download, err := generateDocxArtifactLocal(displayTitle, body)
+		if err != nil {
+			return output
+		}
+		block := formatDocxToolOutput(displayTitle, storage, download, true)
+		if strings.TrimSpace(output) == "" {
+			return block
+		}
+		return strings.TrimSpace(output + "\n\n" + block)
+	}
 	for _, m := range matches {
 		if len(m) < 2 {
 			continue
@@ -218,24 +405,86 @@ func ensureSkillArtifactsInOutput(output, title, content string) string {
 		if storage == "" || !strings.HasSuffix(strings.ToLower(storage), ".docx") {
 			continue
 		}
-		if skillArtifactExists(storage) {
-			continue
-		}
-		ensured, download, err := ensureDocxArtifactOnDisk(displayTitle, body, storage)
+		ensured, _, err := ensureDocxArtifactOnDisk(displayTitle, body, storage)
 		if err != nil {
 			continue
 		}
 		output = replaceSkillArtifactPath(output, storage, ensured)
-		if download != "" {
-			_ = download
-		}
 	}
 	return output
 }
 
+func docxBodyFromToolCalls(toolCalls []map[string]any) string {
+	for i := len(toolCalls) - 1; i >= 0; i-- {
+		tc := toolCalls[i]
+		name := strings.ToLower(str(tc["name"]))
+		if !isDocxSkillName(name) && !strings.Contains(name, "docx") {
+			continue
+		}
+		args, _ := tc["args"].(map[string]any)
+		if args == nil {
+			continue
+		}
+		if body := sanitizeDocxBody(coalesce(str(args["content"]), coalesce(str(args["input"]), str(args["command"])))); body != "" {
+			return body
+		}
+	}
+	return ""
+}
+
+func extractDocxBodyFromAssistantText(full string) string {
+	lines := strings.Split(stripArtifactNoise(full), "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trim := strings.TrimSpace(line)
+		if strings.HasPrefix(trim, "已生成 Word") || strings.HasPrefix(trim, "已为您生成") ||
+			strings.HasPrefix(trim, "文件名：") || strings.HasPrefix(trim, "下载链接：") ||
+			strings.Contains(trim, "/api/skill-artifacts/") {
+			continue
+		}
+		if isPendingAssistantReply(trim) && len(out) == 0 {
+			continue
+		}
+		out = append(out, line)
+	}
+	body := strings.TrimSpace(strings.Join(out, "\n"))
+	if body == "" || looksLikeDocxPlaceholderBody(body) {
+		return ""
+	}
+	runes := len([]rune(body))
+	if runes < 120 && !looksLikeStructuredDocxBody(body) {
+		return ""
+	}
+	return body
+}
+
+// resolveDocxBodyForTurn picks the best docx body from assistant reply vs tool args.
+func resolveDocxBodyForTurn(full string, toolCalls []map[string]any, userMessage string) string {
+	if body := extractDocxBodyFromAssistantText(full); body != "" {
+		toolBody := docxBodyFromToolCalls(toolCalls)
+		if toolBody == "" || len([]rune(body)) > len([]rune(toolBody))+50 || looksLikeDocxPlaceholderBody(toolBody) {
+			return body
+		}
+	}
+	if body := docxBodyFromToolCalls(toolCalls); body != "" {
+		return body
+	}
+	if body := sanitizeDocxBody(extractDocxBodyFromSkillOutput(full)); body != "" {
+		return body
+	}
+	user := strings.TrimSpace(userMessage)
+	if user != "" && !looksLikeDocxPlaceholderBody(user) && (len([]rune(user)) >= 120 || looksLikeStructuredDocxBody(user)) {
+		return user
+	}
+	return ""
+}
+
 func resolveDocxBodyFromExecution(args map[string]any, userMessage, output string, plan map[string]any) string {
 	if args != nil {
-		if body := strings.TrimSpace(coalesce(str(args["content"]), str(args["input"]))); body != "" {
+		path := coalesce(str(args["path"]), str(args["filename"]))
+		if looksLikeSkillScriptCommand(path) || strings.HasSuffix(strings.ToLower(path), ".py") {
+			// 脚本 write 参数不得作为 docx 正文
+		} else if body := sanitizeDocxBody(coalesce(str(args["content"]), str(args["input"]))); body != "" {
 			return body
 		}
 	}
@@ -245,15 +494,26 @@ func resolveDocxBodyFromExecution(args map[string]any, userMessage, output strin
 			if stepArgs == nil {
 				continue
 			}
-			if body := strings.TrimSpace(coalesce(str(stepArgs["content"]), str(stepArgs["input"]))); body != "" {
+			path := coalesce(str(stepArgs["path"]), coalesce(str(stepArgs["filename"]), str(stepArgs["command"])))
+			if looksLikeSkillScriptCommand(path) || strings.HasSuffix(strings.ToLower(path), ".py") {
+				continue
+			}
+			if body := sanitizeDocxBody(coalesce(str(stepArgs["content"]), str(stepArgs["input"]))); body != "" {
 				return body
 			}
 		}
 	}
-	if body := extractDocxBodyFromSkillOutput(output); body != "" {
+	if body := sanitizeDocxBody(extractDocxBodyFromSkillOutput(output)); body != "" {
 		return body
 	}
-	return strings.TrimSpace(userMessage)
+	if body := extractDocxBodyFromAssistantText(output); body != "" {
+		return body
+	}
+	user := strings.TrimSpace(userMessage)
+	if looksLikeCodeAsDocxBody(user) {
+		return ""
+	}
+	return user
 }
 
 func extractDocxBodyFromSkillOutput(output string) string {
@@ -299,7 +559,295 @@ func findGenerateDocxScript() (string, error) {
 	return "", fmt.Errorf("找不到 generate_docx.py")
 }
 
-func previewDocxArtifact(storageName string) (map[string]any, error) {
+func findGeneratePptxScript() (string, error) {
+	candidates := []string{
+		filepath.Join("scripts", "generate_pptx.py"),
+		filepath.Join("..", "scripts", "generate_pptx.py"),
+		"/Users/LIANJIFU/ops/digital-employee-platform/backend/scripts/generate_pptx.py",
+	}
+	for _, c := range candidates {
+		if st, e := os.Stat(c); e == nil && !st.IsDir() {
+			return c, nil
+		}
+	}
+	return "", fmt.Errorf("找不到 generate_pptx.py")
+}
+
+func normalizePptxTitle(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = strings.Trim(s, "《》「」『』\"'`")
+	s = regexp.MustCompile(`(?i)^skill[_-]?pptx[_-]*`).ReplaceAllString(s, "")
+	s = regexp.MustCompile(`(?i)(\.pptx|_pptx)$`).ReplaceAllString(s, "")
+	s = reMultiSpace.ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+	if s == "" || strings.EqualFold(s, "pptx") || strings.EqualFold(s, "ppt") || s == "生成ppt" || s == "演示文稿" {
+		return "演示文稿"
+	}
+	runes := []rune(s)
+	if len(runes) > 40 {
+		s = string(runes[:40])
+	}
+	return strings.TrimSpace(s)
+}
+
+func pptxDownloadBasename(title string) string {
+	title = normalizePptxTitle(title)
+	var b strings.Builder
+	for _, r := range title {
+		switch {
+		case unicode.Is(unicode.Han, r):
+			b.WriteRune(r)
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+		case r == '-' || r == '·':
+			b.WriteRune(r)
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		out = "presentation"
+	}
+	return out + ".pptx"
+}
+
+func pptxStorageName(downloadName string) string {
+	base := strings.TrimSuffix(downloadName, filepath.Ext(downloadName))
+	id := fmt.Sprintf("%x", time.Now().UnixNano())
+	if len(id) > 12 {
+		id = id[len(id)-12:]
+	}
+	return id + "-" + base + ".pptx"
+}
+
+func findGeneratePptxProdScript() (string, error) {
+	candidates := []string{
+		filepath.Join("scripts", "generate_pptx_prod.sh"),
+		filepath.Join("..", "scripts", "generate_pptx_prod.sh"),
+		"/Users/LIANJIFU/ops/digital-employee-platform/backend/scripts/generate_pptx_prod.sh",
+	}
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append([]string{
+			filepath.Join(wd, "scripts", "generate_pptx_prod.sh"),
+			filepath.Join(wd, "..", "scripts", "generate_pptx_prod.sh"),
+		}, candidates...)
+	}
+	for _, c := range candidates {
+		if st, err := os.Stat(c); err == nil && !st.IsDir() {
+			abs, _ := filepath.Abs(c)
+			return abs, nil
+		}
+	}
+	return "", fmt.Errorf("找不到 generate_pptx_prod.sh")
+}
+
+func generatePptxArtifactLocal(title, content string) (storageName, downloadPath string, err error) {
+	cleanupSkillArtifactsTTL(7*24*time.Hour, 400)
+	dir := skillArtifactDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", "", err
+	}
+	displayTitle := normalizePptxTitle(title)
+	downloadName := pptxDownloadBasename(displayTitle)
+	storageName = pptxStorageName(downloadName)
+	outPath := filepath.Join(dir, storageName)
+
+	contentFile, err := os.CreateTemp("", "de-pptx-*.txt")
+	if err != nil {
+		return "", "", err
+	}
+	contentPath := contentFile.Name()
+	defer os.Remove(contentPath)
+	if _, err := contentFile.WriteString(content); err != nil {
+		_ = contentFile.Close()
+		return "", "", err
+	}
+	_ = contentFile.Close()
+
+	// Prefer PilotDeck layout-library (production). Fall back to stdlib OOXML.
+	if prodScript, perr := findGeneratePptxProdScript(); perr == nil {
+		cmd := exec.Command("bash", prodScript, "--out", outPath, "--title", displayTitle, "--outline-file", contentPath)
+		out, cerr := cmd.CombinedOutput()
+		if cerr == nil {
+			if verr := validatePptxOOXMLLoose(outPath); verr == nil {
+				downloadPath = "/api/skill-artifacts/" + storageName
+				return storageName, downloadPath, nil
+			}
+			_ = os.Remove(outPath)
+		} else {
+			// keep going to python fallback; log truncated reason in error only if both fail
+			_ = out
+		}
+	}
+
+	scriptPath, err := findGeneratePptxScript()
+	if err != nil {
+		return "", "", err
+	}
+	cmd := exec.Command("python3", scriptPath, "--out", outPath, "--title", displayTitle, "--content-file", contentPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", "", fmt.Errorf("pptx 生成失败: %v (%s)", err, truncateRunes(string(out), 240))
+	}
+	if err := validatePptxOOXML(outPath); err != nil {
+		_ = os.Remove(outPath)
+		return "", "", err
+	}
+	downloadPath = "/api/skill-artifacts/" + storageName
+	return storageName, downloadPath, nil
+}
+
+func formatPptxToolOutput(displayTitle, storageName, downloadPath string, localFallback bool) string {
+	downloadName := strings.TrimPrefix(storageName, "")
+	if i := strings.Index(storageName, "-"); i > 0 && i < len(storageName)-1 {
+		downloadName = storageName[i+1:]
+	}
+	title := normalizePptxTitle(displayTitle)
+	suffix := ""
+	if localFallback {
+		suffix = "（本地回退）"
+	}
+	return fmt.Sprintf(
+		"已生成 PPT 文档「%s」%s\n文件名：%s\n下载链接：%s\n请把下载链接发给用户，不要改写文件名或链接。",
+		title, suffix, downloadName, downloadPath,
+	)
+}
+
+func looksLikePptxGenerateRequest(msg string) bool {
+	m := strings.ToLower(strings.TrimSpace(msg))
+	if m == "" {
+		return false
+	}
+	hasPPT := strings.Contains(m, "ppt") || strings.Contains(m, "pptx") || strings.Contains(msg, "幻灯") || strings.Contains(msg, "演示文稿")
+	hasGen := strings.Contains(msg, "生成") || strings.Contains(msg, "做一") || strings.Contains(msg, "制作") || strings.Contains(msg, "输出")
+	return hasPPT && hasGen
+}
+
+func inferPptxTitleFromMessage(msg string) string {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return ""
+	}
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`《([^》]{2,32})》`),
+		regexp.MustCompile(`「([^」]{2,32})」`),
+		regexp.MustCompile(`生成[一份套]*[《「"]?([^《」"\s，。！？,]{2,28})`),
+	} {
+		if m := re.FindStringSubmatch(msg); len(m) == 2 {
+			t := normalizePptxTitle(m[1])
+			t = strings.TrimSuffix(t, "PPT")
+			t = strings.TrimSuffix(t, "ppt")
+			t = strings.TrimSpace(t)
+			if t != "" && t != "演示文稿" {
+				return t
+			}
+		}
+	}
+	if strings.Contains(msg, "季度考评") || strings.Contains(msg, "季度考核") {
+		return "团队季度考评"
+	}
+	if strings.Contains(msg, "述职") {
+		return "述职汇报"
+	}
+	return ""
+}
+
+func defaultPptxOutlineForMessage(title, userMsg string) string {
+	t := coalesce(normalizePptxTitle(title), "演示文稿")
+	if strings.Contains(userMsg, "季度考评") || strings.Contains(userMsg, "季度考核") {
+		return fmt.Sprintf(`# %s汇报
+汇报人：___________
+考评周期：____年 第__季度
+汇报日期：____年__月__日
+
+## 目录
+- 一、团队概况
+- 二、KPI 指标总览
+- 三、KPI 达成分析
+- 四、重点项目进展
+- 五、亮点与问题
+- 六、改进措施
+- 七、下季度工作计划
+- 八、总结
+
+## 一、团队概况
+- 团队人数：______ 人
+- 本季度入职 / 离职：______ / ______
+- 核心成员变动：____________
+
+## 二、KPI 指标总览
+- 指标1：目标 ____ / 实际 ____ / 完成率 __%%
+- 指标2：目标 ____ / 实际 ____ / 完成率 __%%
+- 综合完成率：__%%
+
+## 三、KPI 达成分析
+- 已达成指标与关键动作
+- 未达成指标及原因
+- 关键差分析与纠偏
+
+## 四、重点项目进展
+- 项目A：进度 / 风险 / 下一步
+- 项目B：进度 / 风险 / 下一步
+
+## 五、亮点与问题
+- 亮点：可复制的最佳实践
+- 问题：需优先解决的阻塞项
+
+## 六、改进措施
+- 措施1（负责人 / 截止时间）
+- 措施2（负责人 / 截止时间）
+
+## 七、下季度工作计划
+- 目标与关键里程碑
+- 资源与协同诉求
+
+## 八、总结
+- 本季度结论
+- 需决策 / 需支持事项`, t)
+	}
+	return fmt.Sprintf(`# %s
+副标题：业务汇报材料
+汇报人 / 日期：___________ / ____年__月__日
+
+## 目录
+- 背景与目标
+- 核心内容
+- 总结与下一步
+
+## 背景与目标
+- 背景说明
+- 本次目标与成功标准
+
+## 核心内容
+- 要点一
+- 要点二
+- 要点三
+
+## 总结与下一步
+- 结论
+- 行动项与负责人`, t)
+}
+
+func hasPptxArtifactText(text string) bool {
+	low := strings.ToLower(text)
+	return strings.Contains(low, ".pptx") && strings.Contains(text, "/api/skill-artifacts/")
+}
+
+func pptxRelatedToolAttempted(toolCalls []map[string]any) bool {
+	for _, tc := range toolCalls {
+		name := strings.ToLower(str(tc["name"]))
+		if isPptxSkillName(name) || name == "write_file" || name == "bash" || name == "execute_code" || name == "skill.read" {
+			return true
+		}
+		args, _ := tc["args"].(map[string]any)
+		path := strings.ToLower(coalesce(str(args["path"]), coalesce(str(args["command"]), str(args["skill"]))))
+		if strings.Contains(path, "pptx") || strings.Contains(path, "ppt") || strings.Contains(path, ".mjs") || strings.Contains(path, ".copilot-ws") {
+			return true
+		}
+	}
+	return false
+}
+
+func loadDocxPreviewPayload(storageName string) (map[string]any, error) {
 	storageName = skillArtifactStorageName(storageName)
 	if storageName == "" {
 		return nil, fmt.Errorf("无效产物名")
@@ -326,14 +874,179 @@ func previewDocxArtifact(storageName string) (map[string]any, error) {
 	return payload, nil
 }
 
+func previewDocxArtifact(storageName string) (map[string]any, error) {
+	payload, err := loadDocxPreviewPayload(storageName)
+	if err != nil {
+		return nil, err
+	}
+	if docxPreviewLooksLikeCode(payload) || docxPreviewLooksLikePlaceholder(payload) {
+		return nil, fmt.Errorf("文档正文异常（疑似占位符或脚本），请重新生成")
+	}
+	payload["kind"] = "docx"
+	return payload, nil
+}
+
+var pptxSlideTextRE = regexp.MustCompile(`(?s)<a:t[^>]*>([^<]*)</a:t>`)
+var pptxParaRE = regexp.MustCompile(`(?s)<a:p\b[^>]*>(.*?)</a:p>`)
+var pptxBuCharRE = regexp.MustCompile(`(?i)<a:buChar\b`)
+
+func previewPptxArtifact(storageName string) (map[string]any, error) {
+	storageName = skillArtifactStorageName(storageName)
+	if storageName == "" || !strings.HasSuffix(strings.ToLower(storageName), ".pptx") {
+		return nil, fmt.Errorf("无效 pptx 产物名")
+	}
+	path := skillArtifactFilePath(storageName)
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		return nil, fmt.Errorf("无法打开 PPT：%w", err)
+	}
+	defer zr.Close()
+
+	type slideFile struct {
+		idx int
+		rc  io.ReadCloser
+	}
+	var slides []slideFile
+	reSlide := regexp.MustCompile(`(?i)^ppt/slides/slide(\d+)\.xml$`)
+	for _, f := range zr.File {
+		m := reSlide.FindStringSubmatch(f.Name)
+		if len(m) != 2 {
+			continue
+		}
+		n := 0
+		fmt.Sscanf(m[1], "%d", &n)
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		slides = append(slides, slideFile{idx: n, rc: rc})
+	}
+	sort.Slice(slides, func(i, j int) bool { return slides[i].idx < slides[j].idx })
+
+	blocks := make([]map[string]any, 0, len(slides)*4)
+	slidePayloads := make([]map[string]any, 0, len(slides))
+	pageCount := 0
+	for _, sf := range slides {
+		raw, err := io.ReadAll(io.LimitReader(sf.rc, 256<<10))
+		_ = sf.rc.Close()
+		if err != nil {
+			continue
+		}
+		pageCount++
+		xml := string(raw)
+		paras := pptxParaRE.FindAllStringSubmatch(xml, -1)
+		title := fmt.Sprintf("第 %d 页", pageCount)
+		lines := make([]string, 0, len(paras))
+		bullets := make([]string, 0, len(paras))
+		firstText := true
+		for _, pm := range paras {
+			paraXML := pm[1]
+			tm := pptxSlideTextRE.FindStringSubmatch(paraXML)
+			if len(tm) < 2 {
+				continue
+			}
+			t := strings.TrimSpace(tm[1])
+			if t == "" {
+				continue
+			}
+			if firstText {
+				title = t
+				firstText = false
+				continue
+			}
+			isBullet := pptxBuCharRE.MatchString(paraXML) ||
+				strings.HasPrefix(t, "•") || strings.HasPrefix(t, "-")
+			trim := strings.TrimSpace(strings.TrimLeft(t, "•·*- "))
+			if trim == "" {
+				continue
+			}
+			lines = append(lines, trim)
+			if isBullet {
+				bullets = append(bullets, trim)
+			}
+		}
+		// Fallback: flat <a:t> scan if paragraph parse yielded nothing beyond title
+		if len(lines) == 0 {
+			texts := pptxSlideTextRE.FindAllStringSubmatch(xml, -1)
+			for i, tm := range texts {
+				t := strings.TrimSpace(tm[1])
+				if t == "" {
+					continue
+				}
+				if i == 0 {
+					title = t
+					continue
+				}
+				lines = append(lines, t)
+			}
+		}
+		slidePayloads = append(slidePayloads, map[string]any{
+			"index":   pageCount,
+			"title":   title,
+			"lines":   lines,
+			"bullets": bullets,
+		})
+		blocks = append(blocks, map[string]any{"type": "h2", "text": title})
+		bulletSet := map[string]struct{}{}
+		for _, b := range bullets {
+			bulletSet[b] = struct{}{}
+		}
+		for _, line := range lines {
+			if _, ok := bulletSet[line]; ok {
+				blocks = append(blocks, map[string]any{"type": "li", "text": line, "ordered": false})
+			} else {
+				blocks = append(blocks, map[string]any{"type": "p", "text": line})
+			}
+		}
+		blocks = append(blocks, map[string]any{"type": "blank"})
+	}
+	if pageCount == 0 {
+		return nil, fmt.Errorf("PPT 中未找到幻灯片")
+	}
+	displayTitle := normalizePptxTitle(inferTitleFromPptxStorage(storageName))
+	downloadName := pptxDownloadBasename(displayTitle)
+	payload := map[string]any{
+		"kind":         "pptx",
+		"title":        displayTitle,
+		"filename":     storageName,
+		"downloadName": downloadName,
+		"pageCount":    pageCount,
+		"slides":       slidePayloads,
+		"blocks":       blocks,
+	}
+	if warn := pptxOOXMLContentWarning(path); warn != "" {
+		payload["contentWarning"] = warn
+	}
+	return payload, nil
+}
+
+func inferTitleFromPptxStorage(storageName string) string {
+	base := strings.TrimSuffix(filepath.Base(storageName), filepath.Ext(storageName))
+	base = reArtifactIDPref.ReplaceAllString(base, "")
+	return strings.TrimSpace(base)
+}
+
 func generateDocxArtifactLocal(title, content string) (storageName, downloadPath string, err error) {
+	return generateDocxArtifactLocalNamed(title, content, "")
+}
+
+func generateDocxArtifactLocalNamed(title, content, preferredStorage string) (storageName, downloadPath string, err error) {
+	content = sanitizeDocxBody(content)
+	if content == "" {
+		return "", "", fmt.Errorf("docx 正文无效：请提供文档内容，不要传入生成脚本")
+	}
 	dir := skillArtifactDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", "", err
 	}
 	displayTitle := normalizeDocxTitle(title)
 	downloadName := docxDownloadBasename(displayTitle)
-	storageName = docxStorageName(downloadName)
+	preferredStorage = skillArtifactStorageName(preferredStorage)
+	if preferredStorage != "" && strings.HasSuffix(strings.ToLower(preferredStorage), ".docx") {
+		storageName = preferredStorage
+	} else {
+		storageName = docxStorageName(downloadName)
+	}
 	outPath := filepath.Join(dir, storageName)
 
 	scriptPath, err := findGenerateDocxScript()
@@ -389,6 +1102,14 @@ func contentDispositionAttachment(name string) string {
 	display := name
 	if strings.HasSuffix(strings.ToLower(name), ".docx") {
 		display = docxDisplayNameFromStorage(name)
+	} else if strings.HasSuffix(strings.ToLower(name), ".pptx") {
+		if i := strings.Index(name, "-"); i > 0 && i < len(name)-1 {
+			display = name[i+1:]
+		}
+	} else if strings.HasSuffix(strings.ToLower(name), ".pdf") {
+		if i := strings.Index(name, "-"); i > 0 && i < len(name)-1 {
+			display = name[i+1:]
+		}
 	}
 	ascii := asciiFallbackFilename(display)
 	return fmt.Sprintf(
@@ -406,16 +1127,36 @@ func (s *Server) serveSkillArtifactPreview(w http.ResponseWriter, r *http.Reques
 		name = decoded
 	}
 	name = skillArtifactStorageName(name)
-	if name == "" || !strings.HasSuffix(strings.ToLower(name), ".docx") {
-		writeErr(w, apperr.BadReq(apperr.BadRequest, "仅支持 .docx 预览"))
+	if name == "" {
+		writeErr(w, apperr.BadReq(apperr.BadRequest, "无效产物名"))
 		return
 	}
-	payload, err := previewDocxArtifact(name)
-	if err != nil {
-		writeErr(w, apperr.NotFoundErr(apperr.NotFound, err.Error()))
-		return
+	low := strings.ToLower(name)
+	switch {
+	case strings.HasSuffix(low, ".docx"):
+		payload, err := previewDocxArtifact(name)
+		if err != nil {
+			writeErr(w, apperr.NotFoundErr(apperr.NotFound, err.Error()))
+			return
+		}
+		writeJSON(w, payload)
+	case strings.HasSuffix(low, ".pptx"):
+		payload, err := previewPptxArtifact(name)
+		if err != nil {
+			writeErr(w, apperr.NotFoundErr(apperr.NotFound, err.Error()))
+			return
+		}
+		writeJSON(w, payload)
+	case strings.HasSuffix(low, ".pdf"):
+		payload, err := previewPdfArtifact(name)
+		if err != nil {
+			writeErr(w, apperr.NotFoundErr(apperr.NotFound, err.Error()))
+			return
+		}
+		writeJSON(w, payload)
+	default:
+		writeErr(w, apperr.BadReq(apperr.BadRequest, "该文件类型暂不支持在线预览，请下载后打开"))
 	}
-	writeJSON(w, payload)
 }
 
 func writeJSON(w http.ResponseWriter, payload any) {
@@ -445,6 +1186,10 @@ func (s *Server) serveSkillArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	if strings.HasSuffix(strings.ToLower(name), ".docx") {
 		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+	} else if strings.HasSuffix(strings.ToLower(name), ".pptx") {
+		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+	} else if strings.HasSuffix(strings.ToLower(name), ".pdf") {
+		w.Header().Set("Content-Type", "application/pdf")
 	} else {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}

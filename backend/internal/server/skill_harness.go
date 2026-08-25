@@ -88,18 +88,77 @@ func officeSkillName(name string) bool {
 		strings.Contains(n, "幻灯") || strings.Contains(n, "表格")
 }
 
-// isSandboxArtifactSkillInvocation identifies skill runs that only materialize downloadable
-// artifacts in the skill sandbox (e.g. builtin docx), safe in plan/investigate mode.
-func isSandboxArtifactSkillInvocation(tool *registeredTool, sk map[string]any, call toolCallRequest, action string) bool {
-	if tool == nil || tool.Kind != "skill" || action != skillActionRun {
+// isSandboxCopilotWsPath reports whether a relative path/command targets the skill
+// workspace (.copilot-ws/...), which only materializes local downloadable artifacts.
+func isSandboxCopilotWsPath(pathOrCmd string) bool {
+	p := filepathToSlash(strings.TrimSpace(pathOrCmd))
+	if p == "" {
 		return false
 	}
+	// Strip optional interpreter prefix: "node .copilot-ws/gen.mjs"
+	if looksLikeSkillScriptCommand(p) {
+		if m := skillScriptCommandRe.FindStringSubmatch(p); len(m) == 2 {
+			p = m[1]
+		}
+	}
+	return strings.HasPrefix(p, ".copilot-ws/")
+}
+
+func isSandboxCopilotWsWriteCall(call toolCallRequest) bool {
+	path := coalesce(str(call.Args["path"]), coalesce(str(call.Args["file"]), str(call.Args["filename"])))
+	if path == "" {
+		path = skillWritePathFromArgs(call.Args)
+	}
+	return isSandboxCopilotWsPath(path)
+}
+
+func isSandboxCopilotWsRunCall(call toolCallRequest) bool {
 	cmd := skillCommandFromArgs(call.Args)
-	if looksLikeSkillScriptCommand(cmd) {
+	if cmd == "" {
+		cmd = coalesce(str(call.Args["command"]), str(call.Args["cmd"]))
+	}
+	return isSandboxCopilotWsPath(cmd)
+}
+
+// isSandboxArtifactSkillInvocation identifies skill runs that only materialize downloadable
+// artifacts in the skill sandbox (e.g. builtin docx / .copilot-ws pptx scripts).
+func isSandboxArtifactSkillInvocation(tool *registeredTool, sk map[string]any, call toolCallRequest, action string) bool {
+	if tool == nil || tool.Kind != "skill" {
 		return false
 	}
 	name := coalesce(str(sk["name"]), tool.Name)
+	office := isDocxSkillName(tool.Name) || isDocxSkillName(name) || officeSkillName(tool.Name) || officeSkillName(name)
+	if action == skillActionWrite {
+		return office && isSandboxCopilotWsWriteCall(call)
+	}
+	if action != skillActionRun {
+		return false
+	}
+	cmd := skillCommandFromArgs(call.Args)
+	// PPT/XLS 等：执行 .copilot-ws 下已写入的生成脚本，仅产出沙箱产物，免人工审核。
+	if looksLikeSkillScriptCommand(cmd) && isSandboxCopilotWsPath(cmd) {
+		if office {
+			return true
+		}
+		if sk != nil {
+			enrichSkillMetadata(sk)
+			return boolFrom(sk["producesArtifacts"])
+		}
+		return false
+	}
+	if looksLikeSkillScriptCommand(cmd) {
+		return false
+	}
 	if isDocxSkillName(tool.Name) || isDocxSkillName(name) {
+		return str(call.Args["content"]) != "" || str(call.Args["title"]) != "" ||
+			str(call.Args["input"]) != "" || str(call.Args["command"]) == ""
+	}
+	if isPptxSkillName(tool.Name) || isPptxSkillName(name) {
+		return str(call.Args["content"]) != "" || str(call.Args["title"]) != "" ||
+			str(call.Args["input"]) != "" || str(call.Args["outline"]) != "" ||
+			str(call.Args["command"]) == ""
+	}
+	if isPdfSkillName(tool.Name) || isPdfSkillName(name) {
 		return str(call.Args["content"]) != "" || str(call.Args["title"]) != "" ||
 			str(call.Args["input"]) != "" || str(call.Args["command"]) == ""
 	}
@@ -122,6 +181,10 @@ func skillInvocationNeedsApproval(sessionMode string, tool *registeredTool, sk m
 		if looksLikeSkillScriptCommand(cmd) {
 			action = skillActionRun
 		} else if isDocxSkillName(tool.Name) && (str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "") {
+			action = skillActionRun
+		} else if isPptxSkillName(tool.Name) && (str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "" || str(call.Args["outline"]) != "") {
+			action = skillActionRun
+		} else if isPdfSkillName(tool.Name) && (str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "") {
 			action = skillActionRun
 		} else {
 			action = skillActionOpen
@@ -149,7 +212,10 @@ func skillInvocationNeedsApproval(sessionMode string, tool *registeredTool, sk m
 		cmd := skillCommandFromArgs(call.Args)
 		docxBuiltin := isDocxSkillName(tool.Name) && !looksLikeSkillScriptCommand(cmd) &&
 			(str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "" || str(call.Args["command"]) == "")
-		if !looksLikeSkillScriptCommand(cmd) && !docxBuiltin {
+		pptxBuiltin := isPptxSkillName(tool.Name) && !looksLikeSkillScriptCommand(cmd) &&
+			(str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "" ||
+				str(call.Args["outline"]) != "" || str(call.Args["command"]) == "")
+		if !looksLikeSkillScriptCommand(cmd) && !docxBuiltin && !pptxBuiltin {
 			// Invalid run args → harness returns needs_instruction; do not open an approval card for gibberish.
 			return false
 		}
@@ -199,16 +265,23 @@ func (s *Server) runSkillTool(ctx toolRunContext, t *registeredTool, call toolCa
 			action = skillActionRun
 		} else if isDocxSkillName(t.Name) && (str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "") {
 			action = skillActionRun
+		} else if isPptxSkillName(t.Name) && (str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "" || str(call.Args["outline"]) != "" || looksLikePptxGenerateRequest(ctx.UserMessage)) {
+			action = skillActionRun
 		} else {
 			action = skillActionOpen
 		}
 	}
 
 	if (action == skillActionRun || action == skillActionWrite) && normalizeSessionMode(ctx.SessionMode) == sessionModeInvestigate {
-		if action == skillActionWrite || looksLikeSkillScriptCommand(skillCommandFromArgs(call.Args)) {
-			return denySkillWriteInInvestigate()
+		var skProbe map[string]any
+		if s.Store != nil {
+			skProbe = s.resolveSkillForTool(ws, t, skillID)
 		}
-		if !isSandboxArtifactSkillInvocation(t, nil, call, action) {
+		if isSandboxArtifactSkillInvocation(t, skProbe, call, action) {
+			// sandbox .copilot-ws / docx builtin：研判模式也可本地产出下载物
+		} else if action == skillActionWrite || looksLikeSkillScriptCommand(skillCommandFromArgs(call.Args)) {
+			return denySkillWriteInInvestigate()
+		} else if !isSandboxArtifactSkillInvocation(t, skProbe, call, action) {
 			return denySkillWriteInInvestigate()
 		}
 	}
@@ -223,6 +296,19 @@ func (s *Server) runSkillTool(ctx toolRunContext, t *registeredTool, call toolCa
 	}
 	enrichSkillMetadata(sk)
 	skillID = str(sk["id"])
+
+	if isCognitiveSkillName(str(sk["name"])) || isCognitiveSkillName(str(sk["builtinSkillName"])) || boolFrom(sk["cognitive"]) {
+		sk["cognitive"] = true
+		sk["readOnly"] = true
+		sk["producesArtifacts"] = false
+		if action == skillActionRun || action == skillActionWrite {
+			return toolExecResult{
+				Status: "failed", DurationMs: int(time.Since(started).Milliseconds()),
+				Error:  "认知框架技能不可 run/write",
+				Output: "「" + str(sk["name"]) + "」是认知思路模型技能，仅支持 skill.open 阅读细则；请勿 run。平台会在对话中自动注入 digest。",
+			}
+		}
+	}
 
 	switch action {
 	case skillActionOpen:
@@ -324,6 +410,14 @@ func (s *Server) skillWrite(sk map[string]any, call toolCallRequest, started tim
 	if err := os.WriteFile(target, []byte(content), 0o644); err != nil {
 		return toolExecResult{Status: "failed", Error: err.Error(), Output: "写入失败", DurationMs: int(time.Since(started).Milliseconds())}
 	}
+	if isDocxSkillName(str(sk["name"])) && strings.HasSuffix(strings.ToLower(rel), ".docx") && looksLikeCodeAsDocxBody(content) {
+		ms := int(time.Since(started).Milliseconds())
+		return toolExecResult{
+			Status: "failed", DurationMs: ms,
+			Error:  "正文不能是生成脚本",
+			Output: "Word 文档请使用 action=run 并传入 args.title 与人话正文 args.content，不要 write Python 脚本。",
+		}
+	}
 	return toolExecResult{
 		Status:     "success",
 		DurationMs: int(time.Since(started).Milliseconds()),
@@ -402,6 +496,50 @@ func (s *Server) skillRun(ctx toolRunContext, t *registeredTool, sk map[string]a
 		}
 	}
 
+	// Builtin pptx: title + outline content → local .pptx (no script write required)
+	if isPptxSkillName(t.Name) || isPptxSkillName(str(sk["name"])) {
+		if !looksLikeSkillScriptCommand(cmd) {
+			title = normalizePptxTitle(title)
+			if title == "演示文稿" || title == t.Name || strings.EqualFold(title, "pptx") || strings.EqualFold(title, "ppt") {
+				if hint := inferPptxTitleFromMessage(ctx.UserMessage); hint != "" {
+					title = hint
+				}
+			}
+			content := coalesce(str(call.Args["content"]), coalesce(str(call.Args["input"]), coalesce(str(call.Args["outline"]), "")))
+			if content == "" && looksLikePptxGenerateRequest(ctx.UserMessage) {
+				content = defaultPptxOutlineForMessage(title, ctx.UserMessage)
+			}
+			if content != "" || looksLikePptxGenerateRequest(ctx.UserMessage) {
+				if content == "" {
+					content = defaultPptxOutlineForMessage(title, ctx.UserMessage)
+				}
+				return s.skillRunPptxBuiltin(ctx, sk, title, content, track, started)
+			}
+		}
+	}
+
+	// Builtin pdf: title + content → local .pdf
+	if isPdfSkillName(t.Name) || isPdfSkillName(str(sk["name"])) {
+		if !looksLikeSkillScriptCommand(cmd) {
+			title = normalizePdfTitle(title)
+			if title == "生成文档" || title == t.Name || strings.EqualFold(title, "pdf") {
+				if hint := inferDocxTitleFromMessage(ctx.UserMessage); hint != "" {
+					title = hint
+				}
+			}
+			content := coalesce(str(call.Args["content"]), coalesce(str(call.Args["input"]), input))
+			if content == "" && looksLikePdfGenerateRequest(ctx.UserMessage) {
+				content = defaultPdfBodyForMessage(title, ctx.UserMessage)
+			}
+			if content != "" || looksLikePdfGenerateRequest(ctx.UserMessage) {
+				if content == "" {
+					content = defaultPdfBodyForMessage(title, ctx.UserMessage)
+				}
+				return s.skillRunPdfBuiltin(ctx, sk, title, content, track, started)
+			}
+		}
+	}
+
 	if !looksLikeSkillScriptCommand(cmd) {
 		entries := decodeStringSlice(sk["entrypoints"])
 		scripts := decodeStringSlice(sk["scripts"])
@@ -458,8 +596,11 @@ func (s *Server) skillRun(ctx toolRunContext, t *registeredTool, sk map[string]a
 	s.Store.Unlock()
 
 	body := map[string]any{
-		"skillId": skillID, "input": input, "command": cmd,
+		"skillId": skillID, "command": cmd, "action": skillActionRun,
 		"correlationId": ctx.CorrelationID, "timeoutSec": 90,
+	}
+	if trimmed := strings.TrimSpace(input); trimmed != "" && !looksLikeCodeAsDocxBody(trimmed) {
+		body["input"] = trimmed
 	}
 	token := auth.MintRunToken(skillID, ctx.WorkspaceID, id.ID, 5*time.Minute)
 	body["runToken"] = token
@@ -483,12 +624,19 @@ func (s *Server) skillRun(ctx toolRunContext, t *registeredTool, sk map[string]a
 	if dl := str(result["downloadPath"]); dl != "" && !strings.Contains(out, dl) {
 		out = strings.TrimSpace(out + "\n下载链接：" + dl)
 	}
+	// 包脚本成功但未登记 downloadPath 时，从 package 目录收割最近产物。
 	status := "success"
 	rtStatus := str(result["status"])
 	if rtStatus == "needs_instruction" {
 		status = "needs_instruction"
 	} else if ok, isBool := result["ok"].(bool); isBool && !ok {
 		status = "failed"
+	}
+	if status == "success" && !strings.Contains(out, "/api/skill-artifacts/") {
+		if storage, download, _, herr := harvestOfficeArtifactsFromDir(pkgPath); herr == nil && download != "" {
+			out = strings.TrimSpace(out + "\n文件名：" + storage + "\n下载链接：" + download)
+			result["downloadPath"] = download
+		}
 	}
 	if d := intFrom(result["durationMs"]); d > 0 {
 		ms = d
@@ -516,6 +664,15 @@ func (s *Server) skillRunDocxBuiltin(
 		return toolExecResult{Status: "denied", Permission: "auth", Error: "缺少身份", Output: "拒绝执行技能"}
 	}
 	skillID := str(sk["id"])
+	content = sanitizeDocxBody(content)
+	if content == "" {
+		ms := int(time.Since(started).Milliseconds())
+		return toolExecResult{
+			Status: "failed", DurationMs: ms,
+			Error:  "docx 正文无效",
+			Output: "请通过 skill:docx 传入文档正文（title + content），不要传入 Python 生成脚本。",
+		}
+	}
 	body := map[string]any{
 		"skillId": skillID, "input": content, "command": content,
 		"correlationId": ctx.CorrelationID,
@@ -611,6 +768,62 @@ func (s *Server) skillRunDocxBuiltin(
 	return toolExecResult{Status: status, DurationMs: ms, Output: truncateRunes(out, 2000), SandboxID: "skill-runtime:" + skillID}
 }
 
+func (s *Server) skillRunPptxBuiltin(
+	ctx toolRunContext,
+	sk map[string]any,
+	title, content string,
+	track func(int, bool, string),
+	started time.Time,
+) toolExecResult {
+	_ = ctx
+	_ = sk
+	if strings.TrimSpace(content) == "" {
+		content = defaultPptxOutlineForMessage(title, "")
+	}
+	filename, download, err := generatePptxArtifactLocal(title, content)
+	ms := int(time.Since(started).Milliseconds())
+	if err != nil {
+		track(ms, false, "Copilot · pptx 失败")
+		return toolExecResult{
+			Status: "failed", DurationMs: ms, Error: err.Error(),
+			Output: "PPT 生成失败：" + err.Error(),
+		}
+	}
+	track(ms, true, "Copilot · pptx entry")
+	return toolExecResult{
+		Status: "success", DurationMs: ms, SandboxID: "pptx-local",
+		Output: formatPptxToolOutput(title, filename, download, false),
+	}
+}
+
+func (s *Server) skillRunPdfBuiltin(
+	ctx toolRunContext,
+	sk map[string]any,
+	title, content string,
+	track func(int, bool, string),
+	started time.Time,
+) toolExecResult {
+	_ = ctx
+	_ = sk
+	if strings.TrimSpace(content) == "" {
+		content = defaultPdfBodyForMessage(title, "")
+	}
+	filename, download, err := generatePdfArtifactLocal(title, content)
+	ms := int(time.Since(started).Milliseconds())
+	if err != nil {
+		track(ms, false, "Copilot · pdf 失败")
+		return toolExecResult{
+			Status: "failed", DurationMs: ms, Error: err.Error(),
+			Output: "PDF 生成失败：" + err.Error(),
+		}
+	}
+	track(ms, true, "Copilot · pdf entry")
+	return toolExecResult{
+		Status: "success", DurationMs: ms, SandboxID: "pdf-local",
+		Output: formatPdfToolOutput(title, filename, download, false),
+	}
+}
+
 // dispatchAuthorizedTool runs authorize → skill approval gate → queue or execute.
 func (s *Server) dispatchAuthorizedTool(
 	runCtx toolRunContext,
@@ -620,6 +833,12 @@ func (s *Server) dispatchAuthorizedTool(
 	emit reactEmitFunc,
 ) (tool *registeredTool, res toolExecResult) {
 	tool, deny := authorizeToolCall(reg, call)
+	// .copilot-ws 沙箱写脚本：与 skill.write 对齐，免非 skill 的 RequiresApproval 拦截。
+	if deny != nil && deny.Permission == "approval_required" && tool != nil &&
+		(strings.EqualFold(tool.Name, "write_file") || strings.EqualFold(tool.Name, "edit_file")) &&
+		isSandboxCopilotWsWriteCall(call) {
+		deny = nil
+	}
 	if deny == nil && tool != nil && tool.Kind == "skill" {
 		sk := s.resolveSkillForTool(runCtx.WorkspaceID, tool, str(call.Args["skillId"]))
 		if skillInvocationNeedsApproval(sessionMode, tool, sk, call) {

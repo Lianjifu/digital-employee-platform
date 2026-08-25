@@ -5,6 +5,9 @@ import "strings"
 var generalPackSkillNames = []string{
 	"weather", "summarize", "github", "docx", "pdf", "pptx",
 	"frontend-design", "web-design-guidelines", "diagram-maker", "gog",
+	"general-logic-thinking-assistant",
+	"general-problem-solving-analysis-assistant",
+	"general-creative-decision-assistant",
 }
 
 // All PilotDeck-aligned tools for de-general (P0–P3).
@@ -70,6 +73,12 @@ func applyGeneralEmployeeCaps(emp map[string]any, skills, tools []string) {
 	}
 	caps["skills"] = append([]string{}, skills...)
 	caps["tools"] = append([]string{}, tools...)
+	if cog, _ := caps["cognitive"].(map[string]any); cog == nil {
+		caps["cognitive"] = map[string]any{
+			"enabled": true, "defaultPack": "base-cognitive-v1",
+			"allowOverride": true, "maxFrameworksPerTurn": 2,
+		}
+	}
 
 	bp, _ := emp["boundaryPolicy"].(map[string]any)
 	if bp == nil {
@@ -93,6 +102,13 @@ func applyGeneralEmployeeCaps(emp map[string]any, skills, tools []string) {
 	for _, sk := range []string{"docx", "pptx"} {
 		setMode("skill", sk, "approval_required")
 	}
+	for _, sk := range []string{
+		"general-logic-thinking-assistant",
+		"general-problem-solving-analysis-assistant",
+		"general-creative-decision-assistant",
+	} {
+		setMode("skill", sk, "execute")
+	}
 	for _, t := range []string{"bash", "write_file", "edit_file", "execute_code", "edit_notebook", "agent", "task_stop"} {
 		setMode("tool", t, "approval_required")
 	}
@@ -107,6 +123,9 @@ func applyGeneralEmployeeCaps(emp map[string]any, skills, tools []string) {
 
 var officePackSkillNames = []string{
 	"summarize", "docx", "pdf", "pptx", "spreadsheets", "diagram-maker",
+	"general-logic-thinking-assistant",
+	"general-problem-solving-analysis-assistant",
+	"general-creative-decision-assistant",
 }
 
 var officeKnowledgePackages = []string{
@@ -177,6 +196,11 @@ func applyOfficeEmployeeCaps(emp map[string]any, skills, tools []string) {
 	caps["tools"] = append([]string{}, tools...)
 	caps["knowledge"] = append([]string{}, officeKnowledgePackages...)
 	caps["workflows"] = append([]string{}, officeWorkflowSkills...)
+	if cog, _ := caps["cognitive"].(map[string]any); cog == nil {
+		caps["cognitive"] = map[string]any{
+			"enabled": true, "defaultPack": "base-cognitive-v1", "maxFrameworksPerTurn": 2,
+		}
+	}
 
 	bp, _ := emp["boundaryPolicy"].(map[string]any)
 	if bp == nil {
@@ -199,6 +223,13 @@ func applyOfficeEmployeeCaps(emp map[string]any, skills, tools []string) {
 	}
 	for _, sk := range []string{"docx", "pptx", "pdf"} {
 		setMode("skill", sk, "approval_required")
+	}
+	for _, sk := range []string{
+		"general-logic-thinking-assistant",
+		"general-problem-solving-analysis-assistant",
+		"general-creative-decision-assistant",
+	} {
+		setMode("skill", sk, "execute")
 	}
 	for _, t := range tools {
 		setMode("tool", t, "execute")

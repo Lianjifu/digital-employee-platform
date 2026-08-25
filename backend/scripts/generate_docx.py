@@ -20,6 +20,66 @@ BULLET_RE = re.compile(r"^[-*•]\s+")
 MD_H3 = re.compile(r"^###\s+")
 MD_H2 = re.compile(r"^##\s+")
 MD_H1 = re.compile(r"^#\s+")
+TABLE_SEP_RE = re.compile(r"^\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")
+INLINE_BOLD_RE = re.compile(r"\*\*([^*]+)\*\*")
+
+
+def _is_table_row(line: str) -> bool:
+    s = line.strip()
+    return s.count("|") >= 2
+
+
+def _is_table_separator(line: str) -> bool:
+    return bool(TABLE_SEP_RE.match(line.strip()))
+
+
+def _split_table_row(line: str) -> list[str]:
+    s = line.strip().strip("|")
+    return [cell.strip() for cell in s.split("|")]
+
+
+def _add_paragraph_with_inline_md(doc, line: str, *, list_style: str | None = None) -> None:
+    from docx.enum.text import WD_LINE_SPACING
+    from docx.shared import Pt
+
+    if list_style:
+        p = doc.add_paragraph(style=list_style)
+    else:
+        p = doc.add_paragraph()
+        pf = p.paragraph_format
+        pf.space_after = Pt(6)
+        pf.line_spacing_rule = WD_LINE_SPACING.ONE_POINT_FIVE
+    pos = 0
+    for match in INLINE_BOLD_RE.finditer(line):
+        if match.start() > pos:
+            run = p.add_run(line[pos:match.start()])
+            _set_run_font(run, 11)
+        run = p.add_run(match.group(1))
+        run.bold = True
+        _set_run_font(run, 11)
+        pos = match.end()
+    if pos < len(line):
+        run = p.add_run(line[pos:])
+        _set_run_font(run, 11)
+    if pos == 0 and not line:
+        _set_run_font(p.add_run(line), 11)
+
+
+def _add_markdown_table(doc, rows: list[list[str]]) -> None:
+    if not rows:
+        return
+    cols = max(len(row) for row in rows)
+    table = doc.add_table(rows=len(rows), cols=cols)
+    table.style = "Table Grid"
+    for ri, row in enumerate(rows):
+        for ci in range(cols):
+            text = row[ci] if ci < len(row) else ""
+            text = INLINE_BOLD_RE.sub(r"\1", text)
+            cell = table.rows[ri].cells[ci]
+            cell.text = text
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    _set_run_font(run, 10)
 
 
 def normalize_title(title: str) -> str:
@@ -98,10 +158,23 @@ def generate_docx(path: Path, title: str, content: str) -> None:
     for run in h.runs:
         _set_run_font(run, size_pt=16)
 
-    for raw in _iter_lines(content):
+    lines = _iter_lines(content)
+    idx = 0
+    while idx < len(lines):
+        raw = lines[idx]
         line = raw.strip()
         if not line:
             doc.add_paragraph("")
+            idx += 1
+            continue
+
+        if _is_table_row(line) and idx + 1 < len(lines) and _is_table_separator(lines[idx + 1].strip()):
+            table_rows = [_split_table_row(line)]
+            idx += 2
+            while idx < len(lines) and _is_table_row(lines[idx].strip()):
+                table_rows.append(_split_table_row(lines[idx].strip()))
+                idx += 1
+            _add_markdown_table(doc, table_rows)
             continue
 
         if MD_H3.match(line):
@@ -109,9 +182,9 @@ def generate_docx(path: Path, title: str, content: str) -> None:
         elif MD_H2.match(line):
             p = doc.add_heading(MD_H2.sub("", line).strip(), level=2)
         elif MD_H1.match(line):
-            # Avoid duplicating document title
             text = MD_H1.sub("", line).strip()
             if text == heading:
+                idx += 1
                 continue
             p = doc.add_heading(text, level=1)
         elif SECTION_RE.match(line):
@@ -119,26 +192,21 @@ def generate_docx(path: Path, title: str, content: str) -> None:
         elif SUBSECTION_RE.match(line):
             p = doc.add_heading(line, level=3)
         elif BULLET_RE.match(line):
-            p = doc.add_paragraph(BULLET_RE.sub("", line), style="List Bullet")
-            for run in p.runs:
-                _set_run_font(run, 11)
+            _add_paragraph_with_inline_md(doc, BULLET_RE.sub("", line), list_style="List Bullet")
+            idx += 1
             continue
         elif NUMBERED_RE.match(line):
-            p = doc.add_paragraph(NUMBERED_RE.sub("", line), style="List Number")
-            for run in p.runs:
-                _set_run_font(run, 11)
+            _add_paragraph_with_inline_md(doc, NUMBERED_RE.sub("", line), list_style="List Number")
+            idx += 1
             continue
         else:
-            p = doc.add_paragraph(line)
-            pf = p.paragraph_format
-            pf.space_after = Pt(6)
-            pf.line_spacing_rule = WD_LINE_SPACING.ONE_POINT_FIVE
-            for run in p.runs:
-                _set_run_font(run, 11)
+            _add_paragraph_with_inline_md(doc, line)
+            idx += 1
             continue
 
         for run in p.runs:
             _set_run_font(run, 12 if p.style and "Heading" in (p.style.name or "") else 11)
+        idx += 1
 
     path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(path))
@@ -162,23 +230,51 @@ def _paragraph_block(paragraph) -> dict:
     return {"type": "p", "text": text}
 
 
+def _table_blocks(table) -> list[dict]:
+    rows: list[list[str]] = []
+    for row in table.rows:
+        rows.append([(cell.text or "").strip() for cell in row.cells])
+    if not rows:
+        return []
+    blocks: list[dict] = []
+    for ri, row in enumerate(rows):
+        blocks.append({"type": "p", "text": "| " + " | ".join(row) + " |"})
+        if ri == 0:
+            blocks.append({"type": "p", "text": "| " + " | ".join(["---"] * len(row)) + " |"})
+    return blocks
+
+
 def preview_docx(path: Path) -> dict:
     """Extract structured blocks from an existing .docx for UI preview."""
     try:
         from docx import Document
+        from docx.table import Table
+        from docx.text.paragraph import Paragraph
     except ImportError as exc:  # pragma: no cover
         raise SystemExit(f"python-docx is required: {exc}") from exc
 
     doc = Document(str(path))
     blocks: list[dict] = []
     title = ""
-    for paragraph in doc.paragraphs:
-        block = _paragraph_block(paragraph)
-        if block["type"] == "blank":
-            continue
-        if not title and block["type"] == "h1":
-            title = block["text"]
+
+    def append_block(block: dict) -> None:
+        nonlocal title
+        if block.get("type") == "blank":
+            return
+        if not title and block.get("type") == "h1":
+            title = str(block.get("text") or "")
         blocks.append(block)
+
+    for child in doc.element.body:
+        if child.tag.endswith("}p"):
+            paragraph = Paragraph(child, doc)
+            block = _paragraph_block(paragraph)
+            append_block(block)
+        elif child.tag.endswith("}tbl"):
+            table = Table(child, doc)
+            for block in _table_blocks(table):
+                append_block(block)
+
     if not title:
         title = normalize_title(path.stem)
     return {

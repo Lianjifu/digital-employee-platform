@@ -57,7 +57,10 @@ type toolRunContext struct {
 	RiskLevel       string
 }
 
-var toolCallBlockRe = regexp.MustCompile(`(?s)<<<TOOL>>>\s*(\{.*?\})\s*<<<END>>>`)
+var (
+	toolCallBlockRe  = regexp.MustCompile(`(?s)<<<TOOL>>>\s*(\{.*?\})\s*<<<END>>>`)
+	xmlToolCallBlockRe = regexp.MustCompile(`(?s)<([a-zA-Z][\w.:-]*)>\s*(\{.*?\})\s*</[a-zA-Z][\w.:-]*>`)
+)
 
 func slugToolName(name string) string {
 	s := strings.ToLower(strings.TrimSpace(name))
@@ -246,13 +249,45 @@ func toolRegistryPrompt(reg []registeredTool) string {
 	var b strings.Builder
 	b.WriteString("你可以使用下列工具（ReAct）。需要工具时，先只输出一个工具调用块，不要夹杂最终答案：\n")
 	b.WriteString("<<<TOOL>>>\n{\"name\":\"工具名\",\"args\":{...}}\n<<<END>>>\n")
-	b.WriteString("收到工具观察结果后，再决定是否继续调用或给出最终中文回答。最终回答不要包含 <<<TOOL>>> 标记。\n")
+	b.WriteString("禁止输出 <skill.read>、<pptx> 等 XML 标签式工具块；仅使用上述 <<<TOOL>>> 格式。\n")
+	b.WriteString("收到工具观察结果后，再决定是否继续调用或给出最终中文回答。最终回答不要包含 <<<TOOL>>> 或 XML 工具标记。\n")
 	b.WriteString("【Skill Harness】对 kind=skill 的能力：\n")
 	b.WriteString("1) 首次先 action=open 阅读 SKILL.md 与 scripts 列表；\n")
-	b.WriteString("2) 需要写生成器时 action=write path=.copilot-ws/... content=...；\n")
-	b.WriteString("3) 执行必须 action=run 且 command 匹配 scripts/... 或 .copilot-ws/...；\n")
+	b.WriteString("2) 需要写生成器时 action=write path=.copilot-ws/... content=...（或 write_file）；write 成功后系统会自动续跑 run；\n")
+	b.WriteString("3) 执行必须 action=run 且 command 匹配 scripts/... 或 .copilot-ws/...；未见到下载链接前勿声称 PPT/Word 已生成；\n")
 	b.WriteString("4) 勿把自然语言当 command；观察 status=needs_instruction 表示尚未真正执行；\n")
 	b.WriteString("5) 仅当观察为 pending_authorization 时告知用户「已进入人工审核」；禁止在 success/needs_instruction 时声称已提交审核或已生成文件。\n")
+	hasDocx := false
+	for _, t := range enabled {
+		if isDocxSkillName(t.Name) {
+			hasDocx = true
+			break
+		}
+	}
+	if hasDocx {
+		b.WriteString("【Word / docx】生成 Word 请调用 skill:docx；content 必须是完整可落盘正文（与最终回复中的模板全文一致），不得传摘要、title=content= 形式或「按检索整理」类描述；推荐先写出完整模板再调用 skill:docx。\n")
+	}
+	hasPptx := false
+	for _, t := range enabled {
+		if t.Kind == "skill" && (strings.Contains(strings.ToLower(t.Name), "pptx") || strings.Contains(strings.ToLower(t.Name), "ppt")) {
+			hasPptx = true
+			break
+		}
+	}
+	if hasPptx {
+		b.WriteString("【PPT / pptx】优先一次调用 skill:pptx：args.action=run、args.title、args.content（Markdown 大纲，## 为每页标题；封面须含副标题/汇报人等正文）。平台使用 PilotDeck 生产级版式库生成可打开的 .pptx，并返回 /api/skill-artifacts/*.pptx。仅在需要自定义复杂脚本时才 write .copilot-ws/*.mjs 再 run；脚本成功后也必须出现下载链接。未见到下载链接前勿声称已生成。\n")
+	}
+	hasPdf := false
+	for _, t := range enabled {
+		if t.Kind == "skill" && strings.Contains(strings.ToLower(t.Name), "pdf") {
+			hasPdf = true
+			break
+		}
+	}
+	if hasPdf {
+		b.WriteString("【PDF】优先 skill:pdf：args.action=run、args.title、args.content（完整正文）。平台生成 /api/skill-artifacts/*.pdf。未见到下载链接前勿声称已生成。\n")
+	}
+	b.WriteString("【产物协议】docx/pptx/pdf 必须以 /api/skill-artifacts/ 下载链接交付；禁止只声称「已生成」而无链接。\n")
 	b.WriteString("可用工具：\n")
 	for _, t := range enabled {
 		b.WriteString("- ")
@@ -280,6 +315,16 @@ func parseToolCall(text string) (toolCallRequest, bool) {
 	if text == "" {
 		return toolCallRequest{}, false
 	}
+	if call, ok := parseCanonicalToolCall(text); ok {
+		return normalizeParsedToolCall(call), true
+	}
+	if call, ok := parseXMLToolCall(text); ok {
+		return normalizeParsedToolCall(call), true
+	}
+	return toolCallRequest{}, false
+}
+
+func parseCanonicalToolCall(text string) (toolCallRequest, bool) {
 	m := toolCallBlockRe.FindStringSubmatch(text)
 	if len(m) != 2 {
 		return toolCallRequest{}, false
@@ -298,8 +343,103 @@ func parseToolCall(text string) (toolCallRequest, bool) {
 	return call, true
 }
 
+func parseXMLToolCall(text string) (toolCallRequest, bool) {
+	m := xmlToolCallBlockRe.FindStringSubmatch(text)
+	if len(m) != 3 {
+		return toolCallRequest{}, false
+	}
+	name := strings.TrimSpace(strings.TrimPrefix(m[1], "skill:"))
+	lowName := strings.ToLower(name)
+	// Only treat known tool-like tags as tool calls (avoid stripping random XML/HTML).
+	known := map[string]bool{
+		"skill.read": true, "read_skill": true, "write_file": true, "edit_file": true,
+		"bash": true, "pptx": true, "docx": true, "pdf": true, "spreadsheets": true,
+		"knowledge.retrieve": true, "memory.recall": true, "read_file": true,
+		"execute_code": true, "skill": true,
+	}
+	if !known[lowName] && !strings.Contains(lowName, "pptx") && !strings.Contains(lowName, "docx") {
+		return toolCallRequest{}, false
+	}
+	payload := map[string]any{}
+	if err := json.Unmarshal([]byte(m[2]), &payload); err != nil {
+		return toolCallRequest{}, false
+	}
+	args := map[string]any{}
+	for k, v := range payload {
+		switch strings.ToLower(k) {
+		case "name":
+			if name == "" {
+				name = strings.TrimSpace(str(v))
+			}
+		case "args":
+			if nested, ok := v.(map[string]any); ok {
+				for nk, nv := range nested {
+					args[nk] = nv
+				}
+			}
+		default:
+			args[k] = v
+		}
+	}
+	if name == "" {
+		if skill := str(args["skill"]); skill != "" {
+			name = skill
+		}
+	}
+	if name == "" {
+		return toolCallRequest{}, false
+	}
+	if args == nil {
+		args = map[string]any{}
+	}
+	return toolCallRequest{Name: name, Args: args}, true
+}
+
+// normalizeParsedToolCall maps common model aliases to registered tool names.
+func normalizeParsedToolCall(call toolCallRequest) toolCallRequest {
+	if call.Args == nil {
+		call.Args = map[string]any{}
+	}
+	name := strings.TrimSpace(call.Name)
+	skill := strings.TrimSpace(coalesce(str(call.Args["skill"]), str(call.Args["skillName"])))
+	action := normalizeSkillAction(call.Args)
+	switch strings.ToLower(name) {
+	case "skill.read", "read_skill":
+		if skill != "" && (action == skillActionOpen || action == "") {
+			call.Name = skill
+			call.Args["action"] = skillActionOpen
+			delete(call.Args, "skill")
+			delete(call.Args, "skillName")
+		} else if skill != "" {
+			call.Args["skill"] = skill
+		}
+	case "writefile", "write-file":
+		call.Name = "write_file"
+	case "skill:pptx", "skill:docx":
+		call.Name = strings.TrimPrefix(strings.ToLower(name), "skill:")
+	}
+	if strings.HasPrefix(strings.ToLower(call.Name), "skill:") {
+		call.Name = strings.TrimPrefix(call.Name, "skill:")
+	}
+	return call
+}
+
+func looksLikeLeakedToolMarkup(text string) bool {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return false
+	}
+	if strings.Contains(text, "<<<TOOL>>>") || xmlToolCallBlockRe.MatchString(text) {
+		return true
+	}
+	_, ok := parseToolCall(text)
+	return ok
+}
+
 func stripToolCallMarkers(text string) string {
-	return strings.TrimSpace(toolCallBlockRe.ReplaceAllString(text, ""))
+	text = toolCallBlockRe.ReplaceAllString(text, "")
+	text = xmlToolCallBlockRe.ReplaceAllString(text, "")
+	return strings.TrimSpace(text)
 }
 
 func authorizeToolCall(reg []registeredTool, call toolCallRequest) (*registeredTool, *toolExecResult) {

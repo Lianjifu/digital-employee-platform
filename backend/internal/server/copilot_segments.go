@@ -300,8 +300,8 @@ func buildSegmentsFromTurn(full string, reactOut reactTurnResult, replyMode, seg
 	for i := range out {
 		out[i].Index = i
 	}
-	if normalizeReplyMode(replyMode) == replyModeSegmented {
-		out = appendArtifactSegments(out, full, idGen)
+	if normalizeReplyMode(replyMode) == replyModeSegmented && artifactSegmentSeparate() {
+		out = appendArtifactSegments(out, full, firstMessageID, idGen)
 		for i := range out {
 			out[i].Index = i
 		}
@@ -310,6 +310,44 @@ func buildSegmentsFromTurn(full string, reactOut reactTurnResult, replyMode, seg
 		return out
 	}
 	return out
+}
+
+// reconcileSegmentsWithFinalText 在落库/终态 SSE 时刷新分段正文，保留流式阶段已下发的 messageId。
+func reconcileSegmentsWithFinalText(
+	streamed []AssistantSegment,
+	full string,
+	reactOut reactTurnResult,
+	replyMode, segmentPolicy, firstMessageID string,
+	idGen func() string,
+) []AssistantSegment {
+	desired := buildSegmentsFromTurn(full, reactOut, replyMode, segmentPolicy, firstMessageID, idGen, nil)
+	if len(desired) == 0 {
+		return streamed
+	}
+	if len(streamed) == 0 {
+		return desired
+	}
+	out := make([]AssistantSegment, 0, len(desired))
+	for i := range desired {
+		seg := desired[i]
+		if i < len(streamed) && streamed[i].ID != "" {
+			seg.ID = streamed[i].ID
+		}
+		seg.Index = i
+		out = append(out, seg)
+	}
+	return out
+}
+
+func segmentStreamAlreadyDone(streamed []AssistantSegment, i int, seg AssistantSegment, replyMode string) bool {
+	if normalizeReplyMode(replyMode) == replyModeSingle || i >= len(streamed) {
+		return false
+	}
+	prev := streamed[i]
+	if prev.ID != seg.ID {
+		return false
+	}
+	return prev.Kind == seg.Kind && prev.Content == seg.Content
 }
 
 func emitSegmentStream(emit reactEmitFunc, segments []AssistantSegment, modelID, corr, replyMode string) {

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"strings"
 )
 
 // runHarnessTurn routes to direct / react / plan_exec / multi_agent,
@@ -18,13 +19,32 @@ func (s *Server) runHarnessTurn(ctx context.Context, in reactTurnInput) reactTur
 		in.ModelID = resolvedModel
 	}
 
+	// Cognitive thinking model: route after harness mode, inject digest before act.
+	cog := decideCognitiveFramework(in.UserMessage, decision.Mode, usedLevel, in.Employee)
+	in.Cognitive = cog
+	IncCopilotCognitive(cog)
+
 	in.Emit("route", "harness", map[string]any{
 		"mode": decision.Mode, "reason": decision.Reason,
 		"enabledTools": enabledToolKeys(in.Registry), "modelId": in.ModelID,
 		"maxSteps":    reactMaxSteps,
 		"policyLevel": usedLevel, "policyId": policyID,
 		"requestedLevel": decision.PolicyLevel,
+		"cognitive":      cognitiveSnapshot(cog),
 	})
+	if title, detail := thoughtUnderstandTask(in.UserMessage); title != "" {
+		emitThought(in.Emit, "plan", title, detail)
+	}
+	emitCognitiveThoughts(in.Emit, cog)
+	if title, detail := thoughtForRouteMode(decision.Mode, decision.Reason); title != "" {
+		emitThought(in.Emit, "plan", title, detail)
+	}
+	if dig := strings.TrimSpace(cog.DigestText); dig != "" {
+		if strings.TrimSpace(in.System) != "" {
+			in.System += "\n\n"
+		}
+		in.System += dig
+	}
 	in.SkipRoute = true
 
 	idGen := defaultSegmentIDGen(s)
@@ -49,6 +69,7 @@ func (s *Server) runHarnessTurn(ctx context.Context, in reactTurnInput) reactTur
 	}
 
 	if out.Err != nil {
+		out.Cognitive = cog
 		return out
 	}
 
@@ -58,8 +79,11 @@ func (s *Server) runHarnessTurn(ctx context.Context, in reactTurnInput) reactTur
 	}
 	out.PolicyLevel = usedLevel
 	out.PolicyID = policyID
+	out.Cognitive = cog
 
 	out.Text = enrichCopilotFinalText(out.Text, out.ToolCalls, in.UserMessage)
+
+	emitCognitiveFinalize(in.Emit, cog)
 
 	streamOpts := &streamAnswerOpts{
 		ReplyMode: in.ReplyMode, SegmentPolicy: in.SegmentPolicy, CorrelationID: in.CorrelationID,

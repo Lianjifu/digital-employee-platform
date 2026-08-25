@@ -1,6 +1,7 @@
 package server
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/digital-employee-platform/backend/internal/store"
@@ -49,6 +50,7 @@ func TestBuildSegmentsFromTurnSegmentedConversational(t *testing.T) {
 }
 
 func TestBuildSegmentsFromTurnArtifactBubble(t *testing.T) {
+	t.Setenv("DE_COPILOT_ARTIFACT_SEGMENT", "1")
 	full := "# 模板\n正文\n下载链接：/api/skill-artifacts/x-招聘岗位模板.docx"
 	segs := buildSegmentsFromTurn(full, reactTurnResult{}, replyModeSegmented, segmentPolicyDocument, "m1", func() string { return "m2" }, nil)
 	if len(segs) != 2 {
@@ -56,6 +58,41 @@ func TestBuildSegmentsFromTurnArtifactBubble(t *testing.T) {
 	}
 	if segs[1].Kind != segmentKindArtifact {
 		t.Fatalf("artifact kind=%s", segs[1].Kind)
+	}
+	if segs[1].ID != "m1_artifact" {
+		t.Fatalf("artifact id=%s", segs[1].ID)
+	}
+}
+
+func TestBuildSegmentsFromTurnArtifactInlineDefault(t *testing.T) {
+	t.Setenv("DE_COPILOT_ARTIFACT_SEGMENT", "0")
+	t.Setenv("DE_COPILOT_ARTIFACT_INLINE", "1")
+	full := "正文\n下载链接：/api/skill-artifacts/x-招聘岗位模板.docx"
+	segs := buildSegmentsFromTurn(full, reactTurnResult{}, replyModeSegmented, segmentPolicyDocument, "m1", func() string { return "m2" }, nil)
+	if len(segs) != 1 {
+		t.Fatalf("inline should keep single body segment, got %#v", segs)
+	}
+	if !strings.Contains(segs[0].Content, "/api/skill-artifacts/") {
+		t.Fatalf("inline body should retain artifact link: %q", segs[0].Content)
+	}
+}
+
+func TestReconcileSegmentsPreservesStreamedIDs(t *testing.T) {
+	t.Setenv("DE_COPILOT_ARTIFACT_SEGMENT", "1")
+	streamed := []AssistantSegment{
+		{ID: "client-reply", Kind: segmentKindBody, Content: "old body"},
+		{ID: "client-reply_artifact", Kind: segmentKindArtifact, Content: "old art"},
+	}
+	full := "new body\n下载链接：/api/skill-artifacts/x-招聘岗位模板.docx"
+	got := reconcileSegmentsWithFinalText(streamed, full, reactTurnResult{}, replyModeSegmented, segmentPolicyDocument, "client-reply", func() string { return "new-id" })
+	if len(got) != 2 {
+		t.Fatalf("got %#v", got)
+	}
+	if got[0].ID != "client-reply" || got[1].ID != "client-reply_artifact" {
+		t.Fatalf("ids not preserved: %#v", got)
+	}
+	if strings.Contains(got[0].Content, "/api/skill-artifacts/") {
+		t.Fatalf("body should strip artifact path: %q", got[0].Content)
 	}
 }
 

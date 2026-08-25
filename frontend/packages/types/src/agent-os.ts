@@ -15,7 +15,7 @@ export type PolicyDecision = (typeof POLICY_DECISIONS)[number];
 export const INBOUND_CHANNEL_KINDS = ['web', 'api', 'feishu', 'wecom', 'dingtalk'] as const;
 export type InboundChannelKind = (typeof INBOUND_CHANNEL_KINDS)[number];
 
-export const STREAM_EVENT_TYPES = ['stage', 'delta', 'tool', 'route', 'evidence', 'done', 'error'] as const;
+export const STREAM_EVENT_TYPES = ['stage', 'delta', 'tool', 'route', 'thought', 'evidence', 'done', 'error'] as const;
 export type StreamEventType = (typeof STREAM_EVENT_TYPES)[number];
 
 export const LOOP_MODES = ['direct', 'react', 'plan_exec', 'multi_agent'] as const;

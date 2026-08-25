@@ -1,6 +1,7 @@
 package server
 
 import (
+	"archive/zip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -89,6 +90,154 @@ func TestSkillRunNeedsInstructionWithoutScript(t *testing.T) {
 	}, "请生成PPT", time.Now())
 	if res.Status != "needs_instruction" {
 		t.Fatalf("got %s: %s", res.Status, res.Output)
+	}
+}
+
+func TestPreviewPptxArtifact(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DE_SKILL_ARTIFACT_DIR", dir)
+	storage, _, err := generatePptxArtifactLocal("团队季度考评", "# 封面\n## 目录\n- A\n- B\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := previewPptxArtifact(storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if str(payload["kind"]) != "pptx" {
+		t.Fatalf("kind=%v", payload["kind"])
+	}
+	if intFrom(payload["pageCount"]) < 2 {
+		t.Fatalf("pageCount=%v", payload["pageCount"])
+	}
+	slides, ok := payload["slides"].([]map[string]any)
+	if !ok || len(slides) < 2 {
+		if raw, ok := payload["slides"].([]any); !ok || len(raw) < 2 {
+			t.Fatalf("slides missing: %#v", payload["slides"])
+		}
+	} else if str(slides[0]["title"]) == "" {
+		t.Fatalf("empty slide title: %#v", slides[0])
+	}
+	blocks, _ := payload["blocks"].([]map[string]any)
+	if len(blocks) == 0 {
+		if raw, ok := payload["blocks"].([]any); !ok || len(raw) == 0 {
+			t.Fatalf("empty blocks: %#v", payload["blocks"])
+		}
+	}
+}
+
+func TestEnsureSkillArtifactsSkipsWhenPptxPresent(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DE_SKILL_ARTIFACT_DIR", dir)
+	out := "已生成 PPT\n下载链接：/api/skill-artifacts/abc-团队季度考评.pptx"
+	got := ensureSkillArtifactsInOutput(out, "团队季度考评", "## 目录\n- 一项\n"+strings.Repeat("正文内容足够长以通过结构化检测。", 10))
+	if strings.Contains(got, ".docx") {
+		t.Fatalf("should not invent docx beside pptx: %s", got)
+	}
+	if !strings.Contains(got, ".pptx") {
+		t.Fatalf("pptx link lost: %s", got)
+	}
+}
+
+func TestGeneratePptxArtifactLocal(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DE_SKILL_ARTIFACT_DIR", dir)
+	storage, download, err := generatePptxArtifactLocal("团队季度考评", "# 封面\n## 目录\n- A\n- B\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(storage, ".pptx") {
+		t.Fatalf("storage=%s", storage)
+	}
+	if !strings.Contains(download, "/api/skill-artifacts/") {
+		t.Fatalf("download=%s", download)
+	}
+	if !skillArtifactExists(storage) {
+		t.Fatal("file missing")
+	}
+	path := skillArtifactFilePath(storage)
+	if err := validatePptxOOXMLLoose(path); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Production PptxGenJS decks are typically >> 40KB; stdlib fallback is ~8–20KB.
+	if st.Size() < 40_000 {
+		t.Logf("warning: pptx size=%d looks like fallback generator", st.Size())
+	}
+	zr, err := zip.OpenReader(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	haveTheme, haveMaster := false, false
+	for _, f := range zr.File {
+		if strings.HasPrefix(f.Name, "ppt/theme/") {
+			haveTheme = true
+		}
+		if strings.HasPrefix(f.Name, "ppt/slideMasters/") {
+			haveMaster = true
+		}
+	}
+	if !haveTheme || !haveMaster {
+		t.Fatal("missing theme/master")
+	}
+}
+
+func TestGeneratePdfArtifactLocal(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DE_SKILL_ARTIFACT_DIR", dir)
+	storage, download, err := generatePdfArtifactLocal("测试PDF", "一、概述\n内容A\n二、结论\n内容B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(storage, ".pdf") {
+		t.Fatalf("storage=%s", storage)
+	}
+	if !strings.Contains(download, "/api/skill-artifacts/") {
+		t.Fatalf("download=%s", download)
+	}
+	raw, err := os.ReadFile(skillArtifactFilePath(storage))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(raw) < 8 || string(raw[:4]) != "%PDF" {
+		t.Fatalf("bad pdf magic")
+	}
+}
+
+func TestLooksLikeClarificationSpeech(t *testing.T) {
+	if !looksLikeClarificationSpeech("请告诉我考评对象，并请补充周期，方便提供模板。") {
+		t.Fatal("expected clarification")
+	}
+	if looksLikeClarificationSpeech("一、基本信息\n岗位名称：人事专员\n二、岗位职责\n1. 招聘\n2. 入职") {
+		t.Fatal("structured body should pass")
+	}
+}
+
+func TestLooksLikePptxGenerateRequest(t *testing.T) {
+	if !looksLikePptxGenerateRequest("生成团队季度考评 PPT") {
+		t.Fatal("expected true")
+	}
+	if looksLikePptxGenerateRequest("PPT 和 Word 有什么区别") {
+		t.Fatal("question should not count as generate")
+	}
+}
+
+func TestSkillRunPptxBuiltin(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DE_SKILL_ARTIFACT_DIR", dir)
+	s := &Server{}
+	sk := map[string]any{"id": "sk-pptx", "name": "pptx"}
+	res := s.skillRunPptxBuiltin(toolRunContext{UserMessage: "生成团队季度考评 PPT"}, sk, "团队季度考评", "",
+		func(int, bool, string) {}, time.Now())
+	if res.Status != "success" {
+		t.Fatalf("%#v", res)
+	}
+	if !strings.Contains(res.Output, ".pptx") || !strings.Contains(res.Output, "/api/skill-artifacts/") {
+		t.Fatalf("output=%s", res.Output)
 	}
 }
 

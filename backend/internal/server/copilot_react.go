@@ -11,7 +11,7 @@ import (
 	"github.com/digital-employee-platform/backend/internal/modelprov"
 )
 
-const reactMaxSteps = 7
+const reactMaxSteps = 10
 const reactToolObservationMaxRunes = 800
 
 type reactEmitFunc func(typ, stage string, extra map[string]any)
@@ -47,6 +47,8 @@ type reactTurnInput struct {
 	FirstMessageID   string
 	StepSegments     *[]AssistantSegment
 	LiveStream       *liveAnswerStream
+	Employee         map[string]any
+	Cognitive        cognitiveDecision
 }
 
 type reactTurnResult struct {
@@ -66,6 +68,7 @@ type reactTurnResult struct {
 	StepSegments  []AssistantSegment
 	Segments      []AssistantSegment
 	ReplyMode     string
+	Cognitive     cognitiveDecision
 }
 
 // runReactTurn executes a bounded Reason→Act→Observe loop, then optionally streams the final answer.
@@ -171,10 +174,14 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 		if !ok || maxSteps == 1 {
 			finalText = stripToolCallMarkers(text)
 			in.Emit("stage", "react", map[string]any{"status": "ok", "step": step, "action": "final"})
+			emitThought(in.Emit, "finalize", "准备输出回复", "")
 			break
 		}
 
 		tcID := fmt.Sprintf("tc_react_%d", step)
+		if title, detail := thoughtForToolChoice(call.Name); title != "" {
+			emitThought(in.Emit, "analyze", title, detail)
+		}
 		in.Emit("tool", "react", map[string]any{
 			"name": call.Name, "status": "running", "args": call.Args, "id": tcID,
 		})
@@ -205,6 +212,44 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 		obs := res.Output
 		if obs == "" {
 			obs = coalesce(res.Error, res.Status)
+		}
+		if runCmd := parseNextRunCommand(obs); shouldAutoRunAfterSkillWrite(res, runCmd) && isSkillWorkspaceWriteCall(call, tool) {
+			runCall := buildAutoRunToolCallAfterWrite(reg, tool, call, runCmd)
+			runTcID := tcID + "_autorun"
+			runDisplay := runCall.Name
+			in.Emit("tool", "react", map[string]any{
+				"name": runDisplay, "status": "running", "args": runCall.Args, "id": runTcID, "autoContinue": true,
+			})
+			runTool, runRes := s.dispatchAuthorizedTool(runCtx, reg, runCall, in.SessionMode, in.RiskLevel, in.Emit)
+			// write 已在本回合成功：若 run 仍被送进审核队列，改为直接执行沙箱脚本（避免卡在「只写不跑」）。
+			if runRes.Status == "pending_authorization" && isSandboxCopilotWsPath(runCmd) {
+				if runTool == nil {
+					runTool = registryLookup(reg, runCall.Name)
+				}
+				if runTool != nil {
+					runRes = s.runCopilotTool(runCtx, runTool, runCall)
+				}
+			}
+			if runTool != nil {
+				runDisplay = runTool.Name
+			}
+			toolCalls = append(toolCalls, toolCallToPersist(runTcID, runDisplay, runCall.Args, runRes))
+			runExtra := map[string]any{
+				"name": runDisplay, "status": runRes.Status, "args": runCall.Args, "id": runTcID, "autoContinue": true,
+				"durationMs": runRes.DurationMs, "permission": runRes.Permission,
+			}
+			if runRes.Error != "" {
+				runExtra["error"] = runRes.Error
+			}
+			if runRes.SandboxID != "" {
+				runExtra["sandboxId"] = runRes.SandboxID
+			}
+			in.Emit("tool", "react", runExtra)
+			runObs := coalesce(runRes.Output, coalesce(runRes.Error, runRes.Status))
+			obs = strings.TrimSpace(obs + "\n\n【自动续跑 run · " + runDisplay + " · " + runRes.Status + "】\n" + runObs)
+			if runRes.Status == "success" {
+				res = runRes
+			}
 		}
 		obs = truncateRunes(obs, reactToolObservationMaxRunes)
 		messages = append(messages,
@@ -238,6 +283,14 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 
 	if finalText == "" {
 		finalText = "（未生成回复）"
+	}
+	if looksLikeLeakedToolMarkup(finalText) {
+		finalText = stripToolCallMarkers(finalText)
+	}
+	if strings.TrimSpace(finalText) == "" || looksLikeLeakedToolMarkup(finalText) {
+		if toolOut := strings.TrimSpace(bestToolArtifactOutput(toolCalls)); toolOut != "" {
+			finalText = toolOut
+		}
 	}
 	finalText = enrichCopilotFinalText(finalText, toolCalls, in.UserMessage)
 

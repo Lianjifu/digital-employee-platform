@@ -79,6 +79,11 @@ func (s *Server) runRuntimeTool(ctx toolRunContext, t *registeredTool, call tool
 		return s.runtimeBash(ctx, t, call, started)
 	case "web_fetch":
 		return s.runtimeWebFetch(ctx, call, started)
+	// write_file / edit_file / execute_code / web_search 等实现在 pilotdeck_tools.go
+	case "write_file", "edit_file", "web_search", "execute_code", "edit_notebook",
+		"send_attachment", "agent", "task_create", "task_list", "task_output",
+		"task_wait", "task_stop", "list_mcp_resources", "read_mcp_resource":
+		return s.runPilotdeckTool(ctx, t, call, started)
 	default:
 		return toolExecResult{
 			Status: "failed", Error: "未知运行时工具: " + t.Name,
@@ -91,6 +96,23 @@ func (s *Server) resolveRuntimeSkill(ctx toolRunContext, call toolCallRequest) m
 	skillName := coalesce(str(call.Args["skill"]), str(call.Args["skillName"]))
 	if skillName != "" {
 		if sk := s.findWorkspaceSkill(ctx.WorkspaceID, "", skillName); sk != nil {
+			return sk
+		}
+	}
+	path := filepathToSlash(coalesce(str(call.Args["path"]), coalesce(str(call.Args["file"]), str(call.Args["filename"]))))
+	cmd := coalesce(str(call.Args["command"]), str(call.Args["cmd"]))
+	hint := strings.ToLower(path + " " + cmd + " " + str(call.Args["content"]))
+	prefer := ""
+	switch {
+	case strings.Contains(hint, "pptx") || strings.Contains(hint, "ppt") || strings.HasSuffix(path, ".mjs") || strings.HasSuffix(path, ".js"):
+		prefer = "pptx"
+	case strings.Contains(hint, "xlsx") || strings.Contains(hint, "spreadsheet") || strings.Contains(hint, "excel"):
+		prefer = "spreadsheets"
+	case strings.Contains(hint, "docx") || strings.Contains(hint, "word"):
+		prefer = "docx"
+	}
+	if prefer != "" {
+		if sk := s.findWorkspaceSkill(ctx.WorkspaceID, "", prefer); sk != nil && str(sk["packagePath"]) != "" {
 			return sk
 		}
 	}

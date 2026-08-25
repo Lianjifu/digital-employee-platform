@@ -15,6 +15,11 @@ var copilotStreamTotal atomic.Uint64
 var copilotStreamErrors atomic.Uint64
 var copilotRateLimited atomic.Uint64
 var copilotSafetyBlocked atomic.Uint64
+var copilotCognitiveApplied atomic.Uint64
+var copilotCognitiveBypass atomic.Uint64
+var copilotCognitiveLogic atomic.Uint64
+var copilotCognitiveProblem atomic.Uint64
+var copilotCognitiveCreative atomic.Uint64
 var auditWriteFailures atomic.Uint64
 var policyDeniesTotal atomic.Uint64
 var modelProbeTotal atomic.Uint64
@@ -71,6 +76,23 @@ func IncCopilotStream(ok bool) {
 
 func IncCopilotRateLimited()   { copilotRateLimited.Add(1) }
 func IncCopilotSafetyBlocked() { copilotSafetyBlocked.Add(1) }
+
+// IncCopilotCognitive records cognitive framework routing outcomes.
+func IncCopilotCognitive(d cognitiveDecision) {
+	if d.Bypass || !d.Enabled {
+		copilotCognitiveBypass.Add(1)
+		return
+	}
+	copilotCognitiveApplied.Add(1)
+	switch d.Primary {
+	case cognitiveLogic:
+		copilotCognitiveLogic.Add(1)
+	case cognitiveProblem:
+		copilotCognitiveProblem.Add(1)
+	case cognitiveCreative:
+		copilotCognitiveCreative.Add(1)
+	}
+}
 
 // countPendingAuthorizationsLocked returns Actions still awaiting human approval.
 // Caller must hold Store.RLock or Lock.
@@ -173,6 +195,11 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_stream_errors_total Copilot SSE turns that ended in error\n# TYPE de_copilot_stream_errors_total counter\nde_copilot_stream_errors_total{service=%q} %d\n", svc, copilotStreamErrors.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_rate_limited_total Copilot rate limit hits\n# TYPE de_copilot_rate_limited_total counter\nde_copilot_rate_limited_total{service=%q} %d\n", svc, copilotRateLimited.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_safety_blocked_total Copilot content-safety blocks\n# TYPE de_copilot_safety_blocked_total counter\nde_copilot_safety_blocked_total{service=%q} %d\n", svc, copilotSafetyBlocked.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_copilot_cognitive_applied_total Copilot turns with cognitive framework applied\n# TYPE de_copilot_cognitive_applied_total counter\nde_copilot_cognitive_applied_total{service=%q} %d\n", svc, copilotCognitiveApplied.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_copilot_cognitive_bypass_total Copilot cognitive framework bypasses\n# TYPE de_copilot_cognitive_bypass_total counter\nde_copilot_cognitive_bypass_total{service=%q} %d\n", svc, copilotCognitiveBypass.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_copilot_cognitive_framework_total Copilot cognitive primary framework selections\n# TYPE de_copilot_cognitive_framework_total counter\nde_copilot_cognitive_framework_total{service=%q,framework=%q} %d\n", svc, "logic", copilotCognitiveLogic.Load())
+	_, _ = fmt.Fprintf(w, "de_copilot_cognitive_framework_total{service=%q,framework=%q} %d\n", svc, "problem", copilotCognitiveProblem.Load())
+	_, _ = fmt.Fprintf(w, "de_copilot_cognitive_framework_total{service=%q,framework=%q} %d\n", svc, "creative", copilotCognitiveCreative.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_authorizations_pending Copilot single-approver requests awaiting decision\n# TYPE de_copilot_authorizations_pending gauge\nde_copilot_authorizations_pending{service=%q} %d\n", svc, pendingAuth)
 	_, _ = fmt.Fprintf(w, "# HELP de_audit_write_failures_total durable audit fanout failures\n# TYPE de_audit_write_failures_total counter\nde_audit_write_failures_total{service=%q} %d\n", svc, auditWriteFailures.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_policy_denies_total policy deny on write paths\n# TYPE de_policy_denies_total counter\nde_policy_denies_total{service=%q} %d\n", svc, policyDeniesTotal.Load())

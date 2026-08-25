@@ -45,13 +45,15 @@ describe('extractSkillArtifacts', () => {
     ]);
   });
 
-  it('dedupes and cleans skill_docx filenames', () => {
-    const text = '📄 下载链接：`/api/skill-artifacts/lecc2aef2257-skill_docx__输出招聘模板_docx.docx`';
-    const [item] = extractSkillArtifacts(text);
-    expect(item.href).toBe(artifactHref('lecc2aef2257-skill_docx__输出招聘模板_docx.docx'));
-    expect(item.downloadName).toBe('输出招聘模板.docx');
-    expect(item.kind).toBe('docx');
-    expect(item.title).toContain('输出招聘模板');
+  it('marks pptx kind and prefers pptx before docx', () => {
+    const text = [
+      '下载链接：/api/skill-artifacts/aaa123-团队季度考评.docx',
+      '下载链接：/api/skill-artifacts/bbb456-团队季度考评汇报.pptx',
+    ].join('\n');
+    const items = extractSkillArtifacts(text);
+    expect(items[0]?.kind).toBe('pptx');
+    expect(items[0]?.downloadName).toBe('团队季度考评汇报.pptx');
+    expect(items[1]?.kind).toBe('docx');
   });
 });
 

@@ -3,6 +3,16 @@ name: pptx
 description: Create, edit, inspect, render, and validate editable Microsoft PowerPoint (.pptx) presentations, and import legacy binary .ppt files through verified conversion to .pptx. Use for native PowerPoint creation, modification, template inheritance, charts, tables, images, legacy .ppt migration, and slide-level quality assurance. Do not use for HTML/browser presentations or Google Slides.
 ---
 
+## Copilot / Digital Employee shortcut
+
+When invoked from Copilot with `action=run` plus `title` and `content` (Markdown outline),
+the host builds a **production layout-library deck** (title / agenda / bullets / metrics /
+section / closing) via `scripts/build_from_outline.mjs` and registers
+`/api/skill-artifacts/*.pptx`. Prefer that path for standard decks.
+
+Use the full `scripts/pptx.sh` / custom `.mjs` builder only when the user needs template
+inheritance, charts beyond outline heuristics, or audited delivery seals.
+
 # PPTX
 
 Create and modify native PowerPoint files through a reproducible JavaScript workflow. Keep the `.mjs` builder, render every final slide, and fix structural and visual defects before delivery.

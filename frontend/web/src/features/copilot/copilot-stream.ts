@@ -84,6 +84,19 @@ export type CopilotSSEEvent = {
   segmentPolicy?: 'document' | 'conversational';
   messages?: unknown[];
   content?: string;
+  cognitive?: {
+    bypass?: boolean;
+    bypassReason?: string;
+    enabled?: boolean;
+    primary?: string;
+    primaryLabel?: string;
+    secondary?: string;
+    secondaryLabel?: string;
+    mode?: string;
+    phases?: string[];
+    confidence?: number;
+    reasons?: string[];
+  };
 };
 
 export function isMockChatMode(): boolean {

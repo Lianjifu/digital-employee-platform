@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -304,12 +305,13 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 	corr := str(authReq["correlationId"])
 	risk := str(authReq["riskLevel"])
 	toolKey := coalesce(str(authReq["toolKey"]), toolKind+":"+slugToolName(toolName))
+	userMsg := lastUserMessageLocked(s.Store.Messages[cid])
 	s.Store.Unlock()
 
 	runCtx := toolRunContext{
 		Request: r, WorkspaceID: ws, OwnerID: id.ID, Viewer: id,
 		DigitalEmployee: deID, ConversationID: cid, CorrelationID: corr,
-		UserMessage: coalesce(str(args["input"]), coalesce(str(args["content"]), toolName)),
+		UserMessage: coalesce(userMsg, coalesce(str(args["input"]), coalesce(str(args["content"]), toolName))),
 		SessionMode: sessionModeExecute, RiskLevel: risk,
 	}
 	tool := &registeredTool{
@@ -404,16 +406,17 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 	if output == "" {
 		output = lastRes.Output
 	}
-	docTitle := normalizeDocxTitle(coalesce(str(args["title"]), coalesce(str(args["filename"]), toolName)))
-	docBody := resolveDocxBodyFromExecution(args, runCtx.UserMessage, output, plan)
-	if strings.Contains(output, "/api/skill-artifacts/") || isDocxSkillName(toolName) {
+	docTitle := coalesce(
+		inferDocxTitleFromMessage(userMsg),
+		normalizeDocxTitle(coalesce(str(args["title"]), coalesce(str(args["filename"]), toolName))),
+	)
+	docBody := coalesce(
+		resolveDocxBodyForTurn(output, nil, runCtx.UserMessage),
+		resolveDocxBodyFromExecution(args, runCtx.UserMessage, output, plan),
+	)
+	if (strings.Contains(output, "/api/skill-artifacts/") || isDocxSkillName(toolName)) &&
+		!looksLikePptxGenerateRequest(userMsg) && !hasPptxArtifactText(output) && !isPptxSkillName(toolName) {
 		output = ensureSkillArtifactsInOutput(output, docTitle, docBody)
-	}
-	if plan != nil {
-		progress := formatSkillTurnProgress(plan)
-		if progress != "" {
-			output = progress + "\n\n" + output
-		}
 	}
 
 	if lastRes.Status != "success" {
@@ -433,10 +436,7 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 		action["authorizationRequest"] = authReq
 		if cid != "" {
 			if msg, idx := findMessageLocked(s.Store.Messages[cid], actionID); msg != nil {
-				msg["content"] = coalesce(str(msg["content"]), "") + "\n\n—— 授权后执行结果 ——\n" + output
-				if nextRun != "" {
-					msg["content"] = str(msg["content"]) + "\n\n待续跑：action=run command=" + nextRun + "（可点「继续执行 run」）"
-				}
+				msg["content"] = appendAuthorizedExecuteResult(str(msg["content"]), output, nextRun)
 				if ar, ok := msg["approvalRequest"].(map[string]any); ok {
 					ar["skillTurn"] = plan
 					if plan != nil {
@@ -521,10 +521,7 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 				ar["decision"] = "approved"
 				msg["approvalRequest"] = ar
 			}
-			msg["content"] = coalesce(str(msg["content"]), "") + "\n\n—— 授权后执行结果 ——\n" + output
-			if nextRun != "" {
-				msg["content"] = str(msg["content"]) + "\n\n待续跑：action=run command=" + nextRun + "（可点「继续执行 run」）"
-			}
+			msg["content"] = appendAuthorizedExecuteResult(str(msg["content"]), output, nextRun)
 			s.Store.Messages[cid][idx] = msg
 		}
 	}
@@ -579,6 +576,64 @@ func (s *Server) conversationInWorkspaceLocked(ws, cid, raw string) bool {
 		return true
 	}
 	return false
+}
+
+func lastUserMessageLocked(msgs []map[string]any) string {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if str(msgs[i]["role"]) == "user" {
+			return str(msgs[i]["content"])
+		}
+	}
+	return ""
+}
+
+const authorizedExecuteResultMarker = "—— 授权后执行结果 ——"
+
+var (
+	reExecuteStepLine = regexp.MustCompile(`(?m)^——\s*步骤\s+(.+?)\s*——\s*$`)
+	reDocSuccessLine  = regexp.MustCompile(`已生成 Word 文档「([^」]+)」`)
+)
+
+func userFacingExecuteSummary(output string) string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return "授权执行已完成。"
+	}
+	for _, line := range strings.Split(output, "\n") {
+		trim := strings.TrimSpace(line)
+		if m := reDocSuccessLine.FindStringSubmatch(trim); len(m) == 2 {
+			return fmt.Sprintf("已为您生成 Word 文档「%s」，请使用上方卡片预览或下载。", m[1])
+		}
+	}
+	var steps []string
+	for _, m := range reExecuteStepLine.FindAllStringSubmatch(output, -1) {
+		if len(m) == 2 && strings.TrimSpace(m[1]) != "" {
+			steps = append(steps, strings.TrimSpace(m[1]))
+		}
+	}
+	if len(steps) > 0 {
+		return "已完成：" + strings.Join(steps, " → ")
+	}
+	if strings.Contains(output, "success") || strings.Contains(output, "已生成") {
+		return "授权执行已完成。"
+	}
+	return "授权执行已完成。"
+}
+
+func appendAuthorizedExecuteResult(existing, output, nextRun string) string {
+	existing = coalesce(existing, "")
+	if strings.Contains(existing, authorizedExecuteResultMarker) {
+		return existing
+	}
+	out := strings.TrimSpace(userFacingExecuteSummary(output))
+	if out == "" {
+		return existing
+	}
+	existing += "\n\n" + authorizedExecuteResultMarker + "\n" + out
+	if nextRun != "" {
+		existing += "\n\n待续跑：action=run command=" + nextRun + "（可点「继续执行 run」）"
+	}
+	return existing
 }
 
 func findMessageLocked(msgs []map[string]any, id string) (map[string]any, int) {

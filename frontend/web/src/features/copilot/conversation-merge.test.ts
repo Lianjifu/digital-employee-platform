@@ -119,4 +119,23 @@ describe('conversation-merge', () => {
     expect(merged).toHaveLength(2);
     expect(merged[1]?.content).toBe('新文档');
   });
+
+  it('merges duplicate artifact segments after server hydrate', () => {
+    const href = '/api/skill-artifacts/x-模板.docx';
+    const local = [
+      msg({ id: 'u1', role: 'user', content: '生成模板' }),
+      msg({ id: 'body-local', correlationId: 'c1', role: 'assistant', content: '已完成生成。' }),
+      msg({ id: 'art-local', correlationId: 'c1', role: 'assistant', content: `下载链接：${href}` }),
+    ];
+    const server = [
+      msg({ id: 'u1', role: 'user', content: '生成模板' }),
+      msg({ id: 'body-srv', correlationId: 'c1', role: 'assistant', content: '已完成生成。' }),
+      msg({ id: 'art-srv', correlationId: 'c1', role: 'assistant', segmentKind: 'artifact', content: `下载链接：${href}` }),
+    ];
+    const resolved = resolveHydratedMessages({ localMessages: local, serverMessages: server });
+    expect(resolved.applied).toBe(true);
+    const assistants = resolved.messages.filter((m) => m.role === 'assistant');
+    expect(assistants.length).toBeLessThanOrEqual(2);
+    expect(assistants.some((m) => (m.content ?? '').includes(href))).toBe(true);
+  });
 });

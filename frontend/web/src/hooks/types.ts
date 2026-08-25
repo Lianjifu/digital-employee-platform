@@ -78,7 +78,7 @@ export interface ToolCall {
 
 export interface ReasoningStep {
   id: string;
-  kind: 'plan' | 'search' | 'analyze' | 'tool_call' | 'reflect' | 'finalize';
+  kind: 'plan' | 'search' | 'analyze' | 'tool_call' | 'reflect' | 'finalize' | 'framework';
   title: string;
   detail?: string;
   /** 该步骤产生的引用 ID（RAG） */
@@ -88,6 +88,15 @@ export interface ReasoningStep {
   /** 该步骤开始/结束时间（ISO） */
   startedAt?: string;
   endedAt?: string;
+  /** 认知思路模型框架 id：logic | problem | creative */
+  framework?: string;
+  frameworkLabel?: string;
+  /** quick | standard | deep */
+  cognitiveMode?: string;
+  phase?: string;
+  phases?: string[];
+  role?: 'primary' | 'secondary' | string;
+  confidence?: number;
 }
 
 export interface Signer {
@@ -220,6 +229,23 @@ export interface ChatMessageEx {
   reasoningSteps?: ReasoningStep[];
   /** Reasoning 折叠摘要（一段式兼容字段） */
   thinkingSummary?: string;
+  /** 本轮认知思路模型快照（主/辅框架、模式、是否旁路） */
+  cognitive?: {
+    bypass?: boolean;
+    bypassReason?: string;
+    enabled?: boolean;
+    primary?: string;
+    primaryLabel?: string;
+    secondary?: string;
+    secondaryLabel?: string;
+    mode?: string;
+    phases?: string[];
+    confidence?: number;
+    reasons?: string[];
+    digestTokensEst?: number;
+  };
+  /** 生成态进度（气泡「正在执行」；不进思考面板） */
+  progressHint?: string;
   /** 用户反馈 */
   feedback?: MessageFeedback;
   /** 本轮注入记忆白盒溯源 */
@@ -236,6 +262,8 @@ export interface ChatMessageEx {
   editedAt?: string;
   /** 多段回复序号（同一 correlationId 内从 0 递增） */
   segmentIndex?: number;
+  /** 分段类型：artifact 等为下载附件段 */
+  segmentKind?: 'ack' | 'body' | 'summary' | 'step' | 'artifact';
 }
 
 /* ---------- 会话 ---------- */

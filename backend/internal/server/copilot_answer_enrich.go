@@ -19,6 +19,9 @@ func isPendingAssistantReply(text string) bool {
 	if strings.Contains(text, "已生成 Word 文档") || strings.Contains(text, "下载链接：") {
 		return false
 	}
+	if strings.Contains(text, ".pptx") && strings.Contains(text, "/api/skill-artifacts/") {
+		return false
+	}
 	runes := len([]rune(text))
 	if runes > 280 {
 		return false
@@ -41,7 +44,8 @@ func bestToolArtifactOutput(toolCalls []map[string]any) string {
 		if result == "" {
 			continue
 		}
-		if hasSkillArtifacts(result) || strings.Contains(result, "已生成 Word 文档") {
+		if hasSkillArtifacts(result) || strings.Contains(result, "已生成 Word 文档") ||
+			strings.Contains(strings.ToLower(result), ".pptx") {
 			return result
 		}
 	}
@@ -77,12 +81,27 @@ func enrichCopilotFinalText(full string, toolCalls []map[string]any, userMsg str
 		return full
 	}
 	if hasSkillArtifacts(full) {
-		return ensureSkillArtifactsInOutput(full, docTitleFromToolOutput(toolOut, userMsg), extractDocxBodyFromSkillOutput(toolOut))
+		// PPT 回合（或已有 pptx）不要旁路补造 Word。
+		if looksLikePptxGenerateRequest(userMsg) || hasPptxArtifactText(full) || hasPptxArtifactText(toolOut) {
+			return full
+		}
+		body := resolveDocxBodyForTurn(full, toolCalls, userMsg)
+		if body == "" {
+			body = sanitizeDocxBody(extractDocxBodyFromSkillOutput(toolOut))
+		}
+		return ensureSkillArtifactsInOutput(full, docTitleFromToolOutput(toolOut, userMsg), body)
 	}
 	title := docTitleFromToolOutput(toolOut, userMsg)
-	body := extractDocxBodyFromSkillOutput(toolOut)
+	body := resolveDocxBodyForTurn(full, toolCalls, userMsg)
+	if body == "" {
+		body = sanitizeDocxBody(extractDocxBodyFromSkillOutput(toolOut))
+	}
 	if body == "" || isPendingAssistantReply(body) {
-		body = fmt.Sprintf("已为您生成 Word 文档「%s」。", title)
+		if strings.Contains(strings.ToLower(toolOut), ".pptx") || strings.Contains(strings.ToLower(userMsg), "ppt") {
+			body = fmt.Sprintf("已为您生成 PPT 文档「%s」。", coalesce(inferDocxTitleFromMessage(userMsg), title))
+		} else {
+			body = fmt.Sprintf("已为您生成 Word 文档「%s」。", title)
+		}
 	}
 	artifactBlock := formatArtifactSegmentContent(toolOut)
 	if artifactBlock == "" {

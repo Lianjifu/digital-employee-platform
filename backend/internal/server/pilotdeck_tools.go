@@ -79,6 +79,14 @@ func (s *Server) runtimeWriteFile(ctx toolRunContext, call toolCallRequest, star
 	}
 	path := coalesce(str(call.Args["path"]), str(call.Args["file"]))
 	content := coalesce(str(call.Args["content"]), str(call.Args["input"]))
+	if looksLikeCodeAsDocxBody(content) {
+		ms := int(time.Since(started).Milliseconds())
+		return toolExecResult{
+			Status: "failed", DurationMs: ms,
+			Error:  "正文不能是生成脚本",
+			Output: "write_file 拒绝写入 docx 生成脚本。请改用 skill:docx，并传入 title 与人话正文 content。",
+		}
+	}
 	writeCall := toolCallRequest{Args: map[string]any{"action": "write", "path": path, "content": content}}
 	return s.skillWrite(sk, writeCall, started)
 }

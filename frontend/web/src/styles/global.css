@@ -4143,6 +4143,13 @@ a:focus-visible,
   font-size: 12px;
 }
 .copilot-doc-preview__state--error { color: var(--danger); }
+.copilot-doc-preview__paper-stage {
+  padding: 8px 4px 12px;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 4%, transparent), transparent 48px),
+    color-mix(in srgb, var(--bg) 88%, #d6d3d1);
+}
 .copilot-doc-preview__page {
   margin: 0 auto;
   width: 100%;
@@ -4154,6 +4161,47 @@ a:focus-visible,
   color: #1f2937;
   box-shadow: 0 10px 28px color-mix(in srgb, var(--text) 8%, transparent);
   font-family: "PingFang SC", "Microsoft YaHei", "微软雅黑", "Noto Sans SC", sans-serif;
+}
+.copilot-doc-preview__page--paper {
+  max-width: 640px;
+  min-height: 720px;
+  padding: 36px 40px 48px;
+  border-radius: 2px;
+  border: 1px solid #e5e7eb;
+  box-shadow:
+    0 1px 0 #fff inset,
+    0 12px 28px color-mix(in srgb, #000 12%, transparent),
+    0 2px 6px color-mix(in srgb, #000 6%, transparent);
+}
+.copilot-doc-preview__markdown.knowledge-md {
+  font-size: 13px;
+  line-height: 1.75;
+  color: #1f2937;
+}
+.copilot-doc-preview__markdown.knowledge-md h1 {
+  margin: 0 0 16px;
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: center;
+}
+.copilot-doc-preview__markdown.knowledge-md h2 {
+  margin: 18px 0 8px;
+  font-size: 16px;
+  font-weight: 650;
+}
+.copilot-doc-preview__markdown.knowledge-md h3 {
+  margin: 14px 0 6px;
+  font-size: 14px;
+  font-weight: 650;
+}
+.copilot-doc-preview__markdown.knowledge-md p {
+  margin: 0 0 10px;
+  text-align: justify;
+}
+.copilot-doc-preview__markdown.knowledge-md strong {
+  font-weight: 700;
+  color: #111827;
 }
 .copilot-doc-preview__h1 {
   margin: 0 0 16px;
@@ -4188,6 +4236,154 @@ a:focus-visible,
 .copilot-doc-preview__li.is-bullet { list-style: disc; }
 .copilot-doc-preview__li.is-ordered { list-style: decimal; }
 .copilot-doc-preview__gap { height: 8px; }
+
+/* PPT 幻灯片阅读器 */
+.copilot-pptx-reader {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.copilot-pptx-reader__stage {
+  padding: 12px 8px 4px;
+  border-radius: 12px;
+  background:
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--brand) 12%, transparent), transparent 55%),
+    linear-gradient(180deg, #1e293b, #0f172a);
+}
+.copilot-pptx-slide {
+  position: relative;
+  margin: 0 auto;
+  width: 100%;
+  max-width: 560px;
+  aspect-ratio: 16 / 9;
+  display: flex;
+  flex-direction: column;
+  padding: 22px 26px 28px;
+  border-radius: 6px;
+  background: linear-gradient(165deg, #ffffff 0%, #f8fafc 100%);
+  color: #0f172a;
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, #fff 20%, transparent),
+    0 18px 40px color-mix(in srgb, #000 45%, transparent);
+  overflow: hidden;
+  font-family: "PingFang SC", "Microsoft YaHei", "微软雅黑", "Noto Sans SC", sans-serif;
+}
+.copilot-pptx-slide__title {
+  flex: 0 0 auto;
+  margin: 0 0 12px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid color-mix(in srgb, var(--brand, #4f46e5) 55%, #c7d2fe);
+  font-size: clamp(15px, 2.1vw, 20px);
+  font-weight: 700;
+  line-height: 1.35;
+  color: #111827;
+}
+.copilot-pptx-slide__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+.copilot-pptx-slide__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.copilot-pptx-slide__list li {
+  position: relative;
+  font-size: clamp(12px, 1.5vw, 14px);
+  line-height: 1.55;
+  color: #334155;
+}
+.copilot-pptx-slide__list li.is-bullet {
+  padding-left: 1em;
+}
+.copilot-pptx-slide__list li.is-bullet::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: color-mix(in srgb, var(--brand, #4f46e5) 80%, #64748b);
+}
+.copilot-pptx-slide__list li.is-plain {
+  padding-left: 0;
+}
+.copilot-pptx-slide__empty {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 13px;
+}
+.copilot-pptx-slide__footer {
+  position: absolute;
+  right: 14px;
+  bottom: 10px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: #94a3b8;
+}
+.copilot-pptx-reader__nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.copilot-pptx-reader__btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+.copilot-pptx-reader__btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.copilot-pptx-reader__btn:not(:disabled):hover {
+  border-color: color-mix(in srgb, var(--brand) 40%, var(--border));
+}
+.copilot-pptx-reader__dots {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 5px;
+  max-width: 46%;
+}
+.copilot-pptx-reader__dot {
+  width: 7px;
+  height: 7px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-muted) 45%, transparent);
+  cursor: pointer;
+}
+.copilot-pptx-reader__dot.is-active {
+  width: 16px;
+  background: var(--brand, #4f46e5);
+}
+@media (max-width: 640px) {
+  .copilot-doc-preview__page--paper {
+    min-height: 0;
+    padding: 24px 18px 32px;
+  }
+  .copilot-pptx-slide {
+    padding: 16px 16px 24px;
+  }
+}
+.copilot-execution-details summary::-webkit-details-marker { display: none; }
+.copilot-execution-details summary::before {
+  content: '▸';
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform 0.15s ease;
+}
+.copilot-execution-details[open] summary::before { transform: rotate(90deg); }
 
 .copilot-expert-facts {
   display: grid;

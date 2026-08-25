@@ -13,6 +13,8 @@
     { "id": "chart", "export": "chartSlide", "family": "data", "useWhen": "Make one quantitative comparison", "slots": ["title", "series", "takeaway", "source"], "densityBudget": "medium" },
     { "id": "table", "export": "tableSlide", "family": "data", "useWhen": "Show compact exact values", "slots": ["title", "rows", "source"], "densityBudget": "high" },
     { "id": "quote", "export": "quoteSlide", "family": "evidence", "useWhen": "Feature one short attributed quotation", "slots": ["quote", "attribution", "context"], "densityBudget": "low" },
+    { "id": "bullets", "export": "bulletSlide", "family": "content", "useWhen": "Present three to eight narrative bullets", "slots": ["title", "bullets", "kicker"], "densityBudget": "medium" },
+    { "id": "agenda", "export": "agendaSlide", "family": "opening", "useWhen": "Show a numbered table of contents", "slots": ["title", "items"], "densityBudget": "medium" },
     { "id": "closing", "export": "closingSlide", "family": "closing", "useWhen": "End with one action or contact point", "slots": ["title", "action", "contact"], "densityBudget": "low" }
   ]
 }

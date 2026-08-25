@@ -20,12 +20,15 @@ func TestAppendArtifactSegments(t *testing.T) {
 	full := "# 模板\n\n下载链接：/api/skill-artifacts/x-招聘岗位模板.docx"
 	segs := appendArtifactSegments([]AssistantSegment{
 		{ID: "m1", Kind: segmentKindBody, Content: full},
-	}, full, func() string { return "m2" })
+	}, full, "m1", func() string { return "m2" })
 	if len(segs) != 2 {
 		t.Fatalf("want 2 segments, got %d", len(segs))
 	}
 	if segs[1].Kind != segmentKindArtifact {
 		t.Fatalf("second kind=%s", segs[1].Kind)
+	}
+	if segs[1].ID != "m1_artifact" {
+		t.Fatalf("artifact id=%s", segs[1].ID)
 	}
 	if strings.Contains(segs[0].Content, "/api/skill-artifacts/") {
 		t.Fatalf("body should not contain artifact path: %q", segs[0].Content)

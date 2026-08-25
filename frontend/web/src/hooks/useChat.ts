@@ -28,6 +28,15 @@ import { applySegmentSSEEvent, createSegmentRouter } from '@/features/copilot/co
 import { orderAssistantSegments } from '@/features/copilot/segment-message-order';
 import { DEFAULT_REPLY_MODE } from '@/features/copilot/composer-mode';
 import { fetchCopilotTurnStatus, TURN_RECOVERY_POLL_MS } from '@/features/copilot/pending-turn-recovery';
+import {
+  appendHumanThought,
+  progressLabelFromEvent,
+  toHumanThoughtStep,
+} from '@/features/copilot/human-thought';
+import {
+  isArtifactSegmentEvent,
+  mergeArtifactBlockIntoContent,
+} from '@/features/copilot/artifact-segment';
 import { capSessionMessages } from '@/features/copilot/context-limits';
 import { dedupeConversationMessages } from '@/features/copilot/conversation-merge';
 import { clearCopilotLastSession, rememberCopilotSession } from '@/lib/copilot-workspace';
@@ -916,6 +925,16 @@ export function exportSession(session: ChatSession, opts: { includeCitations?: b
         out.push('', '**Reasoning:**');
         for (const s of m.reasoningSteps) out.push(`- (${s.kind}) ${s.title}${s.detail ? ` — ${s.detail}` : ''}`);
       }
+      if (includeReasoning && m.cognitive && !m.cognitive.bypass) {
+        out.push('', '**Cognitive:**');
+        out.push(`- primary: ${m.cognitive.primaryLabel || m.cognitive.primary || '—'}${m.cognitive.mode ? ` · ${m.cognitive.mode}` : ''}`);
+        if (m.cognitive.secondaryLabel || m.cognitive.secondary) {
+          out.push(`- secondary: ${m.cognitive.secondaryLabel || m.cognitive.secondary}`);
+        }
+        if (m.cognitive.phases?.length) out.push(`- phases: ${m.cognitive.phases.join(' → ')}`);
+      } else if (includeReasoning && m.cognitive?.bypass) {
+        out.push('', `**Cognitive:** bypass (${m.cognitive.bypassReason || 'skipped'})`);
+      }
       if (includeToolCalls && m.toolCalls?.length) {
         out.push('', '**Tool calls:**');
         for (const t of m.toolCalls) out.push(`- \`${t.name}\` (${t.status}, ${t.durationMs ?? 0}ms) ${t.sandboxId ? `[sandbox:${t.sandboxId}]` : ''}`);
@@ -945,6 +964,7 @@ export function exportSession(session: ChatSession, opts: { includeCitations?: b
       feedback: m.feedback,
       safety: m.safety,
       metrics: m.metrics,
+      cognitive: m.cognitive,
       approval: m.approvalRequest,
     })),
     hash: uid('audit_'),
@@ -1151,7 +1171,7 @@ export function useChat(agentMeta?: { name: string }) {
       const segmentRouter = createSegmentRouter(replyId);
       const segmentPlaceholders = new Map<string, ChatMessageEx>();
       segmentPlaceholders.set(replyId, placeholder);
-      const ensureSegment = (messageId?: string, segmentIndex?: number) => {
+      const ensureSegment = (messageId?: string, segmentIndex?: number, segmentKind?: ChatMessageEx['segmentKind']) => {
         const mid = messageId?.trim() || replyId;
         if (!segmentPlaceholders.has(mid)) {
           const segPlaceholder: ChatMessageEx = {
@@ -1165,6 +1185,7 @@ export function useChat(agentMeta?: { name: string }) {
             clientMsgId: placeholder.clientMsgId,
             correlationId: correlationIdStr,
             segmentIndex,
+            segmentKind,
             status: 'streaming',
             metrics: { model: modelId, provider: 'de-core' },
             createdAt: new Date().toISOString(),
@@ -1188,41 +1209,66 @@ export function useChat(agentMeta?: { name: string }) {
         }
         return mid;
       };
-      let reasoningMid = replyId;
+      const thoughtHost = replyId;
+      const artifactSegmentIds = new Set<string>();
       let streamCompleted = false;
+      const mergeArtifactIntoHost = (artifactBlock: string) => {
+        if (!artifactBlock.trim()) return;
+        const base = segmentPlaceholders.get(thoughtHost) ?? placeholder;
+        const mergedContent = mergeArtifactBlockIntoContent(base.content ?? '', artifactBlock);
+        const next: ChatMessageEx = {
+          ...base,
+          content: mergedContent,
+          reasoningSteps: [...reasoningSteps],
+          toolCalls: [...toolCalls],
+          citations: [...citations],
+          progressHint: liveProgress || base.progressHint,
+        };
+        segmentPlaceholders.set(thoughtHost, next);
+        dispatch({ type: 'replace_msg', sid, mid: thoughtHost, msg: next });
+      };
       const patchSegment = (mid: string, status: ChatMessageEx['status'] = 'streaming') => {
         const body = segmentRouter.segments.get(mid)?.content ?? '';
         const base = segmentPlaceholders.get(mid) ?? placeholder;
+        const isHost = mid === thoughtHost;
+        const next: ChatMessageEx = {
+          ...base,
+          content: body,
+          ...(isHost ? {
+            reasoningSteps: [...reasoningSteps],
+            toolCalls: [...toolCalls],
+            citations: [...citations],
+            progressHint: liveProgress || base.progressHint,
+          } : {}),
+          status,
+        };
+        segmentPlaceholders.set(mid, next);
         dispatch({
           type: 'replace_msg',
           sid,
           mid,
-          msg: {
-            ...base,
-            content: body,
-            reasoningSteps: [...reasoningSteps],
-            toolCalls: [...toolCalls],
-            citations: [...citations],
-            status,
-          },
+          msg: next,
         });
       };
       const failAllSegments = (message: string, category: ErrorCategory) => {
         for (const mid of segmentRouter.segments.keys()) {
           const body = segmentRouter.segments.get(mid)?.content ?? '';
           const base = segmentPlaceholders.get(mid) ?? placeholder;
+          const isHost = mid === thoughtHost;
           dispatch({
             type: 'replace_msg',
             sid,
             mid,
             msg: {
               ...base,
-              content: body || `请求失败：${message}`,
-              reasoningSteps: [...reasoningSteps],
-              toolCalls: [...toolCalls],
-              citations: [...citations],
+              content: body || (isHost ? `请求失败：${message}` : body),
+              ...(isHost ? {
+                reasoningSteps: [...reasoningSteps],
+                toolCalls: [...toolCalls],
+                citations: [...citations],
+              } : {}),
               status: 'failed',
-              error: { category, message, retryable: category === 'network' || category === 'timeout' },
+              error: isHost ? { category, message, retryable: category === 'network' || category === 'timeout' } : base.error,
             },
           });
         }
@@ -1234,6 +1280,44 @@ export function useChat(agentMeta?: { name: string }) {
       let resolvedProvider = 'de-core';
       let resolvedSource = '';
       let toolStartedAt = startedAt;
+      let liveProgress = '';
+
+      const pushThought = (typ: string, data: CopilotSSEEvent) => {
+        const prevLen = reasoningSteps.length;
+        const next = toHumanThoughtStep(typ, data);
+        if (next) {
+          const merged = appendHumanThought(reasoningSteps, next);
+          reasoningSteps.length = 0;
+          reasoningSteps.push(...merged);
+          if (merged.length > prevLen) {
+            dispatch({
+              type: 'append_reasoning_step',
+              sid,
+              mid: thoughtHost,
+              step: merged[merged.length - 1]!,
+            });
+          } else if (merged.length > 0) {
+            const base = segmentPlaceholders.get(thoughtHost) ?? placeholder;
+            const patched: ChatMessageEx = {
+              ...base,
+              reasoningSteps: [...merged],
+            };
+            segmentPlaceholders.set(thoughtHost, patched);
+            dispatch({ type: 'replace_msg', sid, mid: thoughtHost, msg: patched });
+          }
+        }
+        const progress = progressLabelFromEvent(typ, data);
+        if (progress) {
+          liveProgress = progress;
+          const base = segmentPlaceholders.get(thoughtHost) ?? placeholder;
+          const patched: ChatMessageEx = {
+            ...base,
+            progressHint: liveProgress,
+          };
+          segmentPlaceholders.set(thoughtHost, patched);
+          dispatch({ type: 'replace_msg', sid, mid: thoughtHost, msg: patched });
+        }
+      };
 
       dispatch({
         type: 'log_request',
@@ -1282,114 +1366,11 @@ export function useChat(agentMeta?: { name: string }) {
           if (data.stage === 'rag' || data.stage === 'runtime') {
             if (data.status === 'running') toolStartedAt = Date.now();
           }
-          if (data.stage === 'memory' && Array.isArray(data.provenance) && data.provenance.length) {
-            const titles = data.provenance
-              .map((p) => `${p.layer ?? '?'}:${p.title || p.id || '?'}`)
-              .slice(0, 5)
-              .join(' · ');
-            const step: ReasoningStep = {
-              id: uid('rs_'),
-              kind: 'search',
-              title: `记忆注入 ${data.provenance.length} 条`,
-              detail: titles,
-              startedAt: new Date().toISOString(),
-            };
-            reasoningSteps.push(step);
-            dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
-            return;
-          }
-          const step: ReasoningStep = {
-            id: uid('rs_'),
-            kind: 'plan',
-            title: `阶段 ${data.stage ?? '?'}`,
-            detail: data.status ? `status=${data.status}` : undefined,
-            startedAt: new Date().toISOString(),
-          };
-          reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
+          pushThought(typ, data);
           return;
         }
-        if (typ === 'evolve') {
-          const step: ReasoningStep = {
-            id: uid('rs_'),
-            kind: 'analyze',
-            title: `自进化 · ${data.kind ?? 'candidate'}`,
-            detail: [data.title, data.status, data.summary].filter(Boolean).join(' · ') || undefined,
-            startedAt: new Date().toISOString(),
-          };
-          reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
-          return;
-        }
-        if (typ === 'route') {
-          const step: ReasoningStep = {
-            id: uid('rs_'),
-            kind: 'plan',
-            title: `路由 ${data.mode ?? 'react'}`,
-            detail: [
-              data.reason,
-              data.policyLevel ? `策略${data.policyLevel}` : '',
-              Array.isArray(data.enabledTools) ? `tools=${data.enabledTools.length}` : '',
-            ].filter(Boolean).join(' · ') || undefined,
-            startedAt: new Date().toISOString(),
-          };
-          reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
-          return;
-        }
-        if (typ === 'agent') {
-          const status = data.status ?? 'delegating';
-          const title = status === 'supervising'
-            ? `多智能体督导 · ${Array.isArray(data.specialists) ? data.specialists.length : 0} 人`
-            : status === 'delegating'
-              ? `委派 ${data.name ?? data.employeeId ?? '专家'}`
-              : status === 'delegated'
-                ? `回执 ${data.name ?? data.employeeId ?? '专家'}`
-                : status === 'completed'
-                  ? '多专家会商完成'
-                  : status === 'fallback'
-                    ? '无可用子专家，降级执行'
-                    : `多智能体 · ${status}`;
-          const step: ReasoningStep = {
-            id: uid('rs_'),
-            kind: 'analyze',
-            title: String(title),
-            detail: data.task || data.preview || data.department || data.reason,
-            startedAt: new Date().toISOString(),
-          };
-          reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
-          return;
-        }
-        if (typ === 'plan') {
-          const status = data.status ?? 'ready';
-          const title = status === 'ready' || status === 'completed'
-            ? `计划 ${status === 'completed' ? '完成' : '就绪'}`
-            : status === 'step_running'
-              ? `执行步骤 ${data.index ?? ''}/${data.total ?? ''}`
-              : `计划 · ${status}`;
-          const detail = data.title || data.goal || (Array.isArray(data.steps) ? `${data.steps.length} 步` : undefined);
-          const step: ReasoningStep = {
-            id: uid('rs_'),
-            kind: 'plan',
-            title: String(title),
-            detail: detail ? String(detail) : undefined,
-            startedAt: new Date().toISOString(),
-          };
-          reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
-          return;
-        }
-        if (typ === 'reflect') {
-          const step: ReasoningStep = {
-            id: uid('rs_'),
-            kind: 'reflect',
-            title: `反思 R${data.round ?? 1}`,
-            detail: data.critique || data.reason || data.status,
-            startedAt: new Date().toISOString(),
-          };
-          reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
+        if (typ === 'thought' || typ === 'evolve' || typ === 'route' || typ === 'agent' || typ === 'plan' || typ === 'reflect') {
+          pushThought(typ, data);
           return;
         }
         if (typ === 'authorization') {
@@ -1431,15 +1412,7 @@ export function useChat(agentMeta?: { name: string }) {
           };
           // upsert by actionId，避免与后端已落库消息重复
           dispatch({ type: 'replace_msg', sid, mid, msg: authMsg });
-          const step: ReasoningStep = {
-            id: uid('rs_'),
-            kind: 'analyze',
-            title: '待人工审核',
-            detail: String((data as { tool?: string }).tool || data.name || mid),
-            startedAt: new Date().toISOString(),
-          };
-          reasoningSteps.push(step);
-          dispatch({ type: 'append_reasoning_step', sid, mid: reasoningMid, step });
+          pushThought(typ, data);
           return;
         }
         if (typ === 'tool') {
@@ -1486,29 +1459,50 @@ export function useChat(agentMeta?: { name: string }) {
               score: typeof h.score === 'number' ? h.score : 0.5,
             });
           }
-          patchSegment(reasoningMid);
+          pushThought(typ, data);
+          patchSegment(thoughtHost);
           return;
         }
         if (typ === 'message_start' && data.messageId) {
+          if (isArtifactSegmentEvent(data)) {
+            artifactSegmentIds.add(data.messageId);
+            applySegmentSSEEvent(segmentRouter, data);
+            return;
+          }
           const applied = applySegmentSSEEvent(segmentRouter, data);
           if (applied.kind === 'start' && applied.isNew) {
-            ensureSegment(applied.messageId, data.segmentIndex);
+            ensureSegment(applied.messageId, data.segmentIndex, data.segmentKind as ChatMessageEx['segmentKind']);
+            dispatch({ type: 'order_segment_messages', sid, correlationId: correlationIdStr });
           } else if (data.segmentIndex != null) {
-            ensureSegment(data.messageId, data.segmentIndex);
+            ensureSegment(data.messageId, data.segmentIndex, data.segmentKind as ChatMessageEx['segmentKind']);
           }
-          reasoningMid = segmentRouter.reasoningMid;
           return;
         }
         if (typ === 'message_delta' && data.text) {
+          if (data.messageId && artifactSegmentIds.has(data.messageId)) {
+            applySegmentSSEEvent(segmentRouter, data);
+            return;
+          }
           const applied = applySegmentSSEEvent(segmentRouter, data);
           if (applied.kind !== 'delta') return;
           if (!firstChunkAt) firstChunkAt = Date.now();
-          reasoningMid = applied.messageId;
           content = applied.content;
           patchSegment(applied.messageId);
           return;
         }
         if (typ === 'message_done' && data.messageId) {
+          if (isArtifactSegmentEvent(data) || artifactSegmentIds.has(data.messageId)) {
+            applySegmentSSEEvent(segmentRouter, data);
+            const artBody = typeof data.content === 'string'
+              ? data.content
+              : segmentRouter.segments.get(data.messageId)?.content ?? '';
+            mergeArtifactIntoHost(artBody);
+            if (segmentPlaceholders.has(data.messageId)) {
+              dispatch({ type: 'del_msg', sid, mid: data.messageId });
+              segmentPlaceholders.delete(data.messageId);
+            }
+            return;
+          }
           applySegmentSSEEvent(segmentRouter, data);
           patchSegment(data.messageId, 'succeeded');
           return;
@@ -1517,7 +1511,6 @@ export function useChat(agentMeta?: { name: string }) {
           const applied = applySegmentSSEEvent(segmentRouter, data);
           if (applied.kind !== 'delta') return;
           if (!firstChunkAt) firstChunkAt = Date.now();
-          reasoningMid = applied.messageId;
           content = applied.content;
           patchSegment(applied.messageId);
           return;
@@ -1538,6 +1531,9 @@ export function useChat(agentMeta?: { name: string }) {
         streamCompleted = true;
         applySegmentSSEEvent(segmentRouter, data);
         const provenance = Array.isArray(data.memoryProvenance) ? data.memoryProvenance : undefined;
+        const cognitive = (data.cognitive && typeof data.cognitive === 'object')
+          ? data.cognitive as ChatMessageEx['cognitive']
+          : undefined;
         const metrics: MessageMetrics = {
           model: resolvedModel,
           provider: resolvedSource ? `${resolvedProvider}/${resolvedSource}` : resolvedProvider,
@@ -1553,22 +1549,30 @@ export function useChat(agentMeta?: { name: string }) {
           ? [...segmentRouter.segments.keys()]
           : [replyId];
         for (const mid of segmentIds) {
+          if (artifactSegmentIds.has(mid)) continue;
           const body = segmentRouter.segments.get(mid)?.content ?? '';
           const base = segmentPlaceholders.get(mid) ?? placeholder;
+          const isHost = mid === thoughtHost;
           const finalMsg: ChatMessageEx = {
             ...base,
             content: body,
-            reasoningSteps: mid === reasoningMid ? [...reasoningSteps] : base.reasoningSteps ?? [],
-            toolCalls: mid === reasoningMid ? [...toolCalls] : base.toolCalls ?? [],
-            citations: mid === reasoningMid ? [...citations] : base.citations ?? [],
-            memoryProvenance: mid === reasoningMid ? provenance : base.memoryProvenance,
-            metrics,
+            reasoningSteps: isHost ? [...reasoningSteps] : base.reasoningSteps ?? [],
+            toolCalls: isHost ? [...toolCalls] : base.toolCalls ?? [],
+            citations: isHost ? [...citations] : base.citations ?? [],
+            memoryProvenance: isHost ? provenance : base.memoryProvenance,
+            cognitive: isHost ? cognitive : base.cognitive,
+            metrics: isHost ? metrics : base.metrics,
             status: 'succeeded',
             serverMsgId: (mid === replyId && typeof data.messageId === 'string' && data.messageId)
               ? data.messageId
               : base.serverMsgId ?? uid('srv_'),
           };
           dispatch({ type: 'replace_msg', sid, mid, msg: finalMsg });
+        }
+        for (const artId of artifactSegmentIds) {
+          if (artId !== thoughtHost) {
+            dispatch({ type: 'del_msg', sid, mid: artId });
+          }
         }
         dispatch({ type: 'order_segment_messages', sid, correlationId: correlationIdStr });
         dispatch({
@@ -2209,7 +2213,7 @@ export function useChat(agentMeta?: { name: string }) {
     });
   }, [state.activeId, state.sessions]);
 
-  /** 指定签名位批准：单人审核优先；遗留双签仍走 signerIndex。 */
+  /** 指定签名位批准：单人审核优先；遗留双签仍走 signerIndex。仅授权，不自动执行。 */
   const approve = useCallback(async (mid: string, signerIndex: number, decisionNote?: string) => {
     if (!state.activeId) return;
     const session = state.sessions[state.activeId];
@@ -2223,7 +2227,6 @@ export function useChat(agentMeta?: { name: string }) {
     const isSingle = (message.approvalRequest.required ?? 2) <= 1
       || Boolean((message as ChatMessageEx & { authorizationRequest?: unknown }).authorizationRequest);
 
-    // 确保服务端会话为受控执行，否则 execute 会被拒
     if (session.sessionMode !== 'execute') {
       await patchSessionRemote(session.id, { sessionMode: 'execute', riskLevel: session.riskLevel ?? 'medium' });
       dispatch({ type: 'update_session', sid: state.activeId, patch: { sessionMode: 'execute' } });
@@ -2235,90 +2238,128 @@ export function useChat(agentMeta?: { name: string }) {
       decisionNote: decisionNote ?? '',
     });
     dispatch({ type: 'approve', sid: state.activeId, mid, signerIndex: isSingle ? 0 : signerIndex, signedAt: result.signedAt, signatureHash: result.signatureHash });
-    if (result.completed) {
-      const task = await api.post<{ id: string; code: string }>(`/api/conversations/${conversationId}/tasks`, {
-        title: `${session?.title ?? '专家协同会话'} · 待办事项`,
-        priority: 'P1',
-        assignee: actor.name,
-        digitalEmployeeId: session?.digitalEmployeeId,
-        correlationId: message.correlationId,
-        conversationId,
-        links: { conversationId },
-        source: 'conversation',
-      });
-      let executeResult = '';
-      let nextRunCommand = '';
-      let canContinueRun = false;
-      let skillTurn = message.approvalRequest?.skillTurn;
-      try {
-        const executed = await api.post<{
-          executeResult?: string;
-          status?: string;
-          nextRunCommand?: string;
-          canContinueRun?: boolean;
-          skillTurn?: NonNullable<ChatMessageEx['approvalRequest']>['skillTurn'];
-        }>(`/api/actions/${mid}/execute`, { taskId: task.id, conversationId });
-        executeResult = typeof executed?.executeResult === 'string' ? executed.executeResult : '';
-        nextRunCommand = typeof executed?.nextRunCommand === 'string' ? executed.nextRunCommand : '';
-        canContinueRun = Boolean(executed?.canContinueRun || nextRunCommand);
-        if (executed?.skillTurn) skillTurn = executed.skillTurn;
-      } catch (err) {
-        executeResult = err instanceof Error ? `执行失败：${err.message}` : '执行失败';
-      }
-      const request = message.approvalRequest!;
-      const signers = (request.signers ?? []).map((signer, index) =>
-        index === (isSingle ? 0 : signerIndex) || signer.signed
-          ? {
-              ...signer,
-              signed: true,
-              signedAt: index === (isSingle ? 0 : signerIndex) ? result.signedAt : signer.signedAt,
-              signatureHash: index === (isSingle ? 0 : signerIndex) ? result.signatureHash : signer.signatureHash,
-            }
-          : signer,
-      );
-      const execOk = !executeResult.startsWith('执行失败');
-      dispatch({
-        type: 'replace_msg',
-        sid: state.activeId,
-        mid,
-        msg: {
-          ...message,
-          content: executeResult
-            ? `${message.content}\n\n—— 授权后执行结果 ——\n${executeResult}${
-              canContinueRun && nextRunCommand ? `\n\n待续跑：action=run command=${nextRunCommand}` : ''
-            }`
-            : message.content,
-          approvalRequest: {
-            ...request,
-            skillTurn: skillTurn ?? request.skillTurn,
-            planSummary: skillTurn?.summary ?? request.planSummary,
-            signers: signers.length ? signers : [{
-              userId: actor.id, name: actor.name, role: 'approver' as const,
-              signed: true, signedAt: result.signedAt, signatureHash: result.signatureHash,
-            }],
-            signed: request.required ?? 1,
-            decision: 'approved',
-            decidedAt: result.signedAt,
-          },
-          linkedTaskId: task.id,
-          nextRunCommand: canContinueRun ? nextRunCommand : undefined,
-          canContinueRun: canContinueRun || undefined,
-          toolCalls: [
-            ...(message.toolCalls ?? []),
-            {
-              id: uid('t_'),
-              name: request.action,
-              args: { resource: request.resource, ticketId: request.ticketId },
-              result: executeResult || `已授权执行 · 任务 ${task.code ?? task.id} 已回链`,
-              status: execOk ? 'success' : 'failed',
-              durationMs: 48,
-              permission: 'approval-required',
-            },
-          ],
+    if (!result.completed) return;
+
+    const request = message.approvalRequest!;
+    const signers = (request.signers ?? []).map((signer, index) =>
+      index === (isSingle ? 0 : signerIndex) || signer.signed
+        ? {
+            ...signer,
+            signed: true,
+            signedAt: index === (isSingle ? 0 : signerIndex) ? result.signedAt : signer.signedAt,
+            signatureHash: index === (isSingle ? 0 : signerIndex) ? result.signatureHash : signer.signatureHash,
+          }
+        : signer,
+    );
+    dispatch({
+      type: 'replace_msg',
+      sid: state.activeId,
+      mid,
+      msg: {
+        ...message,
+        approvalRequest: {
+          ...request,
+          signers: signers.length ? signers : [{
+            userId: actor.id, name: actor.name, role: 'approver' as const,
+            signed: true, signedAt: result.signedAt, signatureHash: result.signatureHash,
+          }],
+          signed: request.required ?? 1,
+          decision: 'approved',
+          decidedAt: result.signedAt,
         },
-      });
-    }
+      },
+    });
   }, [state.activeId, state.sessions, patchSessionRemote]);
+
+  const AUTHORIZED_EXECUTE_MARKER = '—— 授权后执行结果 ——';
+
+  const appendExecuteResultOnce = (content: string, executeResult: string, nextRunCommand?: string) => {
+    if (!executeResult.trim()) return content;
+    if (content.includes(AUTHORIZED_EXECUTE_MARKER)) return content;
+    let next = `${content}\n\n${AUTHORIZED_EXECUTE_MARKER}\n${executeResult}`;
+    if (nextRunCommand) {
+      next += `\n\n待续跑：action=run command=${nextRunCommand}`;
+    }
+    return next;
+  };
+
+  /** 授权完成后手动执行受控动作 */
+  const executeAuthorized = useCallback(async (mid: string) => {
+    if (!state.activeId) return;
+    const session = state.sessions[state.activeId];
+    const message = session?.messages.find((item) => item.id === mid);
+    if (!message?.approvalRequest || message.approvalRequest.decision !== 'approved') {
+      throw new Error('该操作尚未授权，无法执行');
+    }
+    const actor = useAuthStore.getState().user;
+    if (!actor) throw new Error('请先登录后再执行。');
+
+    const api = getApiClient();
+    const conversationId = session.conversationId ?? state.activeId;
+    const request = message.approvalRequest;
+
+    const task = await api.post<{ id: string; code: string }>(`/api/conversations/${conversationId}/tasks`, {
+      title: `${session?.title ?? '专家协同会话'} · 待办事项`,
+      priority: 'P1',
+      assignee: actor.name,
+      digitalEmployeeId: session?.digitalEmployeeId,
+      correlationId: message.correlationId,
+      conversationId,
+      links: { conversationId },
+      source: 'conversation',
+    });
+
+    let executeResult = '';
+    let nextRunCommand = '';
+    let canContinueRun = false;
+    let skillTurn = request.skillTurn;
+    try {
+      const executed = await api.post<{
+        executeResult?: string;
+        status?: string;
+        nextRunCommand?: string;
+        canContinueRun?: boolean;
+        skillTurn?: NonNullable<ChatMessageEx['approvalRequest']>['skillTurn'];
+      }>(`/api/actions/${mid}/execute`, { taskId: task.id, conversationId });
+      executeResult = typeof executed?.executeResult === 'string' ? executed.executeResult : '';
+      nextRunCommand = typeof executed?.nextRunCommand === 'string' ? executed.nextRunCommand : '';
+      canContinueRun = Boolean(executed?.canContinueRun || nextRunCommand);
+      if (executed?.skillTurn) skillTurn = executed.skillTurn;
+    } catch (err) {
+      executeResult = err instanceof Error ? `执行失败：${err.message}` : '执行失败';
+    }
+
+    const execOk = !executeResult.startsWith('执行失败');
+    dispatch({
+      type: 'replace_msg',
+      sid: state.activeId,
+      mid,
+      msg: {
+        ...message,
+        content: appendExecuteResultOnce(message.content, executeResult, canContinueRun ? nextRunCommand : undefined),
+        approvalRequest: {
+          ...request,
+          skillTurn: skillTurn ?? request.skillTurn,
+          planSummary: skillTurn?.summary ?? request.planSummary,
+        },
+        linkedTaskId: task.id,
+        nextRunCommand: canContinueRun ? nextRunCommand : undefined,
+        canContinueRun: canContinueRun || undefined,
+        toolCalls: [
+          ...(message.toolCalls ?? []),
+          {
+            id: uid('t_'),
+            name: request.action,
+            args: { resource: request.resource, ticketId: request.ticketId },
+            result: executeResult || `已授权执行 · 任务 ${task.code ?? task.id} 已回链`,
+            status: execOk ? 'success' : 'failed',
+            durationMs: 48,
+            permission: 'approval-required',
+          },
+        ],
+      },
+    });
+  }, [state.activeId, state.sessions]);
 
   /** P2：批准后若仍有待续跑 run，手动继续 Skill Turn */
   const continueSkillTurn = useCallback(async (mid: string) => {
@@ -2563,6 +2604,7 @@ export function useChat(agentMeta?: { name: string }) {
 
     /* 企业级 */
     approve,
+    executeAuthorized,
     continueSkillTurn,
     reject,
     setFeedback,

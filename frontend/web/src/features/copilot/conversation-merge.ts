@@ -3,6 +3,7 @@
  */
 import type { ChatMessageEx } from '@/hooks/types';
 import { orderAssistantSegments } from './segment-message-order';
+import { collapseDuplicateArtifactSegments } from './artifact-segment';
 
 export type ConversationMergeReason =
   | 'apply'
@@ -64,6 +65,8 @@ function mergeMessagePair(existing: ChatMessageEx, incoming: ChatMessageEx, pref
       clientMsgId: existing.clientMsgId || incoming.clientMsgId,
       serverMsgId: existing.serverMsgId || incoming.serverMsgId,
       id: incoming.id || incoming.serverMsgId || existing.serverMsgId || existing.id,
+      cognitive: incoming.cognitive ?? existing.cognitive,
+      reasoningSteps: (incoming.reasoningSteps?.length ? incoming.reasoningSteps : existing.reasoningSteps),
     };
   }
   return existing;
@@ -83,7 +86,7 @@ export function dedupeConversationMessages(messages: ChatMessageEx[]): ChatMessa
     }
     byId.set(message.id, mergeMessagePair(existing, message, stamp(message) >= stamp(existing)));
   }
-  return orderAssistantSegments(order.map((id) => byId.get(id)!));
+  return orderAssistantSegments(collapseDuplicateArtifactSegments(order.map((id) => byId.get(id)!)));
 }
 
 function isStreaming(message: ChatMessageEx): boolean {
@@ -200,7 +203,7 @@ export function mergeConversationMessages(
   for (const message of local) put(message, false);
   for (const message of server) put(message, true);
 
-  return orderAssistantSegments(order.map((key) => byKey.get(key)!).filter(Boolean));
+  return orderAssistantSegments(collapseDuplicateArtifactSegments(order.map((key) => byKey.get(key)!).filter(Boolean)));
 }
 
 export function resolveHydratedMessages(opts: {

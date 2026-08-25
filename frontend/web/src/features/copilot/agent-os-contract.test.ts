@@ -37,8 +37,9 @@ describe('agent-os contract', () => {
   });
 
   it('shares SSE/Connect stream event names', () => {
-    expect(STREAM_EVENT_TYPES).toEqual(['stage', 'delta', 'tool', 'route', 'evidence', 'done', 'error']);
+    expect(STREAM_EVENT_TYPES).toEqual(['stage', 'delta', 'tool', 'route', 'thought', 'evidence', 'done', 'error']);
     expect(isStreamEventType('done')).toBe(true);
+    expect(isStreamEventType('thought')).toBe(true);
     expect(isStreamEventType('finish')).toBe(false);
   });
 

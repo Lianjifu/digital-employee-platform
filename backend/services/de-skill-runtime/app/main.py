@@ -19,6 +19,8 @@ from app.sandbox import (
     strip_forbidden_env,
     verify_run_token,
 )
+from app.artifact_harvest import harvest_office_artifact
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     strip_forbidden_env()
@@ -112,28 +114,35 @@ async def execute(request: Request) -> JSONResponse:
     else:
         stdout_lines.append("status=noop")
         exec_status = "noop"
-    return JSONResponse(
-        status_code=200,
-        content={
-            "ok": exec_ok,
-            "status": exec_status,
-            "runtime": sandbox_mode(),
-            "skillId": skill_id,
-            "stdout": "\n".join(stdout_lines),
-            "error": None if exec_ok else (
-                "needs_instruction: provide action=run with scripts/... command"
-                if exec_status == "needs_instruction"
-                else "skill script failed"
-            ),
-            "durationMs": duration_ms,
-            "runTokenAccepted": True,
-            "denyControlPlane": True,
-            "workspaceId": claims.get("workspaceId"),
-            "correlationId": data.get("correlationId"),
-            "packagePath": package_path or None,
-            "isolation": probe,
-        },
-    )
+    payload: dict[str, Any] = {
+        "ok": exec_ok,
+        "status": exec_status,
+        "runtime": sandbox_mode(),
+        "skillId": skill_id,
+        "stdout": "\n".join(stdout_lines),
+        "error": None if exec_ok else (
+            "needs_instruction: provide action=run with scripts/... command"
+            if exec_status == "needs_instruction"
+            else "skill script failed"
+        ),
+        "durationMs": duration_ms,
+        "runTokenAccepted": True,
+        "denyControlPlane": True,
+        "workspaceId": claims.get("workspaceId"),
+        "correlationId": data.get("correlationId"),
+        "packagePath": package_path or None,
+        "isolation": probe,
+    }
+    if exec_ok and package_path:
+        harvested = harvest_office_artifact(package_path)
+        if harvested:
+            payload.update(harvested)
+            if harvested.get("downloadPath"):
+                payload["stdout"] = (
+                    str(payload.get("stdout") or "")
+                    + f"\n下载链接：{harvested['downloadPath']}"
+                ).strip()
+    return JSONResponse(status_code=200, content=payload)
 
 
 @app.get("/v1/artifacts/{name}")
@@ -149,6 +158,10 @@ def get_artifact(name: str):
     media = (
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         if safe.lower().endswith(".docx")
+        else "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        if safe.lower().endswith(".pptx")
+        else "application/pdf"
+        if safe.lower().endswith(".pdf")
         else "application/octet-stream"
     )
     return FileResponse(path, media_type=media, filename=safe)

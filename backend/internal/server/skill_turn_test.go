@@ -62,6 +62,54 @@ func TestEnsureSkillTurnHasRunStep(t *testing.T) {
 	}
 }
 
+func TestShouldAutoRunAfterSkillWrite(t *testing.T) {
+	ok := toolExecResult{Status: "success", Output: "【skill.write】已写入 .copilot-ws/gen.mjs\n下一步可用 action=run command=.copilot-ws/gen.mjs"}
+	if !shouldAutoRunAfterSkillWrite(ok, ".copilot-ws/gen.mjs") {
+		t.Fatal("expected auto run for .copilot-ws mjs")
+	}
+	if shouldAutoRunAfterSkillWrite(toolExecResult{Status: "failed"}, ".copilot-ws/gen.mjs") {
+		t.Fatal("failed write should not auto run")
+	}
+	if shouldAutoRunAfterSkillWrite(ok, "README.md") {
+		t.Fatal("non-script should not auto run")
+	}
+}
+
+func TestBuildAutoRunToolCallAfterWrite(t *testing.T) {
+	reg := []registeredTool{
+		{Name: "pptx", Kind: "skill", Key: "skill:pptx", Enabled: true},
+		{Name: "write_file", Kind: "runtime", Enabled: true},
+	}
+	writeTool := &registeredTool{Name: "write_file", Kind: "runtime"}
+	call := buildAutoRunToolCallAfterWrite(reg, writeTool, toolCallRequest{Name: "write_file"}, ".copilot-ws/gen_ppt.mjs")
+	if call.Name != "pptx" {
+		t.Fatalf("want pptx skill run, got %q", call.Name)
+	}
+	if str(call.Args["command"]) != ".copilot-ws/gen_ppt.mjs" {
+		t.Fatalf("command=%v", call.Args["command"])
+	}
+	skillTool := &registeredTool{Name: "pptx", Kind: "skill"}
+	call2 := buildAutoRunToolCallAfterWrite(reg, skillTool, toolCallRequest{Name: "pptx"}, ".copilot-ws/a.js")
+	if call2.Name != "pptx" || str(call2.Args["action"]) != skillActionRun {
+		t.Fatalf("skill write auto run=%v", call2)
+	}
+}
+
+func TestIsSkillWorkspaceWriteCall(t *testing.T) {
+	if !isSkillWorkspaceWriteCall(toolCallRequest{
+		Name: "write_file",
+		Args: map[string]any{"path": ".copilot-ws/gen.mjs", "content": "x"},
+	}, &registeredTool{Name: "write_file", Kind: "runtime"}) {
+		t.Fatal("write_file to copilot-ws should qualify")
+	}
+	if isSkillWorkspaceWriteCall(toolCallRequest{
+		Name: "write_file",
+		Args: map[string]any{"path": "SKILL.md", "content": "x"},
+	}, &registeredTool{Name: "write_file", Kind: "runtime"}) {
+		t.Fatal("write outside copilot-ws should not auto run")
+	}
+}
+
 func TestMarkAndAdvanceSkillTurn(t *testing.T) {
 	tool := &registeredTool{Name: "pptx", Kind: "skill"}
 	plan := buildSkillTurnPlan(tool, toolCallRequest{

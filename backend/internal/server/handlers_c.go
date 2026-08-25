@@ -611,6 +611,9 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	emit("stage", "employee", map[string]any{"status": "running"})
 	emp, _ := s.resolveActiveEmployee(r, deID)
 	empMap, _ := emp.(map[string]any)
+	if empMap != nil {
+		ensureEmployeeCognitiveSkills(empMap)
+	}
 	if empMap != nil && empMap["skipped"] == true {
 		emit("stage", "employee", map[string]any{"status": "ok", "employee": nil, "skipped": true})
 	} else if empMap != nil && empMap["active"] == false {
@@ -662,6 +665,21 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		"status": "ok", "hitCount": len(memoryHits),
 		"provenance": memoryProvenanceMaps(memoryHits),
 	})
+	if n := len(memoryHits); n > 0 {
+		titles := make([]string, 0, 3)
+		for _, p := range memoryProvenanceMaps(memoryHits) {
+			if t := str(p["title"]); t != "" {
+				titles = append(titles, t)
+			}
+			if len(titles) >= 3 {
+				break
+			}
+		}
+		emitThought(emit, "search",
+			fmt.Sprintf("参考了 %d 条相关记忆", n),
+			strings.Join(titles, " · "),
+		)
+	}
 
 	// Tool registry: capabilities ∩ enabledTools ∩ boundary ∩ sessionMode
 	registry := buildToolRegistry(empMap, enabledTools)
@@ -684,6 +702,9 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 			emit("stage", "rag", map[string]any{"status": "degraded", "warning": warn, "hitCount": ragCount})
 		} else {
 			emit("stage", "rag", map[string]any{"status": "ok", "hitCount": ragCount})
+		}
+		if ragCount > 0 {
+			emitThought(emit, "search", fmt.Sprintf("检索到 %d 条已发布知识", ragCount), "")
 		}
 	}
 
@@ -757,6 +778,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		SessionMode: sessionMode, RiskLevel: riskLevel, RAGPrefetched: ragCount > 0,
 		SnapshotID: snapID, Binding: binding, MemoryProvenance: memoryProvenanceMaps(memoryHits),
 		ReplyMode: replyMode, SegmentPolicy: segmentPolicy, FirstMessageID: firstMessageID, StepSegments: &stepSegSink,
+		Employee: empMap,
 	})
 	_ = stepSegSink
 	if isCopilotTurnCancelled(corr) {
@@ -812,9 +834,57 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		toolCalls = []map[string]any{}
 	}
 	full = enrichCopilotFinalText(full, toolCalls, userMsg)
-	docTitle := normalizeDocxTitle(coalesce(inferDocxTitleFromMessage(userMsg), inferDocxTitleFromMessage(full)))
-	docBody := resolveDocxBodyFromExecution(nil, userMsg, full, nil)
-	full = ensureSkillArtifactsInOutput(full, docTitle, docBody)
+	// PPT 意图或已有 pptx 产物时，禁止再用大纲误造 .docx
+	skipDocxEnsure := looksLikePptxGenerateRequest(userMsg) || hasPptxArtifactText(full) || hasPptxArtifactText(bestToolArtifactOutput(toolCalls))
+	if !skipDocxEnsure {
+		docTitle := normalizeDocxTitle(coalesce(inferDocxTitleFromMessage(userMsg), inferDocxTitleFromMessage(full)))
+		docBody := resolveDocxBodyForTurn(full, toolCalls, userMsg)
+		if docBody != "" && (docxToolSucceeded(toolCalls) || hasSkillArtifacts(full) || looksLikeStructuredDocxBody(docBody)) {
+			full = ensureSkillArtifactsInOutput(full, docTitle, docBody)
+		}
+	}
+	// PPT 恢复：已尝试相关工具但未产出 .pptx 时，用内置生成器落盘
+	if looksLikePptxGenerateRequest(userMsg) && pptxRelatedToolAttempted(toolCalls) && !hasPptxArtifactText(full) && !hasPptxArtifactText(bestToolArtifactOutput(toolCalls)) {
+		pptTitle := coalesce(inferPptxTitleFromMessage(userMsg), coalesce(inferPptxTitleFromMessage(full), "演示文稿"))
+		outline := strings.TrimSpace(stripToolCallMarkers(full))
+		if len([]rune(outline)) < 40 || looksLikeLeakedToolMarkup(outline) {
+			outline = defaultPptxOutlineForMessage(pptTitle, userMsg)
+		}
+		if storage, download, err := generatePptxArtifactLocal(pptTitle, outline); err == nil {
+			block := formatPptxToolOutput(pptTitle, storage, download, true)
+			if strings.TrimSpace(stripToolCallMarkers(full)) == "" || looksLikeLeakedToolMarkup(full) {
+				full = block
+			} else {
+				full = strings.TrimSpace(stripToolCallMarkers(full) + "\n\n" + block)
+			}
+		}
+	}
+	// PDF 恢复：生成意图 + 相关工具尝试但无 download 链
+	if looksLikePdfGenerateRequest(userMsg) && !hasPdfArtifactText(full) && !hasPdfArtifactText(bestToolArtifactOutput(toolCalls)) {
+		pdfRelated := false
+		for _, tc := range toolCalls {
+			n := strings.ToLower(str(tc["name"]))
+			if isPdfSkillName(n) || strings.Contains(n, "pdf") {
+				pdfRelated = true
+				break
+			}
+		}
+		if pdfRelated {
+			pdfTitle := coalesce(inferDocxTitleFromMessage(userMsg), "生成文档")
+			body := strings.TrimSpace(stripToolCallMarkers(full))
+			if len([]rune(body)) < 40 || looksLikeLeakedToolMarkup(body) || looksLikeClarificationSpeech(body) {
+				body = defaultPdfBodyForMessage(pdfTitle, userMsg)
+			}
+			if storage, download, err := generatePdfArtifactLocal(pdfTitle, body); err == nil {
+				block := formatPdfToolOutput(pdfTitle, storage, download, true)
+				if strings.TrimSpace(stripToolCallMarkers(full)) == "" || looksLikeLeakedToolMarkup(full) {
+					full = block
+				} else if !hasPdfArtifactText(full) {
+					full = strings.TrimSpace(stripToolCallMarkers(full) + "\n\n" + block)
+				}
+			}
+		}
+	}
 	mode := coalesce(reactOut.Mode, modeReact)
 
 	// 5) meter (+ optional model budget hard gate)
@@ -831,19 +901,12 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	s.recordUsageWS(ws, "copilot", units, corr)
 	emit("stage", "meter", map[string]any{"status": "ok", "units": units})
 
-	segments := buildSegmentsFromTurn(full, reactOut, replyMode, segmentPolicy, firstMessageID, segIDGen, nil)
+	segments := reconcileSegmentsWithFinalText(reactOut.Segments, full, reactOut, replyMode, segmentPolicy, firstMessageID, segIDGen)
 	if len(segments) == 0 && strings.TrimSpace(full) != "" {
 		segments = []AssistantSegment{{ID: firstMessageID, Kind: segmentKindBody, Content: full}}
 	}
 	for i, seg := range segments {
-		skipDone := false
-		if i < len(reactOut.Segments) {
-			streamed := reactOut.Segments[i]
-			if streamed.ID == seg.ID && streamed.Content == seg.Content && normalizeReplyMode(replyMode) != replyModeSingle {
-				skipDone = true
-			}
-		}
-		if skipDone {
+		if segmentStreamAlreadyDone(reactOut.Segments, i, seg, replyMode) {
 			continue
 		}
 		emit(contract.StreamMessageDone, "runtime", map[string]any{
@@ -882,6 +945,9 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(reactOut.Agents) > 0 {
 		sharedMeta["agents"] = reactOut.Agents
+	}
+	if snap := cognitiveSnapshot(reactOut.Cognitive); len(snap) > 0 {
+		sharedMeta["cognitive"] = snap
 	}
 	assistantMsgs := assistantMessagesFromSegments(segments, corr, replyMode, assistantNow, sharedMeta, true, toolCalls, citations, len(ackPersisted))
 	assistantMsgID := firstMessageID
@@ -999,6 +1065,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		"evolveCandidates": len(evolveCreated),
 		"snapshotId":       snapID,
 		"runtimeMode":      runtimeMode(),
+		"cognitive":        cognitiveSnapshot(reactOut.Cognitive),
 	})
 	finishCopilotTurn(corr, turnStatusDone)
 	streamOK = true

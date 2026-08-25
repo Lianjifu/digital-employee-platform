@@ -73,7 +73,7 @@ export function AuthorizationModal({
       <div className="space-y-3">
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-5 text-amber-700 dark:text-amber-300">
           <ShieldAlert className="mr-1 inline h-3.5 w-3.5" />该操作由智能体发起，需登录用户人工审核通过后方可执行。
-          {planSummary ? ' 批准后将按 Skill Turn 计划自动执行至产物。' : ''}
+          {planSummary ? ' 批准后可手动执行 Skill Turn 计划。' : ''}
         </div>
         <div>
           <div className="mb-1 text-xs text-[var(--color-text-muted)]">操作</div>
@@ -89,7 +89,7 @@ export function AuthorizationModal({
                 {steps.map((step, i) => (
                   <li key={step.id ?? i}>
                     {step.title ?? step.action ?? `步骤 ${i + 1}`}
-                    {step.status ? <span className="ml-1 text-[var(--text-muted)]">· {step.status}</span> : null}
+                    {step.status && step.status !== 'pending' ? <span className="ml-1 text-[var(--text-muted)]">· {step.status}</span> : null}
                   </li>
                 ))}
               </ol>

@@ -150,6 +150,10 @@ func (s *Server) runPlanExecuteTurn(ctx context.Context, in reactTurnInput) reac
 	in.Emit("plan", "plan", map[string]any{
 		"goal": plan.Goal, "steps": stepMaps, "status": "ready",
 	})
+	emitThought(in.Emit, "plan",
+		"计划："+truncateRunes(coalesce(plan.Goal, in.UserMessage), 48),
+		fmt.Sprintf("共 %d 步", len(plan.Steps)),
+	)
 	if normalizeReplyMode(in.ReplyMode) == replyModeStepwise {
 		appendStepSegment(in.StepSegments, defaultSegmentIDGen(s), segmentKindStep, "计划就绪",
 			fmt.Sprintf("已制定 %d 步计划：%s", len(plan.Steps), coalesce(plan.Goal, in.UserMessage)))

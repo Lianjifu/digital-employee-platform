@@ -53,7 +53,7 @@ func (s *Server) queueToolAuthorization(ctx toolRunContext, tool *registeredTool
 	}
 	content := "智能体已申请执行「" + tool.Name + "」，等待登录用户人工审核授权后方可执行。"
 	if planSummary != "" {
-		content = "智能体已申请 Skill Turn（" + planSummary + "），等待登录用户人工审核；批准后将按计划执行至产物。"
+		content = "智能体已申请 Skill Turn（" + planSummary + "），等待登录用户人工审核；批准后可手动执行至产物。"
 	}
 	msg := map[string]any{
 		"id": actionID, "role": "assistant",
@@ -88,9 +88,9 @@ func (s *Server) queueToolAuthorization(ctx toolRunContext, tool *registeredTool
 func isAllowlistedExecutableTool(name, kind string) bool {
 	n := strings.ToLower(strings.TrimSpace(name))
 	k := strings.ToLower(strings.TrimSpace(kind))
-	if k == "skill" || strings.Contains(n, "docx") || strings.Contains(n, "xlsx") || strings.Contains(n, "pptx") {
-		return isDocxSkillName(n) || strings.Contains(n, "xlsx") || strings.Contains(n, "pptx") ||
-			strings.Contains(n, "excel") || strings.Contains(n, "word") || strings.Contains(n, "ppt")
+	if k == "skill" || strings.Contains(n, "docx") || strings.Contains(n, "xlsx") || strings.Contains(n, "pptx") || strings.Contains(n, "pdf") {
+		return isDocxSkillName(n) || isPdfSkillName(n) || strings.Contains(n, "xlsx") || strings.Contains(n, "pptx") ||
+			strings.Contains(n, "excel") || strings.Contains(n, "word") || strings.Contains(n, "ppt") || strings.Contains(n, "pdf")
 	}
 	if n == "knowledge.retrieve" || n == "memory.recall" || isCMDBTool(n) {
 		return true

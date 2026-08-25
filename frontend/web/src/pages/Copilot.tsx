@@ -32,12 +32,12 @@ import {
   AlertTriangle, Upload, MoreHorizontal, Download,
   Link2, CheckCircle2, BarChart3, Volume2, Zap, Server, BellOff,
   Star, Share2, Settings, X, Pin, ChevronDown, ChevronLeft,
-  Sparkles, Code, Cpu, Users, Loader2, AlertCircle, AtSign,
+  Sparkles, Code, Cpu, Users, AlertCircle, AtSign,
   Hash, Activity, Languages, BookOpenCheck, RotateCcw,
   Paperclip, Send, ChevronRight, ThumbsUp, ThumbsDown,
   Copy, Trash2, Square, Plus, Archive, ArchiveRestore, FileDown, Lock, Eye, EyeOff, ArrowUp,
   Archive as ArchiveIcon, MessageSquareWarning, ShieldAlert, Check, Plug, PlugZap, Pencil,
-  BriefcaseBusiness,
+  BriefcaseBusiness, Presentation,
 } from 'lucide-react';
 import { cn } from '@de/web-utils';
 import { AuthorizationModal } from '@/components/AuthorizationModal';
@@ -92,10 +92,15 @@ import {
   slashHelpText,
   type SlashUiAction,
 } from '@/features/copilot/slash-commands';
-import { extractSkillArtifacts, stripArtifactNoise, type SkillArtifactLink } from '@/features/copilot/artifact-links';
+import { extractSkillArtifacts, type SkillArtifactLink, artifactKindLabel } from '@/features/copilot/artifact-links';
+import {
+  formatAssistantDisplayContent,
+  formatExecutionDetails,
+} from '@/features/copilot/message-display';
 import { DocumentPreviewPanel } from '@/features/copilot/document-preview';
 import { sortSessionsByRecency } from '@/features/copilot/session-sort';
 import { resolveHydratedMessages } from '@/features/copilot/conversation-merge';
+import { collapseDuplicateArtifactSegments } from '@/features/copilot/artifact-segment';
 import { readCopilotLastSession } from '@/lib/copilot-workspace';
 import { getApiClient } from '@de/web-api';
 import { deriveExpertContextOverview } from '@/features/copilot/expert-context';
@@ -1579,6 +1584,11 @@ export default function Copilot() {
     ? chat.activeSession
     : undefined;
 
+  const displayMessages = useMemo(
+    () => collapseDuplicateArtifactSegments(currentSession?.messages ?? []),
+    [currentSession?.messages],
+  );
+
   useEffect(() => {
     if (!currentSession) return;
     // 仅在切换会话时灌入 risk/handoff/closed；mode 直接读 session，避免回写环
@@ -1714,13 +1724,15 @@ export default function Copilot() {
   const latestReasoningTitle = streamingAssistant?.reasoningSteps?.[streamingAssistant.reasoningSteps.length - 1]?.title;
   const generationHint = !isGenerating
     ? ''
-    : latestReasoningTitle
-      ? `正在执行：${latestReasoningTitle}`
-      : generationElapsedSec >= 20
-        ? '任务较复杂，仍在处理中。可继续等待，或点击停止后重试。'
-        : generationElapsedSec >= 6
-          ? '模型与工具链处理中，首段内容即将出现…'
-          : '已收到请求，正在连接模型与准备上下文…';
+    : streamingAssistant?.progressHint
+      ? `正在执行：${streamingAssistant.progressHint}`
+      : latestReasoningTitle
+        ? `正在执行：${latestReasoningTitle}`
+        : generationElapsedSec >= 20
+          ? '任务较复杂，仍在处理中。可继续等待，或点击停止后重试。'
+          : generationElapsedSec >= 6
+            ? '模型与工具链处理中，首段内容即将出现…'
+            : '已收到请求，正在连接模型与准备上下文…';
   const showTypingFallback = chat.state.typing && !hasStreamingAssistant;
   const renderMessageBubble = (m: ChatMessageEx) => (
     <MessageBubble
@@ -1737,6 +1749,14 @@ export default function Copilot() {
           toast.success('已继续执行 run');
         } catch (err) {
           toast.error(err instanceof Error ? err.message : '续跑失败');
+        }
+      }}
+      onExecuteAuthorized={async (mid) => {
+        try {
+          await chat.executeAuthorized(mid);
+          toast.success('已开始执行');
+        } catch (err) {
+          toast.error(err instanceof Error ? err.message : '执行失败');
         }
       }}
       onCitation={(citation) => openCitation(citation, m.id)}
@@ -1765,6 +1785,8 @@ export default function Copilot() {
       onOpenContext={openContext}
       selectedContextMessageId={contextSelection.scope === 'message' ? contextSelection.messageId : undefined}
       messageRef={(element) => { messageRefs.current[m.id] = element; }}
+      generationStatus={streamingAssistant?.id === m.id ? generationHint : undefined}
+      generationElapsedSec={streamingAssistant?.id === m.id ? generationElapsedSec : undefined}
     />
   );
   const canOpenExpertContext = Boolean(currentSession && (activeEmployee || currentSession.digitalEmployeeId || hasSessionContext));
@@ -2203,33 +2225,8 @@ export default function Copilot() {
                   </div>
                 )}
 
-                {isGenerating && (
-                  <div
-                    className="mx-4 sm:mx-8 md:mx-12 mb-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[var(--brand)]/25 bg-[var(--brand-light)]/35 px-3 py-2 text-[11px] leading-relaxed text-[var(--text-secondary)]"
-                    role="status"
-                    aria-live="polite"
-                  >
-                    <div className="inline-flex min-w-0 items-center gap-2">
-                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-[var(--brand)]" />
-                      <span className="truncate">{generationHint}</span>
-                      {generationElapsedSec > 0 && (
-                        <span className="font-mono text-[10px] text-[var(--text-muted)]">{generationElapsedSec}s</span>
-                      )}
-                    </div>
-                    {chat.state.typing && (
-                      <button
-                        type="button"
-                        onClick={() => chat.stop()}
-                        className="shrink-0 rounded-md border border-[var(--border)] bg-[var(--bg-elevated)] px-2 py-1 text-[10px] font-medium text-[var(--text)] hover:border-[var(--danger)]/40 hover:text-[var(--danger)]"
-                      >
-                        停止生成
-                      </button>
-                    )}
-                  </div>
-                )}
-
                 <div className="copilot-message-list px-4 sm:px-8 md:px-12 py-4">
-                  {currentSession.messages.map((m) => renderMessageBubble(m))}
+                  {displayMessages.map((m) => renderMessageBubble(m))}
                 </div>
 
                 {showTypingFallback && (
@@ -2251,13 +2248,16 @@ export default function Copilot() {
                             生成中
                           </span>
                         </div>
-                        <div className="copilot-message__body copilot-message__body--pending inline-flex items-center gap-2 text-[var(--text-muted)] text-sm py-1" role="status">
+                        <div className="copilot-message__body copilot-message__body--pending inline-flex items-center gap-2.5 text-[var(--text-muted)] text-sm py-1" role="status">
                           <span className="copilot-thinking-dots" aria-hidden="true">
                             {[0, 1, 2].map((i) => (
                               <span key={i} style={{ animationDelay: `${i * 0.15}s` }} />
                             ))}
                           </span>
-                          <span>正在思考</span>
+                          <span className="min-w-0 truncate">{generationHint || '正在思考'}</span>
+                          {generationElapsedSec > 0 && (
+                            <span className="font-mono text-[10px] text-[var(--text-muted)]">{generationElapsedSec}s</span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -3383,12 +3383,13 @@ function SkillArtifactDownloadCard({
   filename: string;
   downloadName: string;
   title: string;
-  kind: 'docx' | 'file';
+  kind: SkillArtifactLink['kind'];
   onView?: () => void;
 }) {
-  const label = kind === 'docx' ? 'Word 文档' : '文件';
+  const label = artifactKindLabel(kind);
   const saveAs = downloadName || filename;
   const [busy, setBusy] = useState(false);
+  const Icon = kind === 'pptx' ? Presentation : FileText;
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -3396,25 +3397,8 @@ function SkillArtifactDownloadCard({
     if (busy) return;
     setBusy(true);
     try {
-      const res = await fetch(href, { method: 'GET', credentials: 'same-origin' });
-      if (!res.ok) {
-        throw new Error(res.status === 404 ? '文件不存在或已过期' : `下载失败（${res.status}）`);
-      }
-      const blob = await res.blob();
-      // 若误拿到 JSON 错误页，避免保存成假 docx
-      const sniff = await blob.slice(0, 120).text();
-      if ((blob.type || '').includes('json') || sniff.trimStart().startsWith('{')) {
-        throw new Error('文件不存在或已过期');
-      }
-      const objectUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = objectUrl;
-      a.download = saveAs;
-      a.rel = 'noopener';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(objectUrl);
+      const { downloadArtifactSafely } = await import('@/features/copilot/document-preview');
+      await downloadArtifactSafely(href, saveAs);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : '文件下载失败');
     } finally {
@@ -3440,8 +3424,8 @@ function SkillArtifactDownloadCard({
       className="copilot-artifact-card group flex max-w-[420px] cursor-pointer items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3.5 py-3 transition-colors hover:border-[var(--brand)]/45 hover:bg-[var(--brand-light)]/40"
       aria-label={`查看 ${title}`}
     >
-      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-[var(--brand-light)] text-[var(--brand)]">
-        <FileText className="h-5 w-5" />
+      <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${kind === 'pptx' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : kind === 'pdf' ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300' : 'bg-[var(--brand-light)] text-[var(--brand)]'}`}>
+        <Icon className="h-5 w-5" />
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-[13px] font-semibold text-[var(--text)]">{title}</span>
@@ -3465,9 +3449,10 @@ function SkillArtifactDownloadCard({
 function MessageBubble({
   m, expandedArgs, setExpandedArgs,
   expandedApproval, setExpandedApproval,
-  onApprove, onContinueRun, onCitation, onRetry, onCopy, onRegenerate, onDelete, onRetryMessage, onFeedback,
+  onApprove, onContinueRun, onExecuteAuthorized, onCitation, onRetry, onCopy, onRegenerate, onDelete, onRetryMessage, onFeedback,
   onApproveSigner, onRequestReject, onEdit,
   hoverMsgId, setHoverMsgId, copiedId, agentName, expertRole, expert, onOpenContext, selectedContextMessageId, messageRef, currentUser,
+  generationStatus, generationElapsedSec,
 }: {
   m: ChatMessageEx;
   expandedArgs: Record<string, boolean>;
@@ -3476,6 +3461,7 @@ function MessageBubble({
   setExpandedApproval: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   onApprove: (msgId: string) => void;
   onContinueRun?: (msgId: string) => void | Promise<void>;
+  onExecuteAuthorized?: (msgId: string) => void | Promise<void>;
   onCitation: (c: any, messageId?: string) => void;
   onRetry: (name: string) => void;
   onCopy: (m: ChatMessageEx) => void;
@@ -3496,6 +3482,8 @@ function MessageBubble({
   selectedContextMessageId?: string;
   messageRef?: (element: HTMLDivElement | null) => void;
   currentUser: { id: string; name: string; role: 'user' | 'admin' | 'auditor' } | null;
+  generationStatus?: string;
+  generationElapsedSec?: number;
 }) {
   const isUser = m.role === 'user';
   const isTool = m.role === 'tool';
@@ -3509,9 +3497,14 @@ function MessageBubble({
     [isUser, isTool, m.content],
   );
   const displayContent = useMemo(
-    () => (artifacts.length ? stripArtifactNoise(m.content) : m.content),
+    () => formatAssistantDisplayContent(m.content ?? '', artifacts.length > 0),
     [artifacts.length, m.content],
-  );  const expectedPlatformRole: Record<Signer['role'], 'user' | 'admin' | 'auditor'> = { operator: 'user', approver: 'admin', auditor: 'auditor' };
+  );
+  const executionDetails = useMemo(
+    () => formatExecutionDetails(m.content ?? ''),
+    [m.content],
+  );
+  const expectedPlatformRole: Record<Signer['role'], 'user' | 'admin' | 'auditor'> = { operator: 'user', approver: 'admin', auditor: 'auditor' };
   const isSingleAuth = (m.approvalRequest?.required ?? 2) <= 1;
   const canSign = (signer: Signer) => {
     if (!currentUser || signer.signed) return false;
@@ -3654,6 +3647,16 @@ function MessageBubble({
                   </div>
                 )}
                 {displayContent ? <Markdown text={displayContent} /> : null}
+                {executionDetails && (
+                  <details className="copilot-execution-details rounded-lg border border-[var(--border)] bg-[var(--bg-elevated)] px-3 py-2 text-[11px]">
+                    <summary className="cursor-pointer select-none font-medium text-[var(--text-muted)] hover:text-[var(--text)]">
+                      查看执行明细
+                    </summary>
+                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-relaxed text-[var(--text-secondary)]">
+                      {executionDetails}
+                    </pre>
+                  </details>
+                )}
                 {isStreaming && <span className="inline-block h-3.5 w-1.5 ml-0.5 align-text-bottom bg-[var(--brand)] animate-pulse rounded-sm" aria-hidden="true" />}
               </div>
             )}
@@ -3665,7 +3668,13 @@ function MessageBubble({
                 <span key={i} style={{ animationDelay: `${i * 0.15}s` }} />
               ))}
             </span>
-            <span>{(m.reasoningSteps?.length ?? 0) > 0 ? '正在生成回复…' : '正在思考'}</span>
+            <span className="min-w-0 truncate">
+              {generationStatus
+                || ((m.reasoningSteps?.length ?? 0) > 0 ? '正在生成回复…' : '正在思考')}
+            </span>
+            {generationElapsedSec != null && generationElapsedSec > 0 && (
+              <span className="font-mono text-[10px] text-[var(--text-muted)]">{generationElapsedSec}s</span>
+            )}
           </div>
         ) : null}
 
@@ -3810,7 +3819,7 @@ function MessageBubble({
                     {m.approvalRequest.skillTurn.steps.map((step, i) => (
                       <li key={step.id ?? i}>
                         {step.title ?? step.action ?? `步骤 ${i + 1}`}
-                        {step.status ? ` · ${step.status}` : ''}
+                        {m.approvalRequest.decision !== 'pending' && step.status ? ` · ${step.status}` : ''}
                       </li>
                     ))}
                   </ol>
@@ -3899,6 +3908,16 @@ function MessageBubble({
                   <CheckCircle2 className="mr-1 inline h-3 w-3" />{isSingleAuth ? '已人工授权' : '已审核通过'}
                   {m.approvalRequest.decidedAt && <span className="ml-1 font-mono">{m.approvalRequest.decidedAt.slice(11, 19)}</span>}
                 </Badge>
+                {!m.linkedTaskId && !m.content.includes('—— 授权后执行结果 ——') && onExecuteAuthorized && (
+                  <Button
+                    size="sm"
+                    variant="primary"
+                    title="授权已完成，点击开始执行"
+                    onClick={() => void onExecuteAuthorized(m.id)}
+                  >
+                    开始执行
+                  </Button>
+                )}
                 {(m.canContinueRun || m.nextRunCommand) && onContinueRun && (
                   <Button
                     size="sm"
@@ -4009,7 +4028,7 @@ function ContextDrawerPanel({ tab, messages, onCitation, focusedCitation, artifa
     ...(message.approvalRequest ? [{ id: `${message.id}-approval`, time: message.createdAt, text: `审批 · ${message.approvalRequest.decision}`, tone: message.approvalRequest.decision === 'rejected' ? 'error' : 'success' as const }] : []),
   ]);
   const meta = {
-    document: { label: '生成文档', hint: '阅读已落盘的 Word 文档预览', icon: FileText },
+    document: { label: '生成文档', hint: '阅读已落盘的 Word / PPT 预览', icon: FileText },
     evidence: { label: '证据引用', hint: '回答所依据的可追溯来源', icon: Link2 },
     tasks: { label: '关联任务', hint: '需要持续跟进的执行事项', icon: ListChecksIcon },
     approvals: { label: '审批队列', hint: '涉及人工确认的受控动作', icon: ShieldCheck },

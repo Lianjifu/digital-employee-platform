@@ -12,25 +12,24 @@ export type SegmentDraft = {
 export type SegmentRouterState = {
   defaultId: string;
   segments: Map<string, SegmentDraft>;
-  reasoningMid: string;
 };
 
 export function createSegmentRouter(defaultId: string): SegmentRouterState {
   const segments = new Map<string, SegmentDraft>();
   segments.set(defaultId, { id: defaultId, content: '', status: 'streaming' });
-  return { defaultId, segments, reasoningMid: defaultId };
+  return { defaultId, segments };
+}
+
+/** 思考/工具轨迹始终挂在首段（占位 replyId），不随 message_start 漂移。 */
+export function thoughtHostId(state: SegmentRouterState): string {
+  return state.defaultId;
 }
 
 export function ensureSegment(state: SegmentRouterState, messageId?: string): string {
   const mid = (messageId && messageId.trim()) || state.defaultId;
-  if (mid === state.defaultId) {
-    state.reasoningMid = mid;
-    return mid;
-  }
   if (!state.segments.has(mid)) {
     state.segments.set(mid, { id: mid, content: '', status: 'streaming' });
   }
-  state.reasoningMid = mid;
   return mid;
 }
 

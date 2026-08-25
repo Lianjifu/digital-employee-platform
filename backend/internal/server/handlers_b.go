@@ -93,6 +93,7 @@ func (s *Server) createEmployee(r *http.Request) (any, error) {
 	if item["capabilities"] == nil {
 		item["capabilities"] = map[string]any{"model": "企业通用路由 v2", "knowledge": []string{}, "skills": []string{}, "tools": []string{}, "workflows": []string{}, "channels": []string{"Web"}}
 	}
+	ensureEmployeeCognitiveSkills(item)
 	store.ApplyDefaultReplyModeRuntime(item)
 	s.Store.Lock()
 	defer s.Store.Unlock()

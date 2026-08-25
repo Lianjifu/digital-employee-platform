@@ -460,3 +460,88 @@ export function closingSlide(pptx, tokens, content = {}) {
   }
   return slide;
 }
+
+/** Content slide: title + bullet list (primary Copilot / outline layout). */
+export function bulletSlide(pptx, tokens, content = {}) {
+  const slide = pptx.addSlide();
+  addBackground(pptx, slide, tokens.colors.white);
+  addTitle(slide, tokens, content.title ?? '要点', content.kicker);
+  const items = (content.bullets ?? content.items ?? []).filter(Boolean).slice(0, 8);
+  if (items.length) {
+    slide.addText(toRuns(items, tokens), {
+      objectName: 'Bullet Body',
+      x: 0.74,
+      y: 1.72,
+      w: 11.8,
+      h: 4.9,
+      valign: 'top',
+      margin: 0,
+    });
+  } else if (content.body) {
+    slide.addText(content.body, {
+      objectName: 'Body Text',
+      x: 0.74,
+      y: 1.72,
+      w: 11.8,
+      h: 4.9,
+      fontFace: tokens.typography.bodyFontFace,
+      fontSize: tokens.typography.body,
+      color: tokens.colors.ink,
+      margin: 0,
+      valign: 'top',
+      fit: 'shrink',
+    });
+  }
+  addFooter(slide, tokens, content.footer, content.page);
+  return slide;
+}
+
+/** Agenda / TOC with numbered rows. */
+export function agendaSlide(pptx, tokens, content = {}) {
+  const slide = pptx.addSlide();
+  addBackground(pptx, slide, tokens.colors.paper);
+  addTitle(slide, tokens, content.title ?? '目录', content.kicker ?? 'AGENDA');
+  const items = (content.items ?? content.bullets ?? []).filter(Boolean).slice(0, 8);
+  let y = 1.78;
+  items.forEach((item, index) => {
+    slide.addText(String(index + 1).padStart(2, '0'), {
+      objectName: `Agenda Num ${index + 1}`,
+      x: 0.74,
+      y,
+      w: 0.7,
+      h: 0.42,
+      fontFace: tokens.typography.headFontFace,
+      fontSize: 20,
+      bold: true,
+      color: tokens.colors.accent,
+      margin: 0,
+      breakLine: false,
+    });
+    slide.addText(item, {
+      objectName: `Agenda Item ${index + 1}`,
+      x: 1.55,
+      y,
+      w: 10.9,
+      h: 0.42,
+      fontFace: tokens.typography.bodyFontFace,
+      fontSize: 20,
+      color: tokens.colors.ink,
+      margin: 0,
+      breakLine: false,
+      fit: 'shrink',
+    });
+    if (index < items.length - 1) {
+      slide.addShape(pptx.ShapeType.line, {
+        objectName: `Agenda Rule ${index + 1}`,
+        x: 1.55,
+        y: y + 0.48,
+        w: 10.9,
+        h: 0,
+        line: { color: tokens.colors.rule, width: 1 },
+      });
+    }
+    y += 0.58;
+  });
+  addFooter(slide, tokens, content.footer, content.page);
+  return slide;
+}

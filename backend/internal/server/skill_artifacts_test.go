@@ -2,6 +2,7 @@ package server
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -79,6 +80,35 @@ func TestContentDispositionAttachment(t *testing.T) {
 	}
 }
 
+func TestLooksLikeCodeAsDocxBody(t *testing.T) {
+	code := `from docx import Document
+doc = Document()
+doc.add_heading('test', level=0)`
+	if !looksLikeCodeAsDocxBody(code) {
+		t.Fatal("expected code detection")
+	}
+	if looksLikeCodeAsDocxBody("一、岗位职责\n1. 招聘人事") {
+		t.Fatal("expected prose to pass")
+	}
+}
+
+func TestSanitizeDocxBodyRejectsScript(t *testing.T) {
+	if sanitizeDocxBody("from docx import Document") != "" {
+		t.Fatal("script should sanitize to empty")
+	}
+}
+
+func TestEnsureSkillArtifactsSkipsCodeBody(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DE_SKILL_ARTIFACT_DIR", dir)
+	missing := "abc123-test.docx"
+	output := "下载链接：/api/skill-artifacts/" + missing
+	got := ensureSkillArtifactsInOutput(output, "测试", "from docx import Document")
+	if strings.Contains(got, missing) && skillArtifactExists(missing) {
+		t.Fatal("should not materialize code body")
+	}
+}
+
 func TestInferDocxTitleFromMessage(t *testing.T) {
 	if got := inferDocxTitleFromMessage("请生成《招聘岗位模板》Word 文档"); got != "招聘岗位模板" {
 		t.Fatalf("got %q", got)
@@ -113,6 +143,79 @@ func TestExtractDocxBodyFromSkillOutput(t *testing.T) {
 	got := extractDocxBodyFromSkillOutput(output)
 	if !strings.Contains(got, "一、岗位职责") {
 		t.Fatalf("got %q", got)
+	}
+}
+
+func TestLooksLikeDocxPlaceholderBody(t *testing.T) {
+	placeholder := "title=招聘人事招聘模板, content=按检索结果整理的可编辑招聘模板正文"
+	if !looksLikeDocxPlaceholderBody(placeholder) {
+		t.Fatal("expected placeholder detection")
+	}
+	full := "一、招聘信息\n岗位名称：人事专员\n\n二、岗位职责\n1. 负责招聘渠道维护"
+	if looksLikeDocxPlaceholderBody(full) {
+		t.Fatal("expected full template to pass")
+	}
+}
+
+func TestExtractDocxBodyFromAssistantText(t *testing.T) {
+	full := "招聘人事岗位招聘模板\n\n一、招聘信息\n岗位名称：人事专员\n\n文件名：x.docx\n下载链接：/api/skill-artifacts/abc.docx"
+	got := extractDocxBodyFromAssistantText(full)
+	if !strings.Contains(got, "一、招聘信息") || strings.Contains(got, "下载链接") {
+		t.Fatalf("got %q", got)
+	}
+}
+
+func TestResolveDocxBodyForTurnPrefersAssistant(t *testing.T) {
+	full := "招聘模板\n\n一、招聘信息\n岗位名称：人事专员\n\n二、岗位职责\n1. 维护招聘渠道\n\n三、任职要求\n1. 本科及以上"
+	toolCalls := []map[string]any{{
+		"name": "docx", "status": "success",
+		"args": map[string]any{"content": "title=招聘模板, content=按检索结果整理的可编辑招聘模板正文"},
+	}}
+	got := resolveDocxBodyForTurn(full, toolCalls, "生成招聘模板 word")
+	if !strings.Contains(got, "一、招聘信息") {
+		t.Fatalf("expected assistant body, got %q", got)
+	}
+}
+
+func TestEnsureSkillArtifactsSyncsPlaceholderDocx(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DE_SKILL_ARTIFACT_DIR", dir)
+	storage := "abc123-招聘岗位模板.docx"
+	placeholder := "title=招聘模板, content=按检索结果整理的可编辑招聘模板正文"
+	if _, _, err := generateDocxArtifactLocal("招聘岗位模板", placeholder); err != nil {
+		// placeholder may be rejected by sanitize - write file directly
+		scriptPath, err := findGenerateDocxScript()
+		if err != nil {
+			t.Fatalf("script: %v", err)
+		}
+		outPath := filepath.Join(dir, storage)
+		cmd := exec.Command("python3", scriptPath, "--out", outPath, "--title", "招聘岗位模板", "--content", placeholder)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("seed placeholder docx: %v %s", err, out)
+		}
+	} else {
+		// rename generated file to storage name
+		entries, _ := os.ReadDir(dir)
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".docx") {
+				_ = os.Rename(filepath.Join(dir, e.Name()), filepath.Join(dir, storage))
+				break
+			}
+		}
+	}
+	goodBody := "一、招聘信息\n岗位名称：人事专员\n\n二、岗位职责\n1. 维护招聘渠道\n\n三、任职要求\n1. 本科及以上"
+	output := "下载链接：/api/skill-artifacts/" + storage
+	got := ensureSkillArtifactsInOutput(output, "招聘岗位模板", goodBody)
+	if !strings.Contains(got, storage) {
+		t.Fatalf("missing link: %s", got)
+	}
+	payload, err := previewDocxArtifact(storage)
+	if err != nil {
+		t.Fatalf("preview: %v", err)
+	}
+	text := docxPreviewText(payload)
+	if !strings.Contains(text, "一、招聘信息") {
+		t.Fatalf("docx not synced, preview=%q", text)
 	}
 }
 

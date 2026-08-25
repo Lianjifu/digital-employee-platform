@@ -87,7 +87,25 @@ func formatArtifactSegmentContent(full string) string {
 	return strings.Join(lines, "\n")
 }
 
-func appendArtifactSegments(segs []AssistantSegment, full string, idGen func() string) []AssistantSegment {
+// artifactSegmentSeparate 为 true 时下载卡片独立成段；默认 inline（单气泡内卡片）。
+func artifactSegmentSeparate() bool {
+	if envFlagTrue("DE_COPILOT_ARTIFACT_SEGMENT") {
+		return true
+	}
+	return envFlagFalse("DE_COPILOT_ARTIFACT_INLINE")
+}
+
+func artifactSegmentID(firstMessageID string, idGen func() string) string {
+	if firstMessageID != "" {
+		return firstMessageID + "_artifact"
+	}
+	if idGen != nil {
+		return idGen()
+	}
+	return "msg_artifact"
+}
+
+func appendArtifactSegments(segs []AssistantSegment, full, firstMessageID string, idGen func() string) []AssistantSegment {
 	art := formatArtifactSegmentContent(full)
 	for i := range segs {
 		switch segs[i].Kind {
@@ -98,11 +116,8 @@ func appendArtifactSegments(segs []AssistantSegment, full string, idGen func() s
 	if art == "" {
 		return segs
 	}
-	if idGen == nil {
-		idGen = func() string { return "msg_artifact" }
-	}
 	return append(segs, AssistantSegment{
-		ID:      idGen(),
+		ID:      artifactSegmentID(firstMessageID, idGen),
 		Kind:    segmentKindArtifact,
 		Title:   "下载",
 		Content: art,

@@ -1,5 +1,7 @@
 /** 从助手消息中提取 /api/skill-artifacts 下载链，供下载卡片渲染。 */
 
+export type SkillArtifactKind = 'docx' | 'pptx' | 'pdf' | 'file';
+
 export type SkillArtifactLink = {
   /** 同源相对路径（已 encode），如 /api/skill-artifacts/xxx.docx */
   href: string;
@@ -10,7 +12,7 @@ export type SkillArtifactLink = {
   /** 推断的标题（去扩展名 / 清洗） */
   title: string;
   /** 文件类型标签 */
-  kind: 'docx' | 'file';
+  kind: SkillArtifactKind;
 };
 
 const ARTIFACT_PATH_RE =
@@ -47,7 +49,11 @@ export function inferTitle(filename: string): string {
   let name = filename.replace(/\.[^.]+$/, '');
   name = name.replace(/^[a-z0-9]{6,12}-/i, '');
   name = name.replace(/^skill[_-]?docx[_-]*/i, '');
+  name = name.replace(/^skill[_-]?pptx[_-]*/i, '');
+  name = name.replace(/^skill[_-]?pdf[_-]*/i, '');
   name = name.replace(/_docx$/i, '');
+  name = name.replace(/_pptx$/i, '');
+  name = name.replace(/_pdf$/i, '');
   name = name.replace(/__/g, ' ');
   name = name.replace(/_/g, ' ');
   name = name.replace(/[《》「」『』]/g, '');
@@ -55,8 +61,25 @@ export function inferTitle(filename: string): string {
   return name || '生成文档';
 }
 
-function inferKind(filename: string): SkillArtifactLink['kind'] {
-  return /\.docx$/i.test(filename) ? 'docx' : 'file';
+export function inferKind(filename: string): SkillArtifactKind {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith('.docx')) return 'docx';
+  if (lower.endsWith('.pptx')) return 'pptx';
+  if (lower.endsWith('.pdf')) return 'pdf';
+  return 'file';
+}
+
+export function artifactKindLabel(kind: SkillArtifactKind): string {
+  switch (kind) {
+    case 'docx':
+      return 'Word 文档';
+    case 'pptx':
+      return 'PPT 演示文稿';
+    case 'pdf':
+      return 'PDF 文档';
+    default:
+      return '文件';
+  }
 }
 
 /** 规范下载文件名：标题 + 扩展名，不含存储 id。 */
@@ -64,12 +87,18 @@ export function toDownloadName(storageName: string, explicit?: string): string {
   if (explicit) {
     const clean = sanitizeArtifactFilename(explicit);
     if (clean) {
-      return /\.[a-z0-9]{1,8}$/i.test(clean) ? clean : `${clean}.docx`;
+      if (/\.[a-z0-9]{1,8}$/i.test(clean)) return clean;
+      const kind = inferKind(storageName);
+      const ext =
+        kind === 'pptx' ? '.pptx' : kind === 'docx' ? '.docx' : kind === 'pdf' ? '.pdf' : '';
+      return `${clean}${ext}`;
     }
   }
   const kind = inferKind(storageName);
   const title = inferTitle(storageName).replace(/\s+/g, '');
   if (kind === 'docx') return `${title || '生成文档'}.docx`;
+  if (kind === 'pptx') return `${title || '演示文稿'}.pptx`;
+  if (kind === 'pdf') return `${title || '生成文档'}.pdf`;
   const ext = storageName.match(/(\.[a-z0-9]{1,8})$/i)?.[1] ?? '';
   return `${title || 'download'}${ext}`;
 }
@@ -112,7 +141,12 @@ export function extractSkillArtifacts(text: string): SkillArtifactLink[] {
       kind: inferKind(filename),
     });
   }
-  return out;
+  // PPT 意图下优先展示 pptx，避免同回合误造的 docx 抢占首卡
+  return out.slice().sort((a, b) => {
+    const rank = (k: SkillArtifactKind) =>
+      k === 'pptx' ? 0 : k === 'pdf' ? 1 : k === 'docx' ? 2 : 3;
+    return rank(a.kind) - rank(b.kind);
+  });
 }
 
 /**

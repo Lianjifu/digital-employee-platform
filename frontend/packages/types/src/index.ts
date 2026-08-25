@@ -333,6 +333,14 @@ export interface DigitalEmployeeCapabilities {
   tools: string[];
   workflows: string[];
   channels: string[];
+  /** 对话认知思路模型（逻辑/问题解决/创意决策） */
+  cognitive?: {
+    enabled?: boolean;
+    defaultPack?: string;
+    allowOverride?: boolean;
+    maxFrameworksPerTurn?: number;
+    preferredFramework?: 'logic' | 'problem' | 'creative' | string;
+  };
 }
 
 /**

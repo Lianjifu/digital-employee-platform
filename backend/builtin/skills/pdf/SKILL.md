@@ -5,6 +5,13 @@ description: Read, create, edit, merge, split, rotate, fill, render, and verify 
 
 # PDF
 
+## Copilot / Digital Employee shortcut
+
+When invoked from Copilot with `action=run` plus `title` and `content`, the host may
+materialize a downloadable `.pdf` under `/api/skill-artifacts/` (builtin generator).
+Prefer that path for straightforward document export. Use `scripts/pdf.sh` / ReportLab
+builders when the user needs forms, merges, audited renders, or custom layouts.
+
 Work with PDFs through the bundled `pdf.sh` workflow. Treat structure extraction and visual rendering as complementary: parsed text is evidence about content, while rendered pages are the evidence for layout.
 
 ## Hard requirements

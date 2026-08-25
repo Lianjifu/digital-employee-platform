@@ -37,6 +37,9 @@ func shouldReflect(result reactTurnResult, reflectHint string) (bool, string) {
 	if denied > 0 && failed == 0 && strings.Contains(strings.ToLower(result.Text), "无法") {
 		return true, "tool_denied_weak_answer"
 	}
+	if lookslikeCognitiveAnswerWeak(result.Text, result.Cognitive) {
+		return true, "cognitive_structure_weak"
+	}
 	return false, ""
 }
 
@@ -47,6 +50,9 @@ func buildCritiquePrompt(answer, userMsg, hint, reason string, toolCalls []map[s
 	b.WriteString("触发原因：")
 	b.WriteString(reason)
 	b.WriteString("\n")
+	if reason == "cognitive_structure_weak" {
+		b.WriteString("请按当前认知框架补齐：结论/依据或问题定义/行动或候选方案/有条件推荐等可见结构。\n")
+	}
 	if hint != "" {
 		b.WriteString("用户反馈：")
 		b.WriteString(hint)
@@ -101,6 +107,7 @@ func parseReflectOutput(text string) (critique, revised string) {
 
 // applyReflection optionally revises the answer up to reflectMaxRounds.
 func (s *Server) applyReflection(ctx context.Context, in reactTurnInput, result reactTurnResult, reflectHint string) reactTurnResult {
+	result.Cognitive = in.Cognitive
 	ok, reason := shouldReflect(result, reflectHint)
 	if !ok {
 		return result
@@ -142,8 +149,12 @@ func (s *Server) applyReflection(ctx context.Context, in reactTurnInput, result 
 		critique, revised := parseReflectOutput(raw)
 		in.Emit("reflect", "reflect", map[string]any{
 			"status": "ok", "round": round, "reason": reason,
-			"critique": truncateRunes(critique, 400),
 		})
+		if c := strings.TrimSpace(critique); c != "" {
+			emitThought(in.Emit, "reflect", "反思："+truncateRunes(c, 80), reason)
+		} else {
+			emitThought(in.Emit, "reflect", "已复核回复质量", reason)
+		}
 		if strings.TrimSpace(revised) == "" || revised == current.Text {
 			current.ReflectRounds = round
 			break

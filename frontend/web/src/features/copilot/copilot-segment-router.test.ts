@@ -4,6 +4,7 @@ import {
   createSegmentRouter,
   ensureSegment,
   segmentIds,
+  thoughtHostId,
 } from './copilot-segment-router';
 
 describe('copilot-segment-router', () => {
@@ -44,6 +45,12 @@ describe('copilot-segment-router', () => {
     applySegmentSSEEvent(state, { type: 'done', ok: true });
     expect(state.segments.get('m1')?.status).toBe('succeeded');
     expect(state.segments.get('m2')?.status).toBe('succeeded');
+  });
+
+  it('keeps thought host on default segment when adding segments', () => {
+    const state = createSegmentRouter('m1');
+    applySegmentSSEEvent(state, { type: 'message_start', messageId: 'm2', segmentIndex: 1 });
+    expect(thoughtHostId(state)).toBe('m1');
   });
 
   it('message_done replaces content when provided', () => {

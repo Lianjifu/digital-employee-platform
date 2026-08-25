@@ -37,6 +37,7 @@ const (
 	StreamMessageDone  = "message_done"
 	StreamTool         = "tool"
 	StreamRoute        = "route"
+	StreamThought      = "thought"
 	StreamEvidence     = "evidence"
 	StreamDone         = "done"
 	StreamError        = "error"
@@ -67,7 +68,8 @@ var RiskLevels = []string{RiskLevelLow, RiskLevelMedium, RiskLevelHigh}
 // InboundChannels 为 Envelope.channel，不是投递目录 ChannelKind 全集。
 var InboundChannels = []string{ChannelWeb, ChannelAPI, ChannelFeishu, ChannelWecom, ChannelDingtalk}
 
-// StreamEventTypes 为 SSE / Connect 共用事件词表。
+// StreamEventTypes 为 SSE / Connect 共用事件词表（Connect/proto 子集）。
+// StreamThought 为 Web SSE 扩展事件，经 JSON 投递，暂不进 proto 枚举。
 var StreamEventTypes = []string{
 	StreamStage, StreamDelta, StreamMessageStart, StreamMessageDelta, StreamMessageDone,
 	StreamTool, StreamRoute, StreamEvidence, StreamDone, StreamError,
