@@ -364,6 +364,23 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 				combined.WriteString("\n\n")
 			}
 			combined.WriteString(fmt.Sprintf("—— 步骤 %s ——\n%s", coalesce(str(step["title"]), stepID), lastRes.Output))
+			// P1: if a run step failed with a missing-deps message but its declared deps
+			// include a write step that has since succeeded, give the run one more shot. The
+			// typical cause is the React loop dispatching `bash` directly (bypassing Skill
+			// Turn) before the write_file step finished — by the time preflight ran, the
+			// file was already on disk.
+			if lastRes.Status == "failed" && str(step["action"]) == skillActionRun {
+				if canRetryRunAfterDeps(plan, stepID, lastRes) {
+					markSkillTurnStep(plan, stepID, "pending", "")
+					stepRetry := nextPendingSkillTurnStep(plan)
+					if stepRetry != nil && coalesce(str(stepRetry["id"]), str(stepRetry["action"])) == stepID {
+						combined.WriteString("\n\n—— 重试步骤（依赖已落盘） ——")
+						lastRes = runOne(stepArgs, stepID)
+						executedSteps++
+						combined.WriteString("\n" + lastRes.Output)
+					}
+				}
+			}
 			if lastRes.Status != "success" {
 				break
 			}

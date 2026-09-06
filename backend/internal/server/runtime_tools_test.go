@@ -201,4 +201,28 @@ func TestEnsureWSDepsWritten(t *testing.T) {
 			t.Fatalf("expected handled=false for non-dep command")
 		}
 	})
+
+	t.Run("uses _userMessage to infer outline when content absent (P2)", func(t *testing.T) {
+		// Mirrors the screenshot-1 regression where a bare bash call (no Skill Turn) was
+		// missing _userMessage → inferOfficeOutline returned nothing → file stayed missing.
+		// P2: runtimeBash now pipes ctx.UserMessage into args._userMessage before calling
+		// ensureWSDepsWritten, so the inference branch fires and a real outline lands on disk.
+		call := toolCallRequest{
+			Args: map[string]any{
+				"_userMessage": "Q3 研发季度汇报 PPT",
+				"command":      "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/p2.md --out .copilot-ws/p2.pptx",
+			},
+		}
+		res, handled := ensureWSDepsWritten(sk, str(call.Args["command"]), call)
+		if !handled || res.Status != "success" {
+			t.Fatalf("expected handled+success, got handled=%v res=%+v", handled, res)
+		}
+		got, err := os.ReadFile(filepath.Join(pkg, ".copilot-ws", "p2.md"))
+		if err != nil {
+			t.Fatalf("outline not written from _userMessage: %v", err)
+		}
+		if !strings.Contains(string(got), "#") {
+			t.Fatalf("inferred outline looks empty: %s", got)
+		}
+	})
 }

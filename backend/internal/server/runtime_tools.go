@@ -233,6 +233,17 @@ func (s *Server) runtimeBash(ctx toolRunContext, t *registeredTool, call toolCal
 	// step lands, so the run sees a missing outline and preflight rejects it. Skill Turn plans
 	// already inject these writes via injectWriteStepsForRunDependencies; direct bash calls
 	// bypass that machinery, so we replicate the safety net here.
+	// P2: pipe the surrounding user message into ensureWSDepsWritten via a transient
+	// _userMessage field so direct bash (no Skill Turn) can still infer an outline when
+	// the LLM did not include `content` in its tool call args. Without this, screenshot 1's
+	// bare `bash scripts/pptx.sh ... --outline-file ...md` would write nothing and the
+	// preflight would refuse with "缺依赖文件".
+	if call.Args == nil {
+		call.Args = map[string]any{}
+	}
+	if str(call.Args["_userMessage"]) == "" && ctx.UserMessage != "" {
+		call.Args["_userMessage"] = ctx.UserMessage
+	}
 	if wRes, handled := ensureWSDepsWritten(sk, cmd, call); handled {
 		if wRes.Status != "success" {
 			return wRes

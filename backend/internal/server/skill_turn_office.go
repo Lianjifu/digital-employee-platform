@@ -118,6 +118,9 @@ func planWritesPath(plan map[string]any, dep string) bool {
 }
 
 // injectWriteStepsForRunDependencies prepends write steps for .copilot-ws files referenced by run command.
+// Each injected write step gets a stable id (`write-<sanitized-dep>`); the run step is updated
+// with a `deps: [<write-id>]` field so the executor can enforce write → run ordering even if
+// the plan was perturbed (skill mismatch, parallel dispatch, retry).
 func injectWriteStepsForRunDependencies(steps []map[string]any, args map[string]any, cmd, userMessage string, tool *registeredTool) []map[string]any {
 	if tool == nil || !officeSkillName(tool.Name) {
 		return steps
@@ -129,6 +132,7 @@ func injectWriteStepsForRunDependencies(steps []map[string]any, args map[string]
 	plan := map[string]any{"steps": steps}
 	prefix := make([]map[string]any, 0, len(deps))
 	content := writeContentFromArgs(args)
+	writeIDs := make([]string, 0, len(deps))
 	for _, dep := range deps {
 		if planWritesPath(plan, dep) {
 			continue
@@ -158,6 +162,7 @@ func injectWriteStepsForRunDependencies(steps []map[string]any, args map[string]
 			}
 		}
 		stepID := "write-" + strings.NewReplacer("/", "-", ".", "-").Replace(dep)
+		writeIDs = append(writeIDs, stepID)
 		prefix = append(prefix, map[string]any{
 			"id": stepID, "action": skillActionWrite,
 			"title": "写入 " + dep,
@@ -166,6 +171,16 @@ func injectWriteStepsForRunDependencies(steps []map[string]any, args map[string]
 	}
 	if len(prefix) == 0 {
 		return steps
+	}
+	// Tag the existing run step(s) with deps pointing at the injected write steps so the
+	// Skill Turn executor won't dispatch them until writes land. Without this guard,
+	// screenshot 1's `bash` ran in parallel with `write_file` and preflight rejected it.
+	for i, st := range steps {
+		if str(st["action"]) != skillActionRun {
+			continue
+		}
+		st["deps"] = append([]string{}, writeIDs...)
+		steps[i] = st
 	}
 	return append(prefix, steps...)
 }

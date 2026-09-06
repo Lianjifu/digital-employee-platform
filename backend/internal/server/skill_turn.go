@@ -61,13 +61,13 @@ func buildSkillTurnPlan(tool *registeredTool, call toolCallRequest) map[string]a
 		runArgs := cloneArgs(args)
 		runArgs["action"] = skillActionRun
 		if cmd != "" {
-			runArgs["command"] = cmd
+			runArgs["command"] = rewriteSkillScriptForTool(cmd, tool)
 		}
 		steps = append(steps, map[string]any{
 			"id": "run", "action": skillActionRun, "title": "执行技能脚本/入口",
 			"args": runArgs, "status": "pending",
 		})
-		steps = injectWriteStepsForRunDependencies(steps, args, cmd, userMessage, tool)
+		steps = injectWriteStepsForRunDependencies(steps, args, skillCommandFromArgs(runArgs), userMessage, tool)
 	default:
 		stepArgs := cloneArgs(args)
 		stepArgs["action"] = action
@@ -87,6 +87,7 @@ func buildSkillTurnPlan(tool *registeredTool, call toolCallRequest) map[string]a
 		"version": 1,
 		"summary": strings.Join(titles, " → "),
 		"steps":   steps,
+		"toolName": tool.Name,
 	}
 }
 
@@ -158,13 +159,45 @@ func markSkillTurnStep(plan map[string]any, stepID, status, output string) {
 }
 
 func nextPendingSkillTurnStep(plan map[string]any) map[string]any {
-	for _, st := range skillTurnSteps(plan) {
-		status := str(st["status"])
-		if status == "" || status == "pending" || status == "ready" {
-			return st
+	steps := skillTurnSteps(plan)
+	if len(steps) == 0 {
+		return nil
+	}
+	// Build a status index once so the deps check is O(steps) per lookup, not O(steps²).
+	statusByID := map[string]string{}
+	for _, st := range steps {
+		statusByID[coalesce(str(st["id"]), str(st["action"]))] = str(st["status"])
+	}
+	for _, st := range steps {
+		status := statusByID[coalesce(str(st["id"]), str(st["action"]))]
+		if status != "" && status != "pending" && status != "ready" {
+			continue
 		}
+		// P0: respect dependency edges. A run step that declares `deps: [write-...]`
+		// must wait until each named dep is in success state. Without this, the run
+		// preflight sees the .copilot-ws file missing and the user sees a red "缺依赖文件"
+		// step in the timeline.
+		if !stepDepsSatisfied(st, statusByID) {
+			continue
+		}
+		return st
 	}
 	return nil
+}
+
+// stepDepsSatisfied returns true when every entry in st["deps"] is in success state, or
+// when the step has no deps. Status lookup is precomputed by the caller (statusByID).
+func stepDepsSatisfied(st map[string]any, statusByID map[string]string) bool {
+	raw, _ := st["deps"].([]string)
+	if len(raw) == 0 {
+		return true
+	}
+	for _, dep := range raw {
+		if statusByID[dep] != "success" {
+			return false
+		}
+	}
+	return true
 }
 
 // skillTurnRunCommand returns the run step command from an approvable skill turn plan.
@@ -228,8 +261,93 @@ func preferredNextRunCommand(plan map[string]any, action map[string]any, fallbac
 	return ""
 }
 
+// rewriteSkillScriptForTool swaps the script name in cmd to match the skill's package.
+// e.g. `bash scripts/pptx.sh ...` with tool.Name=docx becomes `bash scripts/docx.sh ...`.
+// Why: the model frequently emits a hardcoded `scripts/pptx.sh` even when the user
+// picked the docx skill (screenshot 2 of the audit showed exactly this). Without the
+// rewrite, the Skill Turn run step dispatches into the wrong package directory.
+func rewriteSkillScriptForTool(cmd string, tool *registeredTool) string {
+	cmd = strings.TrimSpace(cmd)
+	if tool == nil || cmd == "" {
+		return cmd
+	}
+	want := skillScriptNameForTool(tool)
+	if want == "" {
+		return cmd
+	}
+	re := regexp.MustCompile(`(?i)\b(scripts/)(pptx|docx|xlsx|spreadsheets|word|excel)\.sh\b`)
+	return re.ReplaceAllStringFunc(cmd, func(match string) string {
+		// Already correct → leave alone.
+		low := strings.ToLower(match)
+		if strings.Contains(low, "scripts/"+want+".sh") {
+			return match
+		}
+		// Replace the script name with the right one, preserving the surrounding shell.
+		return strings.Replace(match, match[strings.Index(strings.ToLower(match), "scripts/"):], "scripts/"+want+".sh", 1)
+	})
+}
+
+// skillScriptNameForTool maps a registered skill to the package script basename that
+// lives under scripts/. Returns "" when the tool is not an office skill — callers skip
+// the rewrite for non-office tools.
+func skillScriptNameForTool(tool *registeredTool) string {
+	if tool == nil {
+		return ""
+	}
+	name := strings.ToLower(strings.TrimSpace(tool.Name))
+	switch {
+	case strings.Contains(name, "pptx") || strings.Contains(name, "ppt"):
+		return "pptx"
+	case strings.Contains(name, "docx") || strings.Contains(name, "word") || strings.Contains(name, "文档"):
+		return "docx"
+	case strings.Contains(name, "xlsx") || strings.Contains(name, "spreadsheet") || strings.Contains(name, "excel"):
+		return "xlsx"
+	}
+	return ""
+}
+
+// skillTurnHasPending reports whether any Skill Turn step still needs to run.
 func skillTurnHasPending(plan map[string]any) bool {
 	return nextPendingSkillTurnStep(plan) != nil
+}
+
+// canRetryRunAfterDeps decides whether a failed run step should be retried because one of
+// its declared deps landed successfully after the run preflight rejected it. Returns true
+// only when the run failure was the missing-deps flavor (not generic policy/auth denial)
+// and at least one listed dep is now in success state.
+func canRetryRunAfterDeps(plan map[string]any, stepID string, res toolExecResult) bool {
+	steps := skillTurnSteps(plan)
+	var target map[string]any
+	statusByID := map[string]string{}
+	for _, st := range steps {
+		id := coalesce(str(st["id"]), str(st["action"]))
+		statusByID[id] = str(st["status"])
+		if id == stepID {
+			target = st
+		}
+	}
+	if target == nil {
+		return false
+	}
+	raw, _ := target["deps"].([]string)
+	if len(raw) == 0 {
+		return false
+	}
+	anyReady := false
+	for _, dep := range raw {
+		if statusByID[dep] == "success" {
+			anyReady = true
+			break
+		}
+	}
+	if !anyReady {
+		return false
+	}
+	out := res.Output
+	if res.Error != "" && out == "" {
+		out = res.Error
+	}
+	return strings.Contains(out, "缺依赖文件") || strings.Contains(out, "缺少依赖文件") || strings.Contains(out, "缺少依赖")
 }
 
 func formatSkillTurnProgress(plan map[string]any) string {
@@ -252,6 +370,8 @@ func ensureSkillTurnHasRunStep(plan map[string]any, runCmd string) {
 	if plan == nil || runCmd == "" {
 		return
 	}
+	toolName := str(plan["toolName"])
+	runCmd = rewriteSkillScriptForTool(runCmd, &registeredTool{Name: toolName})
 	for _, st := range skillTurnSteps(plan) {
 		if str(st["action"]) != skillActionRun {
 			continue

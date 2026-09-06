@@ -162,3 +162,89 @@ func TestPreferredNextRunCommandSkipsOutlineFile(t *testing.T) {
 		t.Fatalf("want run script, got %q", cmd)
 	}
 }
+
+// TestBuildSkillTurnPlanRunRewritesScriptForTool verifies the LLM-emitted hardcoded
+// `scripts/pptx.sh` is rewritten to `scripts/<toolName>.sh` so a docx Skill Turn
+// dispatches into the docx package, not the pptx one (screenshot 2 of the audit).
+func TestBuildSkillTurnPlanRunRewritesScriptForTool(t *testing.T) {
+	tool := &registeredTool{Name: "docx", Kind: "skill", Key: "skill:docx"}
+	cmd := `bash scripts/pptx.sh node scripts/build_from_outline.mjs --spec .copilot-ws/out.md --out .copilot-ws/out.docx`
+	plan := buildSkillTurnPlan(tool, toolCallRequest{Name: "docx", Args: map[string]any{"action": "run", "command": cmd}})
+	if plan == nil {
+		t.Fatal("expected plan")
+	}
+	runCmd := skillTurnRunCommand(plan)
+	if !strings.Contains(runCmd, "scripts/docx.sh") {
+		t.Fatalf("script name not rewritten for docx tool: %q", runCmd)
+	}
+	if strings.Contains(runCmd, "scripts/pptx.sh") {
+		t.Fatalf("pptx script leaked into docx plan: %q", runCmd)
+	}
+}
+
+// TestNextPendingSkillTurnStepRespectsDeps verifies a run step that declares
+// `deps: [write-...]` is skipped until the write step lands in success state.
+// This guards the screenshot-1 regression where bash failed because it raced
+// the write step.
+func TestNextPendingSkillTurnStepRespectsDeps(t *testing.T) {
+	plan := map[string]any{
+		"steps": []map[string]any{
+			{"id": "write-.copilot-ws-q.md", "action": skillActionWrite, "status": "pending"},
+			{
+				"id":     "run",
+				"action": skillActionRun,
+				"status": "pending",
+				"deps":   []string{"write-.copilot-ws-q.md"},
+				"args":   map[string]any{"action": skillActionRun, "command": "bash scripts/x.sh --outline-file .copilot-ws/q.md"},
+			},
+		},
+	}
+	// Both pending → write must come first because run's dep isn't satisfied yet.
+	got := nextPendingSkillTurnStep(plan)
+	if got == nil || coalesce(str(got["id"]), str(got["action"])) != "write-.copilot-ws-q.md" {
+		t.Fatalf("expected write step first, got %+v", got)
+	}
+	// Mark write success → nextPending should now pick the run.
+	for i, st := range skillTurnSteps(plan) {
+		if coalesce(str(st["id"]), str(st["action"])) == "write-.copilot-ws-q.md" {
+			plan["steps"].([]map[string]any)[i]["status"] = "success"
+		}
+	}
+	got = nextPendingSkillTurnStep(plan)
+	if got == nil || coalesce(str(got["id"]), str(got["action"])) != "run" {
+		t.Fatalf("expected run step after write success, got %+v", got)
+	}
+}
+
+// TestCanRetryRunAfterDeps verifies the retry gate: a failed run step that
+// hit preflight "缺依赖文件" can be retried once its write dep succeeds, but
+// other failure modes (policy/auth/timeout) stay blocked.
+func TestCanRetryRunAfterDeps(t *testing.T) {
+	plan := map[string]any{
+		"steps": []map[string]any{
+			{"id": "write-.copilot-ws-q.md", "action": skillActionWrite, "status": "success"},
+			{
+				"id":     "run",
+				"action": skillActionRun,
+				"status": "failed",
+				"deps":   []string{"write-.copilot-ws-q.md"},
+				"output": "缺少依赖文件 .copilot-ws/q.md（须先 action=write 写入或等待 Skill Turn write 步骤完成）",
+			},
+		},
+	}
+	res := toolExecResult{Status: "failed", Output: "缺少依赖文件 .copilot-ws/q.md（须先 action=write 写入或等待 Skill Turn write 步骤完成）"}
+	if !canRetryRunAfterDeps(plan, "run", res) {
+		t.Fatal("expected retry to be permitted for missing-deps failure after write success")
+	}
+	// Same failure but write dep still pending → no retry.
+	plan["steps"].([]map[string]any)[0]["status"] = "pending"
+	if canRetryRunAfterDeps(plan, "run", res) {
+		t.Fatal("retry should be blocked when dep hasn't landed")
+	}
+	// Different failure (auth denial) → no retry even with success dep.
+	plan["steps"].([]map[string]any)[0]["status"] = "success"
+	denied := toolExecResult{Status: "denied", Permission: "policy", Output: "策略拦截：拒绝执行"}
+	if canRetryRunAfterDeps(plan, "run", denied) {
+		t.Fatal("retry should be blocked for non-deps failure")
+	}
+}
