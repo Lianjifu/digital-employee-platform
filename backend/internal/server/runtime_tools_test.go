@@ -118,3 +118,87 @@ func TestRunPilotdeckToolReadFileDoesNotRecurse(t *testing.T) {
 		t.Fatalf("read_file status=%s output=%s err=%s", res.Status, res.Output, res.Error)
 	}
 }
+
+// TestEnsureWSDepsWritten guards the bash-auto-write fix: when a bash call's command
+// references a .copilot-ws/<file>.md via --outline-file and the file is not yet on disk,
+// ensureWSDepsWritten must create it from call.Args["content"] before the run dispatches.
+// Previously the preflight would fail with "缺少依赖文件" and the user saw the bash step
+// turn red in the steps panel.
+func TestEnsureWSDepsWritten(t *testing.T) {
+	pkg := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(pkg, ".copilot-ws"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sk := map[string]any{"name": "pptx", "packagePath": pkg}
+
+	t.Run("writes outline using args.content when provided", func(t *testing.T) {
+		call := toolCallRequest{
+			Args: map[string]any{
+				"command": "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/foo.md --out .copilot-ws/foo.pptx",
+				"content": "# 真实大纲\n\n- 实际内容",
+			},
+		}
+		res, handled := ensureWSDepsWritten(sk, str(call.Args["command"]), call)
+		if !handled || res.Status != "success" {
+			t.Fatalf("expected handled+success, got handled=%v res=%+v", handled, res)
+		}
+		got, err := os.ReadFile(filepath.Join(pkg, ".copilot-ws", "foo.md"))
+		if err != nil {
+			t.Fatalf("outline not written: %v", err)
+		}
+		if !strings.Contains(string(got), "真实大纲") {
+			t.Fatalf("outline content wrong: %s", got)
+		}
+	})
+
+	t.Run("infers outline from user message when content absent", func(t *testing.T) {
+		call := toolCallRequest{
+			Args: map[string]any{
+				"_userMessage": "输出 Q3 研发季度汇报 PPT",
+				"command":      "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/q3.md --out .copilot-ws/q3.pptx",
+			},
+		}
+		res, handled := ensureWSDepsWritten(sk, str(call.Args["command"]), call)
+		if !handled || res.Status != "success" {
+			t.Fatalf("expected handled+success, got handled=%v res=%+v", handled, res)
+		}
+		got, err := os.ReadFile(filepath.Join(pkg, ".copilot-ws", "q3.md"))
+		if err != nil {
+			t.Fatalf("outline not written: %v", err)
+		}
+		if !strings.Contains(string(got), "#") {
+			t.Fatalf("inferred outline looks empty: %s", got)
+		}
+	})
+
+	t.Run("skips files that already exist", func(t *testing.T) {
+		existing := filepath.Join(pkg, ".copilot-ws", "already.md")
+		if err := os.WriteFile(existing, []byte("keep me"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		call := toolCallRequest{
+			Args: map[string]any{
+				"command": "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/already.md --out .copilot-ws/already.pptx",
+				"content": "OVERWRITE",
+			},
+		}
+		_, handled := ensureWSDepsWritten(sk, str(call.Args["command"]), call)
+		if !handled {
+			t.Fatalf("expected handled=true even when no writes happen")
+		}
+		got, _ := os.ReadFile(existing)
+		if string(got) != "keep me" {
+			t.Fatalf("existing file was clobbered: %s", got)
+		}
+	})
+
+	t.Run("returns false when cmd has no .copilot-ws deps", func(t *testing.T) {
+		call := toolCallRequest{
+			Args: map[string]any{"command": "ls /tmp"},
+		}
+		_, handled := ensureWSDepsWritten(sk, str(call.Args["command"]), call)
+		if handled {
+			t.Fatalf("expected handled=false for non-dep command")
+		}
+	})
+}

@@ -228,11 +228,81 @@ func (s *Server) runtimeBash(ctx toolRunContext, t *registeredTool, call toolCal
 	if sk == nil {
 		return toolExecResult{Status: "failed", Error: "无可用技能包", DurationMs: int(time.Since(started).Milliseconds())}
 	}
+	// Auto-fill any .copilot-ws files the run command references but hasn't been written yet.
+	// Why: the LLM frequently calls `bash` (or `write_file` + `bash`) before its own write_file
+	// step lands, so the run sees a missing outline and preflight rejects it. Skill Turn plans
+	// already inject these writes via injectWriteStepsForRunDependencies; direct bash calls
+	// bypass that machinery, so we replicate the safety net here.
+	if wRes, handled := ensureWSDepsWritten(sk, cmd, call); handled {
+		if wRes.Status != "success" {
+			return wRes
+		}
+	}
 	runCall := toolCallRequest{
 		Name: t.Name,
 		Args: map[string]any{"action": "run", "command": cmd, "skillId": str(sk["id"])},
 	}
 	return s.runSkillTool(ctx, &registeredTool{Name: str(sk["name"]), Kind: "skill", Key: "skill:" + slugToolName(str(sk["name"]))}, runCall, started)
+}
+
+// ensureWSDepsWritten checks every .copilot-ws/<file> referenced by cmd. If the file doesn't
+// exist on disk yet, it is written using args.content if provided, otherwise generated from
+// inferOfficeOutline(tool=user-supplied skill, userMessage). Returns (res, true) when at
+// least one write happened (caller checks res.Status); (zero, false) when there was nothing
+// to inject. Errors are reported as toolExecResult so the run caller can return them
+// uniformly.
+func ensureWSDepsWritten(sk map[string]any, cmd string, call toolCallRequest) (toolExecResult, bool) {
+	deps := copilotWSDepsFromCommand(cmd)
+	if len(deps) == 0 {
+		return toolExecResult{}, false
+	}
+	pkgPath := strings.TrimSpace(str(sk["packagePath"]))
+	if pkgPath == "" {
+		return toolExecResult{}, false
+	}
+	// Build a synthetic tool registry entry so inferOfficeOutline can branch by skill name.
+	toolName := strings.TrimSpace(str(sk["name"]))
+	userMessage := strings.TrimSpace(coalesce(
+		str(call.Args["_userMessage"]),
+		coalesce(str(call.Args["input"]), coalesce(str(call.Args["content"]), str(call.Args["outline"]))),
+	))
+	regTool := &registeredTool{Name: toolName, Kind: "skill", Key: "skill:" + slugToolName(toolName)}
+
+	started := time.Now()
+	for _, dep := range deps {
+		full := filepath.Join(pkgPath, filepath.FromSlash(dep))
+		if _, err := os.Stat(full); err == nil {
+			continue // already on disk — nothing to do.
+		}
+		content := strings.TrimSpace(coalesce(str(call.Args["content"]), str(call.Args["outline"])))
+		if content == "" {
+			if inferred := inferOfficeOutline(regTool, userMessage); inferred != "" {
+				content = inferred
+			}
+		}
+		if content == "" {
+			// No content available and outline inference produced nothing — refuse rather
+			// than write an empty file. Pre-flight would refuse it anyway downstream.
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			return toolExecResult{
+				Status: "failed", Error: err.Error(),
+				Output:      "自动写入依赖失败：" + dep,
+				DurationMs:  int(time.Since(started).Milliseconds()),
+				SandboxID:   "skill-run:auto-write",
+			}, true
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			return toolExecResult{
+				Status: "failed", Error: err.Error(),
+				Output:      "自动写入依赖失败：" + dep,
+				DurationMs:  int(time.Since(started).Milliseconds()),
+				SandboxID:   "skill-run:auto-write",
+			}, true
+		}
+	}
+	return toolExecResult{Status: "success", DurationMs: int(time.Since(started).Milliseconds()), SandboxID: "skill-run:auto-write"}, true
 }
 
 func (s *Server) runtimeWebFetch(ctx toolRunContext, call toolCallRequest, started time.Time) toolExecResult {
