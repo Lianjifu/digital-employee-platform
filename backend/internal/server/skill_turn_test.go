@@ -126,3 +126,39 @@ func TestMarkAndAdvanceSkillTurn(t *testing.T) {
 		t.Fatal("expected no pending")
 	}
 }
+
+func TestResetFailedRunStepsForContinue(t *testing.T) {
+	runCmd := `bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/q.md --out .copilot-ws/q.pptx`
+	plan := map[string]any{
+		"steps": []map[string]any{
+			{"id": "write", "action": skillActionWrite, "status": "success"},
+			{"id": "run", "action": skillActionRun, "status": "failed", "args": map[string]any{"action": skillActionRun, "command": runCmd}},
+		},
+	}
+	if nextPendingSkillTurnStep(plan) != nil {
+		t.Fatal("failed run should not be pending before reset")
+	}
+	resetFailedRunStepsForContinue(plan)
+	next := nextPendingSkillTurnStep(plan)
+	if next == nil || str(next["action"]) != skillActionRun {
+		t.Fatalf("expected run pending after reset, got %v", next)
+	}
+	if skillTurnRunCommand(plan) != runCmd {
+		t.Fatalf("run command=%q", skillTurnRunCommand(plan))
+	}
+}
+
+func TestPreferredNextRunCommandSkipsOutlineFile(t *testing.T) {
+	runCmd := `bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/q.md --out .copilot-ws/q.pptx`
+	plan := map[string]any{
+		"steps": []map[string]any{
+			{"id": "write", "action": skillActionWrite, "status": "success"},
+			{"id": "run", "action": skillActionRun, "status": "failed", "args": map[string]any{"action": skillActionRun, "command": runCmd}},
+		},
+	}
+	out := "【skill.write】已写入 .copilot-ws/q.md（12 bytes）\n下一步可用 action=run command=.copilot-ws/q.md"
+	cmd := preferredNextRunCommand(plan, map[string]any{}, out)
+	if cmd != runCmd {
+		t.Fatalf("want run script, got %q", cmd)
+	}
+}

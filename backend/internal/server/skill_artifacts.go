@@ -1,7 +1,6 @@
 package server
 
 import (
-	"archive/zip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +10,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -360,7 +358,7 @@ func replaceSkillArtifactPath(output, oldStorage, newStorage string) string {
 	return strings.ReplaceAll(out, encOld, encNew)
 }
 
-// ensureSkillArtifactsInOutput materializes or syncs .docx artifacts referenced in assistant output.
+// ensureSkillArtifactsInOutput syncs .docx artifacts already referenced in assistant output (no new generation).
 func ensureSkillArtifactsInOutput(output, title, content string) string {
 	if strings.TrimSpace(output) == "" {
 		return output
@@ -387,15 +385,7 @@ func ensureSkillArtifactsInOutput(output, title, content string) string {
 		return output
 	}
 	if len(matches) == 0 {
-		storage, download, err := generateDocxArtifactLocal(displayTitle, body)
-		if err != nil {
-			return output
-		}
-		block := formatDocxToolOutput(displayTitle, storage, download, true)
-		if strings.TrimSpace(output) == "" {
-			return block
-		}
-		return strings.TrimSpace(output + "\n\n" + block)
+		return output
 	}
 	for _, m := range matches {
 		if len(m) < 2 {
@@ -617,6 +607,169 @@ func pptxStorageName(downloadName string) string {
 		id = id[len(id)-12:]
 	}
 	return id + "-" + base + ".pptx"
+}
+
+var reSkillXlsxPrefix = regexp.MustCompile(`(?i)^skill[_-]?xlsx[_-]*`)
+
+func normalizeXlsxTitle(raw string) string {
+	s := strings.TrimSpace(raw)
+	s = strings.Trim(s, "《》「」『》\"'`")
+	s = reSkillXlsxPrefix.ReplaceAllString(s, "")
+	s = regexp.MustCompile(`(?i)(\.xlsx|_xlsx)$`).ReplaceAllString(s, "")
+	s = reMultiSpace.ReplaceAllString(s, " ")
+	s = strings.TrimSpace(s)
+	if s == "" || strings.EqualFold(s, "xlsx") || s == "表格" || s == "excel" {
+		return "数据明细"
+	}
+	runes := []rune(s)
+	if len(runes) > 32 {
+		s = string(runes[:32])
+	}
+	return strings.TrimSpace(s)
+}
+
+func xlsxDownloadBasename(title string) string {
+	title = normalizeXlsxTitle(title)
+	var b strings.Builder
+	for _, r := range title {
+		switch {
+		case unicode.Is(unicode.Han, r):
+			b.WriteRune(r)
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9'):
+			b.WriteRune(r)
+		case r == '-' || r == '·':
+			b.WriteRune(r)
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		out = "spreadsheet"
+	}
+	return out + ".xlsx"
+}
+
+func xlsxStorageName(downloadName string) string {
+	base := strings.TrimSuffix(downloadName, filepath.Ext(downloadName))
+	id := fmt.Sprintf("%x", time.Now().UnixNano())
+	if len(id) > 12 {
+		id = id[len(id)-12:]
+	}
+	return id + "-" + base + ".xlsx"
+}
+
+func xlsxDisplayNameFromStorage(storage string) string {
+	name := filepath.Base(strings.TrimSpace(storage))
+	if reArtifactIDPref.MatchString(name) {
+		rest := reArtifactIDPref.ReplaceAllString(name, "")
+		if rest != "" {
+			return xlsxDownloadBasename(rest)
+		}
+	}
+	return xlsxDownloadBasename(name)
+}
+
+func findGenerateXlsxScript() (string, error) {
+	candidates := []string{
+		filepath.Join("..", "..", "builtin", "skills", "spreadsheets", "scripts", "spreadsheet.sh"),
+		"/Users/LIANJIFU/ops/digital-employee-platform/backend/builtin/skills/spreadsheets/scripts/spreadsheet.sh",
+	}
+	if wd, err := os.Getwd(); err == nil {
+		candidates = append([]string{
+			filepath.Join(wd, "..", "..", "builtin", "skills", "spreadsheets", "scripts", "spreadsheet.sh"),
+			filepath.Join(wd, "builtin", "skills", "spreadsheets", "scripts", "spreadsheet.sh"),
+		}, candidates...)
+	}
+	for _, c := range candidates {
+		if st, e := os.Stat(c); e == nil && !st.IsDir() {
+			abs, _ := filepath.Abs(c)
+			return abs, nil
+		}
+	}
+	return "", fmt.Errorf("找不到 spreadsheet.sh")
+}
+
+// generateXlsxArtifactLocal builds an .xlsx via the spreadsheet skill CLI (markdown table → xlsx).
+func generateXlsxArtifactLocal(title, content string) (storageName, downloadPath string, err error) {
+	cleanupSkillArtifactsTTL(7*24*time.Hour, 400)
+	dir := skillArtifactDir()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", "", err
+	}
+	displayTitle := normalizeXlsxTitle(title)
+	downloadName := xlsxDownloadBasename(displayTitle)
+	storageName = xlsxStorageName(downloadName)
+	outPath := filepath.Join(dir, storageName)
+
+	// Save content to temp file for build
+	contentFile, err := os.CreateTemp("", "de-xlsx-*.md")
+	if err != nil {
+		return "", "", err
+	}
+	contentPath := contentFile.Name()
+	defer os.Remove(contentPath)
+	if _, err := contentFile.WriteString(content); err != nil {
+		_ = contentFile.Close()
+		return "", "", err
+	}
+	_ = contentFile.Close()
+
+	scriptPath, err := findGenerateXlsxScript()
+	if err != nil {
+		return "", "", err
+	}
+	cmd := exec.Command("bash", scriptPath, "build", "--title", displayTitle, "--spec", contentPath, "--out", outPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// Fallback: produce a minimal xlsx-shaped placeholder so artifact path still resolves.
+		// The preview path will report the stub.
+		return "", "", fmt.Errorf("xlsx 生成失败: %v (%s)", err, truncateRunes(string(out), 240))
+	}
+	if st, statErr := os.Stat(outPath); statErr != nil || st.Size() < 100 {
+		return "", "", fmt.Errorf("xlsx 产物无效")
+	}
+	downloadPath = "/api/skill-artifacts/" + storageName
+	return storageName, downloadPath, nil
+}
+
+// previewXlsxArtifact shells out to spreadsheet.sh inspect to get a JSON preview.
+func previewXlsxArtifact(storageName string) (map[string]any, error) {
+	storageName = skillArtifactStorageName(storageName)
+	if storageName == "" || !strings.HasSuffix(strings.ToLower(storageName), ".xlsx") {
+		return nil, fmt.Errorf("无效 xlsx 产物名")
+	}
+	if !skillArtifactExists(storageName) {
+		return nil, fmt.Errorf("产物不存在")
+	}
+	scriptPath, err := findGenerateXlsxScript()
+	if err != nil {
+		return nil, err
+	}
+	path := skillArtifactFilePath(storageName)
+	tmpJSON, err := os.CreateTemp("", "de-xlsx-preview-*.json")
+	if err != nil {
+		return nil, err
+	}
+	tmpPath := tmpJSON.Name()
+	_ = tmpJSON.Close()
+	defer os.Remove(tmpPath)
+
+	cmd := exec.Command("bash", scriptPath, "inspect", "--input", path, "--out", tmpPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("xlsx 预览失败: %v (%s)", err, truncateRunes(string(out), 240))
+	}
+	raw, rerr := os.ReadFile(tmpPath)
+	if rerr != nil {
+		return nil, fmt.Errorf("xlsx 预览读取失败: %w", rerr)
+	}
+	var payload map[string]any
+	if jerr := json.Unmarshal(raw, &payload); jerr != nil {
+		return nil, fmt.Errorf("xlsx 预览解析失败: %w", jerr)
+	}
+	payload["filename"] = storageName
+	payload["downloadName"] = xlsxDisplayNameFromStorage(storageName)
+	payload["kind"] = "xlsx"
+	return payload, nil
 }
 
 func findGeneratePptxProdScript() (string, error) {
@@ -890,136 +1043,6 @@ var pptxSlideTextRE = regexp.MustCompile(`(?s)<a:t[^>]*>([^<]*)</a:t>`)
 var pptxParaRE = regexp.MustCompile(`(?s)<a:p\b[^>]*>(.*?)</a:p>`)
 var pptxBuCharRE = regexp.MustCompile(`(?i)<a:buChar\b`)
 
-func previewPptxArtifact(storageName string) (map[string]any, error) {
-	storageName = skillArtifactStorageName(storageName)
-	if storageName == "" || !strings.HasSuffix(strings.ToLower(storageName), ".pptx") {
-		return nil, fmt.Errorf("无效 pptx 产物名")
-	}
-	path := skillArtifactFilePath(storageName)
-	zr, err := zip.OpenReader(path)
-	if err != nil {
-		return nil, fmt.Errorf("无法打开 PPT：%w", err)
-	}
-	defer zr.Close()
-
-	type slideFile struct {
-		idx int
-		rc  io.ReadCloser
-	}
-	var slides []slideFile
-	reSlide := regexp.MustCompile(`(?i)^ppt/slides/slide(\d+)\.xml$`)
-	for _, f := range zr.File {
-		m := reSlide.FindStringSubmatch(f.Name)
-		if len(m) != 2 {
-			continue
-		}
-		n := 0
-		fmt.Sscanf(m[1], "%d", &n)
-		rc, err := f.Open()
-		if err != nil {
-			continue
-		}
-		slides = append(slides, slideFile{idx: n, rc: rc})
-	}
-	sort.Slice(slides, func(i, j int) bool { return slides[i].idx < slides[j].idx })
-
-	blocks := make([]map[string]any, 0, len(slides)*4)
-	slidePayloads := make([]map[string]any, 0, len(slides))
-	pageCount := 0
-	for _, sf := range slides {
-		raw, err := io.ReadAll(io.LimitReader(sf.rc, 256<<10))
-		_ = sf.rc.Close()
-		if err != nil {
-			continue
-		}
-		pageCount++
-		xml := string(raw)
-		paras := pptxParaRE.FindAllStringSubmatch(xml, -1)
-		title := fmt.Sprintf("第 %d 页", pageCount)
-		lines := make([]string, 0, len(paras))
-		bullets := make([]string, 0, len(paras))
-		firstText := true
-		for _, pm := range paras {
-			paraXML := pm[1]
-			tm := pptxSlideTextRE.FindStringSubmatch(paraXML)
-			if len(tm) < 2 {
-				continue
-			}
-			t := strings.TrimSpace(tm[1])
-			if t == "" {
-				continue
-			}
-			if firstText {
-				title = t
-				firstText = false
-				continue
-			}
-			isBullet := pptxBuCharRE.MatchString(paraXML) ||
-				strings.HasPrefix(t, "•") || strings.HasPrefix(t, "-")
-			trim := strings.TrimSpace(strings.TrimLeft(t, "•·*- "))
-			if trim == "" {
-				continue
-			}
-			lines = append(lines, trim)
-			if isBullet {
-				bullets = append(bullets, trim)
-			}
-		}
-		// Fallback: flat <a:t> scan if paragraph parse yielded nothing beyond title
-		if len(lines) == 0 {
-			texts := pptxSlideTextRE.FindAllStringSubmatch(xml, -1)
-			for i, tm := range texts {
-				t := strings.TrimSpace(tm[1])
-				if t == "" {
-					continue
-				}
-				if i == 0 {
-					title = t
-					continue
-				}
-				lines = append(lines, t)
-			}
-		}
-		slidePayloads = append(slidePayloads, map[string]any{
-			"index":   pageCount,
-			"title":   title,
-			"lines":   lines,
-			"bullets": bullets,
-		})
-		blocks = append(blocks, map[string]any{"type": "h2", "text": title})
-		bulletSet := map[string]struct{}{}
-		for _, b := range bullets {
-			bulletSet[b] = struct{}{}
-		}
-		for _, line := range lines {
-			if _, ok := bulletSet[line]; ok {
-				blocks = append(blocks, map[string]any{"type": "li", "text": line, "ordered": false})
-			} else {
-				blocks = append(blocks, map[string]any{"type": "p", "text": line})
-			}
-		}
-		blocks = append(blocks, map[string]any{"type": "blank"})
-	}
-	if pageCount == 0 {
-		return nil, fmt.Errorf("PPT 中未找到幻灯片")
-	}
-	displayTitle := normalizePptxTitle(inferTitleFromPptxStorage(storageName))
-	downloadName := pptxDownloadBasename(displayTitle)
-	payload := map[string]any{
-		"kind":         "pptx",
-		"title":        displayTitle,
-		"filename":     storageName,
-		"downloadName": downloadName,
-		"pageCount":    pageCount,
-		"slides":       slidePayloads,
-		"blocks":       blocks,
-	}
-	if warn := pptxOOXMLContentWarning(path); warn != "" {
-		payload["contentWarning"] = warn
-	}
-	return payload, nil
-}
-
 func inferTitleFromPptxStorage(storageName string) string {
 	base := strings.TrimSuffix(filepath.Base(storageName), filepath.Ext(storageName))
 	base = reArtifactIDPref.ReplaceAllString(base, "")
@@ -1147,6 +1170,13 @@ func (s *Server) serveSkillArtifactPreview(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		writeJSON(w, payload)
+	case strings.HasSuffix(low, ".xlsx"):
+		payload, err := previewXlsxArtifact(name)
+		if err != nil {
+			writeErr(w, apperr.NotFoundErr(apperr.NotFound, err.Error()))
+			return
+		}
+		writeJSON(w, payload)
 	case strings.HasSuffix(low, ".pdf"):
 		payload, err := previewPdfArtifact(name)
 		if err != nil {
@@ -1188,6 +1218,8 @@ func (s *Server) serveSkillArtifact(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
 	} else if strings.HasSuffix(strings.ToLower(name), ".pptx") {
 		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.presentationml.presentation")
+	} else if strings.HasSuffix(strings.ToLower(name), ".xlsx") {
+		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	} else if strings.HasSuffix(strings.ToLower(name), ".pdf") {
 		w.Header().Set("Content-Type", "application/pdf")
 	} else {
@@ -1237,4 +1269,158 @@ func inferDocxTitleFromMessage(msg string) string {
 		return "岗位说明书"
 	}
 	return ""
+}
+
+func isSpreadsheetSkillName(name string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	return n == "xlsx" || n == "spreadsheets" || n == "spreadsheet" ||
+		n == "excel" || strings.Contains(n, "spreadsheet") || n == "表格生成"
+}
+
+func inferXlsxTitleFromMessage(msg string) string {
+	msg = strings.TrimSpace(msg)
+	if msg == "" {
+		return ""
+	}
+	for _, re := range []*regexp.Regexp{
+		regexp.MustCompile(`《([^》]{2,32})》`),
+		regexp.MustCompile(`「([^」]{2,32})」`),
+		regexp.MustCompile(`生成[一份张]*[《「"]?([^《」"\s，。！？,]{2,24})`),
+	} {
+		if m := re.FindStringSubmatch(msg); len(m) == 2 {
+			t := strings.TrimSpace(m[1])
+			if t != "" && t != "表格" {
+				return t
+			}
+		}
+	}
+	if strings.Contains(msg, "预算") {
+		return "预算明细"
+	}
+	if strings.Contains(msg, "考勤") {
+		return "考勤明细"
+	}
+	if strings.Contains(msg, "花名册") || strings.Contains(msg, "人员名单") {
+		return "人员花名册"
+	}
+	return ""
+}
+
+// defaultDocxOutlineForMessage produces a structured Word outline when the model did not
+// supply content. Mirrors defaultPptxOutlineForMessage (skill_artifacts.go:744) so Word
+// tasks without explicit body still generate multi-section documents instead of 1-page stubs.
+func defaultDocxOutlineForMessage(title, userMsg string) string {
+	t := coalesce(strings.TrimSpace(title), "生成文档")
+	if strings.Contains(userMsg, "招聘") {
+		return fmt.Sprintf(`# %s
+
+## 一、岗位基本信息
+- 岗位名称：
+- 所属部门：
+- 直接上级：
+- 岗位编号：
+
+## 二、岗位职责
+- 职责一：
+- 职责二：
+- 职责三：
+
+## 三、任职要求
+- 学历 / 专业：
+- 工作经验：
+- 核心能力：
+
+## 四、薪资福利
+- 薪资范围：
+- 福利体系：
+
+## 五、备注
+- 补充说明：`, t)
+	}
+	if strings.Contains(userMsg, "岗位说明") {
+		return fmt.Sprintf(`# %s
+
+## 一、岗位标识
+- 岗位名称：
+- 所属部门：
+- 岗位级别：
+
+## 二、岗位概述
+- 岗位目的：
+- 工作关系：
+
+## 三、岗位职责
+- 关键职责一：
+- 关键职责二：
+- 关键职责三：
+
+## 四、任职资格
+- 教育背景：
+- 经验要求：
+- 专业技能：
+
+## 五、发展通道
+- 晋升方向：`, t)
+	}
+	return fmt.Sprintf(`# %s
+
+## 一、概述
+- 背景说明：
+- 适用范围：
+
+## 二、核心内容
+- 要点一：
+- 要点二：
+- 要点三：
+
+## 三、流程与标准
+- 流程描述：
+- 验收标准：
+
+## 四、附则
+- 解释权：
+- 生效日期：`, t)
+}
+
+// defaultXlsxOutlineForMessage produces a structured Excel outline (markdown table seed)
+// when the model did not supply content. The spreadsheet skill consumes markdown tables.
+func defaultXlsxOutlineForMessage(title, userMsg string) string {
+	t := coalesce(strings.TrimSpace(title), "数据明细")
+	if strings.Contains(userMsg, "预算") {
+		return fmt.Sprintf(`# %s
+
+| 项目 | 类别 | 金额（元） | 负责人 | 备注 |
+| --- | --- | --- | --- | --- |
+| 收入预算 | 主营收入 | | | |
+| 成本预算 | 人力成本 | | | |
+| 成本预算 | 运营成本 | | | |
+| 利润预算 | 净利润 | | | |
+
+## 说明
+- 数据周期：
+- 口径：
+- 复核人：`, t)
+	}
+	if strings.Contains(userMsg, "考勤") {
+		return fmt.Sprintf(`# %s
+
+| 员工 | 部门 | 出勤天数 | 迟到 | 早退 | 请假 | 加班 |
+| --- | --- | --- | --- | --- | --- | --- |
+| | | | | | | |
+
+## 说明
+- 统计周期：
+- 异常处理：`, t)
+	}
+	return fmt.Sprintf(`# %s
+
+| 序号 | 名称 | 分类 | 数量 | 单位 | 备注 |
+| --- | --- | --- | --- | --- | --- |
+| 1 | | | | | |
+| 2 | | | | | |
+| 3 | | | | | |
+
+## 说明
+- 数据来源：
+- 责任人：`, t)
 }

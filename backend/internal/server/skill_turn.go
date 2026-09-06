@@ -21,6 +21,13 @@ func buildSkillTurnPlan(tool *registeredTool, call toolCallRequest) map[string]a
 	if args == nil {
 		args = map[string]any{}
 	}
+	// userMessage: prefer the one passed via hidden args key (set by request handlers when
+	// the surrounding conversation context is available); fall back to any caller-supplied
+	// user-content field so the outline inference has intent to anchor on.
+	userMessage := strings.TrimSpace(coalesce(
+		str(args["_userMessage"]),
+		coalesce(str(args["input"]), coalesce(str(args["content"]), str(args["outline"]))),
+	))
 	action := normalizeSkillAction(args)
 	cmd := skillCommandFromArgs(args)
 	if action == "" {
@@ -60,6 +67,7 @@ func buildSkillTurnPlan(tool *registeredTool, call toolCallRequest) map[string]a
 			"id": "run", "action": skillActionRun, "title": "执行技能脚本/入口",
 			"args": runArgs, "status": "pending",
 		})
+		steps = injectWriteStepsForRunDependencies(steps, args, cmd, userMessage, tool)
 	default:
 		stepArgs := cloneArgs(args)
 		stepArgs["action"] = action
@@ -157,6 +165,67 @@ func nextPendingSkillTurnStep(plan map[string]any) map[string]any {
 		}
 	}
 	return nil
+}
+
+// skillTurnRunCommand returns the run step command from an approvable skill turn plan.
+func skillTurnRunCommand(plan map[string]any) string {
+	for _, st := range skillTurnSteps(plan) {
+		if str(st["action"]) != skillActionRun {
+			continue
+		}
+		args, _ := st["args"].(map[string]any)
+		if cmd := skillCommandFromArgs(args); cmd != "" {
+			return cmd
+		}
+	}
+	return ""
+}
+
+// resetFailedRunStepsForContinue marks failed run steps pending so continueRun can retry them.
+func resetFailedRunStepsForContinue(plan map[string]any) {
+	steps := skillTurnSteps(plan)
+	for i, st := range steps {
+		if str(st["action"]) != skillActionRun {
+			continue
+		}
+		status := str(st["status"])
+		if status != "failed" && status != "needs_instruction" {
+			continue
+		}
+		st["status"] = "pending"
+		delete(st, "finishedAt")
+		steps[i] = st
+	}
+	plan["steps"] = steps
+}
+
+func skillTurnHasRetryableRun(plan map[string]any) bool {
+	for _, st := range skillTurnSteps(plan) {
+		if str(st["action"]) != skillActionRun {
+			continue
+		}
+		status := str(st["status"])
+		if status == "failed" || status == "needs_instruction" {
+			return true
+		}
+	}
+	return false
+}
+
+// preferredNextRunCommand picks the script command to continue a skill turn (not outline/data files).
+func preferredNextRunCommand(plan map[string]any, action map[string]any, fallbackOutput string) string {
+	if plan != nil {
+		if cmd := skillTurnRunCommand(plan); cmd != "" {
+			return cmd
+		}
+	}
+	if cmd := strings.TrimSpace(str(action["nextRunCommand"])); cmd != "" {
+		return cmd
+	}
+	if cmd := parseNextRunCommand(fallbackOutput); cmd != "" && looksLikeSkillScriptCommand(cmd) {
+		return cmd
+	}
+	return ""
 }
 
 func skillTurnHasPending(plan map[string]any) bool {

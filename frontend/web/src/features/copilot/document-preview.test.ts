@@ -1,63 +1,88 @@
 import { describe, expect, it } from 'vitest';
 import {
-  blocksToPreviewMarkdown,
-  slidesFromPreviewPayload,
-  type DocPreviewPayload,
+  buildXlsxGrid,
+  columnIndex,
+  parseCellAddress,
+  xlsxCellToText,
+  type XlsxPreviewCell,
 } from './document-preview';
-import { renderMarkdownDocument } from '@/features/knowledge/markdown-doc';
 
-describe('blocksToPreviewMarkdown', () => {
-  it('preserves markdown tables and bold from paragraph blocks', () => {
-    const md = blocksToPreviewMarkdown([
-      { type: 'h1', text: '招聘模板' },
-      { type: 'p', text: '**Word 文件尚未实际产出**' },
-      { type: 'p', text: '| 职位名称 | Python 开发工程师 | 职位编号 | PY-001 |' },
-      { type: 'p', text: '|---|---|---|---|' },
-      { type: 'p', text: '| 所属部门 | 技术部 | 汇报对象 | 技术总监 |' },
-    ]);
-    expect(md).toContain('**Word 文件尚未实际产出**');
-    expect(md).toContain('| 职位名称 |');
-    const { html } = renderMarkdownDocument(md);
-    expect(html).toContain('<strong');
-    expect(html).toContain('<table');
-    expect(html).toContain('Python 开发工程师');
+describe('columnIndex / parseCellAddress', () => {
+  it('maps A, Z, AA, AB to base-26 column numbers', () => {
+    expect(columnIndex('A')).toBe(1);
+    expect(columnIndex('Z')).toBe(26);
+    expect(columnIndex('AA')).toBe(27);
+    expect(columnIndex('AB')).toBe(28);
+  });
+
+  it('parses cell addresses with optional absolute markers', () => {
+    expect(parseCellAddress('A1')).toEqual({ row: 1, col: 1 });
+    expect(parseCellAddress('$B$12')).toEqual({ row: 12, col: 2 });
+    expect(parseCellAddress('AC1048576')).toEqual({ row: 1048576, col: 29 });
+  });
+
+  it('returns null for malformed addresses', () => {
+    expect(parseCellAddress('')).toBeNull();
+    expect(parseCellAddress('1A')).toBeNull();
+    expect(parseCellAddress('A')).toBeNull();
   });
 });
 
-describe('slidesFromPreviewPayload', () => {
-  it('prefers structured slides array', () => {
-    const payload: DocPreviewPayload = {
-      kind: 'pptx',
-      title: '团队季度考评',
-      filename: 'x.pptx',
-      pageCount: 2,
-      blocks: [],
-      slides: [
-        { index: 1, title: '封面', lines: ['汇报人'], bullets: [] },
-        { index: 2, title: '目录', lines: ['概况', 'KPI'], bullets: ['概况', 'KPI'] },
-      ],
-    };
-    const slides = slidesFromPreviewPayload(payload);
-    expect(slides).toHaveLength(2);
-    expect(slides[0]?.title).toBe('封面');
-    expect(slides[1]?.bullets).toEqual(['概况', 'KPI']);
+describe('xlsxCellToText', () => {
+  it('handles primitives', () => {
+    expect(xlsxCellToText('张三')).toBe('张三');
+    expect(xlsxCellToText(1000000)).toBe('1000000');
+    expect(xlsxCellToText(true)).toBe('true');
+    expect(xlsxCellToText(null)).toBe('');
+    expect(xlsxCellToText(undefined)).toBe('');
   });
 
-  it('falls back to h2-separated blocks', () => {
-    const payload: DocPreviewPayload = {
-      kind: 'pptx',
-      title: 'x',
-      filename: 'x.pptx',
-      blocks: [
-        { type: 'h2', text: '封面' },
-        { type: 'p', text: '副标题' },
-        { type: 'blank' },
-        { type: 'h2', text: '目录' },
-        { type: 'li', text: '一、概况' },
-      ],
-    };
-    const slides = slidesFromPreviewPayload(payload);
-    expect(slides.map((s) => s.title)).toEqual(['封面', '目录']);
-    expect(slides[1]?.bullets).toEqual(['一、概况']);
+  it('flattens ExcelJS richText and formula shapes', () => {
+    expect(xlsxCellToText({ richText: [{ text: '财务' }, { text: '部' }] })).toBe('财务部');
+    expect(xlsxCellToText({ text: '=SUM(A1:A5)' })).toBe('=SUM(A1:A5)');
+    expect(xlsxCellToText({ result: 12345 })).toBe('12345');
+    expect(xlsxCellToText({ formula: 'B1*2', result: 200 })).toBe('200');
+  });
+});
+
+describe('buildXlsxGrid', () => {
+  it('positions cells and computes bounding box', () => {
+    const cells: XlsxPreviewCell[] = [
+      { address: 'A1', value: '项目' },
+      { address: 'B1', value: '金额' },
+      { address: 'A2', value: '收入' },
+      { address: 'B2', value: 1000000 },
+    ];
+    const grid = buildXlsxGrid(cells, 20, 30);
+    expect(grid.cols).toBe(2);
+    expect(grid.rows).toBe(2);
+    expect(grid.data.get('1:1')).toBe('项目');
+    expect(grid.data.get('1:2')).toBe('金额');
+    expect(grid.data.get('2:1')).toBe('收入');
+    expect(grid.data.get('2:2')).toBe('1000000');
+  });
+
+  it('clamps cells beyond maxCols/maxRows', () => {
+    const cells: XlsxPreviewCell[] = [
+      { address: 'A1', value: 'ok' },
+      { address: 'T1', value: 'edge' },
+      { address: 'U1', value: 'over-col' },
+      { address: 'A50', value: 'over-row' },
+    ];
+    const grid = buildXlsxGrid(cells, 20, 30);
+    expect(grid.data.get('1:1')).toBe('ok');
+    expect(grid.data.get('1:20')).toBe('edge');
+    expect(grid.data.get('1:21')).toBeUndefined();
+    expect(grid.data.get('50:1')).toBeUndefined();
+  });
+
+  it('skips malformed addresses without throwing', () => {
+    const cells = [
+      { address: 'A1', value: 'good' },
+      { address: 'nope', value: 'bad' },
+    ] as unknown as XlsxPreviewCell[];
+    const grid = buildXlsxGrid(cells, 20, 30);
+    expect(grid.data.get('1:1')).toBe('good');
+    expect(grid.data.size).toBe(1);
   });
 });

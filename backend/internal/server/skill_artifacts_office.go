@@ -300,6 +300,8 @@ func registerLocalArtifactFile(srcPath, preferredTitle string) (storageName, dow
 		storage = docxStorageName(docxDownloadBasename(normalizeDocxTitle(base)))
 	case ".pptx":
 		storage = pptxStorageName(pptxDownloadBasename(normalizePptxTitle(base)))
+	case ".xlsx":
+		storage = xlsxStorageName(xlsxDownloadBasename(normalizeXlsxTitle(base)))
 	case ".pdf":
 		storage = pdfStorageName(pdfDownloadBasename(normalizePdfTitle(base)))
 	default:
@@ -357,7 +359,7 @@ func harvestOfficeArtifactsFromDir(root string) (storageName, downloadPath, kind
 			return nil
 		}
 		low := strings.ToLower(info.Name())
-		if strings.HasSuffix(low, ".pptx") || strings.HasSuffix(low, ".docx") || strings.HasSuffix(low, ".pdf") {
+		if strings.HasSuffix(low, ".pptx") || strings.HasSuffix(low, ".docx") || strings.HasSuffix(low, ".xlsx") || strings.HasSuffix(low, ".pdf") {
 			// Skip node_modules / .git noise
 			if strings.Contains(path, "node_modules") || strings.Contains(path, "/.git/") {
 				return nil
@@ -394,6 +396,8 @@ func harvestOfficeArtifactsFromDir(root string) (storageName, downloadPath, kind
 		kind = "docx"
 	case ".pptx":
 		kind = "pptx"
+	case ".xlsx":
+		kind = "xlsx"
 	case ".pdf":
 		kind = "pdf"
 	}
@@ -449,7 +453,7 @@ func cleanupSkillArtifactsTTL(maxAge time.Duration, maxFiles int) {
 		}
 		name := e.Name()
 		low := strings.ToLower(name)
-		if !(strings.HasSuffix(low, ".docx") || strings.HasSuffix(low, ".pptx") || strings.HasSuffix(low, ".pdf")) {
+		if !(strings.HasSuffix(low, ".docx") || strings.HasSuffix(low, ".pptx") || strings.HasSuffix(low, ".xlsx") || strings.HasSuffix(low, ".pdf")) {
 			continue
 		}
 		info, err := e.Info()

@@ -55,6 +55,15 @@ describe('extractSkillArtifacts', () => {
     expect(items[0]?.downloadName).toBe('团队季度考评汇报.pptx');
     expect(items[1]?.kind).toBe('docx');
   });
+
+  it('recognizes xlsx, normalizes title, and labels it Excel 表格', () => {
+    const text =
+      '下载链接：/api/skill-artifacts/lecc2aef2257-skill_xlsx__预算明细_xlsx.xlsx';
+    const items = extractSkillArtifacts(text);
+    expect(items[0]?.kind).toBe('xlsx');
+    expect(items[0]?.title).toBe('预算明细');
+    expect(items[0]?.downloadName).toBe('预算明细.xlsx');
+  });
 });
 
 describe('stripArtifactNoise', () => {

@@ -1,6 +1,6 @@
 /** 从助手消息中提取 /api/skill-artifacts 下载链，供下载卡片渲染。 */
 
-export type SkillArtifactKind = 'docx' | 'pptx' | 'pdf' | 'file';
+export type SkillArtifactKind = 'docx' | 'pptx' | 'pdf' | 'xlsx' | 'file';
 
 export type SkillArtifactLink = {
   /** 同源相对路径（已 encode），如 /api/skill-artifacts/xxx.docx */
@@ -51,8 +51,10 @@ export function inferTitle(filename: string): string {
   name = name.replace(/^skill[_-]?docx[_-]*/i, '');
   name = name.replace(/^skill[_-]?pptx[_-]*/i, '');
   name = name.replace(/^skill[_-]?pdf[_-]*/i, '');
+  name = name.replace(/^skill[_-]?xlsx[_-]*/i, '');
   name = name.replace(/_docx$/i, '');
   name = name.replace(/_pptx$/i, '');
+  name = name.replace(/_xlsx$/i, '');
   name = name.replace(/_pdf$/i, '');
   name = name.replace(/__/g, ' ');
   name = name.replace(/_/g, ' ');
@@ -65,6 +67,7 @@ export function inferKind(filename: string): SkillArtifactKind {
   const lower = filename.toLowerCase();
   if (lower.endsWith('.docx')) return 'docx';
   if (lower.endsWith('.pptx')) return 'pptx';
+  if (lower.endsWith('.xlsx')) return 'xlsx';
   if (lower.endsWith('.pdf')) return 'pdf';
   return 'file';
 }
@@ -75,6 +78,8 @@ export function artifactKindLabel(kind: SkillArtifactKind): string {
       return 'Word 文档';
     case 'pptx':
       return 'PPT 演示文稿';
+    case 'xlsx':
+      return 'Excel 表格';
     case 'pdf':
       return 'PDF 文档';
     default:
@@ -90,7 +95,10 @@ export function toDownloadName(storageName: string, explicit?: string): string {
       if (/\.[a-z0-9]{1,8}$/i.test(clean)) return clean;
       const kind = inferKind(storageName);
       const ext =
-        kind === 'pptx' ? '.pptx' : kind === 'docx' ? '.docx' : kind === 'pdf' ? '.pdf' : '';
+        kind === 'pptx' ? '.pptx' :
+        kind === 'docx' ? '.docx' :
+        kind === 'xlsx' ? '.xlsx' :
+        kind === 'pdf'  ? '.pdf'  : '';
       return `${clean}${ext}`;
     }
   }
@@ -98,6 +106,7 @@ export function toDownloadName(storageName: string, explicit?: string): string {
   const title = inferTitle(storageName).replace(/\s+/g, '');
   if (kind === 'docx') return `${title || '生成文档'}.docx`;
   if (kind === 'pptx') return `${title || '演示文稿'}.pptx`;
+  if (kind === 'xlsx') return `${title || '数据明细'}.xlsx`;
   if (kind === 'pdf') return `${title || '生成文档'}.pdf`;
   const ext = storageName.match(/(\.[a-z0-9]{1,8})$/i)?.[1] ?? '';
   return `${title || 'download'}${ext}`;

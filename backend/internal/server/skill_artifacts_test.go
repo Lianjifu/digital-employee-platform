@@ -118,6 +118,20 @@ func TestInferDocxTitleFromMessage(t *testing.T) {
 	}
 }
 
+func TestEnsureSkillArtifactsDoesNotCreateWithoutLink(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DE_SKILL_ARTIFACT_DIR", dir)
+	output := "请下载附件"
+	got := ensureSkillArtifactsInOutput(output, "招聘岗位模板", "一、基本信息\n岗位名称：人事专员")
+	if got != output {
+		t.Fatalf("should not create artifact: %s", got)
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) > 0 {
+		t.Fatalf("unexpected files: %d", len(entries))
+	}
+}
+
 func TestEnsureSkillArtifactsInOutput(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("DE_SKILL_ARTIFACT_DIR", dir)
