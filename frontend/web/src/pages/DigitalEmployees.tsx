@@ -2283,6 +2283,25 @@ function CapabilityAssemblySelector({ catalog, capabilities, policy, onChangeCap
               </label>
             </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-2">
+              <label className="inline-flex items-center gap-2 text-xs text-[var(--text-secondary)] sm:col-span-2">
+                <input
+                  type="checkbox"
+                  checked={capabilities.cognitive?.showNarrative !== false}
+                  disabled={capabilities.cognitive?.enabled === false}
+                  onChange={(event) => onChangeCapabilities({
+                    ...capabilities,
+                    cognitive: {
+                      enabled: capabilities.cognitive?.enabled !== false,
+                      defaultPack: capabilities.cognitive?.defaultPack ?? 'base-cognitive-v1',
+                      allowOverride: capabilities.cognitive?.allowOverride ?? true,
+                      maxFrameworksPerTurn: capabilities.cognitive?.maxFrameworksPerTurn ?? 2,
+                      preferredFramework: capabilities.cognitive?.preferredFramework,
+                      showNarrative: event.target.checked,
+                    },
+                  })}
+                />
+                展示三阶段思考叙事（意图理解 → 任务规划 → 工具执行）
+              </label>
               <label className="grid gap-1.5 text-xs font-medium">
                 默认偏好框架
                 <select

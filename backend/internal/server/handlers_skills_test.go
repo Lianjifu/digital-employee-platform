@@ -139,11 +139,6 @@ func TestSkillCenterP1DetailBindImpact(t *testing.T) {
 		t.Fatalf("sk-docx should be referenced and not freely uninstallable: %s", rr.Body.String())
 	}
 
-	rr = knowledgeDo(t, h, http.MethodPost, "/api/skills/sk-docx/uninstall", "mock-admin-token", `{}`)
-	if rr.Code == 200 {
-		t.Fatalf("expected uninstall blocked without force")
-	}
-
 	rr = knowledgeDo(t, h, http.MethodPost, "/api/agents/de-1/skills", "mock-admin-token",
 		`{"skillId":"sk-docx"}`)
 	if rr.Code != 200 {
@@ -165,6 +160,46 @@ func TestSkillCenterP1DetailBindImpact(t *testing.T) {
 		`{"role":"View","canCall":true,"canConfig":false}`)
 	if rr.Code != 200 {
 		t.Fatalf("patch permissions %d %s", rr.Code, rr.Body.String())
+	}
+
+	rr = knowledgeDo(t, h, http.MethodPost, "/api/skills/sk-docx/uninstall", "mock-admin-token", `{}`)
+	if rr.Code != 200 {
+		t.Fatalf("expected uninstall with auto-unbind got %d %s", rr.Code, rr.Body.String())
+	}
+
+	rr = knowledgeDo(t, h, http.MethodGet, "/api/skills/sk-docx/impact", "mock-admin-token", "")
+	if rr.Code == 200 {
+		t.Fatalf("expected skill gone after uninstall")
+	}
+}
+
+func TestSkillUninstallSuppressesBuiltinReinstall(t *testing.T) {
+	st := store.New()
+	h := server.New(st).Handler()
+
+	rr := knowledgeDo(t, h, http.MethodPost, "/api/skills/sk-docx/uninstall", "mock-admin-token", `{}`)
+	if rr.Code != 200 {
+		t.Fatalf("uninstall docx %d %s", rr.Code, rr.Body.String())
+	}
+	if !st.SkillSuppressed("w1", "docx") && !st.SkillSuppressed("w1", "sk-docx") {
+		t.Fatal("expected docx uninstall suppression recorded")
+	}
+
+	st.EnsureDocxSkillReady()
+	for _, sk := range st.Skills {
+		name, _ := sk["name"].(string)
+		if strings.EqualFold(name, "docx") {
+			t.Fatalf("EnsureDocxSkillReady should not re-install suppressed docx")
+		}
+	}
+
+	srv := server.New(st)
+	srv.EnsureBuiltinSkillsReady()
+	for _, sk := range st.Skills {
+		name, _ := sk["name"].(string)
+		if strings.EqualFold(name, "docx") {
+			t.Fatalf("EnsureBuiltinSkillsReady should not re-install suppressed docx")
+		}
 	}
 }
 

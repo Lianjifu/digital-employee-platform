@@ -65,7 +65,7 @@ export function AuthorizationModal({
             disabled={!canApprove || submitting}
             onClick={() => void confirm()}
           >
-            {submitting ? '正在校验…' : '确认授权'}
+            {submitting ? '正在校验…' : (skillTurn?.steps?.length ? '批准并执行' : '确认授权')}
           </Button>
         </>
       }
@@ -73,7 +73,7 @@ export function AuthorizationModal({
       <div className="space-y-3">
         <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-5 text-amber-700 dark:text-amber-300">
           <ShieldAlert className="mr-1 inline h-3.5 w-3.5" />该操作由智能体发起，需登录用户人工审核通过后方可执行。
-          {planSummary ? ' 批准后可手动执行 Skill Turn 计划。' : ''}
+          {planSummary ? ' 批准后将自动执行 Skill Turn 计划（写入 → 生成产物）。' : ''}
         </div>
         <div>
           <div className="mb-1 text-xs text-[var(--color-text-muted)]">操作</div>

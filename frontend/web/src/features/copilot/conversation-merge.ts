@@ -66,6 +66,8 @@ function mergeMessagePair(existing: ChatMessageEx, incoming: ChatMessageEx, pref
       serverMsgId: existing.serverMsgId || incoming.serverMsgId,
       id: incoming.id || incoming.serverMsgId || existing.serverMsgId || existing.id,
       cognitive: incoming.cognitive ?? existing.cognitive,
+      turnMeta: incoming.turnMeta ?? existing.turnMeta,
+      turnTasks: (incoming.turnTasks?.length ? incoming.turnTasks : existing.turnTasks),
       reasoningSteps: (incoming.reasoningSteps?.length ? incoming.reasoningSteps : existing.reasoningSteps),
     };
   }

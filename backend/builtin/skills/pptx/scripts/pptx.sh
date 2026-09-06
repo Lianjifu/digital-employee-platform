@@ -119,6 +119,17 @@ cmd_fix() {
   cmd_check
 }
 
+ensure_runtime_env() {
+  if ! runtime_ready; then
+    printf '{"status":"error","error":"PPTX dependencies are missing or stale","hint":"Run: bash %s fix"}\n' "$0" >&2
+    exit 2
+  fi
+  export PPTX_SKILL_ROOT="$SKILL_DIR"
+  export PPTX_RUNTIME_ROOT="$RUNTIME_CACHE"
+  export PPTX_SKILL_SOFFICE="$(find_soffice || true)"
+  export PPTX_SKILL_PDF_RENDERER="$(find_pdf_renderer || true)"
+}
+
 case "${1:-}" in
   check)
     shift
@@ -128,18 +139,31 @@ case "${1:-}" in
     shift
     cmd_fix "$@"
     ;;
-  ""|-h|--help|help)
-    printf 'Usage: pptx.sh <check|fix|convert|scaffold|build|deliver|inspect|render|audit|validate-map|prepare-starter|apply-template|fidelity|self-test> [options]\n'
-    ;;
-  *)
-    if ! runtime_ready; then
-      printf '{"status":"error","error":"PPTX dependencies are missing or stale","hint":"Run: bash %s fix"}\n' "$0" >&2
+  # Copilot / SKILL.md path: bash scripts/pptx.sh node scripts/build_from_outline.mjs ...
+  node)
+    shift
+    ensure_runtime_env
+    if [[ $# -lt 1 ]]; then
+      printf '{"status":"error","error":"missing script path after node"}\n' >&2
       exit 2
     fi
-    export PPTX_SKILL_ROOT="$SKILL_DIR"
-    export PPTX_RUNTIME_ROOT="$RUNTIME_CACHE"
-    export PPTX_SKILL_SOFFICE="$(find_soffice || true)"
-    export PPTX_SKILL_PDF_RENDERER="$(find_pdf_renderer || true)"
+    script="$1"
+    shift
+    case "$script" in
+      /*) ;;
+      *) script="$SKILL_DIR/$script" ;;
+    esac
+    if [[ ! -f "$script" ]]; then
+      printf '{"status":"error","error":"script not found: %s"}\n' "$script" >&2
+      exit 2
+    fi
+    exec "$(find_node)" "$script" "$@"
+    ;;
+  ""|-h|--help|help)
+    printf 'Usage: pptx.sh <check|fix|node|convert|scaffold|build|deliver|inspect|render|audit|validate-map|prepare-starter|apply-template|fidelity|self-test> [options]\n'
+    ;;
+  *)
+    ensure_runtime_env
     exec "$(find_node)" "$SCRIPT_DIR/pptx_cli.mjs" "$@"
     ;;
 esac

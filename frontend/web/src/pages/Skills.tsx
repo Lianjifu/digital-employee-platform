@@ -389,12 +389,24 @@ export default function Skills() {
 
   const handleUninstall = () => {
     if (!active || !canWrite) return;
-    if (impact && !impact.uninstallAllowed) {
-      setOperationNotice(`已阻止卸载「${active.name}」：${impact.reason}`);
-      setActiveModal(null);
-      return;
-    }
-    uninstallSkillMutation.mutate({ id: active.id }, { onSuccess: () => { setInstalled((prev) => prev.filter((s) => s.id !== active.id)); setActiveId(installed.find((item) => item.id !== active.id)?.id ?? null); setActiveModal(null); }, onError: (error) => { setOperationNotice(error instanceof Error ? error.message : '卸载失败，请查看影响分析'); setActiveModal(null); } });
+    const skillId = active.id;
+    const skillName = active.name;
+    uninstallSkillMutation.mutate(
+      { id: skillId },
+      {
+        onSuccess: () => {
+          setInstalled((prev) => prev.filter((s) => s.id !== skillId));
+          setActiveId(null);
+          setShowDetails(false);
+          setActiveModal(null);
+          setOperationNotice(`已卸载「${skillName}」`);
+        },
+        onError: (error) => {
+          setOperationNotice(error instanceof Error ? error.message : '卸载失败，请查看影响分析');
+          setActiveModal(null);
+        },
+      },
+    );
   };
 
   const handleBatchUpgrade = () => {
@@ -1528,7 +1540,24 @@ export default function Skills() {
         onClose={() => setActiveModal(null)}
         onConfirm={handleUninstall}
         title={`卸载 ${active?.name ?? ''}？`}
-        description="卸载后将停止所有调用，正在使用此技能的工作流将失败。"
+        description={
+          impact && !impact.uninstallAllowed ? (
+            <div className="space-y-2 text-[13px] text-[var(--text-secondary)]">
+              <p>卸载后将停止所有调用，并自动解除以下引用：</p>
+              {(impact.agents?.length ?? 0) > 0 && (
+                <p>智能体：{impact.agents.join('、')}</p>
+              )}
+              {(impact.workflows?.length ?? 0) > 0 && (
+                <p>工作流：{impact.workflows.join('、')}</p>
+              )}
+              {(impact.activeRuns ?? 0) > 0 && (
+                <p className="text-[var(--warning)]">仍有 {impact.activeRuns} 个运行中任务，需审批单号后才能强制卸载。</p>
+              )}
+            </div>
+          ) : (
+            '卸载后将停止所有调用，正在使用此技能的工作流将失败。'
+          )
+        }
         confirmText="确认卸载"
         tone="danger"
       />

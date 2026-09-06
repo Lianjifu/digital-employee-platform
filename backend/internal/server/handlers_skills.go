@@ -922,12 +922,17 @@ func (s *Server) skillUninstall(r *http.Request, id *auth.Identity, ws, skillID 
 	}
 	impact := s.skillImpactLocked(ws, skillID)
 	force := boolFrom(body["force"])
-	if !boolFrom(impact["uninstallAllowed"]) && !force {
-		return nil, apperr.BadReq(apperr.BadRequest, coalesce(str(impact["reason"]), "技能仍被引用，无法卸载"))
+	activeRuns := intFrom(impact["activeRuns"])
+	if activeRuns > 0 && !force {
+		return nil, apperr.BadReq(apperr.BadRequest, coalesce(str(impact["reason"]), "技能仍有运行中的任务，无法卸载"))
 	}
-	if !boolFrom(impact["uninstallAllowed"]) && strings.TrimSpace(str(body["approvalTicket"])) == "" {
+	if activeRuns > 0 && strings.TrimSpace(str(body["approvalTicket"])) == "" {
 		return nil, apperr.Forbidden(apperr.ReleaseRequestRequired, "E_APPROVAL_REQUIRED: 强制卸载必须提供审批单号")
 	}
+	skillName := str(sk["name"])
+	s.purgeSkillBindingsLocked(ws, skillID)
+	s.unbindSkillFromEmployeesLocked(skillName, skillID)
+	s.recordSkillSuppressedLocked(ws, sk)
 	s.Store.Skills = append(s.Store.Skills[:idx], s.Store.Skills[idx+1:]...)
 	health := make([]map[string]any, 0, len(s.Store.SkillHealth))
 	healthDeleted := make([]string, 0, 1)
@@ -941,16 +946,18 @@ func (s *Server) skillUninstall(r *http.Request, id *auth.Identity, ws, skillID 
 		}
 	}
 	s.Store.SkillHealth = health
-	// disable bindings
-	bindings := s.skillExtraSlice("bindings")
-	for _, b := range bindings {
-		if str(b["capabilityId"]) == skillID {
-			b["status"] = "disabled"
-		}
+	auditAction := "卸载技能"
+	if force || !boolFrom(impact["uninstallAllowed"]) {
+		auditAction = "强制卸载技能"
 	}
-	s.Store.SkillExtra["bindings"] = bindings
-	s.Store.AppendAudit(ws, id.Name, ternary(force, "强制卸载技能", "卸载技能"), str(sk["name"]), "success", "")
-	go s.persistSkills()
+	s.Store.AppendAudit(ws, id.Name, auditAction, skillName, "success", "")
+	go func() {
+		s.persistSkills()
+		s.persistSkillExtra()
+		if s.Store.CanWrite("employees") {
+			s.Store.Persist("employees")
+		}
+	}()
 	s.durableDeleteSync("skills", skillID)
 	if len(healthDeleted) > 0 {
 		s.durableDeleteSync("skill_health", healthDeleted...)

@@ -340,6 +340,8 @@ export interface DigitalEmployeeCapabilities {
     allowOverride?: boolean;
     maxFrameworksPerTurn?: number;
     preferredFramework?: 'logic' | 'problem' | 'creative' | string;
+    /** 是否在对话中展示三阶段思考叙事 */
+    showNarrative?: boolean;
   };
 }
 

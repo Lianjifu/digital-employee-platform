@@ -60,7 +60,7 @@ import { ComposerReasoningMenu } from '@/features/copilot/composer-reasoning';
 import { ComposerReplyModeMenu } from '@/features/copilot/composer-reply-mode';
 import { ComposerContextUsage } from '@/features/copilot/composer-context-usage';
 import { ComposerInsertMenu } from '@/features/copilot/composer-insert';
-import { ThoughtPanel } from '@/features/copilot/thought-panel';
+import { TurnThoughtPanel } from '@/features/copilot/turn-narrative/turn-thought-panel';
 import {
   DEFAULT_RUN_MODE,
   DEFAULT_REASONING_EFFORT,
@@ -103,7 +103,7 @@ import { resolveHydratedMessages } from '@/features/copilot/conversation-merge';
 import { collapseDuplicateArtifactSegments } from '@/features/copilot/artifact-segment';
 import { readCopilotLastSession } from '@/lib/copilot-workspace';
 import { getApiClient } from '@de/web-api';
-import { deriveExpertContextOverview } from '@/features/copilot/expert-context';
+import { deriveExpertContextOverview, deriveTurnProgress } from '@/features/copilot/expert-context';
 import { ExpertContextPanel } from '@/features/copilot/expert-context-panel';
 import { sessionHistoryPresentation } from '@/features/copilot/layout';
 import { COPILOT_LLM_HISTORY_TURNS, shouldShowContextWindowHint } from '@/features/copilot/context-limits';
@@ -1696,6 +1696,10 @@ export default function Copilot() {
     () => (selectedContextMessage ? deriveExpertContextOverview([selectedContextMessage]) : null),
     [selectedContextMessage],
   );
+  const turnProgress = useMemo(
+    () => deriveTurnProgress(selectedContextMessage ?? currentSession?.messages.filter((m) => m.role === 'assistant').at(-1)),
+    [selectedContextMessage, currentSession?.messages],
+  );
   const hasSessionContext = workbench.evidence + workbench.linkedTasks + workbench.pendingApprovals + workbench.executions + workbench.documents > 0;
   const hasStreamingAssistant = Boolean(
     currentSession?.messages.some((message) => message.role === 'assistant' && (message.status === 'streaming' || message.status === 'in_flight')),
@@ -1745,16 +1749,18 @@ export default function Copilot() {
       onApprove={(mid) => setShowApproval({ messageId: mid, signerIndex: 0 })}
       onContinueRun={async (mid) => {
         try {
-          await chat.continueSkillTurn(mid);
-          toast.success('已继续执行 run');
+          const ok = await chat.continueSkillTurn(mid);
+          if (ok) toast.success('已继续执行 run');
+          else toast.error('续跑未成功，请查看执行结果');
         } catch (err) {
           toast.error(err instanceof Error ? err.message : '续跑失败');
         }
       }}
       onExecuteAuthorized={async (mid) => {
         try {
-          await chat.executeAuthorized(mid);
-          toast.success('已开始执行');
+          const ok = await chat.executeAuthorized(mid);
+          if (ok) toast.success('已开始执行');
+          else toast.error('执行未完成，可点击「继续执行 run」重试');
         } catch (err) {
           toast.error(err instanceof Error ? err.message : '执行失败');
         }
@@ -2948,6 +2954,7 @@ export default function Copilot() {
                 onCitation={(c) => openCitation(c)}
                 onJumpMessage={jumpToMessage}
                 onPickExpert={openNewSessionPicker}
+                turnProgress={turnProgress}
               />
             )}
           </div>
@@ -3172,7 +3179,17 @@ export default function Copilot() {
         onClose={() => setShowApproval(null)}
         onApprove={async (note) => {
           if (!showApproval) throw new Error('当前审批席位不可用，请刷新后重试。');
+          const msg = currentSession?.messages.find((message) => message.id === showApproval.messageId);
+          const hasSkillTurn = Boolean(msg?.approvalRequest?.skillTurn?.steps?.length);
           await chat.approve(showApproval.messageId, showApproval.signerIndex, note);
+          if (hasSkillTurn) {
+            try {
+              await chat.executeAuthorized(showApproval.messageId);
+              toast.success('已批准并开始执行');
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : '批准成功，但自动执行失败，请点「开始执行」重试');
+            }
+          }
         }}
       />
       <DebugPanel
@@ -3614,7 +3631,7 @@ function MessageBubble({
         )}
 
         {!isUser && !isTool && (
-          <ThoughtPanel message={m} streaming={isStreaming} />
+          <TurnThoughtPanel message={m} streaming={isStreaming} showNarrative={expert?.capabilities?.cognitive?.showNarrative !== false} />
         )}
 
         {!isEmpty ? (
@@ -3729,6 +3746,8 @@ function MessageBubble({
                       <Badge tone="error" className="text-[9px]">
                         <AlertCircle className="mr-0.5 inline h-2.5 w-2.5" />失败
                       </Badge>
+                    ) : tc.status === 'needs_instruction' ? (
+                      <Badge tone="warn" className="text-[9px]">待补全命令</Badge>
                     ) : !denied ? (
                       <Badge tone="success" className="text-[9px]">
                         <CheckCircle2 className="mr-0.5 inline h-2.5 w-2.5" />{tc.durationMs}ms
@@ -3904,10 +3923,23 @@ function MessageBubble({
             )}
             {m.approvalRequest.decision === 'approved' && (
               <div className="flex flex-wrap items-center gap-1.5">
-                <Badge tone="success" className="text-[10px]">
-                  <CheckCircle2 className="mr-1 inline h-3 w-3" />{isSingleAuth ? '已人工授权' : '已审核通过'}
-                  {m.approvalRequest.decidedAt && <span className="ml-1 font-mono">{m.approvalRequest.decidedAt.slice(11, 19)}</span>}
-                </Badge>
+                {!m.content.includes('—— 授权后执行结果 ——') ? (
+                  <Badge tone="warn" className="text-[10px]">
+                    <ShieldCheck className="mr-1 inline h-3 w-3" />{isSingleAuth ? '已授权 · 待执行' : '已通过 · 待执行'}
+                    {m.approvalRequest.decidedAt && <span className="ml-1 font-mono">{m.approvalRequest.decidedAt.slice(11, 19)}</span>}
+                  </Badge>
+                ) : m.content.includes('执行失败')
+                  || (m.toolCalls ?? []).some((tc) => tc.status === 'failed')
+                  || (m.approvalRequest.skillTurn?.steps ?? []).some((s) => s.status === 'failed' || s.status === 'needs_instruction') ? (
+                  <Badge tone="error" className="text-[10px]">
+                    <AlertCircle className="mr-1 inline h-3 w-3" />执行失败
+                  </Badge>
+                ) : (
+                  <Badge tone="success" className="text-[10px]">
+                    <CheckCircle2 className="mr-1 inline h-3 w-3" />{isSingleAuth ? '已授权并执行' : '已通过并执行'}
+                    {m.approvalRequest.decidedAt && <span className="ml-1 font-mono">{m.approvalRequest.decidedAt.slice(11, 19)}</span>}
+                  </Badge>
+                )}
                 {!m.linkedTaskId && !m.content.includes('—— 授权后执行结果 ——') && onExecuteAuthorized && (
                   <Button
                     size="sm"

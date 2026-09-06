@@ -3,6 +3,20 @@ name: docx
 description: Create, inspect, edit, restyle, review, compare, sanitize, render, audit, and finalize professional Microsoft Word .docx documents. Use this skill whenever PilotDeck must produce or modify a Word document, preserve an existing document while making targeted changes, add comments or tracked replacements, analyze document structure or metadata, verify accessibility and layout quality, compare revisions, remove review data, or deliver a visually checked DOCX. Use only for .docx files, not legacy .doc, macro-enabled .docm, or Google Docs operations.
 ---
 
+---
+
+## Copilot / Digital Employee
+
+From Copilot, **Word must be generated only via SKILL scripts** — `action=run` with `command` matching `scripts/...` or `.copilot-ws/...`. The host **rejects** `title+content` shortcut generation.
+
+Required flow:
+
+1. `action=open` — read this SKILL.md  
+2. `action=write` — `path=.copilot-ws/outline.md` with document outline (auto-injected when run references `--outline-file .copilot-ws/...`)  
+3. `action=run` — e.g. `bash scripts/docx.sh create --spec .copilot-ws/outline.md --out .copilot-ws/out.docx`
+
+Do not claim a file was generated until the observation includes an `/api/skill-artifacts/` download link.
+
 # Professional Word DOCX
 
 Treat a Word document as both structured content and a paginated visual artifact. Use the bundled CLI for deterministic package operations, follow the task-specific guidance below, and do not deliver a mutated DOCX until the latest structural and visual checks pass.

@@ -150,10 +150,13 @@ func (s *Server) runPlanExecuteTurn(ctx context.Context, in reactTurnInput) reac
 	in.Emit("plan", "plan", map[string]any{
 		"goal": plan.Goal, "steps": stepMaps, "status": "ready",
 	})
-	emitThought(in.Emit, "plan",
+	emitThought(in.Emit, "plan", turnPhasePlan,
 		"计划："+truncateRunes(coalesce(plan.Goal, in.UserMessage), 48),
 		fmt.Sprintf("共 %d 步", len(plan.Steps)),
 	)
+	for i, st := range plan.Steps {
+		emitTurnTask(in.Emit, "added", fmt.Sprintf("plan_%s", st.ID), st.Title, st.Action, i+1, len(plan.Steps))
+	}
 	if normalizeReplyMode(in.ReplyMode) == replyModeStepwise {
 		appendStepSegment(in.StepSegments, defaultSegmentIDGen(s), segmentKindStep, "计划就绪",
 			fmt.Sprintf("已制定 %d 步计划：%s", len(plan.Steps), coalesce(plan.Goal, in.UserMessage)))
@@ -167,6 +170,7 @@ func (s *Server) runPlanExecuteTurn(ctx context.Context, in reactTurnInput) reac
 		in.Emit("plan", "plan", map[string]any{
 			"status": "step_running", "stepId": st.ID, "title": st.Title, "index": i + 1, "total": len(plan.Steps),
 		})
+		emitTurnTask(in.Emit, "started", fmt.Sprintf("plan_%s", st.ID), st.Title, "", i+1, len(plan.Steps))
 		in.Emit("stage", "execute", map[string]any{"status": "running", "step": i + 1, "title": st.Title})
 
 		query := coalesce(st.Query, in.UserMessage)
@@ -209,6 +213,7 @@ func (s *Server) runPlanExecuteTurn(ctx context.Context, in reactTurnInput) reac
 			obs := coalesce(res.Output, coalesce(res.Error, res.Status))
 			observations = append(observations, fmt.Sprintf("步骤%s「%s」·%s：\n%s", st.ID, st.Title, res.Status, obs))
 			in.Emit("plan", "plan", map[string]any{"status": "step_done", "stepId": st.ID, "toolStatus": res.Status})
+			emitTurnTask(in.Emit, "completed", fmt.Sprintf("plan_%s", st.ID), st.Title, res.Status, i+1, len(plan.Steps))
 			if normalizeReplyMode(in.ReplyMode) == replyModeStepwise {
 				appendStepSegment(in.StepSegments, defaultSegmentIDGen(s), segmentKindStep, st.Title,
 					truncateRunes(obs, 280))

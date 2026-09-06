@@ -33,11 +33,11 @@ func (s *Server) runHarnessTurn(ctx context.Context, in reactTurnInput) reactTur
 		"cognitive":      cognitiveSnapshot(cog),
 	})
 	if title, detail := thoughtUnderstandTask(in.UserMessage); title != "" {
-		emitThought(in.Emit, "plan", title, detail)
+		emitThought(in.Emit, "plan", turnPhaseUnderstand, title, detail)
 	}
 	emitCognitiveThoughts(in.Emit, cog)
 	if title, detail := thoughtForRouteMode(decision.Mode, decision.Reason); title != "" {
-		emitThought(in.Emit, "plan", title, detail)
+		emitThought(in.Emit, "plan", turnPhasePlan, title, detail)
 	}
 	if dig := strings.TrimSpace(cog.DigestText); dig != "" {
 		if strings.TrimSpace(in.System) != "" {

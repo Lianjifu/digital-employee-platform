@@ -155,6 +155,18 @@ export function deriveExpertJobContract(employee: DigitalEmployee | null | undef
   };
 }
 
+export function deriveTurnProgress(message: ChatMessageEx | null | undefined) {
+  const tasks = message?.turnTasks ?? message?.turnMeta?.tasks ?? [];
+  return tasks.map((t) => ({
+    id: t.id,
+    title: t.title,
+    status: (t.status === 'running' || t.status === 'done' || t.status === 'failed' || t.status === 'cancelled' || t.status === 'pending')
+      ? t.status
+      : 'pending' as const,
+    detail: 'detail' in t ? t.detail : undefined,
+  }));
+}
+
 /** 从会话消息汇总专家上下文（优先当前选中消息集合）。 */
 export function deriveExpertContextOverview(messages: ChatMessageEx[]): ExpertContextOverview {
   const citations: Citation[] = [];
@@ -242,7 +254,7 @@ export function deriveExpertContextOverview(messages: ChatMessageEx[]): ExpertCo
       name: t.name,
       status: t.status,
       durationMs: typeof t.durationMs === 'number' ? t.durationMs : null,
-      error: t.error || (t.status === 'failed' || t.status === 'denied' ? (t.result || '调用失败') : null),
+      error: t.error || (t.status === 'failed' || t.status === 'denied' ? (t.result || '调用失败') : t.status === 'needs_instruction' ? (t.result || '待补全命令') : null),
       permission: t.permission ?? null,
       approvalPending: t.approvalPending,
       messageId: t.messageId,
@@ -272,10 +284,10 @@ export function deriveExpertContextOverview(messages: ChatMessageEx[]): ExpertCo
     for (const t of message.toolCalls ?? []) {
       const fail = t.status === 'failed' || t.status === 'denied';
       timeline.push({
-        tone: fail ? 'error' : 'info',
+        tone: t.status === 'needs_instruction' ? 'warn' : fail ? 'error' : 'info',
         text: fail && t.error
           ? `${t.name} · ${t.status} · ${t.error}`
-          : `${t.name} · ${t.status === 'success' ? '成功' : t.status}`,
+          : `${t.name} · ${t.status === 'success' ? '成功' : t.status === 'needs_instruction' ? '待补全' : t.status}`,
         time,
         messageId: message.id,
       });

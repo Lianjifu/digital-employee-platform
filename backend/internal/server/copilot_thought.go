@@ -2,31 +2,7 @@ package server
 
 import (
 	"strings"
-
-	"github.com/digital-employee-platform/backend/pkg/contract"
 )
-
-// emitThought 发出对人阅读友好的思考事件（与 stage 流水线解耦）。
-func emitThought(emit reactEmitFunc, kind, title, detail string) {
-	if emit == nil {
-		return
-	}
-	title = strings.TrimSpace(title)
-	if title == "" {
-		return
-	}
-	kind = strings.TrimSpace(kind)
-	if kind == "" {
-		kind = "analyze"
-	}
-	extra := map[string]any{
-		"type": contract.StreamThought, "kind": kind, "title": title,
-	}
-	if d := strings.TrimSpace(detail); d != "" {
-		extra["detail"] = d
-	}
-	emit(contract.StreamThought, "thought", extra)
-}
 
 func thoughtUnderstandTask(userMsg string) (title, detail string) {
 	msg := strings.TrimSpace(userMsg)
@@ -73,16 +49,33 @@ func thoughtForToolChoice(toolName string) (title, detail string) {
 	lower := strings.ToLower(name)
 	switch {
 	case strings.Contains(lower, "docx") || strings.Contains(lower, "word"):
-		return "选择生成 Word 文档", "便于转发、存档与正式分发"
+		return "调用生成 Word 文档", "便于转发、存档与正式分发"
 	case strings.Contains(lower, "pptx") || strings.Contains(lower, "ppt"):
-		return "选择生成演示文稿", "便于汇报与分享"
+		return "调用生成演示文稿", "便于汇报与分享"
 	case strings.Contains(lower, "xlsx") || strings.Contains(lower, "excel"):
-		return "选择生成表格", "便于汇总与二次处理"
+		return "调用生成表格", "便于汇总与二次处理"
 	case strings.Contains(lower, "knowledge") || strings.Contains(lower, "retrieve"):
 		return "检索相关知识", name
 	case strings.Contains(lower, "memory"):
 		return "查阅相关记忆", name
 	default:
 		return "调用能力：" + name, ""
+	}
+}
+
+func thoughtForToolResult(status, toolName string) (title, detail string) {
+	name := strings.TrimSpace(toolName)
+	if name == "" {
+		name = "能力"
+	}
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "success", "ok":
+		return "完成：" + name, ""
+	case "denied", "approval_required", "pending_authorization":
+		return "等待审批：" + name, ""
+	case "failed", "error":
+		return "失败：" + name, ""
+	default:
+		return "", ""
 	}
 }

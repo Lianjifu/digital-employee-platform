@@ -16,9 +16,11 @@ import type { RunMode } from './composer-mode';
 import {
   buildExpertEvidencePack,
   deriveExpertJobContract,
+  deriveTurnProgress,
   formatEvidencePackMarkdown,
   type ExpertContextOverview,
 } from './expert-context';
+import { TurnTaskList } from './turn-narrative/turn-task-list';
 
 const SOURCE_COLOR: Record<string, string> = {
   知识库: 'text-[var(--brand)] bg-[var(--brand-light)]',
@@ -101,11 +103,12 @@ export function ExpertContextPanel(props: {
   onCitation: (c: Citation) => void;
   onJumpMessage?: (messageId: string) => void;
   onPickExpert?: () => void;
+  turnProgress?: ReturnType<typeof deriveTurnProgress>;
 }) {
   const {
     employee, overview, sessionOverview, messageOverview, scope,
     runMode, riskLevel, handoffActive, handoffOwner, nextAction, summaryCounts,
-    onOpenTab, onCitation, onJumpMessage, onPickExpert,
+    onOpenTab, onCitation, onJumpMessage, onPickExpert, turnProgress = [],
   } = props;
   const contract = useMemo(() => deriveExpertJobContract(employee), [employee]);
   const [showCompare, setShowCompare] = useState(false);
@@ -411,6 +414,19 @@ export function ExpertContextPanel(props: {
                 ))}
               </ul>
             </>
+          )}
+        </Collapsible>
+
+        <Collapsible
+          title="本回合进度"
+          icon={Clock}
+          defaultOpen={turnProgress.length > 0}
+          badge={<Badge tone={turnProgress.some((t) => t.status === 'running') ? 'brand' : 'neutral'} className="text-[9px]">{turnProgress.length}</Badge>}
+        >
+          {turnProgress.length === 0 ? (
+            <p className="copilot-ecx-empty-inline">当前范围暂无任务进度。</p>
+          ) : (
+            <TurnTaskList tasks={turnProgress} />
           )}
         </Collapsible>
 

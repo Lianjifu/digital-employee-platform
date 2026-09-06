@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import shlex
 import hmac
 import json
 import os
@@ -130,7 +131,7 @@ def run_package_script(
     else:
         cmd = ["bash", str(target)]
     if args_tail:
-        cmd.extend(args_tail.split())
+        cmd.extend(shlex.split(args_tail))
     env = {k: v for k, v in os.environ.items() if not any(k == p or k.startswith(p) for p in FORBIDDEN_ENV)}
     env["DE_SKILL_PACKAGE_ROOT"] = str(root)
     env["DE_SKILL_WORK_DIR"] = str(root)

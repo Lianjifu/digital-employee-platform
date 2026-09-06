@@ -582,6 +582,8 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	defer func() { IncCopilotStream(streamOK) }()
 
 	rec := &turnEventRecorder{}
+	narrCollector := newTurnNarrativeCollector()
+	turnStartedAt := time.Now()
 	var snapRec map[string]any
 	defer func() {
 		if snapRec != nil {
@@ -595,6 +597,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		for k, v := range extra {
 			payload[k] = v
 		}
+		narrCollector.Record(typ, stage, extra)
 		rec.Add(typ, stage, extra)
 		if r.Context().Err() != nil {
 			return
@@ -675,7 +678,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
-		emitThought(emit, "search",
+		emitThought(emit, "search", turnPhaseUnderstand,
 			fmt.Sprintf("参考了 %d 条相关记忆", n),
 			strings.Join(titles, " · "),
 		)
@@ -704,7 +707,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 			emit("stage", "rag", map[string]any{"status": "ok", "hitCount": ragCount})
 		}
 		if ragCount > 0 {
-			emitThought(emit, "search", fmt.Sprintf("检索到 %d 条已发布知识", ragCount), "")
+			emitThought(emit, "search", turnPhaseUnderstand, fmt.Sprintf("检索到 %d 条已发布知识", ragCount), "")
 		}
 	}
 
@@ -834,57 +837,6 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		toolCalls = []map[string]any{}
 	}
 	full = enrichCopilotFinalText(full, toolCalls, userMsg)
-	// PPT 意图或已有 pptx 产物时，禁止再用大纲误造 .docx
-	skipDocxEnsure := looksLikePptxGenerateRequest(userMsg) || hasPptxArtifactText(full) || hasPptxArtifactText(bestToolArtifactOutput(toolCalls))
-	if !skipDocxEnsure {
-		docTitle := normalizeDocxTitle(coalesce(inferDocxTitleFromMessage(userMsg), inferDocxTitleFromMessage(full)))
-		docBody := resolveDocxBodyForTurn(full, toolCalls, userMsg)
-		if docBody != "" && (docxToolSucceeded(toolCalls) || hasSkillArtifacts(full) || looksLikeStructuredDocxBody(docBody)) {
-			full = ensureSkillArtifactsInOutput(full, docTitle, docBody)
-		}
-	}
-	// PPT 恢复：已尝试相关工具但未产出 .pptx 时，用内置生成器落盘
-	if looksLikePptxGenerateRequest(userMsg) && pptxRelatedToolAttempted(toolCalls) && !hasPptxArtifactText(full) && !hasPptxArtifactText(bestToolArtifactOutput(toolCalls)) {
-		pptTitle := coalesce(inferPptxTitleFromMessage(userMsg), coalesce(inferPptxTitleFromMessage(full), "演示文稿"))
-		outline := strings.TrimSpace(stripToolCallMarkers(full))
-		if len([]rune(outline)) < 40 || looksLikeLeakedToolMarkup(outline) {
-			outline = defaultPptxOutlineForMessage(pptTitle, userMsg)
-		}
-		if storage, download, err := generatePptxArtifactLocal(pptTitle, outline); err == nil {
-			block := formatPptxToolOutput(pptTitle, storage, download, true)
-			if strings.TrimSpace(stripToolCallMarkers(full)) == "" || looksLikeLeakedToolMarkup(full) {
-				full = block
-			} else {
-				full = strings.TrimSpace(stripToolCallMarkers(full) + "\n\n" + block)
-			}
-		}
-	}
-	// PDF 恢复：生成意图 + 相关工具尝试但无 download 链
-	if looksLikePdfGenerateRequest(userMsg) && !hasPdfArtifactText(full) && !hasPdfArtifactText(bestToolArtifactOutput(toolCalls)) {
-		pdfRelated := false
-		for _, tc := range toolCalls {
-			n := strings.ToLower(str(tc["name"]))
-			if isPdfSkillName(n) || strings.Contains(n, "pdf") {
-				pdfRelated = true
-				break
-			}
-		}
-		if pdfRelated {
-			pdfTitle := coalesce(inferDocxTitleFromMessage(userMsg), "生成文档")
-			body := strings.TrimSpace(stripToolCallMarkers(full))
-			if len([]rune(body)) < 40 || looksLikeLeakedToolMarkup(body) || looksLikeClarificationSpeech(body) {
-				body = defaultPdfBodyForMessage(pdfTitle, userMsg)
-			}
-			if storage, download, err := generatePdfArtifactLocal(pdfTitle, body); err == nil {
-				block := formatPdfToolOutput(pdfTitle, storage, download, true)
-				if strings.TrimSpace(stripToolCallMarkers(full)) == "" || looksLikeLeakedToolMarkup(full) {
-					full = block
-				} else if !hasPdfArtifactText(full) {
-					full = strings.TrimSpace(stripToolCallMarkers(full) + "\n\n" + block)
-				}
-			}
-		}
-	}
 	mode := coalesce(reactOut.Mode, modeReact)
 
 	// 5) meter (+ optional model budget hard gate)
@@ -948,6 +900,10 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	}
 	if snap := cognitiveSnapshot(reactOut.Cognitive); len(snap) > 0 {
 		sharedMeta["cognitive"] = snap
+	}
+	turnDurationMs := int(time.Since(turnStartedAt).Milliseconds())
+	if turnMeta := narrCollector.Snapshot(reactOut.Cognitive, mode, turnDurationMs); len(turnMeta) > 0 {
+		sharedMeta["turnMeta"] = turnMeta
 	}
 	assistantMsgs := assistantMessagesFromSegments(segments, corr, replyMode, assistantNow, sharedMeta, true, toolCalls, citations, len(ackPersisted))
 	assistantMsgID := firstMessageID
@@ -1066,6 +1022,7 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		"snapshotId":       snapID,
 		"runtimeMode":      runtimeMode(),
 		"cognitive":        cognitiveSnapshot(reactOut.Cognitive),
+		"turnMeta":         narrCollector.Snapshot(reactOut.Cognitive, mode, int(time.Since(turnStartedAt).Milliseconds())),
 	})
 	finishCopilotTurn(corr, turnStatusDone)
 	streamOK = true

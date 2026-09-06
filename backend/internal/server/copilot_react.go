@@ -174,13 +174,15 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 		if !ok || maxSteps == 1 {
 			finalText = stripToolCallMarkers(text)
 			in.Emit("stage", "react", map[string]any{"status": "ok", "step": step, "action": "final"})
-			emitThought(in.Emit, "finalize", "准备输出回复", "")
+			emitThought(in.Emit, "finalize", turnPhasePlan, "准备输出回复", "")
 			break
 		}
 
 		tcID := fmt.Sprintf("tc_react_%d", step)
 		if title, detail := thoughtForToolChoice(call.Name); title != "" {
-			emitThought(in.Emit, "analyze", title, detail)
+			emitThoughtPhase(in.Emit, "tool_call", turnPhaseExecute, title, detail, map[string]any{
+				"toolCallId": tcID,
+			})
 		}
 		in.Emit("tool", "react", map[string]any{
 			"name": call.Name, "status": "running", "args": call.Args, "id": tcID,
@@ -208,6 +210,11 @@ func (s *Server) runReactTurn(ctx context.Context, in reactTurnInput) reactTurnR
 			extra["sandboxId"] = res.SandboxID
 		}
 		in.Emit("tool", "react", extra)
+		if title, detail := thoughtForToolResult(res.Status, displayName); title != "" {
+			emitThoughtPhase(in.Emit, "tool_call", turnPhaseExecute, title, detail, map[string]any{
+				"toolCallId": tcID,
+			})
+		}
 
 		obs := res.Output
 		if obs == "" {

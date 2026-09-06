@@ -253,9 +253,9 @@ func toolRegistryPrompt(reg []registeredTool) string {
 	b.WriteString("收到工具观察结果后，再决定是否继续调用或给出最终中文回答。最终回答不要包含 <<<TOOL>>> 或 XML 工具标记。\n")
 	b.WriteString("【Skill Harness】对 kind=skill 的能力：\n")
 	b.WriteString("1) 首次先 action=open 阅读 SKILL.md 与 scripts 列表；\n")
-	b.WriteString("2) 需要写生成器时 action=write path=.copilot-ws/... content=...（或 write_file）；write 成功后系统会自动续跑 run；\n")
+	b.WriteString("2) Office（pptx/docx/pdf）须先 write path=.copilot-ws/*.md 写入大纲，再 run command=scripts/...；run 引用 --outline-file .copilot-ws/... 时系统会自动补 write 步；\n")
 	b.WriteString("3) 执行必须 action=run 且 command 匹配 scripts/... 或 .copilot-ws/...；未见到下载链接前勿声称 PPT/Word 已生成；\n")
-	b.WriteString("4) 勿把自然语言当 command；观察 status=needs_instruction 表示尚未真正执行；\n")
+	b.WriteString("4) 勿把自然语言当 command；观察 status=needs_instruction 表示尚未真正执行；status=failed 且含【预检失败】表示缺 package 或依赖文件；\n")
 	b.WriteString("5) 仅当观察为 pending_authorization 时告知用户「已进入人工审核」；禁止在 success/needs_instruction 时声称已提交审核或已生成文件。\n")
 	hasDocx := false
 	for _, t := range enabled {
@@ -265,7 +265,7 @@ func toolRegistryPrompt(reg []registeredTool) string {
 		}
 	}
 	if hasDocx {
-		b.WriteString("【Word / docx】生成 Word 请调用 skill:docx；content 必须是完整可落盘正文（与最终回复中的模板全文一致），不得传摘要、title=content= 形式或「按检索整理」类描述；推荐先写出完整模板再调用 skill:docx。\n")
+		b.WriteString("【Word / docx】须先 action=open 阅读 SKILL.md，再 action=run 且 command 匹配 scripts/docx.sh 或 scripts/...（例：bash scripts/docx.sh create ...）。禁止仅传 title+content 快捷生成；未见到 /api/skill-artifacts/ 链接前勿声称已生成。\n")
 	}
 	hasPptx := false
 	for _, t := range enabled {
@@ -275,7 +275,7 @@ func toolRegistryPrompt(reg []registeredTool) string {
 		}
 	}
 	if hasPptx {
-		b.WriteString("【PPT / pptx】优先一次调用 skill:pptx：args.action=run、args.title、args.content（Markdown 大纲，## 为每页标题；封面须含副标题/汇报人等正文）。平台使用 PilotDeck 生产级版式库生成可打开的 .pptx，并返回 /api/skill-artifacts/*.pptx。仅在需要自定义复杂脚本时才 write .copilot-ws/*.mjs 再 run；脚本成功后也必须出现下载链接。未见到下载链接前勿声称已生成。\n")
+		b.WriteString("【PPT / pptx】须先 action=open；再 write .copilot-ws/<name>.md 大纲（或依赖系统自动补 write）；最后 action=run command=bash scripts/pptx.sh node scripts/build_from_outline.mjs --title T --outline-file .copilot-ws/O.md --out .copilot-ws/F.pptx。禁止 title+content 快捷生成；未见到 /api/skill-artifacts/ 链接前勿声称已生成。\n")
 	}
 	hasPdf := false
 	for _, t := range enabled {
@@ -285,9 +285,9 @@ func toolRegistryPrompt(reg []registeredTool) string {
 		}
 	}
 	if hasPdf {
-		b.WriteString("【PDF】优先 skill:pdf：args.action=run、args.title、args.content（完整正文）。平台生成 /api/skill-artifacts/*.pdf。未见到下载链接前勿声称已生成。\n")
+		b.WriteString("【PDF】须 action=open 后 action=run command=scripts/...；禁止 title+content 快捷生成。未见到 /api/skill-artifacts/*.pdf 链接前勿声称已生成。\n")
 	}
-	b.WriteString("【产物协议】docx/pptx/pdf 必须以 /api/skill-artifacts/ 下载链接交付；禁止只声称「已生成」而无链接。\n")
+	b.WriteString("【产物协议】docx/pptx/pdf 必须由 skill 脚本产出并以 /api/skill-artifacts/ 链接交付；平台禁止内置旁路生成。\n")
 	b.WriteString("可用工具：\n")
 	for _, t := range enabled {
 		b.WriteString("- ")

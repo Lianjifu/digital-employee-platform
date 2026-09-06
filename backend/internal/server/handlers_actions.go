@@ -284,8 +284,9 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 			authReq["skillTurn"] = plan
 		}
 	}
-	if continueRun {
-		if cmd := coalesce(str(body["command"]), str(action["nextRunCommand"])); cmd != "" {
+	if continueRun && plan != nil {
+		resetFailedRunStepsForContinue(plan)
+		if cmd := coalesce(str(body["command"]), coalesce(str(action["nextRunCommand"]), skillTurnRunCommand(plan))); cmd != "" {
 			ensureSkillTurnHasRunStep(plan, cmd)
 			authReq["skillTurn"] = plan
 		}
@@ -324,6 +325,17 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 	executedSteps := 0
 
 	runOne := func(stepArgs map[string]any, stepID string) toolExecResult {
+		stepAction := normalizeSkillAction(stepArgs)
+		if stepAction == skillActionRun {
+			cmd := skillCommandFromArgs(stepArgs)
+			sk := s.resolveSkillForTool(ws, tool, coalesce(str(stepArgs["skillId"]), str(args["skillId"])))
+			if pf, ok := officeSkillRunPreflight(sk, cmd); !ok {
+				if plan != nil {
+					markSkillTurnStep(plan, stepID, pf.Status, pf.Output)
+				}
+				return pf
+			}
+		}
 		res := s.runCopilotTool(runCtx, tool, toolCallRequest{Name: toolName, Args: stepArgs})
 		if plan != nil {
 			stStatus := "success"
@@ -355,22 +367,20 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 			if lastRes.Status != "success" {
 				break
 			}
-			// P0: write 成功后根据输出补齐/续跑 run
+			// P0: write 成功后根据输出补齐 run；nextRun 优先取 run 步脚本，勿把 outline .md 当作续跑命令
 			if str(step["action"]) == skillActionWrite {
 				if cmd := parseNextRunCommand(lastRes.Output); cmd != "" {
 					ensureSkillTurnHasRunStep(plan, cmd)
+				}
+				if cmd := skillTurnRunCommand(plan); cmd != "" {
+					nextRun = cmd
+				} else if cmd := parseNextRunCommand(lastRes.Output); looksLikeSkillScriptCommand(cmd) {
 					nextRun = cmd
 				}
 			}
 		}
 		if nextRun == "" {
-			nextRun = str(action["nextRunCommand"])
-			for _, st := range skillTurnSteps(plan) {
-				if str(st["action"]) == skillActionRun && (str(st["status"]) == "pending" || str(st["status"]) == "") {
-					a, _ := st["args"].(map[string]any)
-					nextRun = coalesce(str(a["command"]), nextRun)
-				}
-			}
+			nextRun = preferredNextRunCommand(plan, action, combined.String())
 		}
 	} else {
 		lastRes = s.runCopilotTool(runCtx, tool, toolCallRequest{Name: toolName, Args: args})
@@ -406,23 +416,10 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 	if output == "" {
 		output = lastRes.Output
 	}
-	docTitle := coalesce(
-		inferDocxTitleFromMessage(userMsg),
-		normalizeDocxTitle(coalesce(str(args["title"]), coalesce(str(args["filename"]), toolName))),
-	)
-	docBody := coalesce(
-		resolveDocxBodyForTurn(output, nil, runCtx.UserMessage),
-		resolveDocxBodyFromExecution(args, runCtx.UserMessage, output, plan),
-	)
-	if (strings.Contains(output, "/api/skill-artifacts/") || isDocxSkillName(toolName)) &&
-		!looksLikePptxGenerateRequest(userMsg) && !hasPptxArtifactText(output) && !isPptxSkillName(toolName) {
-		output = ensureSkillArtifactsInOutput(output, docTitle, docBody)
-	}
-
 	if lastRes.Status != "success" {
 		// 若 write 已成功但 run 失败，保留 nextRun 供 P2「继续执行 run」
 		if nextRun == "" {
-			nextRun = parseNextRunCommand(output)
+			nextRun = preferredNextRunCommand(plan, action, output)
 		}
 		action["status"] = "approved"
 		action["executeError"] = coalesce(lastRes.Error, lastRes.Status)
@@ -452,7 +449,8 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 		s.Store.Unlock()
 		s.Store.Persist("actions")
 		s.Store.Persist("messages")
-		if executedSteps > 0 && nextRun != "" {
+		canContinue := nextRun != "" || skillTurnHasRetryableRun(plan) || skillTurnHasPending(plan)
+		if executedSteps > 0 && canContinue {
 			out := map[string]any{}
 			for k, v := range action {
 				out[k] = v
@@ -461,6 +459,17 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 			out["skillTurn"] = plan
 			out["nextRunCommand"] = nextRun
 			out["canContinueRun"] = true
+			out["partial"] = true
+			return out, nil
+		}
+		if executedSteps > 0 {
+			out := map[string]any{}
+			for k, v := range action {
+				out[k] = v
+			}
+			out["executeResult"] = output
+			out["skillTurn"] = plan
+			out["executeError"] = coalesce(lastRes.Error, lastRes.Status)
 			out["partial"] = true
 			return out, nil
 		}

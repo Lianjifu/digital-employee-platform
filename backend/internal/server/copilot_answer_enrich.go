@@ -72,16 +72,22 @@ func docTitleFromToolOutput(toolOut, userMsg string) string {
 	return "生成文档"
 }
 
-// enrichCopilotFinalText merges successful docx/tool outputs into the assistant reply
-// when the model stopped at an interim "please wait" message without the artifact link.
+// enrichCopilotFinalText merges successful tool outputs into the assistant reply
+// without fabricating office artifacts (docx/pptx/pdf must come from skill scripts).
 func enrichCopilotFinalText(full string, toolCalls []map[string]any, userMsg string) string {
 	full = strings.TrimSpace(full)
 	toolOut := strings.TrimSpace(bestToolArtifactOutput(toolCalls))
 	if toolOut == "" {
 		return full
 	}
+	artifactBlock := formatArtifactSegmentContent(toolOut)
+	if artifactBlock == "" {
+		artifactBlock = strings.TrimSpace(toolOut)
+	}
+	if artifactBlock == "" {
+		return full
+	}
 	if hasSkillArtifacts(full) {
-		// PPT 回合（或已有 pptx）不要旁路补造 Word。
 		if looksLikePptxGenerateRequest(userMsg) || hasPptxArtifactText(full) || hasPptxArtifactText(toolOut) {
 			return full
 		}
@@ -89,7 +95,10 @@ func enrichCopilotFinalText(full string, toolCalls []map[string]any, userMsg str
 		if body == "" {
 			body = sanitizeDocxBody(extractDocxBodyFromSkillOutput(toolOut))
 		}
-		return ensureSkillArtifactsInOutput(full, docTitleFromToolOutput(toolOut, userMsg), body)
+		if body != "" {
+			return ensureSkillArtifactsInOutput(full, docTitleFromToolOutput(toolOut, userMsg), body)
+		}
+		return full
 	}
 	title := docTitleFromToolOutput(toolOut, userMsg)
 	body := resolveDocxBodyForTurn(full, toolCalls, userMsg)
@@ -98,14 +107,10 @@ func enrichCopilotFinalText(full string, toolCalls []map[string]any, userMsg str
 	}
 	if body == "" || isPendingAssistantReply(body) {
 		if strings.Contains(strings.ToLower(toolOut), ".pptx") || strings.Contains(strings.ToLower(userMsg), "ppt") {
-			body = fmt.Sprintf("已为您生成 PPT 文档「%s」。", coalesce(inferDocxTitleFromMessage(userMsg), title))
+			body = fmt.Sprintf("已为您生成 PPT 文档「%s」。", coalesce(inferPptxTitleFromMessage(userMsg), title))
 		} else {
 			body = fmt.Sprintf("已为您生成 Word 文档「%s」。", title)
 		}
-	}
-	artifactBlock := formatArtifactSegmentContent(toolOut)
-	if artifactBlock == "" {
-		artifactBlock = strings.TrimSpace(toolOut)
 	}
 	if isPendingAssistantReply(full) || full == "" {
 		if artifactBlock != "" && !strings.Contains(body, artifactBlock) {

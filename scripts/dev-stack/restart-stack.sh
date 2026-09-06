@@ -1,0 +1,89 @@
+#!/bin/bash
+# Restart the digital-employee-platform dev stack via launchd supervisor.
+# Use this instead of `pkill bin/de-app` — supervisor will respawn instantly.
+#
+# Usage:
+#   ./scripts/dev-stack/restart-stack.sh           # restart in place
+#   ./scripts/dev-stack/restart-stack.sh stop      # stop
+#   ./scripts/dev-stack/restart-stack.sh start     # start (idempotent)
+#   ./scripts/dev-stack/restart-stack.sh status    # ports + procs
+#
+# See [[feedback-startup-protocol]] for why this exists.
+
+set -u
+PLIST="$HOME/Library/LaunchAgents/com.digital-employee.dev-stack.plist"
+PORTS=(8089 8100 5173)
+BACKEND="/Users/LIANJIFU/ops/digital-employee-platform/backend"
+
+probe() {
+  echo "=== procs ==="
+  ps aux | grep -E "de-app|vite|gateway-proxy-monolith" | grep -v grep | awk '{printf "  %-7s %s\n", $2, substr($0, index($0,$11))}' | head -10
+  echo "=== ports ==="
+  for p in "${PORTS[@]}"; do
+    code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 "http://127.0.0.1:${p}/healthz" 2>/dev/null)
+    code=${code:-000}
+    if [ "$code" != "000" ]; then
+      echo "  :${p}  ${code}  up"
+    else
+      echo "  :${p}  -    down"
+    fi
+  done
+  echo "=== supervisor ==="
+  launchctl list | grep digital-employee || echo "  (supervisor not loaded)"
+}
+
+wait_ready() {
+  local timeout="${1:-30}"
+  for i in $(seq 1 "$timeout"); do
+    b=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 http://127.0.0.1:8100/healthz 2>/dev/null)
+    f=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 http://127.0.0.1:5173/ 2>/dev/null)
+    g=$(curl -s -o /dev/null -w "%{http_code}" --max-time 1 http://127.0.0.1:8089/healthz 2>/dev/null)
+    if [ "$b" = "200" ] && [ "$f" = "200" ] && [ "$g" = "200" ]; then
+      echo "stack ready after ${i}s (gateway:8089 backend:8100 frontend:5173)"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "stack not ready after ${timeout}s; check /tmp/de-stack/*.log"
+  return 1
+}
+
+case "${1:-restart}" in
+  status)
+    probe
+    ;;
+  stop)
+    [ -f "$PLIST" ] && launchctl unload "$PLIST" 2>&1 || true
+    sleep 1
+    probe
+    ;;
+  start)
+    if [ ! -f "$PLIST" ]; then
+      echo "missing plist: $PLIST"; exit 1
+    fi
+    if launchctl list | grep -q digital-employee; then
+      echo "already loaded"
+    else
+      launchctl load "$PLIST"
+    fi
+    wait_ready
+    ;;
+  restart|"")
+    if [ -f "$PLIST" ] && launchctl list | grep -q digital-employee; then
+      echo "unloading supervisor..."
+      launchctl unload "$PLIST"
+      sleep 2
+    fi
+    # Ensure infra is up (PG + Redis)
+    echo "ensuring PG/Redis..."
+    (cd "$BACKEND" && make compose-up 2>&1 | tail -3)
+    echo "loading supervisor..."
+    launchctl load "$PLIST"
+    wait_ready
+    probe
+    ;;
+  *)
+    echo "usage: $0 {restart|start|stop|status}"
+    exit 1
+    ;;
+esac

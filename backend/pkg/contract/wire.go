@@ -38,6 +38,7 @@ const (
 	StreamTool         = "tool"
 	StreamRoute        = "route"
 	StreamThought      = "thought"
+	StreamTask         = "task"
 	StreamEvidence     = "evidence"
 	StreamDone         = "done"
 	StreamError        = "error"
@@ -72,7 +73,7 @@ var InboundChannels = []string{ChannelWeb, ChannelAPI, ChannelFeishu, ChannelWec
 // StreamThought 为 Web SSE 扩展事件，经 JSON 投递，暂不进 proto 枚举。
 var StreamEventTypes = []string{
 	StreamStage, StreamDelta, StreamMessageStart, StreamMessageDelta, StreamMessageDone,
-	StreamTool, StreamRoute, StreamEvidence, StreamDone, StreamError,
+	StreamTool, StreamRoute, StreamThought, StreamTask, StreamEvidence, StreamDone, StreamError,
 }
 
 // ReplyModes 为专家协作回复分段模式。

@@ -4143,6 +4143,101 @@ a:focus-visible,
   font-size: 12px;
 }
 .copilot-doc-preview__state--error { color: var(--danger); }
+.copilot-doc-preview__sheet-stage {
+  padding: 8px 4px 12px;
+  border-radius: 12px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--text) 4%, transparent), transparent 48px),
+    color-mix(in srgb, var(--bg) 88%, #d6d3d1);
+}
+.copilot-doc-preview__xlsx {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.copilot-doc-preview__xlsx-meta {
+  padding: 4px 10px 0;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--text) 70%, transparent);
+}
+.copilot-doc-preview__xlsx-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 0 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--brand) 12%, var(--border));
+}
+.copilot-doc-preview__xlsx-tab {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: color-mix(in srgb, var(--text) 70%, transparent);
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+.copilot-doc-preview__xlsx-tab:hover {
+  color: var(--brand);
+}
+.copilot-doc-preview__xlsx-tab.is-active {
+  color: var(--brand);
+  border-bottom-color: var(--brand);
+}
+.copilot-doc-preview__xlsx-wrap {
+  margin: 0 auto;
+  padding: 12px;
+  max-height: 480px;
+  overflow: auto;
+  background: #fff;
+  border: 1px solid color-mix(in srgb, var(--brand) 8%, var(--border));
+  border-radius: 8px;
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--text) 8%, transparent);
+}
+.copilot-doc-preview__xlsx-table {
+  border-collapse: collapse;
+  font-family: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+  color: #1f2937;
+}
+.copilot-doc-preview__xlsx-corner,
+.copilot-doc-preview__xlsx-colhdr,
+.copilot-doc-preview__xlsx-rowhdr {
+  position: sticky;
+  background: color-mix(in srgb, var(--brand) 6%, #f3f4f6);
+  color: color-mix(in srgb, var(--text) 60%, transparent);
+  font-weight: 600;
+  padding: 4px 8px;
+  text-align: center;
+  border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+  z-index: 1;
+}
+.copilot-doc-preview__xlsx-colhdr {
+  top: 0;
+}
+.copilot-doc-preview__xlsx-rowhdr {
+  left: 0;
+  min-width: 32px;
+}
+.copilot-doc-preview__xlsx-corner {
+  top: 0;
+  left: 0;
+  z-index: 2;
+}
+.copilot-doc-preview__xlsx-cell {
+  padding: 4px 8px;
+  min-width: 80px;
+  max-width: 240px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid color-mix(in srgb, var(--text) 8%, transparent);
+}
+.copilot-doc-preview__xlsx-cell.is-header {
+  font-weight: 600;
+  background: color-mix(in srgb, var(--brand) 4%, #f9fafb);
+}
 .copilot-doc-preview__paper-stage {
   padding: 8px 4px 12px;
   border-radius: 12px;
@@ -4237,7 +4332,7 @@ a:focus-visible,
 .copilot-doc-preview__li.is-ordered { list-style: decimal; }
 .copilot-doc-preview__gap { height: 8px; }
 
-/* PPT 幻灯片阅读器 */
+/* PPT 幻灯片阅读器 — PilotDeck 版式还原 */
 .copilot-pptx-reader {
   display: flex;
   flex-direction: column;
@@ -4247,10 +4342,15 @@ a:focus-visible,
   padding: 12px 8px 4px;
   border-radius: 12px;
   background:
-    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--brand) 12%, transparent), transparent 55%),
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, #102A43 18%, transparent), transparent 55%),
     linear-gradient(180deg, #1e293b, #0f172a);
 }
+.copilot-pptx-reader__stage.is-raster {
+  background: #0b1220;
+}
 .copilot-pptx-slide {
+  --pptx-accent: #F26B38;
+  --pptx-muted: #5B6B7C;
   position: relative;
   margin: 0 auto;
   width: 100%;
@@ -4258,25 +4358,71 @@ a:focus-visible,
   aspect-ratio: 16 / 9;
   display: flex;
   flex-direction: column;
-  padding: 22px 26px 28px;
+  padding: 22px 26px 20px;
   border-radius: 6px;
-  background: linear-gradient(165deg, #ffffff 0%, #f8fafc 100%);
-  color: #0f172a;
+  background: #ffffff;
+  color: #102A43;
   box-shadow:
     0 0 0 1px color-mix(in srgb, #fff 20%, transparent),
     0 18px 40px color-mix(in srgb, #000 45%, transparent);
   overflow: hidden;
-  font-family: "PingFang SC", "Microsoft YaHei", "微软雅黑", "Noto Sans SC", sans-serif;
+  font-family: "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}
+.copilot-pptx-slide--raster {
+  padding: 0;
+  background: #000;
+}
+.copilot-pptx-slide__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #0b1220;
+}
+.copilot-pptx-slide__eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #C7D8E5;
+  margin-bottom: 10px;
+}
+.copilot-pptx-slide__accent-rule {
+  width: 42px;
+  height: 3px;
+  margin: 0 0 16px;
+  background: var(--pptx-accent);
+  border-radius: 2px;
 }
 .copilot-pptx-slide__title {
   flex: 0 0 auto;
   margin: 0 0 12px;
   padding-bottom: 10px;
-  border-bottom: 2px solid color-mix(in srgb, var(--brand, #4f46e5) 55%, #c7d2fe);
+  border-bottom: 2px solid color-mix(in srgb, var(--pptx-accent) 70%, #ffd0b8);
   font-size: clamp(15px, 2.1vw, 20px);
   font-weight: 700;
   line-height: 1.35;
-  color: #111827;
+  color: inherit;
+}
+.copilot-pptx-slide__title--cover {
+  border-bottom: none;
+  padding-bottom: 0;
+  margin-bottom: 12px;
+  font-size: clamp(20px, 3.2vw, 30px);
+  max-width: 92%;
+}
+.copilot-pptx-slide__subtitle {
+  margin: 0;
+  font-size: clamp(13px, 1.8vw, 16px);
+  line-height: 1.45;
+  color: var(--pptx-muted);
+  font-family: "Source Han Serif SC", "Songti SC", "Noto Serif SC", Georgia, serif;
+  max-width: 85%;
+}
+.copilot-pptx-slide__spacer { flex: 1 1 auto; }
+.copilot-pptx-slide__meta {
+  font-size: 11px;
+  color: #A9BECC;
 }
 .copilot-pptx-slide__body {
   flex: 1 1 auto;
@@ -4289,38 +4435,78 @@ a:focus-visible,
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 .copilot-pptx-slide__list li {
-  position: relative;
   font-size: clamp(12px, 1.5vw, 14px);
   line-height: 1.55;
-  color: #334155;
 }
 .copilot-pptx-slide__list li.is-bullet {
-  padding-left: 1em;
+  padding-left: 14px;
+  position: relative;
 }
 .copilot-pptx-slide__list li.is-bullet::before {
-  content: "•";
+  content: "";
   position: absolute;
   left: 0;
-  color: color-mix(in srgb, var(--brand, #4f46e5) 80%, #64748b);
+  top: 0.55em;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--pptx-accent);
 }
-.copilot-pptx-slide__list li.is-plain {
-  padding-left: 0;
+.copilot-pptx-slide__list li.is-plain { padding-left: 0; }
+.copilot-pptx-slide__agenda {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.copilot-pptx-slide__agenda li {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, #102A43 12%, transparent);
+  font-size: 13px;
+}
+.copilot-pptx-slide__agenda-num {
+  font-weight: 700;
+  color: var(--pptx-accent);
+  font-variant-numeric: tabular-nums;
+  min-width: 1.6em;
 }
 .copilot-pptx-slide__empty {
   margin: 0;
-  color: #94a3b8;
+  color: var(--pptx-muted);
   font-size: 13px;
 }
 .copilot-pptx-slide__footer {
-  position: absolute;
-  right: 14px;
-  bottom: 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, #102A43 12%, transparent);
   font-size: 10px;
-  letter-spacing: 0.04em;
-  color: #94a3b8;
+  color: var(--pptx-muted);
+}
+.copilot-pptx-slide--cover .copilot-pptx-slide__footer { border-top: none; }
+.copilot-pptx-slide__footer--overlay {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  margin: 0;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 4px;
+  background: color-mix(in srgb, #000 45%, transparent);
+  color: #fff;
+}
+.copilot-pptx-slide__footer-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 70%;
 }
 .copilot-pptx-reader__nav {
   display: flex;
@@ -4365,7 +4551,7 @@ a:focus-visible,
 }
 .copilot-pptx-reader__dot.is-active {
   width: 16px;
-  background: var(--brand, #4f46e5);
+  background: #F26B38;
 }
 @media (max-width: 640px) {
   .copilot-doc-preview__page--paper {
@@ -4373,7 +4559,7 @@ a:focus-visible,
     padding: 24px 18px 32px;
   }
   .copilot-pptx-slide {
-    padding: 16px 16px 24px;
+    padding: 16px 16px 14px;
   }
 }
 .copilot-execution-details summary::-webkit-details-marker { display: none; }

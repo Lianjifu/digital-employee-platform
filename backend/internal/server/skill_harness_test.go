@@ -226,22 +226,50 @@ func TestLooksLikePptxGenerateRequest(t *testing.T) {
 	}
 }
 
-func TestSkillRunPptxBuiltin(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("DE_SKILL_ARTIFACT_DIR", dir)
+func TestOfficeSkillRejectsTitleContentShortcut(t *testing.T) {
 	s := &Server{}
-	sk := map[string]any{"id": "sk-pptx", "name": "pptx"}
-	res := s.skillRunPptxBuiltin(toolRunContext{UserMessage: "生成团队季度考评 PPT"}, sk, "团队季度考评", "",
-		func(int, bool, string) {}, time.Now())
-	if res.Status != "success" {
-		t.Fatalf("%#v", res)
+	sk := map[string]any{
+		"id": "sk-pptx", "name": "pptx", "packagePath": t.TempDir(),
+		"hasScripts": true, "scripts": []string{"scripts/build_from_outline.mjs"},
+		"producesArtifacts": true,
 	}
-	if !strings.Contains(res.Output, ".pptx") || !strings.Contains(res.Output, "/api/skill-artifacts/") {
+	tool := &registeredTool{Name: "pptx", Kind: "skill", Key: "skill:pptx"}
+	res := s.skillRun(toolRunContext{SessionMode: sessionModeExecute, WorkspaceID: "w1"}, tool, sk, toolCallRequest{
+		Args: map[string]any{
+			"action": "run", "title": "团队季度考评", "content": "## 目录\n- A",
+		},
+	}, "生成 PPT", time.Now())
+	if res.Status != "needs_instruction" {
+		t.Fatalf("expected needs_instruction, got %s: %s", res.Status, res.Output)
+	}
+	if !strings.Contains(res.Output, "禁止平台内置快捷生成") {
 		t.Fatalf("output=%s", res.Output)
+	}
+	docSk := map[string]any{
+		"id": "sk-docx", "name": "docx", "packagePath": t.TempDir(),
+		"hasScripts": true, "scripts": []string{"scripts/docx.sh"},
+	}
+	docTool := &registeredTool{Name: "docx", Kind: "skill", Key: "skill:docx"}
+	docRes := s.skillRun(toolRunContext{WorkspaceID: "w1"}, docTool, docSk, toolCallRequest{
+		Args: map[string]any{"action": "run", "title": "通知", "content": "一、材料\n1. 身份证"},
+	}, "", time.Now())
+	if docRes.Status != "needs_instruction" {
+		t.Fatalf("docx shortcut should be rejected: %#v", docRes)
 	}
 }
 
-func TestInvestigateDeniesSkillRun(t *testing.T) {
+func TestOfficeSkillNotFoundWhenUnbound(t *testing.T) {
+	s := &Server{Store: store.New()}
+	tool := &registeredTool{Name: "pptx", Kind: "skill", Key: "skill:pptx"}
+	res := s.runSkillTool(toolRunContext{WorkspaceID: "w-none"}, tool, toolCallRequest{
+		Name: "pptx", Args: map[string]any{"action": "open"},
+	}, time.Now())
+	if res.Status != "failed" || !strings.Contains(res.Output, "未装配") {
+		t.Fatalf("got %#v", res)
+	}
+}
+
+func TestInvestigateDeniesSkillRunWithoutScript(t *testing.T) {
 	s := &Server{}
 	tool := &registeredTool{Name: "pptx", Kind: "skill", Key: "skill:pptx"}
 	res := s.runSkillTool(toolRunContext{WorkspaceID: "w-none", SessionMode: sessionModeInvestigate}, tool, toolCallRequest{
@@ -252,25 +280,22 @@ func TestInvestigateDeniesSkillRun(t *testing.T) {
 	}
 }
 
-func TestInvestigateAllowsDocxBuiltinRun(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("DE_SKILL_ARTIFACT_DIR", dir)
+func TestInvestigateRejectsOfficeBuiltinShortcut(t *testing.T) {
 	s := &Server{Store: store.New()}
-	s.Store.EnsureDocxSkillReady()
+	sk := map[string]any{
+		"id": "sk-docx", "name": "docx", "packagePath": t.TempDir(),
+		"hasScripts": true, "scripts": []string{"scripts/docx.sh"},
+	}
 	tool := &registeredTool{Name: "docx", Kind: "skill", Key: "skill:docx", Mode: toolModeExecute, Enabled: true}
-	res := s.runSkillTool(toolRunContext{
+	res := s.skillRun(toolRunContext{
 		WorkspaceID: "w1", SessionMode: sessionModeInvestigate,
 		Viewer: &auth.Identity{ID: "u1", Name: "测试"},
-		UserMessage: "生成入职材料清单通知",
-	}, tool, toolCallRequest{
-		Name: "docx", Args: map[string]any{
+	}, tool, sk, toolCallRequest{
+		Args: map[string]any{
 			"action": "run", "title": "入职材料清单通知", "content": "一、材料清单\n1. 身份证",
 		},
-	}, time.Now())
-	if res.Status != "success" {
-		t.Fatalf("docx builtin should succeed in investigate, got %#v", res)
-	}
-	if !strings.Contains(res.Output, "/api/skill-artifacts/") {
-		t.Fatalf("missing artifact link: %s", res.Output)
+	}, "生成入职材料", time.Now())
+	if res.Status != "needs_instruction" {
+		t.Fatalf("builtin shortcut must be rejected, got %#v", res)
 	}
 }

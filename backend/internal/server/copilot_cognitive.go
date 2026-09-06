@@ -93,6 +93,24 @@ func employeeCognitiveConfig(emp map[string]any) (enabled bool, maxFrameworks in
 	return enabled, maxFrameworks, preferred
 }
 
+func employeeShowNarrative(emp map[string]any) bool {
+	if emp == nil {
+		return true
+	}
+	caps, _ := emp["capabilities"].(map[string]any)
+	if caps == nil {
+		return true
+	}
+	cog, _ := caps["cognitive"].(map[string]any)
+	if cog == nil {
+		return true
+	}
+	if v, ok := cog["showNarrative"].(bool); ok {
+		return v
+	}
+	return true
+}
+
 func employeeCognitiveEnabled(emp map[string]any) bool {
 	enabled, _, _ := employeeCognitiveConfig(emp)
 	return enabled
@@ -426,25 +444,25 @@ func emitCognitiveThoughts(emit reactEmitFunc, d cognitiveDecision) {
 		return
 	}
 	if d.Bypass {
-		emitThought(emit, "plan", "直接作答（跳过认知框架）", humanCognitiveBypass(d.BypassReason))
+		emitThought(emit, "plan", turnPhaseUnderstand, "直接作答（跳过认知框架）", humanCognitiveBypass(d.BypassReason))
 		return
 	}
 	detail := "模式 " + d.Mode
 	if len(d.Reasons) > 0 {
 		detail += " · " + strings.Join(d.Reasons, ", ")
 	}
-	emitThoughtCognitive(emit, "framework", "选用框架："+cognitiveLabel(d.Primary)+"（主）", detail, d, "primary")
+	emitThoughtCognitive(emit, "framework", turnPhaseUnderstand, "选用框架："+cognitiveLabel(d.Primary)+"（主）", detail, d, "primary", "")
 	if d.Secondary != "" {
 		sec := d
 		sec.Primary = d.Secondary
-		emitThoughtCognitive(emit, "framework", "辅框架："+cognitiveLabel(d.Secondary), "与主框架协同，避免重复澄清", sec, "secondary")
+		emitThoughtCognitive(emit, "framework", turnPhaseUnderstand, "辅框架："+cognitiveLabel(d.Secondary), "与主框架协同，避免重复澄清", sec, "secondary", "")
 	}
 	if len(d.Phases) > 0 {
 		labels := make([]string, 0, len(d.Phases))
 		for _, p := range d.Phases {
 			labels = append(labels, cognitivePhaseLabel(p))
 		}
-		emitThoughtCognitive(emit, "plan", "思路阶段："+strings.Join(labels, " → "), "从「"+cognitivePhaseLabel(d.Phases[0])+"」推进", d, "primary")
+		emitThoughtCognitive(emit, "plan", turnPhasePlan, "思路阶段："+strings.Join(labels, " → "), "从「"+cognitivePhaseLabel(d.Phases[0])+"」推进", d, "primary", d.Phases[0])
 	}
 }
 
@@ -462,10 +480,10 @@ func emitCognitiveFinalize(emit reactEmitFunc, d cognitiveDecision) {
 	default:
 		detail = "结论 → 关键依据 → 下一步"
 	}
-	emitThoughtCognitive(emit, "finalize", title, detail, d, "primary")
+	emitThoughtCognitive(emit, "finalize", turnPhasePlan, title, detail, d, "primary", "")
 }
 
-func emitThoughtCognitive(emit reactEmitFunc, kind, title, detail string, d cognitiveDecision, role string) {
+func emitThoughtCognitive(emit reactEmitFunc, kind, narrativePhase, title, detail string, d cognitiveDecision, role, phaseStep string) {
 	if emit == nil {
 		return
 	}
@@ -479,14 +497,17 @@ func emitThoughtCognitive(emit reactEmitFunc, kind, title, detail string, d cogn
 	}
 	extra := map[string]any{
 		"type": contract.StreamThought, "kind": kind, "title": title,
+		"phase": narrativePhase,
 		"framework": d.Primary, "frameworkLabel": cognitiveLabel(d.Primary),
 		"mode": d.Mode, "role": role, "confidence": d.Confidence,
 	}
 	if dtl := strings.TrimSpace(detail); dtl != "" {
 		extra["detail"] = dtl
 	}
+	if phaseStep != "" {
+		extra["phaseStep"] = phaseStep
+	}
 	if len(d.Phases) > 0 {
-		extra["phase"] = d.Phases[0]
 		extra["phases"] = d.Phases
 	}
 	emit(contract.StreamThought, "thought", extra)

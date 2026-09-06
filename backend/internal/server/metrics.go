@@ -20,6 +20,14 @@ var copilotCognitiveBypass atomic.Uint64
 var copilotCognitiveLogic atomic.Uint64
 var copilotCognitiveProblem atomic.Uint64
 var copilotCognitiveCreative atomic.Uint64
+var copilotTurnUnderstand atomic.Uint64
+var copilotTurnPlan atomic.Uint64
+var copilotTurnExecute atomic.Uint64
+var copilotTurnReflect atomic.Uint64
+var copilotTurnTaskTotal atomic.Uint64
+var officeSkillScriptRequiredTotal atomic.Uint64
+var officeSkillPackageMissingTotal atomic.Uint64
+var officeSkillPreflightFailedTotal atomic.Uint64
 var auditWriteFailures atomic.Uint64
 var policyDeniesTotal atomic.Uint64
 var modelProbeTotal atomic.Uint64
@@ -93,6 +101,26 @@ func IncCopilotCognitive(d cognitiveDecision) {
 		copilotCognitiveCreative.Add(1)
 	}
 }
+
+// IncTurnPhaseStep records a narrative phase thought step.
+func IncTurnPhaseStep(phase string) {
+	switch phase {
+	case turnPhaseUnderstand:
+		copilotTurnUnderstand.Add(1)
+	case turnPhasePlan:
+		copilotTurnPlan.Add(1)
+	case turnPhaseExecute:
+		copilotTurnExecute.Add(1)
+	case turnPhaseReflect:
+		copilotTurnReflect.Add(1)
+	}
+}
+
+func IncTurnTaskEvent() { copilotTurnTaskTotal.Add(1) }
+
+func IncOfficeSkillScriptRequired() { officeSkillScriptRequiredTotal.Add(1) }
+func IncOfficeSkillPackageMissing() { officeSkillPackageMissingTotal.Add(1) }
+func IncOfficeSkillPreflightFailed() { officeSkillPreflightFailedTotal.Add(1) }
 
 // countPendingAuthorizationsLocked returns Actions still awaiting human approval.
 // Caller must hold Store.RLock or Lock.
@@ -200,6 +228,14 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_cognitive_framework_total Copilot cognitive primary framework selections\n# TYPE de_copilot_cognitive_framework_total counter\nde_copilot_cognitive_framework_total{service=%q,framework=%q} %d\n", svc, "logic", copilotCognitiveLogic.Load())
 	_, _ = fmt.Fprintf(w, "de_copilot_cognitive_framework_total{service=%q,framework=%q} %d\n", svc, "problem", copilotCognitiveProblem.Load())
 	_, _ = fmt.Fprintf(w, "de_copilot_cognitive_framework_total{service=%q,framework=%q} %d\n", svc, "creative", copilotCognitiveCreative.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_copilot_turn_phase_steps_total Copilot turn narrative phase steps\n# TYPE de_copilot_turn_phase_steps_total counter\nde_copilot_turn_phase_steps_total{service=%q,phase=%q} %d\n", svc, "understand", copilotTurnUnderstand.Load())
+	_, _ = fmt.Fprintf(w, "de_copilot_turn_phase_steps_total{service=%q,phase=%q} %d\n", svc, "plan", copilotTurnPlan.Load())
+	_, _ = fmt.Fprintf(w, "de_copilot_turn_phase_steps_total{service=%q,phase=%q} %d\n", svc, "execute", copilotTurnExecute.Load())
+	_, _ = fmt.Fprintf(w, "de_copilot_turn_phase_steps_total{service=%q,phase=%q} %d\n", svc, "reflect", copilotTurnReflect.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_copilot_turn_task_events_total Copilot turn task SSE events\n# TYPE de_copilot_turn_task_events_total counter\nde_copilot_turn_task_events_total{service=%q} %d\n", svc, copilotTurnTaskTotal.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_office_skill_script_required_total Office skill runs rejected without scripts/ command\n# TYPE de_office_skill_script_required_total counter\nde_office_skill_script_required_total{service=%q} %d\n", svc, officeSkillScriptRequiredTotal.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_office_skill_package_missing_total Office skill run blocked: no packagePath\n# TYPE de_office_skill_package_missing_total counter\nde_office_skill_package_missing_total{service=%q} %d\n", svc, officeSkillPackageMissingTotal.Load())
+	_, _ = fmt.Fprintf(w, "# HELP de_office_skill_preflight_failed_total Office skill run blocked: missing deps\n# TYPE de_office_skill_preflight_failed_total counter\nde_office_skill_preflight_failed_total{service=%q} %d\n", svc, officeSkillPreflightFailedTotal.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_authorizations_pending Copilot single-approver requests awaiting decision\n# TYPE de_copilot_authorizations_pending gauge\nde_copilot_authorizations_pending{service=%q} %d\n", svc, pendingAuth)
 	_, _ = fmt.Fprintf(w, "# HELP de_audit_write_failures_total durable audit fanout failures\n# TYPE de_audit_write_failures_total counter\nde_audit_write_failures_total{service=%q} %d\n", svc, auditWriteFailures.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_policy_denies_total policy deny on write paths\n# TYPE de_policy_denies_total counter\nde_policy_denies_total{service=%q} %d\n", svc, policyDeniesTotal.Load())

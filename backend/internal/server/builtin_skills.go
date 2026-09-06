@@ -572,6 +572,9 @@ func (s *Server) ensureGeneralPackInstalledLocked(ws string, manifest builtinMan
 }
 
 func (s *Server) ensureOneBuiltinInstalledLocked(ws, skillName string, manifest builtinManifest, packID string) {
+	if s.Store.SkillSuppressedUnlocked(ws, skillName) {
+		return
+	}
 	meta, _, err := loadBuiltinSkillPackage(skillName)
 	if err != nil {
 		return
@@ -582,7 +585,9 @@ func (s *Server) ensureOneBuiltinInstalledLocked(ws, skillName string, manifest 
 		}
 		canonID := builtinSkillInstallID(skillName)
 		if str(sk["id"]) == canonID || str(sk["builtinSkillName"]) == skillName || strings.EqualFold(str(sk["name"]), meta.Name) {
-			if str(sk["packagePath"]) == "" {
+			// Rematerialize when package missing or builtin content changed (sha mismatch).
+			needPkg := str(sk["packagePath"]) == "" || str(sk["packageSha256"]) != meta.SHA256
+			if needPkg {
 				_ = s.attachBuiltinPackageToSkill(sk, ws, str(sk["id"]), skillName)
 			}
 			sk["lifecycleStatus"] = "enabled"

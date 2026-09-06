@@ -64,7 +64,7 @@ export interface ToolCall {
   name: string;
   args: Record<string, unknown>;
   result?: string;
-  status: 'pending' | 'running' | 'success' | 'failed' | 'denied';
+  status: 'pending' | 'running' | 'success' | 'failed' | 'denied' | 'needs_instruction';
   durationMs?: number;
   retryCount?: number;
   /** 权限策略：auto / approval-required / denied / disabled / prohibited … */
@@ -94,6 +94,7 @@ export interface ReasoningStep {
   /** quick | standard | deep */
   cognitiveMode?: string;
   phase?: string;
+  phaseStep?: string;
   phases?: string[];
   role?: 'primary' | 'secondary' | string;
   confidence?: number;
@@ -243,7 +244,35 @@ export interface ChatMessageEx {
     confidence?: number;
     reasons?: string[];
     digestTokensEst?: number;
+    showNarrative?: boolean;
   };
+  /** 回合叙事元数据（意图理解/任务规划/工具执行） */
+  turnMeta?: {
+    narrative?: string;
+    summary?: string;
+    phases?: Array<{
+      phase: string;
+      label: string;
+      status: string;
+      stepCount?: number;
+      steps?: ReasoningStep[];
+    }>;
+    tasks?: Array<{
+      id: string;
+      title: string;
+      status: string;
+      detail?: string;
+    }>;
+  };
+  /** 流式任务清单（done 后合并进 turnMeta） */
+  turnTasks?: Array<{
+    id: string;
+    title: string;
+    status: 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
+    detail?: string;
+    startedAt?: string;
+    endedAt?: string;
+  }>;
   /** 生成态进度（气泡「正在执行」；不进思考面板） */
   progressHint?: string;
   /** 用户反馈 */

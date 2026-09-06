@@ -33,6 +33,8 @@ import {
   progressLabelFromEvent,
   toHumanThoughtStep,
 } from '@/features/copilot/human-thought';
+import { parseTurnMeta } from '@/features/copilot/turn-narrative/build-turn-summary';
+import { dedupeTurnTasks, mergeTurnTasks } from '@/features/copilot/turn-narrative/turn-task-list';
 import {
   isArtifactSegmentEvent,
   mergeArtifactBlockIntoContent,
@@ -103,6 +105,35 @@ function parseNextRunCommandFromContent(content?: string): string {
   if (!content) return '';
   const m = content.match(/action=run\s+command=(\S+)/);
   return m?.[1] ?? '';
+}
+
+function isSkillExecuteFailure(result: string): boolean {
+  const text = result.trim();
+  if (!text) return true;
+  if (text.startsWith('执行失败')) return true;
+  if (text.includes('【预检失败】')) return true;
+  if (text.includes('【skill.run】拒绝')) return true;
+  if (/"status"\s*:\s*"error"/.test(text)) return true;
+  if (/Unknown command:/i.test(text)) return true;
+  if (/script not found/i.test(text)) return true;
+  if (/PPTX dependencies are missing/i.test(text)) return true;
+  return false;
+}
+
+function skillTurnHasFailedStep(skillTurn?: { steps?: Array<{ status?: string }> }): boolean {
+  return (skillTurn?.steps ?? []).some((s) => s.status === 'failed' || s.status === 'needs_instruction');
+}
+
+function skillTurnRunCommandFromMessage(message: ChatMessageEx): string {
+  const steps = message.approvalRequest?.skillTurn?.steps;
+  if (!steps?.length) return '';
+  for (const step of steps) {
+    if (step.action === 'run') {
+      const cmd = step.args?.command;
+      if (typeof cmd === 'string' && cmd.trim()) return cmd.trim();
+    }
+  }
+  return '';
 }
 
 type Action =
@@ -935,6 +966,15 @@ export function exportSession(session: ChatSession, opts: { includeCitations?: b
       } else if (includeReasoning && m.cognitive?.bypass) {
         out.push('', `**Cognitive:** bypass (${m.cognitive.bypassReason || 'skipped'})`);
       }
+      if (includeReasoning && m.turnMeta?.summary) {
+        out.push('', `**Turn narrative:** ${m.turnMeta.summary}`);
+      }
+      if (includeReasoning && m.turnMeta?.phases?.length) {
+        out.push('', '**Turn phases:**');
+        for (const p of m.turnMeta.phases) {
+          out.push(`- ${p.label} (${p.status})${p.stepCount != null ? ` · ${p.stepCount} steps` : ''}`);
+        }
+      }
       if (includeToolCalls && m.toolCalls?.length) {
         out.push('', '**Tool calls:**');
         for (const t of m.toolCalls) out.push(`- \`${t.name}\` (${t.status}, ${t.durationMs ?? 0}ms) ${t.sandboxId ? `[sandbox:${t.sandboxId}]` : ''}`);
@@ -965,6 +1005,7 @@ export function exportSession(session: ChatSession, opts: { includeCitations?: b
       safety: m.safety,
       metrics: m.metrics,
       cognitive: m.cognitive,
+      turnMeta: m.turnMeta,
       approval: m.approvalRequest,
     })),
     hash: uid('audit_'),
@@ -1274,6 +1315,7 @@ export function useChat(agentMeta?: { name: string }) {
         }
       };
       const reasoningSteps: ReasoningStep[] = [];
+      const turnTasks: NonNullable<ChatMessageEx['turnTasks']> = [];
       const toolCalls: ToolCall[] = [];
       const citations: Citation[] = [];
       let resolvedModel = modelId;
@@ -1307,7 +1349,7 @@ export function useChat(agentMeta?: { name: string }) {
           }
         }
         const progress = progressLabelFromEvent(typ, data);
-        if (progress) {
+        if (progress && reasoningSteps.length === 0) {
           liveProgress = progress;
           const base = segmentPlaceholders.get(thoughtHost) ?? placeholder;
           const patched: ChatMessageEx = {
@@ -1317,6 +1359,18 @@ export function useChat(agentMeta?: { name: string }) {
           segmentPlaceholders.set(thoughtHost, patched);
           dispatch({ type: 'replace_msg', sid, mid: thoughtHost, msg: patched });
         }
+      };
+
+      const patchTurnState = () => {
+        const base = segmentPlaceholders.get(thoughtHost) ?? placeholder;
+        const patched: ChatMessageEx = {
+          ...base,
+          reasoningSteps: [...reasoningSteps],
+          turnTasks: [...turnTasks],
+          progressHint: reasoningSteps.length > 0 ? undefined : (liveProgress || base.progressHint),
+        };
+        segmentPlaceholders.set(thoughtHost, patched);
+        dispatch({ type: 'replace_msg', sid, mid: thoughtHost, msg: patched });
       };
 
       dispatch({
@@ -1373,6 +1427,20 @@ export function useChat(agentMeta?: { name: string }) {
           pushThought(typ, data);
           return;
         }
+        if (typ === 'task') {
+          const merged = mergeTurnTasks(turnTasks, {
+            taskId: typeof data.taskId === 'string' ? data.taskId : undefined,
+            title: typeof data.title === 'string' ? data.title : undefined,
+            status: typeof data.status === 'string' ? data.status : undefined,
+            action: typeof data.action === 'string' ? data.action : undefined,
+            detail: typeof data.detail === 'string' ? data.detail : undefined,
+          });
+          turnTasks.length = 0;
+          turnTasks.push(...merged);
+          pushThought(typ, data);
+          patchTurnState();
+          return;
+        }
         if (typ === 'authorization') {
           const approvalRaw = (data.approvalRequest ?? data.authorizationRequest) as (ChatMessageEx['approvalRequest'] & {
             approverRoleHint?: string;
@@ -1425,10 +1493,10 @@ export function useChat(agentMeta?: { name: string }) {
             ?? (Array.isArray(data.hits) ? (data.hits as Array<{ title?: string; snippet?: string; score?: number; docId?: string; source?: string }>) : []);
           const statusRaw = data.status ?? 'success';
           const status: ToolCall['status'] =
-            statusRaw === 'denied' || statusRaw === 'failed' || statusRaw === 'running' || statusRaw === 'success'
+            statusRaw === 'denied' || statusRaw === 'failed' || statusRaw === 'running' || statusRaw === 'success' || statusRaw === 'needs_instruction'
               ? statusRaw
               : statusRaw === 'ok' ? 'success'
-                : statusRaw === 'pending_authorization' || statusRaw === 'needs_instruction' ? 'denied'
+                : statusRaw === 'pending_authorization' ? 'denied'
                   : 'failed';
           const args = {
             ...(typeof data.args === 'object' && data.args ? data.args : {}),
@@ -1534,6 +1602,7 @@ export function useChat(agentMeta?: { name: string }) {
         const cognitive = (data.cognitive && typeof data.cognitive === 'object')
           ? data.cognitive as ChatMessageEx['cognitive']
           : undefined;
+        const turnMeta = parseTurnMeta(data.turnMeta);
         const metrics: MessageMetrics = {
           model: resolvedModel,
           provider: resolvedSource ? `${resolvedProvider}/${resolvedSource}` : resolvedProvider,
@@ -1561,6 +1630,14 @@ export function useChat(agentMeta?: { name: string }) {
             citations: isHost ? [...citations] : base.citations ?? [],
             memoryProvenance: isHost ? provenance : base.memoryProvenance,
             cognitive: isHost ? cognitive : base.cognitive,
+            turnMeta: isHost ? turnMeta : base.turnMeta,
+            turnTasks: isHost
+              ? dedupeTurnTasks([
+                  ...turnTasks,
+                  ...(((turnMeta?.tasks as ChatMessageEx['turnTasks']) ?? [])),
+                ])
+              : base.turnTasks,
+            progressHint: undefined,
             metrics: isHost ? metrics : base.metrics,
             status: 'succeeded',
             serverMsgId: (mid === replyId && typeof data.messageId === 'string' && data.messageId)
@@ -2283,9 +2360,9 @@ export function useChat(agentMeta?: { name: string }) {
     return next;
   };
 
-  /** 授权完成后手动执行受控动作 */
-  const executeAuthorized = useCallback(async (mid: string) => {
-    if (!state.activeId) return;
+  /** 授权完成后手动执行受控动作；返回是否执行成功 */
+  const executeAuthorized = useCallback(async (mid: string): Promise<boolean> => {
+    if (!state.activeId) return false;
     const session = state.sessions[state.activeId];
     const message = session?.messages.find((item) => item.id === mid);
     if (!message?.approvalRequest || message.approvalRequest.decision !== 'approved') {
@@ -2329,7 +2406,9 @@ export function useChat(agentMeta?: { name: string }) {
       executeResult = err instanceof Error ? `执行失败：${err.message}` : '执行失败';
     }
 
-    const execOk = !executeResult.startsWith('执行失败');
+    const execOk = executeResult.length > 0
+      && !isSkillExecuteFailure(executeResult)
+      && !skillTurnHasFailedStep(skillTurn);
     dispatch({
       type: 'replace_msg',
       sid: state.activeId,
@@ -2359,32 +2438,47 @@ export function useChat(agentMeta?: { name: string }) {
         ],
       },
     });
+    return execOk;
   }, [state.activeId, state.sessions]);
 
-  /** P2：批准后若仍有待续跑 run，手动继续 Skill Turn */
-  const continueSkillTurn = useCallback(async (mid: string) => {
-    if (!state.activeId) return;
+  /** P2：批准后若仍有待续跑 run，手动继续 Skill Turn；返回是否成功 */
+  const continueSkillTurn = useCallback(async (mid: string): Promise<boolean> => {
+    if (!state.activeId) return false;
     const session = state.sessions[state.activeId];
     const message = session?.messages.find((item) => item.id === mid);
-    if (!message) return;
+    if (!message) return false;
     const conversationId = session.conversationId ?? state.activeId;
-    const cmd = message.nextRunCommand || parseNextRunCommandFromContent(message.content);
+    const cmd = skillTurnRunCommandFromMessage(message)
+      || message.nextRunCommand
+      || parseNextRunCommandFromContent(message.content);
     if (!cmd && !message.canContinueRun) {
       throw new Error('没有可续跑的 run 步骤');
     }
-    const executed = await getApiClient().post<{
-      executeResult?: string;
-      nextRunCommand?: string;
-      canContinueRun?: boolean;
-      skillTurn?: NonNullable<ChatMessageEx['approvalRequest']>['skillTurn'];
-    }>(`/api/actions/${mid}/execute`, {
-      conversationId,
-      continueRun: true,
-      command: cmd || undefined,
-    });
-    const executeResult = typeof executed?.executeResult === 'string' ? executed.executeResult : '';
-    const nextRunCommand = typeof executed?.nextRunCommand === 'string' ? executed.nextRunCommand : '';
-    const canContinueRun = Boolean(executed?.canContinueRun || nextRunCommand);
+    let executeResult = '';
+    let nextRunCommand = '';
+    let canContinueRun = false;
+    let skillTurn = message.approvalRequest?.skillTurn;
+    try {
+      const executed = await getApiClient().post<{
+        executeResult?: string;
+        nextRunCommand?: string;
+        canContinueRun?: boolean;
+        skillTurn?: NonNullable<ChatMessageEx['approvalRequest']>['skillTurn'];
+      }>(`/api/actions/${mid}/execute`, {
+        conversationId,
+        continueRun: true,
+        command: cmd || undefined,
+      });
+      executeResult = typeof executed?.executeResult === 'string' ? executed.executeResult : '';
+      nextRunCommand = typeof executed?.nextRunCommand === 'string' ? executed.nextRunCommand : '';
+      canContinueRun = Boolean(executed?.canContinueRun || nextRunCommand);
+      if (executed?.skillTurn) skillTurn = executed.skillTurn;
+    } catch (err) {
+      executeResult = err instanceof Error ? `执行失败：${err.message}` : '执行失败';
+    }
+    const execOk = executeResult.length > 0
+      && !isSkillExecuteFailure(executeResult)
+      && !skillTurnHasFailedStep(skillTurn);
     dispatch({
       type: 'replace_msg',
       sid: state.activeId,
@@ -2397,8 +2491,8 @@ export function useChat(agentMeta?: { name: string }) {
         approvalRequest: message.approvalRequest
           ? {
               ...message.approvalRequest,
-              skillTurn: executed?.skillTurn ?? message.approvalRequest.skillTurn,
-              planSummary: executed?.skillTurn?.summary ?? message.approvalRequest.planSummary,
+              skillTurn: skillTurn ?? message.approvalRequest.skillTurn,
+              planSummary: skillTurn?.summary ?? message.approvalRequest.planSummary,
             }
           : message.approvalRequest,
         nextRunCommand: canContinueRun ? nextRunCommand : undefined,
@@ -2410,12 +2504,13 @@ export function useChat(agentMeta?: { name: string }) {
             name: 'skill.run',
             args: { command: cmd },
             result: executeResult || '续跑完成',
-            status: executeResult.startsWith('执行失败') ? 'failed' : 'success',
+            status: execOk ? 'success' : 'failed',
             durationMs: 48,
           },
         ],
       },
     });
+    return execOk;
   }, [state.activeId, state.sessions]);
 
   /** 兼容旧 API：不再绕过服务端校验，仍只尝试首个未签席位。 */

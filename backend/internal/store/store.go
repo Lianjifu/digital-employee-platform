@@ -764,6 +764,9 @@ func (s *Store) seed() {
 func (s *Store) EnsureDocxSkillReady() {
 	s.Lock()
 	defer s.Unlock()
+	if s.skillSuppressedLocked("w1", "docx") || s.skillSuppressedLocked("w1", "sk-docx") {
+		return
+	}
 	hasDocx := false
 	for _, sk := range s.Skills {
 		if str(sk["id"]) == "sk-docx" || strings.EqualFold(str(sk["name"]), "docx") {

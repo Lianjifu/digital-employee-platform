@@ -3,15 +3,19 @@ name: pptx
 description: Create, edit, inspect, render, and validate editable Microsoft PowerPoint (.pptx) presentations, and import legacy binary .ppt files through verified conversion to .pptx. Use for native PowerPoint creation, modification, template inheritance, charts, tables, images, legacy .ppt migration, and slide-level quality assurance. Do not use for HTML/browser presentations or Google Slides.
 ---
 
-## Copilot / Digital Employee shortcut
+## Copilot / Digital Employee
 
-When invoked from Copilot with `action=run` plus `title` and `content` (Markdown outline),
-the host builds a **production layout-library deck** (title / agenda / bullets / metrics /
-section / closing) via `scripts/build_from_outline.mjs` and registers
-`/api/skill-artifacts/*.pptx`. Prefer that path for standard decks.
+From Copilot, **PPT must be generated only via SKILL scripts** — `action=run` with `command` matching `scripts/...` or `.copilot-ws/...`. The host **rejects** `title+content` shortcut generation.
 
-Use the full `scripts/pptx.sh` / custom `.mjs` builder only when the user needs template
-inheritance, charts beyond outline heuristics, or audited delivery seals.
+When `run` references `--outline-file .copilot-ws/...`, the host **auto-adds a write step** for that outline if missing.
+
+Standard deck from outline:
+
+```bash
+bash scripts/pptx.sh node scripts/build_from_outline.mjs --title "TITLE" --outline-file outline.md --out deck.pptx
+```
+
+Use the full `scripts/pptx.sh` / custom `.mjs` builder when the user needs template inheritance, charts beyond outline heuristics, or audited delivery seals.
 
 # PPTX
 

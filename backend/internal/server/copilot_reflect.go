@@ -151,9 +151,9 @@ func (s *Server) applyReflection(ctx context.Context, in reactTurnInput, result 
 			"status": "ok", "round": round, "reason": reason,
 		})
 		if c := strings.TrimSpace(critique); c != "" {
-			emitThought(in.Emit, "reflect", "反思："+truncateRunes(c, 80), reason)
+			emitThought(in.Emit, "reflect", turnPhaseReflect, "反思："+truncateRunes(c, 80), reason)
 		} else {
-			emitThought(in.Emit, "reflect", "已复核回复质量", reason)
+			emitThought(in.Emit, "reflect", turnPhaseReflect, "已复核回复质量", reason)
 		}
 		if strings.TrimSpace(revised) == "" || revised == current.Text {
 			current.ReflectRounds = round

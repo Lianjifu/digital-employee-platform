@@ -164,7 +164,7 @@ func (s *Server) skillImpactLocked(ws, skillID string) map[string]any {
 	allowed := len(agents)+len(workflows) == 0
 	reason := ""
 	if !allowed {
-		reason = "存在智能体或工作流引用，需强制卸载并提供审批单号"
+		reason = "存在智能体或工作流引用，卸载时将自动解除绑定"
 	}
 	// refresh health references
 	for _, h := range s.Store.SkillHealth {
@@ -175,6 +175,77 @@ func (s *Server) skillImpactLocked(ws, skillID string) map[string]any {
 	return map[string]any{
 		"skillId": skillID, "agents": agents, "workflows": workflows,
 		"activeRuns": 0, "uninstallAllowed": allowed, "reason": reason,
+	}
+}
+
+func (s *Server) purgeSkillBindingsLocked(ws, skillID string) {
+	bindings := s.skillExtraSlice("bindings")
+	if len(bindings) == 0 {
+		return
+	}
+	kept := make([]map[string]any, 0, len(bindings))
+	for _, b := range bindings {
+		if str(b["capabilityId"]) != skillID {
+			kept = append(kept, b)
+			continue
+		}
+		bws := str(b["workspaceId"])
+		if bws != "" && bws != ws {
+			kept = append(kept, b)
+		}
+	}
+	s.Store.SkillExtra["bindings"] = kept
+}
+
+func (s *Server) unbindSkillFromEmployeesLocked(skillName, skillID string) {
+	lname := strings.ToLower(strings.TrimSpace(skillName))
+	for _, emp := range s.Store.Employees {
+		caps, _ := emp["capabilities"].(map[string]any)
+		if caps != nil {
+			skills := decodeStringSlice(caps["skills"])
+			filtered := make([]string, 0, len(skills))
+			for _, n := range skills {
+				if strings.EqualFold(n, skillName) || n == skillID {
+					continue
+				}
+				filtered = append(filtered, n)
+			}
+			if len(filtered) != len(skills) {
+				caps["skills"] = filtered
+			}
+		}
+		bp, _ := emp["boundaryPolicy"].(map[string]any)
+		if bp == nil {
+			continue
+		}
+		modes, _ := bp["capabilityModes"].([]any)
+		if len(modes) == 0 {
+			continue
+		}
+		kept := make([]any, 0, len(modes))
+		for _, raw := range modes {
+			m, _ := raw.(map[string]any)
+			if m == nil {
+				continue
+			}
+			if str(m["capabilityType"]) == "skill" &&
+				(strings.EqualFold(str(m["capabilityName"]), lname) || str(m["capabilityId"]) == skillID) {
+				continue
+			}
+			kept = append(kept, m)
+		}
+		if len(kept) != len(modes) {
+			bp["capabilityModes"] = kept
+		}
+	}
+}
+
+func (s *Server) recordSkillSuppressedLocked(ws string, sk map[string]any) {
+	skillID := str(sk["id"])
+	skillName := coalesce(str(sk["builtinSkillName"]), str(sk["name"]))
+	s.Store.RecordSkillSuppressedUnlocked(ws, skillName)
+	if skillID != "" && !strings.EqualFold(skillID, skillName) {
+		s.Store.RecordSkillSuppressedUnlocked(ws, skillID)
 	}
 }
 

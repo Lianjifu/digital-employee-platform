@@ -62,9 +62,17 @@ class H(BaseHTTPRequestHandler):
             self.wfile.flush()
 
     def _proxy_buffered(self, data, status, headers):
-        self._write_response_headers(status, headers)
-        if self.command != "HEAD":
-            self.wfile.write(data)
+        # Upstream Content-Length is stripped in SKIP; without re-adding it,
+        # HTTP/1.1 keep-alive clients hang waiting for EOF → Vite proxy 503.
+        self.send_response(status)
+        for k, v in headers.items():
+            if k.lower() not in SKIP:
+                self.send_header(k, v)
+        body = b"" if self.command == "HEAD" else (data or b"")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if body:
+            self.wfile.write(body)
 
     def _proxy(self):
         port = pick(self.path.split("?", 1)[0])

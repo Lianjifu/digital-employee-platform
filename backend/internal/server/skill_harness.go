@@ -73,11 +73,47 @@ func enrichSkillMetadata(sk map[string]any) {
 		scripts := decodeStringSlice(sk["scripts"])
 		if len(scripts) > 0 {
 			sk["entrypoints"] = scripts
-		} else if isDocxSkillName(str(sk["name"])) {
-			sk["entrypoints"] = []string{"__builtin_generate_docx"}
-			sk["producesArtifacts"] = true
-			sk["readOnly"] = false
 		}
+	}
+}
+
+func isOfficeSkillName(name string) bool {
+	return isDocxSkillName(name) || isPptxSkillName(name) || isPdfSkillName(name)
+}
+
+func officeSkillNeedsScriptResult(skillName string, sk map[string]any, started time.Time) toolExecResult {
+	name := strings.TrimSpace(skillName)
+	if name == "" {
+		name = "office"
+	}
+	scripts := decodeStringSlice(sk["scripts"])
+	hint := strings.Join(scripts, ", ")
+	if hint == "" {
+		hint = strings.Join(decodeStringSlice(sk["entrypoints"]), ", ")
+	}
+	if hint == "" {
+		hint = "(请先 action=open 查看 scripts 列表)"
+	}
+	kind := "文档"
+	switch {
+	case isPptxSkillName(name):
+		kind = "PPT"
+	case isPdfSkillName(name):
+		kind = "PDF"
+	case isDocxSkillName(name):
+		kind = "Word"
+	}
+	return toolExecResult{
+		Status: "needs_instruction", DurationMs: int(time.Since(started).Milliseconds()),
+		Error: "须通过 SKILL 脚本生成",
+		Output: fmt.Sprintf(
+			"【skill.run】%s 技能必须通过 SKILL 包内脚本生成 %s，禁止平台内置快捷生成。\n"+
+				"1) action=open 阅读 SKILL.md\n"+
+				"2) action=run 且 command 匹配 scripts/... 或 .copilot-ws/...\n"+
+				"可用脚本：%s",
+			name, kind, hint,
+		),
+		SandboxID: "skill-run:needs_script",
 	}
 }
 
@@ -149,18 +185,8 @@ func isSandboxArtifactSkillInvocation(tool *registeredTool, sk map[string]any, c
 	if looksLikeSkillScriptCommand(cmd) {
 		return false
 	}
-	if isDocxSkillName(tool.Name) || isDocxSkillName(name) {
-		return str(call.Args["content"]) != "" || str(call.Args["title"]) != "" ||
-			str(call.Args["input"]) != "" || str(call.Args["command"]) == ""
-	}
-	if isPptxSkillName(tool.Name) || isPptxSkillName(name) {
-		return str(call.Args["content"]) != "" || str(call.Args["title"]) != "" ||
-			str(call.Args["input"]) != "" || str(call.Args["outline"]) != "" ||
-			str(call.Args["command"]) == ""
-	}
-	if isPdfSkillName(tool.Name) || isPdfSkillName(name) {
-		return str(call.Args["content"]) != "" || str(call.Args["title"]) != "" ||
-			str(call.Args["input"]) != "" || str(call.Args["command"]) == ""
+	if isOfficeSkillName(tool.Name) || isOfficeSkillName(name) {
+		return false
 	}
 	if sk != nil {
 		enrichSkillMetadata(sk)
@@ -179,12 +205,6 @@ func skillInvocationNeedsApproval(sessionMode string, tool *registeredTool, sk m
 	cmd := skillCommandFromArgs(call.Args)
 	if action == "" {
 		if looksLikeSkillScriptCommand(cmd) {
-			action = skillActionRun
-		} else if isDocxSkillName(tool.Name) && (str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "") {
-			action = skillActionRun
-		} else if isPptxSkillName(tool.Name) && (str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "" || str(call.Args["outline"]) != "") {
-			action = skillActionRun
-		} else if isPdfSkillName(tool.Name) && (str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "") {
 			action = skillActionRun
 		} else {
 			action = skillActionOpen
@@ -210,13 +230,7 @@ func skillInvocationNeedsApproval(sessionMode string, tool *registeredTool, sk m
 	}
 	if action == skillActionRun {
 		cmd := skillCommandFromArgs(call.Args)
-		docxBuiltin := isDocxSkillName(tool.Name) && !looksLikeSkillScriptCommand(cmd) &&
-			(str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "" || str(call.Args["command"]) == "")
-		pptxBuiltin := isPptxSkillName(tool.Name) && !looksLikeSkillScriptCommand(cmd) &&
-			(str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "" ||
-				str(call.Args["outline"]) != "" || str(call.Args["command"]) == "")
-		if !looksLikeSkillScriptCommand(cmd) && !docxBuiltin && !pptxBuiltin {
-			// Invalid run args → harness returns needs_instruction; do not open an approval card for gibberish.
+		if !looksLikeSkillScriptCommand(cmd) {
 			return false
 		}
 		if sk != nil && boolFrom(sk["readOnly"]) {
@@ -241,15 +255,7 @@ func denySkillWriteInInvestigate() toolExecResult {
 }
 
 func (s *Server) resolveSkillForTool(ws string, t *registeredTool, skillID string) map[string]any {
-	sk := s.findWorkspaceSkill(ws, skillID, t.Name)
-	if sk == nil && isDocxSkillName(t.Name) {
-		s.Store.EnsureDocxSkillReady()
-		sk = s.findWorkspaceSkill(ws, skillID, t.Name)
-		if sk == nil {
-			sk = s.findWorkspaceSkill("w1", "sk-docx", "docx")
-		}
-	}
-	return sk
+	return s.findWorkspaceSkill(ws, skillID, t.Name)
 }
 
 // runSkillTool implements the Skill Harness: open / write / run / artifacts.
@@ -262,10 +268,6 @@ func (s *Server) runSkillTool(ctx toolRunContext, t *registeredTool, call toolCa
 
 	if action == "" {
 		if looksLikeSkillScriptCommand(cmd) {
-			action = skillActionRun
-		} else if isDocxSkillName(t.Name) && (str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "") {
-			action = skillActionRun
-		} else if isPptxSkillName(t.Name) && (str(call.Args["content"]) != "" || str(call.Args["title"]) != "" || str(call.Args["input"]) != "" || str(call.Args["outline"]) != "" || looksLikePptxGenerateRequest(ctx.UserMessage)) {
 			action = skillActionRun
 		} else {
 			action = skillActionOpen
@@ -288,8 +290,16 @@ func (s *Server) runSkillTool(ctx toolRunContext, t *registeredTool, call toolCa
 
 	sk := s.resolveSkillForTool(ws, t, skillID)
 	if sk == nil {
+		ms := int(time.Since(started).Milliseconds())
+		if isOfficeSkillName(t.Name) {
+			return toolExecResult{
+				Status: "failed", DurationMs: ms,
+				Error:  "office 技能未装配",
+				Output: fmt.Sprintf("当前工作区未装配「%s」技能，无法生成文档。请在数字员工能力中启用对应 skill 后重试。", t.Name),
+			}
+		}
 		return toolExecResult{
-			Status: "failed", DurationMs: int(time.Since(started).Milliseconds()),
+			Status: "failed", DurationMs: ms,
 			Error:  "技能不存在：" + t.Name,
 			Output: "未找到工作区内技能「" + t.Name + "」。请确认已装配并启用。",
 		}
@@ -354,8 +364,14 @@ func (s *Server) skillOpen(_ toolRunContext, t *registeredTool, sk map[string]an
 		for _, sc := range scripts {
 			b.WriteString("  - " + sc + "\n")
 		}
-	} else if isDocxSkillName(str(sk["name"])) {
-		b.WriteString("builtin entry: action=run with args.title + args.content → 生成 .docx\n")
+	} else if isOfficeSkillName(str(sk["name"])) {
+		b.WriteString("office skill：禁止 title+content 快捷生成；须 action=run command=scripts/...\n")
+		if isDocxSkillName(str(sk["name"])) {
+			b.WriteString("示例：bash scripts/docx.sh create --title T --spec-file spec.json --out out.docx\n")
+		}
+		if isPptxSkillName(str(sk["name"])) {
+			b.WriteString("示例：bash scripts/pptx.sh node scripts/build_from_outline.mjs --title T --outline-file O --out F.pptx\n")
+		}
 	} else {
 		b.WriteString("本包无 scripts：不可 run；仅可阅读说明。\n")
 	}
@@ -415,7 +431,7 @@ func (s *Server) skillWrite(sk map[string]any, call toolCallRequest, started tim
 		return toolExecResult{
 			Status: "failed", DurationMs: ms,
 			Error:  "正文不能是生成脚本",
-			Output: "Word 文档请使用 action=run 并传入 args.title 与人话正文 args.content，不要 write Python 脚本。",
+			Output: "Word 请通过 scripts/docx.sh 生成；可 write .copilot-ws/ 辅助脚本后再 run，勿 write .docx 或 Python 生成器。",
 		}
 	}
 	return toolExecResult{
@@ -470,73 +486,25 @@ func (s *Server) skillRun(ctx toolRunContext, t *registeredTool, sk map[string]a
 	if ctx.Viewer != nil && ctx.Viewer.Name != "" {
 		actor = ctx.Viewer.Name
 	}
-	title := coalesce(str(call.Args["title"]), coalesce(str(call.Args["filename"]), t.Name))
 	cmd := skillCommandFromArgs(call.Args)
 
 	track := func(ms int, ok bool, source string) {
+		if s.Store == nil {
+			return
+		}
 		s.recordSkillInvocationWithRequest(ctx.Request, ctx.WorkspaceID, sk, ms, ok, actor, source)
 		if ctx.DigitalEmployee != "" {
 			s.recordEmployeeRuntime(ctx.DigitalEmployee, ms, ok)
 		}
 	}
 
-	// Builtin docx entrypoint (L5: stays as documented entry, not a pattern for other skills)
-	if isDocxSkillName(t.Name) || isDocxSkillName(str(sk["name"])) {
+	officeName := coalesce(str(sk["name"]), t.Name)
+	if isOfficeSkillName(officeName) || isOfficeSkillName(t.Name) {
 		if !looksLikeSkillScriptCommand(cmd) {
-			title = normalizeDocxTitle(title)
-			if title == "生成文档" || title == t.Name || strings.EqualFold(title, "docx") {
-				if hint := inferDocxTitleFromMessage(ctx.UserMessage); hint != "" {
-					title = hint
-				} else {
-					title = "生成文档"
-				}
-			}
-			content := coalesce(str(call.Args["content"]), coalesce(str(call.Args["input"]), input))
-			return s.skillRunDocxBuiltin(ctx, sk, title, content, track, started)
-		}
-	}
-
-	// Builtin pptx: title + outline content → local .pptx (no script write required)
-	if isPptxSkillName(t.Name) || isPptxSkillName(str(sk["name"])) {
-		if !looksLikeSkillScriptCommand(cmd) {
-			title = normalizePptxTitle(title)
-			if title == "演示文稿" || title == t.Name || strings.EqualFold(title, "pptx") || strings.EqualFold(title, "ppt") {
-				if hint := inferPptxTitleFromMessage(ctx.UserMessage); hint != "" {
-					title = hint
-				}
-			}
-			content := coalesce(str(call.Args["content"]), coalesce(str(call.Args["input"]), coalesce(str(call.Args["outline"]), "")))
-			if content == "" && looksLikePptxGenerateRequest(ctx.UserMessage) {
-				content = defaultPptxOutlineForMessage(title, ctx.UserMessage)
-			}
-			if content != "" || looksLikePptxGenerateRequest(ctx.UserMessage) {
-				if content == "" {
-					content = defaultPptxOutlineForMessage(title, ctx.UserMessage)
-				}
-				return s.skillRunPptxBuiltin(ctx, sk, title, content, track, started)
-			}
-		}
-	}
-
-	// Builtin pdf: title + content → local .pdf
-	if isPdfSkillName(t.Name) || isPdfSkillName(str(sk["name"])) {
-		if !looksLikeSkillScriptCommand(cmd) {
-			title = normalizePdfTitle(title)
-			if title == "生成文档" || title == t.Name || strings.EqualFold(title, "pdf") {
-				if hint := inferDocxTitleFromMessage(ctx.UserMessage); hint != "" {
-					title = hint
-				}
-			}
-			content := coalesce(str(call.Args["content"]), coalesce(str(call.Args["input"]), input))
-			if content == "" && looksLikePdfGenerateRequest(ctx.UserMessage) {
-				content = defaultPdfBodyForMessage(title, ctx.UserMessage)
-			}
-			if content != "" || looksLikePdfGenerateRequest(ctx.UserMessage) {
-				if content == "" {
-					content = defaultPdfBodyForMessage(title, ctx.UserMessage)
-				}
-				return s.skillRunPdfBuiltin(ctx, sk, title, content, track, started)
-			}
+			ms := int(time.Since(started).Milliseconds())
+			track(ms, false, "Copilot · office 需脚本")
+			IncOfficeSkillScriptRequired()
+			return officeSkillNeedsScriptResult(officeName, sk, started)
 		}
 	}
 
@@ -581,6 +549,13 @@ func (s *Server) skillRun(ctx toolRunContext, t *registeredTool, sk map[string]a
 		return toolExecResult{Status: "failed", Error: "技能不存在", Output: "技能不存在", DurationMs: int(time.Since(started).Milliseconds())}
 	}
 	sk = sk2
+	if pf, ok := officeSkillRunPreflight(sk, cmd); !ok {
+		ms := int(time.Since(started).Milliseconds())
+		s.Store.Unlock()
+		s.recordSkillInvocationWithRequest(ctx.Request, ctx.WorkspaceID, sk, ms, false, actor, "Copilot · 预检失败")
+		pf.DurationMs = ms
+		return pf
+	}
 	dec := s.evaluateSkillSandboxPolicyLocked(ctx.WorkspaceID, skillID, cmd)
 	govPolicy := s.ensureSkillGovernanceLocked(skillID)
 	pkgPayload := skillPackagePayload(sk2)
@@ -649,178 +624,6 @@ func (s *Server) skillRun(ctx toolRunContext, t *registeredTool, sk map[string]a
 	return toolExecResult{
 		Status: status, DurationMs: ms, Output: truncateRunes(out, 4000),
 		Error: errMsg, SandboxID: "skill-runtime:" + skillID,
-	}
-}
-
-func (s *Server) skillRunDocxBuiltin(
-	ctx toolRunContext,
-	sk map[string]any,
-	title, content string,
-	track func(int, bool, string),
-	started time.Time,
-) toolExecResult {
-	id := ctx.Viewer
-	if id == nil {
-		return toolExecResult{Status: "denied", Permission: "auth", Error: "缺少身份", Output: "拒绝执行技能"}
-	}
-	skillID := str(sk["id"])
-	content = sanitizeDocxBody(content)
-	if content == "" {
-		ms := int(time.Since(started).Milliseconds())
-		return toolExecResult{
-			Status: "failed", DurationMs: ms,
-			Error:  "docx 正文无效",
-			Output: "请通过 skill:docx 传入文档正文（title + content），不要传入 Python 生成脚本。",
-		}
-	}
-	body := map[string]any{
-		"skillId": skillID, "input": content, "command": content,
-		"correlationId": ctx.CorrelationID,
-		"action":        "generate_docx",
-		"skillName":     "docx",
-		"title":         title,
-		"content":       content,
-		"timeoutSec":    60,
-	}
-	s.Store.Lock()
-	_, sk2 := s.findSkillLocked(ctx.WorkspaceID, skillID)
-	if sk2 == nil && str(sk["workspaceId"]) != "" {
-		_, sk2 = s.findSkillLocked(str(sk["workspaceId"]), skillID)
-	}
-	if sk2 == nil {
-		s.Store.Unlock()
-		filename, download, err := generateDocxArtifactLocal(title, content)
-		ms := int(time.Since(started).Milliseconds())
-		if err != nil {
-			return toolExecResult{Status: "failed", DurationMs: ms, Error: err.Error(), Output: "docx 生成失败：" + err.Error()}
-		}
-		return toolExecResult{
-			Status: "success", DurationMs: ms, SandboxID: "docx-local",
-			Output: formatDocxToolOutput(title, filename, download, false),
-		}
-	}
-	sk = sk2
-	dec := s.evaluateSkillSandboxPolicyLocked(ctx.WorkspaceID, skillID, content)
-	govPolicy := s.ensureSkillGovernanceLocked(skillID)
-	pkgPayload := skillPackagePayload(sk2)
-	if dec.Blocked {
-		ms := int(time.Since(started).Milliseconds())
-		s.Store.Unlock()
-		s.recordSkillInvocationWithRequest(ctx.Request, ctx.WorkspaceID, sk2, ms, false, "助手", "Copilot · 策略拦截")
-		return toolExecResult{
-			Status: "denied", Permission: "policy", Error: dec.Reason,
-			Output: "策略拦截：" + dec.Reason, DurationMs: ms,
-		}
-	}
-	s.Store.Unlock()
-
-	token := auth.MintRunToken(skillID, ctx.WorkspaceID, id.ID, 5*time.Minute)
-	body["runToken"] = token
-	body["denyControlPlane"] = true
-	body["allowedEgress"] = govPolicy["allowedEgress"]
-	if pkgPayload != nil {
-		for k, v := range pkgPayload {
-			body[k] = v
-		}
-	}
-	result, runtimeErr := s.callSkillRuntime(body)
-	ms := int(time.Since(started).Milliseconds())
-	if runtimeErr != nil {
-		filename, download, err := ensureDocxArtifactOnDisk(title, content, "")
-		if err == nil {
-			track(ms, true, "Copilot · docx 本地回退")
-			return toolExecResult{
-				Status: "success", DurationMs: ms, SandboxID: "docx-local-fallback",
-				Output: formatDocxToolOutput(title, filename, download, true),
-			}
-		}
-		track(ms, false, "Copilot · docx 失败")
-		return toolExecResult{
-			Status: "failed", DurationMs: ms,
-			Error:  fmt.Sprintf("docx 运行时失败：%v；本地回退：%v", runtimeErr, err),
-			Output: "skill:docx 调用失败：" + runtimeErr.Error(),
-		}
-	}
-	preferred := coalesce(str(result["filename"]), strings.TrimPrefix(str(result["downloadPath"]), "/api/skill-artifacts/"))
-	localFallback := false
-	if ok, isBool := result["ok"].(bool); isBool && !ok {
-		preferred = ""
-	}
-	if preferred == "" || !skillArtifactExists(preferred) {
-		localFallback = true
-	}
-	filename, download, err := ensureDocxArtifactOnDisk(title, content, preferred)
-	if err != nil {
-		track(ms, false, "Copilot · docx 落盘失败")
-		return toolExecResult{
-			Status: "failed", DurationMs: ms,
-			Error:  err.Error(),
-			Output: "docx 生成失败：" + err.Error(),
-		}
-	}
-	displayTitle := coalesce(str(result["title"]), title)
-	out := formatDocxToolOutput(displayTitle, filename, download, localFallback)
-	status := "success"
-	if ok, isBool := result["ok"].(bool); isBool && !ok && !localFallback {
-		status = "failed"
-	}
-	track(ms, status == "success", "Copilot · docx entry")
-	return toolExecResult{Status: status, DurationMs: ms, Output: truncateRunes(out, 2000), SandboxID: "skill-runtime:" + skillID}
-}
-
-func (s *Server) skillRunPptxBuiltin(
-	ctx toolRunContext,
-	sk map[string]any,
-	title, content string,
-	track func(int, bool, string),
-	started time.Time,
-) toolExecResult {
-	_ = ctx
-	_ = sk
-	if strings.TrimSpace(content) == "" {
-		content = defaultPptxOutlineForMessage(title, "")
-	}
-	filename, download, err := generatePptxArtifactLocal(title, content)
-	ms := int(time.Since(started).Milliseconds())
-	if err != nil {
-		track(ms, false, "Copilot · pptx 失败")
-		return toolExecResult{
-			Status: "failed", DurationMs: ms, Error: err.Error(),
-			Output: "PPT 生成失败：" + err.Error(),
-		}
-	}
-	track(ms, true, "Copilot · pptx entry")
-	return toolExecResult{
-		Status: "success", DurationMs: ms, SandboxID: "pptx-local",
-		Output: formatPptxToolOutput(title, filename, download, false),
-	}
-}
-
-func (s *Server) skillRunPdfBuiltin(
-	ctx toolRunContext,
-	sk map[string]any,
-	title, content string,
-	track func(int, bool, string),
-	started time.Time,
-) toolExecResult {
-	_ = ctx
-	_ = sk
-	if strings.TrimSpace(content) == "" {
-		content = defaultPdfBodyForMessage(title, "")
-	}
-	filename, download, err := generatePdfArtifactLocal(title, content)
-	ms := int(time.Since(started).Milliseconds())
-	if err != nil {
-		track(ms, false, "Copilot · pdf 失败")
-		return toolExecResult{
-			Status: "failed", DurationMs: ms, Error: err.Error(),
-			Output: "PDF 生成失败：" + err.Error(),
-		}
-	}
-	track(ms, true, "Copilot · pdf entry")
-	return toolExecResult{
-		Status: "success", DurationMs: ms, SandboxID: "pdf-local",
-		Output: formatPdfToolOutput(title, filename, download, false),
 	}
 }
 

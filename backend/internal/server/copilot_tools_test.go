@@ -123,7 +123,7 @@ func TestToolRegistryPrompt_IncludesDocxGuidance(t *testing.T) {
 		{Key: "skill:docx", Name: "docx", Kind: "skill", Enabled: true, Description: "word"},
 	}
 	p := toolRegistryPrompt(reg)
-	if !strings.Contains(p, "【Word / docx】") || !strings.Contains(p, "完整可落盘正文") {
+	if !strings.Contains(p, "【Word / docx】") || !strings.Contains(p, "scripts/docx.sh") || !strings.Contains(p, "禁止仅传 title+content") {
 		t.Fatalf("missing docx guidance: %s", p)
 	}
 }

@@ -65,12 +65,14 @@ function step(
   kind: ReasoningStep['kind'],
   title: string,
   detail?: string,
+  phase?: string,
 ): ReasoningStep {
   return {
     id: uid(),
     kind,
     title,
     detail: detail?.trim() || undefined,
+    phase,
     startedAt: new Date().toISOString(),
   };
 }
@@ -100,6 +102,7 @@ function fromExplicitThought(data: ThoughtEventLike): ReasoningStep | null {
   if (data.frameworkLabel) base.frameworkLabel = data.frameworkLabel;
   if (data.mode && (data.framework || data.phases || kind === 'framework')) base.cognitiveMode = data.mode;
   if (data.phase) base.phase = data.phase;
+  if (data.phaseStep) base.phaseStep = data.phaseStep;
   if (Array.isArray(data.phases) && data.phases.length) base.phases = data.phases.map(String);
   if (data.role) base.role = data.role;
   if (typeof data.confidence === 'number') base.confidence = data.confidence;
@@ -160,7 +163,7 @@ function mapStageThought(data: ThoughtEventLike): ReasoningStep | null {
   }
   if (stage === 'react' || stage === 'execute') {
     if (status === 'ok' && data.action === 'final') {
-      return step('finalize', '准备输出回复');
+      return step('finalize', '准备输出回复', undefined, 'plan');
     }
     return null;
   }
@@ -171,21 +174,21 @@ function mapStageThought(data: ThoughtEventLike): ReasoningStep | null {
       ? data.hitCount
       : (Array.isArray(data.provenance) ? data.provenance.length : 0);
     if (status === 'degraded') {
-      return step('search', '记忆读取受限', data.warning || '已降级继续');
+      return step('search', '记忆读取受限', data.warning || '已降级继续', 'understand');
     }
     if (n <= 0) return null;
     const titles = provenanceTitles(data.provenance);
-    return step('search', `参考了 ${n} 条相关记忆`, titles || undefined);
+    return step('search', `参考了 ${n} 条相关记忆`, titles || undefined, 'understand');
   }
 
   if (stage === 'rag') {
     if (status === 'running') return null;
     const n = typeof data.hitCount === 'number' ? data.hitCount : 0;
     if (status === 'degraded') {
-      return step('search', '知识检索受限', data.warning || '已降级继续');
+      return step('search', '知识检索受限', data.warning || '已降级继续', 'understand');
     }
     if (n <= 0) return null;
-    return step('search', `检索到 ${n} 条已发布知识`);
+    return step('search', `检索到 ${n} 条已发布知识`, undefined, 'understand');
   }
 
   return null;
@@ -200,6 +203,7 @@ function mapPlanThought(data: ThoughtEventLike): ReasoningStep | null {
       'plan',
       goal ? `计划：${goal}` : '已拟定执行计划',
       count > 0 ? `共 ${count} 步` : undefined,
+      'plan',
     );
   }
   if (status === 'step_running') {
@@ -207,13 +211,13 @@ function mapPlanThought(data: ThoughtEventLike): ReasoningStep | null {
     const idx = data.index;
     const total = data.total;
     const prefix = idx != null && total != null ? `第 ${idx}/${total} 步` : '执行计划步骤';
-    return step('plan', title ? `${prefix}：${title}` : prefix);
+    return step('plan', title ? `${prefix}：${title}` : prefix, undefined, 'plan');
   }
   if (status === 'completed') {
-    return step('finalize', '计划步骤已完成');
+    return step('finalize', '计划步骤已完成', undefined, 'plan');
   }
   if (status === 'failed') {
-    return step('analyze', '计划执行遇到问题', data.error || data.reason);
+    return step('analyze', '计划执行遇到问题', data.error || data.reason, 'plan');
   }
   return null;
 }
@@ -225,7 +229,7 @@ function mapReflectThought(data: ThoughtEventLike): ReasoningStep | null {
     return null;
   }
   if (status === 'failed') {
-    return step('reflect', '质量复核未完成', data.error);
+    return step('reflect', '质量复核未完成', data.error, 'reflect');
   }
   return null;
 }
@@ -235,19 +239,19 @@ function mapAgentThought(data: ThoughtEventLike): ReasoningStep | null {
   const name = data.name || data.employeeId || '专家';
   if (status === 'supervising') {
     const n = Array.isArray(data.specialists) ? data.specialists.length : 0;
-    return step('analyze', n > 0 ? `协调 ${n} 位专家会商` : '协调多位专家');
+    return step('analyze', n > 0 ? `协调 ${n} 位专家会商` : '协调多位专家', undefined, 'plan');
   }
   if (status === 'delegating') {
-    return step('plan', `请 ${name} 协助`, data.task || data.preview);
+    return step('plan', `请 ${name} 协助`, data.task || data.preview, 'plan');
   }
   if (status === 'delegated') {
-    return step('analyze', `已收到 ${name} 的结果`, data.preview || data.department);
+    return step('analyze', `已收到 ${name} 的结果`, data.preview || data.department, 'execute');
   }
   if (status === 'completed') {
-    return step('finalize', '多专家会商完成');
+    return step('finalize', '多专家会商完成', undefined, 'plan');
   }
   if (status === 'fallback') {
-    return step('analyze', '暂无可用子专家，改为自行处理', data.reason);
+    return step('analyze', '暂无可用子专家，改为自行处理', data.reason, 'plan');
   }
   return null;
 }

@@ -5271,9 +5271,9 @@ export async function mockHandler(path: string, opts: { method?: string; body?: 
     const impact = mockSkillImpacts[id] ?? { skillId: id, agents: [], workflows: [], activeRuns: 0, uninstallAllowed: true };
     if (action === 'impact' && method === 'GET') return impact;
     if (action === 'uninstall' && method === 'POST') {
-      if (!impact.uninstallAllowed && !body.force) throw new Error(`E_SKILL_IN_USE: ${impact.reason}`);
-      if (!impact.uninstallAllowed && !body.approvalTicket) throw new Error('E_APPROVAL_REQUIRED: 强制卸载必须提供审批单号');
-      mockSkills.splice(mockSkills.indexOf(skill), 1); delete mockSkillPermissions[id]; delete mockSkillRuntime[id]; appendControlPlaneAudit('skill', body.force ? '强制卸载技能' : '卸载技能', skill.name); return { id, status: 'uninstalled', impact };
+      if ((impact.activeRuns ?? 0) > 0 && !body.force) throw new Error(`E_SKILL_IN_USE: ${impact.reason}`);
+      if ((impact.activeRuns ?? 0) > 0 && !body.approvalTicket) throw new Error('E_APPROVAL_REQUIRED: 强制卸载必须提供审批单号');
+      mockSkills.splice(mockSkills.indexOf(skill), 1); delete mockSkillPermissions[id]; delete mockSkillRuntime[id]; appendControlPlaneAudit('skill', (!impact.uninstallAllowed || body.force) ? '强制卸载技能' : '卸载技能', skill.name); return { id, status: 'uninstalled', impact };
     }
     if (action === 'lifecycle' && method === 'PATCH') { const next = body.lifecycleStatus; if (!['enabled', 'disabled', 'pending_approval', 'quarantined', 'deprecated'].includes(next)) throw new Error('不支持的技能生命周期状态'); skill.lifecycleStatus = next; Object.assign(mockSkills.find((item) => item.id === id)!, skill); appendControlPlaneAudit('skill', `更新技能状态为 ${next}`, skill.name); return skill; }
     if (action === 'governance' && method === 'GET') return skillGovernance(id);
