@@ -549,7 +549,7 @@ func (s *Server) skillRun(ctx toolRunContext, t *registeredTool, sk map[string]a
 		return toolExecResult{Status: "failed", Error: "技能不存在", Output: "技能不存在", DurationMs: int(time.Since(started).Milliseconds())}
 	}
 	sk = sk2
-	if pf, ok := officeSkillRunPreflight(sk, cmd); !ok {
+	if pf, ok := officeSkillRunPreflight(sk, cmd, ctx.UserMessage); !ok {
 		ms := int(time.Since(started).Milliseconds())
 		s.Store.Unlock()
 		s.recordSkillInvocationWithRequest(ctx.Request, ctx.WorkspaceID, sk, ms, false, actor, "Copilot · 预检失败")

@@ -94,6 +94,37 @@ func inferOfficeOutline(tool *registeredTool, userMessage string) string {
 	return ""
 }
 
+// rescueMissingOfficeDep tries to materialize a missing .copilot-ws/<dep> from user intent.
+// Returns true when the file is successfully written so the preflight loop can re-check.
+//
+// Why: bash calls (and the LLM's first bash in a Skill Turn) can race the write_file
+// step. Without this rescue, preflight rejects the run with "缺依赖文件" even though
+// the agent clearly meant to generate a real outline. Better to materialize one from
+// intent and let quality gates still reject the stub if it's too thin.
+//
+// Caveat: this only fires for office skills. Other skills don't have outline inference.
+func rescueMissingOfficeDep(sk map[string]any, pkgPath, dep, name, userMessage string) bool {
+	if userMessage == "" {
+		return false
+	}
+	if !strings.HasPrefix(dep, ".copilot-ws/") {
+		return false
+	}
+	tool := &registeredTool{Name: name, Kind: "skill", Key: "skill:" + slugToolName(name)}
+	content := inferOfficeOutline(tool, userMessage)
+	if content == "" {
+		return false
+	}
+	full := filepath.Join(pkgPath, filepath.FromSlash(dep))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		return false
+	}
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		return false
+	}
+	return true
+}
+
 func planWritesPath(plan map[string]any, dep string) bool {
 	dep = normalizeCopilotWSPath(dep)
 	if dep == "" {
@@ -283,7 +314,12 @@ func containsAnyKeyword(body string, keywords []string) (matched string, ok bool
 // officeSkillRunPreflight validates package and run dependencies before sandbox execution.
 // Beyond file existence, it now checks content quality (min sections / chars) to refuse
 // fabricated placeholders and trivially-thin outlines.
-func officeSkillRunPreflight(sk map[string]any, cmd string) (fail toolExecResult, ok bool) {
+//
+// userMessage: when a missing dep can be auto-rescued by inferring an outline from
+// user intent, preflight will write it on the spot and re-check rather than failing.
+// Empty userMessage skips the rescue (callers that don't have conversation context
+// pass "" and preflight falls back to the original "缺依赖文件" refusal).
+func officeSkillRunPreflight(sk map[string]any, cmd, userMessage string) (fail toolExecResult, ok bool) {
 	if sk == nil {
 		return toolExecResult{}, true
 	}
@@ -316,6 +352,17 @@ func officeSkillRunPreflight(sk map[string]any, cmd string) (fail toolExecResult
 		full := filepath.Join(pkgPath, filepath.FromSlash(dep))
 		st, err := os.Stat(full)
 		if err != nil {
+			// P0 rescue: if the missing dep is a .copilot-ws outline and we can infer
+			// one from user intent, write it on the spot and re-check instead of failing.
+			// Why: the React loop can dispatch `bash scripts/...sh --outline-file ...md`
+			// before the agent has emitted its own write_file call. Without this rescue,
+			// the user sees a red "缺依赖文件" step (screenshot of the latest audit).
+			if rescueOK := rescueMissingOfficeDep(sk, pkgPath, dep, name, userMessage); rescueOK {
+				st, err = os.Stat(full)
+				if err == nil {
+					goto haveFile
+				}
+			}
 			IncOfficeSkillPreflightFailed()
 			msg := fmt.Sprintf("缺少依赖文件 %s（须先 action=write 写入或等待 Skill Turn write 步骤完成）", dep)
 			return toolExecResult{
@@ -323,6 +370,7 @@ func officeSkillRunPreflight(sk map[string]any, cmd string) (fail toolExecResult
 				Output: "【预检失败】" + msg,
 			}, false
 		}
+	haveFile:
 		if minSec == 0 && minChars == 0 {
 			continue
 		}

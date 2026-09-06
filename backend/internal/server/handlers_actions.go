@@ -329,7 +329,7 @@ func (s *Server) executeAction(r *http.Request) (any, error) {
 		if stepAction == skillActionRun {
 			cmd := skillCommandFromArgs(stepArgs)
 			sk := s.resolveSkillForTool(ws, tool, coalesce(str(stepArgs["skillId"]), str(args["skillId"])))
-			if pf, ok := officeSkillRunPreflight(sk, cmd); !ok {
+			if pf, ok := officeSkillRunPreflight(sk, cmd, runCtx.UserMessage); !ok {
 				if plan != nil {
 					markSkillTurnStep(plan, stepID, pf.Status, pf.Output)
 				}

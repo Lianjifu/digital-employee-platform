@@ -48,7 +48,7 @@ func TestBuildSkillTurnPlanRunInjectsWrite(t *testing.T) {
 func TestOfficeSkillRunPreflightMissingPackage(t *testing.T) {
 	pf, ok := officeSkillRunPreflight(map[string]any{
 		"name": "pptx", "packagePath": "",
-	}, "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/a.md --out .copilot-ws/b.pptx")
+	}, "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/a.md --out .copilot-ws/b.pptx", "")
 	if ok || pf.Status != "failed" {
 		t.Fatalf("expected package missing fail, ok=%v pf=%+v", ok, pf)
 	}
@@ -61,7 +61,7 @@ func TestOfficeSkillRunPreflightMissingDep(t *testing.T) {
 	}
 	pf, ok := officeSkillRunPreflight(map[string]any{
 		"name": "pptx", "packagePath": dir,
-	}, "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/missing.md --out .copilot-ws/out.pptx")
+	}, "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/missing.md --out .copilot-ws/out.pptx", "")
 	if ok || pf.Status != "failed" {
 		t.Fatalf("expected dep missing fail, ok=%v pf=%+v", ok, pf)
 	}
@@ -80,7 +80,7 @@ func TestOfficeSkillRunPreflightPass(t *testing.T) {
 	}
 	pf, ok := officeSkillRunPreflight(map[string]any{
 		"name": "pptx", "packagePath": dir,
-	}, "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/ok.md --out .copilot-ws/out.pptx")
+	}, "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/ok.md --out .copilot-ws/out.pptx", "")
 	if !ok || pf.Status != "" {
 		t.Fatalf("expected pass, ok=%v pf=%+v", ok, pf)
 	}
@@ -100,7 +100,7 @@ func TestOfficeSkillRunPreflightRejectsThin(t *testing.T) {
 	}
 	pf, ok := officeSkillRunPreflight(map[string]any{
 		"name": "pptx", "packagePath": dir,
-	}, "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/thin.md --out .copilot-ws/out.pptx")
+	}, "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/thin.md --out .copilot-ws/out.pptx", "")
 	if ok || pf.Status != "failed" {
 		t.Fatalf("expected fail on thin content, ok=%v pf=%+v", ok, pf)
 	}
@@ -159,7 +159,7 @@ func TestOfficeSkillRunPreflightRejectsPlaceholders(t *testing.T) {
 	}
 	pf, ok := officeSkillRunPreflight(map[string]any{
 		"name": "pptx", "packagePath": dir,
-	}, "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/ph.md --out .copilot-ws/out.pptx")
+	}, "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/ph.md --out .copilot-ws/out.pptx", "")
 	if ok || pf.Status != "failed" {
 		t.Fatalf("expected placeholder rejection, ok=%v pf=%+v", ok, pf)
 	}
@@ -199,7 +199,7 @@ func TestOfficeSkillRunPreflightRejectsGenericTemplate(t *testing.T) {
 	}
 	pf, ok := officeSkillRunPreflight(map[string]any{
 		"name": "docx", "packagePath": dir,
-	}, "bash scripts/docx.sh create --spec .copilot-ws/generic.md --out .copilot-ws/out.docx")
+	}, "bash scripts/docx.sh create --spec .copilot-ws/generic.md --out .copilot-ws/out.docx", "")
 	if ok || pf.Status != "failed" {
 		t.Fatalf("expected keyword-floor rejection, ok=%v pf=%+v", ok, pf)
 	}
@@ -253,12 +253,59 @@ func TestOfficeSkillRunPreflightSurfaceClarifyingQuestions(t *testing.T) {
 	}
 	pf, ok := officeSkillRunPreflight(map[string]any{
 		"name": "docx", "packagePath": dir,
-	}, "bash scripts/docx.sh create --spec .copilot-ws/qa.md --out .copilot-ws/out.docx")
+	}, "bash scripts/docx.sh create --spec .copilot-ws/qa.md --out .copilot-ws/out.docx", "")
 	if ok || pf.Status != "failed" {
 		t.Fatalf("expected fail, ok=%v pf=%+v", ok, pf)
 	}
 	if !strings.Contains(pf.Output, "向用户追问") {
 		t.Fatalf("expected clarifying questions in output, got: %s", pf.Output)
+	}
+}
+
+// TestOfficeSkillRunPreflightRescuesMissingDepWithUserIntent guards the latest
+// audit regression: when bash fires before the LLM's own write_file step lands,
+// preflight must auto-materialize the missing outline from user intent and let
+// the run proceed. Without this rescue, the user sees "缺依赖文件" even when the
+// agent clearly meant to write a real outline.
+func TestOfficeSkillRunPreflightRescuesMissingDepWithUserIntent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".copilot-ws"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// outline missing, but we provide a rich user intent → rescue should write it.
+	pf, ok := officeSkillRunPreflight(map[string]any{
+		"name": "pptx", "packagePath": dir,
+	}, "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/q3.md --out .copilot-ws/q3.pptx",
+		"输出 Q3 研发季度汇报 PPT")
+	if !ok {
+		t.Fatalf("expected rescue to write outline and pass, got pf=%+v", pf)
+	}
+	// Verify the file was actually written.
+	got, err := os.ReadFile(filepath.Join(dir, ".copilot-ws", "q3.md"))
+	if err != nil {
+		t.Fatalf("rescue did not write outline: %v", err)
+	}
+	if !strings.Contains(string(got), "#") {
+		t.Fatalf("rescued outline looks empty: %s", got)
+	}
+}
+
+// TestOfficeSkillRunPreflightStillRejectsWithoutUserIntent: rescue is opt-in via
+// userMessage. With empty userMessage, the existing "缺依赖文件" failure path is
+// preserved so callers without conversation context don't accidentally fabricate stubs.
+func TestOfficeSkillRunPreflightStillRejectsWithoutUserIntent(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".copilot-ws"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pf, ok := officeSkillRunPreflight(map[string]any{
+		"name": "pptx", "packagePath": dir,
+	}, "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/missing.md --out .copilot-ws/out.pptx", "")
+	if ok || pf.Status != "failed" {
+		t.Fatalf("expected fail without user intent, ok=%v pf=%+v", ok, pf)
+	}
+	if !strings.Contains(pf.Output, "缺少依赖文件") {
+		t.Fatalf("expected 缺少依赖文件 message, got: %s", pf.Output)
 	}
 }
 
