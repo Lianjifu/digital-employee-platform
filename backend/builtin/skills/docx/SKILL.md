@@ -21,6 +21,10 @@ Do not claim a file was generated until the observation includes an `/api/skill-
 
 Treat a Word document as both structured content and a paginated visual artifact. Use the bundled CLI for deterministic package operations, follow the task-specific guidance below, and do not deliver a mutated DOCX until the latest structural and visual checks pass.
 
+## Content rules
+
+- **禁止输出占位符**（`____`、`[待填]`、`{{...}}`、纯冒号空字段）；每个 H2 必须紧跟 2-3 句实际描述。若用户消息没有具体数据（岗位名称、薪资范围、流程节点等），先追问关键事实再生成。
+
 ## Resolve and invoke the skill
 
 Resolve the directory containing this `SKILL.md` as `DOCX_SKILL_ROOT`. Common locations are:

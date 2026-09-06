@@ -88,10 +88,53 @@ export function stripExecutionTechnicalNoise(execution: string): string {
  * User-facing bubble text: hide pending-auth boilerplate and raw execution logs when possible.
  */
 const TOOL_BLOCK_RE = /<<<TOOL>>>[\s\S]*?<<<END>>>/g;
-const XML_TOOL_BLOCK_RE = /<[a-zA-Z][\w.:-]*>[\s\S]*?<\/[a-zA-Z][\w.:-]*>/g;
+const XML_TOOL_BLOCK_RE = /<(TOOL|tool_call|invoke|skill_read|skill\.read)>([\s\S]*?)<\/\1>/gi;
+
+function summarizeToolTag(tag: string, inner: string): string {
+  const body = inner.trim();
+  // try to extract a tool name and a short signature from the inner content.
+  const firstLine = body.split('\n', 1)[0]?.trim() ?? '';
+  // detect common tool names from inner text
+  let label = tag.toLowerCase();
+  if (firstLine) {
+    try {
+      const parsed = JSON.parse(firstLine);
+      if (parsed && typeof parsed === 'object') {
+        const name = (parsed as { name?: unknown }).name;
+        const skill = (parsed as { skill?: unknown }).skill;
+        const action = (parsed as { action?: unknown }).action;
+        if (typeof name === 'string') label = name;
+        else if (typeof skill === 'string') label = skill;
+        else if (typeof action === 'string') label = action;
+      }
+    } catch {
+      // not JSON — fall back to the tag
+    }
+  }
+  const bytes = new TextEncoder().encode(body).length;
+  const sizeLabel = bytes > 1024 ? `${(bytes / 1024).toFixed(1)}KB` : `${bytes}B`;
+  return `【工具调用 · ${label} · ${sizeLabel}】`;
+}
+
+/**
+ * Collapses raw tool markup into short human-readable summaries that are safe to
+ * render in the chat bubble. Tool blocks were previously stripped silently, which
+ * left users with no signal that the agent made a tool call. Now each block becomes
+ * a one-line badge so users can see what the agent did without scrolling 1.7KB of args.
+ */
+function collapseToolMarkup(content: string): string {
+  let out = content.replace(TOOL_BLOCK_RE, (match) => {
+    const inner = match.replace(/^<<<TOOL>>>/, '').replace(/<<<END>>>$/, '');
+    return summarizeToolTag('TOOL', inner);
+  });
+  out = out.replace(XML_TOOL_BLOCK_RE, (_match, tag: string, inner: string) => {
+    return summarizeToolTag(tag, inner);
+  });
+  return out.replace(/\n{3,}/g, '\n\n').trim();
+}
 
 function stripLeakedToolMarkup(content: string): string {
-  return content.replace(TOOL_BLOCK_RE, '').replace(XML_TOOL_BLOCK_RE, '').trim();
+  return collapseToolMarkup(content);
 }
 
 export function formatAssistantDisplayContent(content: string, hasArtifacts: boolean): string {

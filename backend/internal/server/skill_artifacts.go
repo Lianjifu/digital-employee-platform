@@ -908,9 +908,12 @@ func defaultPptxOutlineForMessage(title, userMsg string) string {
 	t := coalesce(normalizePptxTitle(title), "演示文稿")
 	if strings.Contains(userMsg, "季度考评") || strings.Contains(userMsg, "季度考核") {
 		return fmt.Sprintf(`# %s汇报
-汇报人：___________
-考评周期：____年 第__季度
-汇报日期：____年__月__日
+
+【指令】禁止使用占位符；每个 H2 必须给出 2-3 句实际描述，不要照抄通用模板。
+
+汇报人：（请填写）
+考评周期：（请填写）年第（请填写）季度
+汇报日期：（请填写）年（请填写）月（请填写）日
 
 ## 目录
 - 一、团队概况
@@ -923,14 +926,14 @@ func defaultPptxOutlineForMessage(title, userMsg string) string {
 - 八、总结
 
 ## 一、团队概况
-- 团队人数：______ 人
-- 本季度入职 / 离职：______ / ______
-- 核心成员变动：____________
+- 团队人数：（请填写）人
+- 本季度入职 / 离职：（请填写）/（请填写）
+- 核心成员变动：（请填写）
 
 ## 二、KPI 指标总览
-- 指标1：目标 ____ / 实际 ____ / 完成率 __%%
-- 指标2：目标 ____ / 实际 ____ / 完成率 __%%
-- 综合完成率：__%%
+- 指标1：目标（请填写）/ 实际（请填写）/ 完成率（请填写）%%
+- 指标2：目标（请填写）/ 实际（请填写）/ 完成率（请填写）%%
+- 综合完成率：（请填写）%%
 
 ## 三、KPI 达成分析
 - 已达成指标与关键动作
@@ -958,8 +961,11 @@ func defaultPptxOutlineForMessage(title, userMsg string) string {
 - 需决策 / 需支持事项`, t)
 	}
 	return fmt.Sprintf(`# %s
+
+【指令】禁止使用占位符；每个 H2 必须给出 2-3 句实际描述。
+
 副标题：业务汇报材料
-汇报人 / 日期：___________ / ____年__月__日
+汇报人 / 日期：（请填写）/（请填写）年（请填写）月（请填写）日
 
 ## 目录
 - 背景与目标
@@ -1314,6 +1320,8 @@ func defaultDocxOutlineForMessage(title, userMsg string) string {
 	if strings.Contains(userMsg, "招聘") {
 		return fmt.Sprintf(`# %s
 
+【指令】禁止使用占位符；每个 H2 必须给出 2-3 句实际描述，不要照抄通用模板。
+
 ## 一、岗位基本信息
 - 岗位名称：
 - 所属部门：
@@ -1340,6 +1348,8 @@ func defaultDocxOutlineForMessage(title, userMsg string) string {
 	if strings.Contains(userMsg, "岗位说明") {
 		return fmt.Sprintf(`# %s
 
+【指令】禁止使用占位符；每个 H2 必须给出 2-3 句实际描述。
+
 ## 一、岗位标识
 - 岗位名称：
 - 所属部门：
@@ -1363,6 +1373,8 @@ func defaultDocxOutlineForMessage(title, userMsg string) string {
 - 晋升方向：`, t)
 	}
 	return fmt.Sprintf(`# %s
+
+【指令】禁止使用占位符；每个 H2 必须给出 2-3 句实际描述。
 
 ## 一、概述
 - 背景说明：
@@ -1389,12 +1401,14 @@ func defaultXlsxOutlineForMessage(title, userMsg string) string {
 	if strings.Contains(userMsg, "预算") {
 		return fmt.Sprintf(`# %s
 
+【指令】禁止使用占位符；每个 H2 必须给出 2-3 句实际描述。
+
 | 项目 | 类别 | 金额（元） | 负责人 | 备注 |
 | --- | --- | --- | --- | --- |
-| 收入预算 | 主营收入 | | | |
-| 成本预算 | 人力成本 | | | |
-| 成本预算 | 运营成本 | | | |
-| 利润预算 | 净利润 | | | |
+| 收入预算 | 主营收入 |  |  |  |
+| 成本预算 | 人力成本 |  |  |  |
+| 成本预算 | 运营成本 |  |  |  |
+| 利润预算 | 净利润 |  |  |  |
 
 ## 说明
 - 数据周期：
@@ -1404,9 +1418,11 @@ func defaultXlsxOutlineForMessage(title, userMsg string) string {
 	if strings.Contains(userMsg, "考勤") {
 		return fmt.Sprintf(`# %s
 
+【指令】禁止使用占位符；每个 H2 必须给出 2-3 句实际描述。
+
 | 员工 | 部门 | 出勤天数 | 迟到 | 早退 | 请假 | 加班 |
 | --- | --- | --- | --- | --- | --- | --- |
-| | | | | | | |
+|  |  |  |  |  |  |  |
 
 ## 说明
 - 统计周期：
@@ -1414,11 +1430,13 @@ func defaultXlsxOutlineForMessage(title, userMsg string) string {
 	}
 	return fmt.Sprintf(`# %s
 
+【指令】禁止使用占位符；每个 H2 必须给出 2-3 句实际描述。
+
 | 序号 | 名称 | 分类 | 数量 | 单位 | 备注 |
 | --- | --- | --- | --- | --- | --- |
-| 1 | | | | | |
-| 2 | | | | | |
-| 3 | | | | | |
+| 1 |  |  |  |  |  |
+| 2 |  |  |  |  |  |
+| 3 |  |  |  |  |  |
 
 ## 说明
 - 数据来源：

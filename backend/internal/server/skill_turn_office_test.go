@@ -117,3 +117,168 @@ func TestInferOfficeOutlinePptx(t *testing.T) {
 		t.Fatalf("expected H1 title, got: %s", out)
 	}
 }
+
+// TestOfficeSkillRunPreflightRejectsPlaceholders guards the "fill-in-the-blanks outline"
+// regression — a long outline stuffed with _____ / [待填] must fail preflight instead of
+// producing a useless fill-in-form PPT.
+func TestOfficeSkillRunPreflightRejectsPlaceholders(t *testing.T) {
+	dir := t.TempDir()
+	outline := filepath.Join(dir, ".copilot-ws", "ph.md")
+	if err := os.MkdirAll(filepath.Dir(outline), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The exact shape from the user-reported failure: many sections, all fill-in placeholders.
+	body := strings.Join([]string{
+		"# 季度汇报",
+		"",
+		"## 一、季度目标",
+		"- 核心目标：____",
+		"- 指标1：____",
+		"- 指标2：____",
+		"- 责任人：____",
+		"- 完成情况：____",
+		"- 后续动作：____",
+		"",
+		"## 二、项目进展",
+		"- 项目A：____",
+		"- 项目B：____",
+		"- 项目C：____",
+		"- 项目D：____",
+		"- 项目E：____",
+		"",
+		"## 三、风险与计划",
+		"- 风险1：____",
+		"- 风险2：____",
+		"- 下季度计划：____",
+		"- 资源需求：____",
+		"- 协同诉求：____",
+		"",
+	}, "\n")
+	if err := os.WriteFile(outline, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pf, ok := officeSkillRunPreflight(map[string]any{
+		"name": "pptx", "packagePath": dir,
+	}, "bash scripts/pptx.sh node scripts/build_from_outline.mjs --outline-file .copilot-ws/ph.md --out .copilot-ws/out.pptx")
+	if ok || pf.Status != "failed" {
+		t.Fatalf("expected placeholder rejection, ok=%v pf=%+v", ok, pf)
+	}
+	if !strings.Contains(pf.Error, "占位符") && !strings.Contains(pf.Output, "占位符") {
+		t.Fatalf("expected 占位符 message, got err=%q out=%q", pf.Error, pf.Output)
+	}
+}
+
+// TestOfficeSkillRunPreflightRejectsGenericTemplate guards the "long outline but no
+// actual topic markers" regression — sections exist and chars are enough, but the body
+// says nothing about the user's actual topic. Keyword floor must refuse.
+func TestOfficeSkillRunPreflightRejectsGenericTemplate(t *testing.T) {
+	dir := t.TempDir()
+	outline := filepath.Join(dir, ".copilot-ws", "generic.md")
+	if err := os.MkdirAll(filepath.Dir(outline), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Multi-section, ≥200 chars, no fill-in tokens — but completely generic filler text.
+	body := strings.Join([]string{
+		"# 通用材料",
+		"",
+		"## 一、开篇引言",
+		"本节以背景介绍为主，辅以概要陈述，并在段落中适当延展，确保整体覆盖典型读者所关心的面。",
+		"",
+		"## 二、核心叙事",
+		"围绕主题逐层展开，论述三个分论点，承接上一节的过渡，并在段落结尾处给出小结。",
+		"",
+		"## 三、场景刻画",
+		"对若干典型场景进行还原，给出具体可见的细节，并在每段后增加总结句，便于把握重点。",
+		"",
+		"## 四、后续落点",
+		"收束全文，提示下一阶段值得关注的内容，呼应开篇所述，并提示读者留意正文之外的边界。",
+		"",
+	}, "\n")
+	if err := os.WriteFile(outline, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pf, ok := officeSkillRunPreflight(map[string]any{
+		"name": "docx", "packagePath": dir,
+	}, "bash scripts/docx.sh create --spec .copilot-ws/generic.md --out .copilot-ws/out.docx")
+	if ok || pf.Status != "failed" {
+		t.Fatalf("expected keyword-floor rejection, ok=%v pf=%+v", ok, pf)
+	}
+	if !strings.Contains(pf.Error, "关键词") && !strings.Contains(pf.Output, "关键词") {
+		t.Fatalf("expected 关键词 message, got err=%q out=%q", pf.Error, pf.Output)
+	}
+}
+
+// TestClarifyingQuestionsForSkill guards P3 — when preflight rejects a generic outline,
+// the error must surface skill-specific questions the agent can ask the user. Without
+// this, the agent loops with another generic template instead of gathering facts.
+func TestClarifyingQuestionsForSkill(t *testing.T) {
+	for _, name := range []string{"pptx", "docx", "xlsx"} {
+		qs := clarifyingQuestionsForSkill(name)
+		if len(qs) < 2 {
+			t.Errorf("%s: expected ≥2 clarifying questions, got %v", name, qs)
+		}
+	}
+	if qs := clarifyingQuestionsForSkill("unknown-skill"); qs != nil {
+		t.Errorf("unknown skill should return nil, got %v", qs)
+	}
+}
+
+// TestOfficeSkillRunPreflightSurfaceClarifyingQuestions ensures the question list
+// actually flows into the rejection message when keyword floor fails.
+func TestOfficeSkillRunPreflightSurfaceClarifyingQuestions(t *testing.T) {
+	dir := t.TempDir()
+	outline := filepath.Join(dir, ".copilot-ws", "qa.md")
+	if err := os.MkdirAll(filepath.Dir(outline), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Long, multi-section, no placeholders, but no docx floor keyword → reject + surface questions.
+	body := strings.Join([]string{
+		"# 材料",
+		"",
+		"## 一、开篇引言",
+		"本节以背景介绍为主，辅以概要陈述，并在段落中适当延展，确保整体覆盖典型读者所关心的面。",
+		"",
+		"## 二、核心叙事",
+		"围绕主题逐层展开，论述三个分论点，承接上一节的过渡，并在段落结尾处给出小结。",
+		"",
+		"## 三、场景刻画",
+		"对若干典型场景进行还原，给出具体可见的细节，并在每段后增加总结句，便于把握重点。",
+		"",
+		"## 四、后续落点",
+		"收束全文，提示下一阶段值得关注的内容，呼应开篇所述，并提示读者留意正文之外的边界。",
+		"",
+	}, "\n")
+	if err := os.WriteFile(outline, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pf, ok := officeSkillRunPreflight(map[string]any{
+		"name": "docx", "packagePath": dir,
+	}, "bash scripts/docx.sh create --spec .copilot-ws/qa.md --out .copilot-ws/out.docx")
+	if ok || pf.Status != "failed" {
+		t.Fatalf("expected fail, ok=%v pf=%+v", ok, pf)
+	}
+	if !strings.Contains(pf.Output, "向用户追问") {
+		t.Fatalf("expected clarifying questions in output, got: %s", pf.Output)
+	}
+}
+
+// TestCountPlaceholderLines sanity-checks the regex coverage (_____ [待填] [TODO] {{x}}).
+func TestCountPlaceholderLines(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantPh  int
+		wantTot int
+	}{
+		{"none", "一、概述\n\n- 要点一\n- 要点二", 0, 3},
+		{"underscores", "## 季度目标\n- 目标：____\n- 责任人：________\n## 风险\n- 风险A：____", 3, 5},
+		{"mixed tokens", "## 待办\n- [待填]\n- [TODO] 跟进\n## 数据\n- 字段：{{name}}\n- 备注：空", 3, 6},
+		{"blank lines ignored", "## A\n\n- item\n\n## B", 0, 3},
+	}
+	for _, tc := range cases {
+		ph, tot := countPlaceholderLines(tc.body)
+		if ph != tc.wantPh || tot != tc.wantTot {
+			t.Errorf("%s: want ph=%d tot=%d, got ph=%d tot=%d", tc.name, tc.wantPh, tc.wantTot, ph, tot)
+		}
+	}
+}

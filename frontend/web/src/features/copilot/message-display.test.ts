@@ -36,11 +36,28 @@ describe('formatAssistantDisplayContent', () => {
     expect(got).toContain('一、岗位职责');
   });
 
-  it('strips leaked xml tool blocks from bubble', () => {
-    const raw = '<skill.read>\n{"skill":"pptx","action":"open"}\n</skill.read>';
+  it('collapses leaked xml tool blocks into a one-line summary badge', () => {
+    const raw = '<skill.read>\n{"name":"pptx","action":"open"}\n</skill.read>';
     const got = formatAssistantDisplayContent(raw, false);
-    expect(got).toBe('');
-    expect(got).not.toContain('skill.read');
+    expect(got).toContain('【工具调用');
+    expect(got).toContain('pptx');
+    expect(got).not.toContain('<skill.read>');
+    expect(got).not.toContain('"action"');
+  });
+
+  it('collapses <<<TOOL>>>...<<<END>>> blocks the same way', () => {
+    const raw = '<<<TOOL>>>\n{"name":"write_file","path":"a.md","content":"long"}\n<<<END>>>';
+    const got = formatAssistantDisplayContent(raw, false);
+    expect(got).toContain('【工具调用');
+    expect(got).toContain('write_file');
+    expect(got).not.toContain('<<<TOOL>>>');
+  });
+
+  it('collapses TOOL tag with non-JSON inner content', () => {
+    const raw = '<TOOL>bash scripts/foo.sh --input x.md --out x.pptx</TOOL>';
+    const got = formatAssistantDisplayContent(raw, false);
+    expect(got).toContain('【工具调用');
+    expect(got).not.toContain('<TOOL>');
   });
 });
 

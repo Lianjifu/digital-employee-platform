@@ -24,6 +24,7 @@ Create and modify native PowerPoint files through a reproducible JavaScript work
 ## Hard requirements
 
 - Use JavaScript ES modules and the bundled `scripts/pptx.sh` workflow.
+- **禁止输出占位符**（`____`、`[待填]`、`{{...}}`、`____年__月__日` 等连续下划线）；每个 H2 必须紧跟 2-3 句实际描述。如果用户消息没有具体数据，先向用户追问关键事实（团队、季度、关键指标）再生成。
 - Use PptxGenJS for net-new decks and pptx-automizer for inherited template slides.
 - Do not use `python-pptx`, `@oai/artifact-tool`, Google Slides APIs, or an HTML-to-PPTX authoring path.
 - Preserve every input PPT or PPTX. Write edits and conversions to a distinct `.pptx` output unless the user explicitly requests replacement.

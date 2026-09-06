@@ -184,6 +184,87 @@ func officeOutlineQuality(skillName string) (minSections, minChars int, requireH
 	return 0, 0, false
 }
 
+// keywordFloorForSkill returns a list of "intent" keywords. At least one must appear in
+// the outline so we don't accept a generic 9-section template that says nothing specific.
+// Why: catches the "Q3 季度汇报" failure mode where the model emits an outline that looks
+// detailed but contains no concrete topic markers.
+func keywordFloorForSkill(skillName string) []string {
+	n := strings.ToLower(strings.TrimSpace(skillName))
+	switch {
+	case isPptxSkillName(n):
+		return []string{"汇报", "季度", "季度", "目标", "进展", "总结", "规划", "%", "完成", "项目", "风险", "计划"}
+	case isDocxSkillName(n):
+		return []string{"岗位", "职责", "要求", "学历", "经验", "流程", "制度", "说明", "部门", "工作"}
+	case isSpreadsheetSkillName(n):
+		return []string{"收入", "成本", "利润", "元", "%", "员工", "部门", "考勤", "预算", "数据", "统计"}
+	}
+	return nil
+}
+
+// Placeholder patterns that signal "model didn't bother writing real content".
+// Three-or-more underscores, the explicit Chinese/Japanese tags, and template-style braces.
+var rePlaceholderPattern = regexp.MustCompile(`_{3,}|\[待填\]|\[TODO\]|\{\{[^}]+\}\}`)
+
+// countPlaceholderLines returns the number of non-empty lines that contain at least one
+// placeholder token, plus the total non-empty line count for ratio calculation.
+func countPlaceholderLines(body string) (placeholderLines, totalLines int) {
+	for _, raw := range strings.Split(body, "\n") {
+		trim := strings.TrimSpace(raw)
+		if trim == "" {
+			continue
+		}
+		totalLines++
+		if rePlaceholderPattern.MatchString(trim) {
+			placeholderLines++
+		}
+	}
+	return placeholderLines, totalLines
+}
+
+// clarifyingQuestionsForSkill returns a short list of questions the agent should ask the
+// user when their original message lacks enough specifics to generate a meaningful artifact.
+// Surfaced in the preflight error so the next agent turn (or a human copilot operator) can
+// elicit the missing facts instead of looping with another generic template.
+func clarifyingQuestionsForSkill(skillName string) []string {
+	n := strings.ToLower(strings.TrimSpace(skillName))
+	switch {
+	case isPptxSkillName(n):
+		return []string{
+			"汇报对象与场景（如部门季度汇报 / 项目复盘 / 客户提案）？",
+			"覆盖的时间范围与核心 KPI 指标？",
+			"重点项目 / 关键里程碑清单？",
+		}
+	case isDocxSkillName(n):
+		return []string{
+			"文档主题与目标读者（招聘 JD / 制度说明 / 流程指南）？",
+			"必须包含的关键事实（岗位 / 部门 / 薪资范围 / 流程节点）？",
+		}
+	case isSpreadsheetSkillName(n):
+		return []string{
+			"数据维度与口径（按部门 / 按项目 / 按月份）？",
+			"字段清单与单位（金额单位 / 数量 / 日期格式）？",
+			"汇总行 / 合计公式的边界？",
+		}
+	}
+	return nil
+}
+
+// containsAnyKeyword returns true if body contains at least one keyword from the floor
+// list. Uses a word-boundary-ish check for short CJK keywords (substring is fine since
+// CJK has no whitespace between words).
+func containsAnyKeyword(body string, keywords []string) (matched string, ok bool) {
+	low := strings.ToLower(body)
+	for _, kw := range keywords {
+		if kw == "" {
+			continue
+		}
+		if strings.Contains(low, strings.ToLower(kw)) {
+			return kw, true
+		}
+	}
+	return "", false
+}
+
 // officeSkillRunPreflight validates package and run dependencies before sandbox execution.
 // Beyond file existence, it now checks content quality (min sections / chars) to refuse
 // fabricated placeholders and trivially-thin outlines.
@@ -276,6 +357,38 @@ func officeSkillRunPreflight(sk map[string]any, cmd string) (fail toolExecResult
 				Status: "failed", Error: msg,
 				Output: "【预检失败】" + msg + "\n提示：在 write 步骤补充内容后再执行。",
 			}, false
+		}
+		// Gate 3: refuse placeholder-heavy outlines (e.g. `_____` fill-ins, `[待填]`, `{{...}}`).
+		// Why: a 9-section outline stuffed with blanks still passed the size gate but produced
+		// a useless "fill-in-the-form" PPT — the user's original complaint.
+		phLines, totLines := countPlaceholderLines(body)
+		if totLines > 0 && phLines*10 > totLines {
+			IncOfficeSkillPreflightFailed()
+			msg := fmt.Sprintf("依赖文件 %s 含占位符比例过高（%d/%d 行）：禁止大量 `____`/`[待填]`/`{{...}}` 等占位符，请补写实际内容", dep, phLines, totLines)
+			out := "【预检失败】" + msg + "\n提示：每个 H2 段必须给出 2-3 句实际描述，不要输出占位符。"
+			if qs := clarifyingQuestionsForSkill(name); len(qs) > 0 {
+				out += "\n如信息不足，可先向用户追问：\n- " + strings.Join(qs, "\n- ")
+			}
+			return toolExecResult{
+				Status: "failed", Error: msg,
+				Output: out,
+			}, false
+		}
+		// Gate 4: keyword floor — for office skills, require at least one topic-specific
+		// keyword so we don't accept a generic template that ignores the user's intent.
+		if floor := keywordFloorForSkill(name); len(floor) > 0 {
+			if _, ok := containsAnyKeyword(body, floor); !ok {
+				IncOfficeSkillPreflightFailed()
+				msg := fmt.Sprintf("依赖文件 %s 缺少主题关键词：需要在正文中体现实际内容（关键词如 %s 等）", dep, strings.Join(floor[:min(6, len(floor))], "/"))
+				out := "【预检失败】" + msg + "\n提示：请按用户原始诉求补写具体内容（项目、数据、关键节点），不要照抄通用模板。"
+				if qs := clarifyingQuestionsForSkill(name); len(qs) > 0 {
+					out += "\n如信息不足，可先向用户追问：\n- " + strings.Join(qs, "\n- ")
+				}
+				return toolExecResult{
+					Status: "failed", Error: msg,
+					Output: out,
+				}, false
+			}
 		}
 	}
 	return toolExecResult{}, true

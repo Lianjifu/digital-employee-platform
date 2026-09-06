@@ -10,6 +10,7 @@ Work with standalone spreadsheet files through a reproducible JavaScript `.mjs` 
 ## Hard requirements
 
 - Use JavaScript ES modules and the bundled scripts. Do not use `openpyxl`, `xlsxwriter`, `pandas.ExcelWriter`, Google Sheets APIs, or Codex-private runtime paths.
+- **禁止输出占位符**（`____`、空字段、`[待填]`、`{{...}}`）；每个 H2 必须紧跟 2-3 句实际描述，表格必须给出真实数据行（金额/数量/日期等），不能整列空着。若用户消息没有数据，先追问关键事实再生成。
 - Preserve every input file. Write edits to a distinct output unless the user explicitly requests replacement.
 - Keep important calculations in worksheet formulas. Do not replace inspectable formulas with hardcoded results.
 - Inspect and render an existing workbook before modifying it. Match its formatting and conventions unless the user requests a redesign.
