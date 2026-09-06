@@ -111,9 +111,59 @@ function summarizeToolTag(tag: string, inner: string): string {
       // not JSON — fall back to the tag
     }
   }
+  // Caller can pass "（未完成）" as a status suffix — keep it visible to users.
+  const incomplete = inner.includes('（未完成）') ? ' · （未完成）' : '';
   const bytes = new TextEncoder().encode(body).length;
   const sizeLabel = bytes > 1024 ? `${(bytes / 1024).toFixed(1)}KB` : `${bytes}B`;
-  return `【工具调用 · ${label} · ${sizeLabel}】`;
+  return `【工具调用 · ${label} · ${sizeLabel}${incomplete}】`;
+}
+
+/**
+ * Collapse any leftover unclosed tool-block fragment left over from a truncated SSE
+ * stream. We replace the dangling opener (and everything after it up to the next closed
+ * block or end of string) with a single "未完成" badge so users get a hint that the
+ * agent was about to fire a tool, instead of seeing raw `<TOOL>{...}` leaked markup.
+ */
+function collapseUnclosedToolBlocks(content: string): string {
+  let out = content;
+  // Handle the <<<TOOL>>> / <<<END>>> pair: an opener without a matching closer leaves
+  // a trailing fragment that we replace with a single summary badge.
+  let idx = out.search(/<<<TOOL>>>/);
+  while (idx >= 0) {
+    const tail = out.slice(idx);
+    const closeIdx = tail.indexOf('<<<END>>>');
+    if (closeIdx < 0) {
+      const inner = tail.replace(/^<<<TOOL>>>/, '');
+      const summary = summarizeToolTag('TOOL', inner + '（未完成）');
+      out = out.slice(0, idx).trimEnd() + '\n' + summary;
+      break;
+    }
+    idx = out.indexOf('<<<TOOL>>>', idx + closeIdx);
+  }
+  // Handle XML tool tags with no matching close.
+  for (const tag of ['TOOL', 'tool_call', 'invoke', 'skill_read', 'skill.read']) {
+    const openRe = new RegExp(`<${tag}>`, 'i');
+    let openIdx = out.search(openRe);
+    while (openIdx >= 0) {
+      const closeRe = new RegExp(`</${tag}>`, 'i');
+      const tail = out.slice(openIdx);
+      const closeIdx = tail.search(closeRe);
+      if (closeIdx < 0) {
+        const inner = tail.replace(openRe, '');
+        const summary = summarizeToolTag(tag, inner + '（未完成）');
+        out = out.slice(0, openIdx).trimEnd() + '\n' + summary;
+        break;
+      }
+      openIdx = openIdx + closeIdx + tag.length + 3; // skip past this block, keep searching
+    }
+  }
+  // Strip any leftover orphan </tag> closer with no matching opener (truncated stream).
+  for (const tag of ['TOOL', 'tool_call', 'invoke', 'skill_read', 'skill.read']) {
+    out = out.replace(new RegExp(`</${tag}>`, 'gi'), '');
+  }
+  // Same for orphan <<<END>>> with no matching <<<TOOL>>> opener.
+  out = out.replace(/<<<END>>>/g, '');
+  return out;
 }
 
 /**
@@ -121,6 +171,10 @@ function summarizeToolTag(tag: string, inner: string): string {
  * render in the chat bubble. Tool blocks were previously stripped silently, which
  * left users with no signal that the agent made a tool call. Now each block becomes
  * a one-line badge so users can see what the agent did without scrolling 1.7KB of args.
+ *
+ * Also closes any unclosed tool-block fragments left over from a truncated SSE stream
+ * (e.g. `<<<TOOL>>>` with no matching `<<<END>>>`). Without this guard, a mid-stream
+ * disconnect shows raw `<TOOL>` markup in the bubble.
  */
 function collapseToolMarkup(content: string): string {
   let out = content.replace(TOOL_BLOCK_RE, (match) => {
@@ -130,6 +184,8 @@ function collapseToolMarkup(content: string): string {
   out = out.replace(XML_TOOL_BLOCK_RE, (_match, tag: string, inner: string) => {
     return summarizeToolTag(tag, inner);
   });
+  // Truncated-stream guard: any opener with no closer becomes a "未完成" badge.
+  out = collapseUnclosedToolBlocks(out);
   return out.replace(/\n{3,}/g, '\n\n').trim();
 }
 

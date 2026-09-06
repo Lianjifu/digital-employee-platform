@@ -59,6 +59,57 @@ describe('formatAssistantDisplayContent', () => {
     expect(got).toContain('【工具调用');
     expect(got).not.toContain('<TOOL>');
   });
+
+  // Guards the "truncated stream" regression: when SSE closes mid-block (e.g. network
+  // blip or the user clicking stop), the bubble shows the raw opener with no closer.
+  // Collapse must replace the dangling block with a "未完成" badge so the user sees that
+  // a tool was about to fire, not leaked JSON.
+  it('replaces unclosed <<<TOOL>>> block with an incomplete-call badge', () => {
+    const raw = '已经开始排版\n<<<TOOL>>>\n{"name":"write_file","path":"a.md"';
+    const got = formatAssistantDisplayContent(raw, false);
+    expect(got).toContain('已经开始排版');
+    expect(got).not.toContain('<<<TOOL>>>');
+    expect(got).not.toContain('{"name"');
+    expect(got).toContain('未完成');
+  });
+
+  it('strips dangling <<<END>>> without an opener', () => {
+    const raw = '已完成排版\n<<<END>>>';
+    const got = formatAssistantDisplayContent(raw, false);
+    expect(got).toContain('已完成排版');
+    expect(got).not.toContain('<<<END>>>');
+  });
+
+  it('replaces unclosed <TOOL> tag with an incomplete-call badge', () => {
+    const raw = '正在写入\n<TOOL>\nbash scripts/build.sh';
+    const got = formatAssistantDisplayContent(raw, false);
+    expect(got).toContain('正在写入');
+    expect(got).not.toContain('<TOOL>');
+    expect(got).toContain('未完成');
+  });
+
+  it('strips dangling closing xml tag without opener', () => {
+    const raw = '排版中\n</TOOL>';
+    const got = formatAssistantDisplayContent(raw, false);
+    expect(got).toContain('排版中');
+    expect(got).not.toContain('</TOOL>');
+  });
+
+  it('handles balanced <<<TOOL>>><<<END>>> interleaved with text', () => {
+    const raw = [
+      '前面的话',
+      '<<<TOOL>>>\n{"name":"x"}\n<<<END>>>',
+      '中间的话',
+      '<<<TOOL>>>\n{"name":"y"}\n<<<END>>>',
+      '后面的话',
+    ].join('\n');
+    const got = formatAssistantDisplayContent(raw, false);
+    expect(got).toContain('前面的话');
+    expect(got).toContain('中间的话');
+    expect(got).toContain('后面的话');
+    expect(got).not.toContain('<<<TOOL>>>');
+    expect(got).not.toContain('<<<END>>>');
+  });
 });
 
 describe('formatExecutionDetails', () => {
