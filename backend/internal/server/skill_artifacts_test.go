@@ -236,19 +236,24 @@ func TestEnsureSkillArtifactsSyncsPlaceholderDocx(t *testing.T) {
 // TestDefaultOfficeOutlinesNoPlaceholders guards the regression where default PPT/Word/Excel
 // templates shipped with `_____` fill-in tokens, which then slipped past the size-only
 // preflight gate and produced a useless fill-in-form artifact.
+//
+// Also enforces the newer quality gates (≥3 sections / ≥200 chars for PPT/Doc, ≥1 section /
+// ≥80 chars for XLSX, keyword floor, placeholder ratio ≤10%). Without these checks, rescueMissingOfficeDep
+// would write a template that immediately fails preflight (latest audit regression).
 func TestDefaultOfficeOutlinesNoPlaceholders(t *testing.T) {
 	cases := []struct {
-		name string
-		body string
+		name    string
+		body    string
+		skill   string
 	}{
-		{"pptx quarterly", defaultPptxOutlineForMessage("Q3", "季度考评 模板")},
-		{"pptx generic", defaultPptxOutlineForMessage("通用", "业务汇报")},
-		{"docx recruit", defaultDocxOutlineForMessage("岗位", "招聘 JD")},
-		{"docx position", defaultDocxOutlineForMessage("岗位说明", "岗位说明 文档")},
-		{"docx generic", defaultDocxOutlineForMessage("制度", "通用 文档")},
-		{"xlsx budget", defaultXlsxOutlineForMessage("预算", "2026 预算 表")},
-		{"xlsx attendance", defaultXlsxOutlineForMessage("考勤", "考勤 月表")},
-		{"xlsx generic", defaultXlsxOutlineForMessage("明细", "通用 数据")},
+		{"pptx quarterly", defaultPptxOutlineForMessage("Q3", "季度考评 模板"), "pptx"},
+		{"pptx generic", defaultPptxOutlineForMessage("通用", "业务汇报"), "pptx"},
+		{"docx recruit", defaultDocxOutlineForMessage("岗位", "招聘 JD"), "docx"},
+		{"docx position", defaultDocxOutlineForMessage("岗位说明", "岗位说明 文档"), "docx"},
+		{"docx generic", defaultDocxOutlineForMessage("制度", "通用 文档"), "docx"},
+		{"xlsx budget", defaultXlsxOutlineForMessage("预算", "2026 预算 表"), "xlsx"},
+		{"xlsx attendance", defaultXlsxOutlineForMessage("考勤", "考勤 月表"), "xlsx"},
+		{"xlsx generic", defaultXlsxOutlineForMessage("明细", "通用 数据"), "xlsx"},
 	}
 	for _, tc := range cases {
 		if strings.Contains(tc.body, "___") {
@@ -256,6 +261,33 @@ func TestDefaultOfficeOutlinesNoPlaceholders(t *testing.T) {
 		}
 		if !strings.Contains(tc.body, "【指令】") {
 			t.Errorf("%s: missing directive line", tc.name)
+		}
+		// Quality gate: must pass preflight when used as a real .copilot-ws file.
+		ph, tot := countPlaceholderLines(tc.body)
+		if tot > 0 && ph*10 > tot {
+			t.Errorf("%s: placeholder ratio too high (%d/%d lines)", tc.name, ph, tot)
+		}
+		minSec, minChars, requireH1 := officeOutlineQuality(tc.skill)
+		sec := 0
+		h1 := 0
+		for _, line := range strings.Split(tc.body, "\n") {
+			trim := strings.TrimSpace(line)
+			if strings.HasPrefix(trim, "# ") {
+				h1++
+				sec++
+			} else if strings.HasPrefix(trim, "## ") {
+				sec++
+			}
+		}
+		runes := len([]rune(tc.body))
+		if requireH1 && h1 < 1 {
+			t.Errorf("%s: missing H1 (h1=%d)", tc.name, h1)
+		}
+		if sec < minSec {
+			t.Errorf("%s: too few sections (got %d, want ≥%d)", tc.name, sec, minSec)
+		}
+		if runes < minChars {
+			t.Errorf("%s: too few chars (got %d, want ≥%d)", tc.name, runes, minChars)
 		}
 	}
 }
