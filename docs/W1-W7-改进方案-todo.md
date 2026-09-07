@@ -9,7 +9,7 @@
 
 | 段 | 项数 | ✅ 完成 | 🟡 部分 | ⚪ 未做 | 完成率 |
 |----|----:|------:|------:|------:|-----:|
-| 后端 W1（Skill Vetter / Gateway 硬墙 / Catalog / DS） | 4 | 2 | 1 | 1 | 50% |
+| 后端 W1（Skill Vetter / Gateway 硬墙 / Catalog / DS） | 4 | 3 | 0 | 1 | 75% |
 | 后端 W2（SubAgent / 3-列 / Vault） | 3 | 2 | 0 | 1 | 67% |
 | 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 0 | 1 | 2 | 0% |
 | 后端 W4（Heartbeat / VisualDiff） | 2 | 0 | 0 | 2 | 0% |
@@ -17,8 +17,8 @@
 | 后端 W6（PM SOP / Canvas） | 2 | 0 | 0 | 2 | 0% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 0 | 0 | 2 | 0% |
 | 前端 9 项 | 9 | 2 | 2 | 5 | 22% |
-| 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 2 | 1 | ~47 | 6% |
-| **合计** | **~80** | **8** | **5** | **~66** | **~14%** |
+| 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 8 | 1 | ~41 | ~18% |
+| **合计** | **~80** | **15** | **4** | **~60** | **~22%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -120,7 +120,7 @@
 |---|---|---|
 | ADR-018 | Skill Vetter 接入策略 | ⚪ |
 | ADR-019 | Gateway 硬墙策略 | ✅ 完成（[ADR-019](../adr/ADR-019-gateway-hardening.md)） |
-| ADR-020 | Workspace Publisher Key 信任链 | 🟡 草图（W2-D1 README 提到） |
+| ADR-020 | Workspace Publisher Key 信任链 | ✅ 完成（[ADR-020](../adr/ADR-020-workspace-publisher-key.md)） |
 | ADR-021 | Vault 接入策略（dev/staging/prod 三段） | ✅ 完成（[ADR-021](../adr/ADR-021-vault-integration.md)） |
 | ADR-022 | SubAgent 调度与并发合并 | ⚪ |
 | ADR-023 | ExpertInbox 数据生命周期 | ⚪ |
@@ -136,23 +136,23 @@
 | 手册 | 状态 |
 |---|---|
 | W1-vetter 安全策略 / 用户面对白名单 | ⚪ |
-| W2-publisher-key 运维手册 | ⚪ |
-| W2-vault 凭据管理手册 | ⚪ |
+| W2-publisher-key 运维手册 | ✅ 完成（[手册-W2-skill签名与vault.md](../手册-W2-skill签名与vault.md)） |
+| W2-vault 凭据管理手册 | ✅ 完成（同上 §4） |
 | W3-expert-inbox 审核手册 | ⚪ |
 | W4-heartbeat & visualdiff 排查手册 | ⚪ |
 | W5-multimodal 上传规范 | ⚪ |
 | W6-pm-canvas 协作手册 | ⚪ |
 | W7-sqlite / wechat 部署手册 | ⚪ |
 
-### 9.3 Prometheus 指标（10 条，0 条已落）
+### 9.3 Prometheus 指标（10 条，4 条已落）
 
 | 指标 | 状态 |
 |---|---|
-| `de_skill_vetter_total{verdict}` | ⚪ |
-| `de_skill_sign_total{result}` | ⚪ |
+| `de_skill_vetter_total{verdict}` | ✅ 完成（`metrics.Global.Vetter`） |
+| `de_skill_sign_total{result}` | ✅ 完成（`metrics.Global.Sign`） |
 | `de_subagent_run_seconds` | ⚪ |
-| `de_vault_resolve_seconds{ref}` | ⚪ |
-| `de_expert_inbox_pending` | ⚪ |
+| `de_vault_resolve_seconds{ref}` | ✅ 完成（`metrics.Global.Vault`） |
+| `de_expert_inbox_pending` | ✅ 完成（`metrics.Global.ExpertInbox`，stub gauge=0） |
 | `de_hotreload_reload_total{resource}` | ⚪ |
 | `de_heartbeat_lag_seconds` | ⚪ |
 | `de_visualdiff_seconds{size}` | ⚪ |
@@ -198,20 +198,20 @@
 
 > 顺序遵守「先契约后迁包」「先 ADR 后代码」「hard_delete_persist_test 必须新增」三条原则。
 
-1. **W1-D1 vetter 联通**（2 人日）
+1. **W1-D1 vetter 联通**（2 人日） ✅ 完成
    - 在 `verifyBuiltinSignature` 之前 vetter 跑
    - 加 `TestImportRejectedWhenVetterFails`
    - 出 ADR-018
-2. **W1-D3 gateway 硬墙**（3 人日）
+2. **W1-D3 gateway 硬墙**（3 人日） ✅ 完成
    - `internal/gateway/` 包：SSRF / path traversal / size / mime / iframe sandbox
    - `/api/skill-artifacts/<f>/preview` 同源代理
    - 出 ADR-019 + 4 个测试
-3. **W2-D2 Vault 接入**（3 人日）
+3. **W2-D2 Vault 接入**（3 人日） ✅ 完成
    - 抽 `signing.KeyStore` 接口
    - 新增 `VaultKeyStore`，`DevKeyStore` 改 `FileKeyStore`
    - 加 `vault.PutMap/ResolveMap` 用于模型凭据
    - 出 ADR-021 + 5 个测试
-4. **横切批次**（1 人日）
+4. **横切批次**（1 人日） ✅ 完成
    - ADR-020（publisher key）定稿
    - W2 运维手册 1 篇
    - 4 个 Prometheus 指标（vetter / sign / vault / expert_inbox）
