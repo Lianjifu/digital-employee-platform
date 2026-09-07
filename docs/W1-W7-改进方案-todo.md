@@ -13,12 +13,12 @@
 | 后端 W2（SubAgent / 3-列 / Vault） | 3 | 2 | 0 | 1 | 67% |
 | 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 3 | 0 | 0 | 100% |
 | 后端 W4（Heartbeat / VisualDiff） | 2 | 2 | 0 | 0 | 100% |
-| 后端 W5（SelfImproving / Multimodal） | 2 | 0 | 0 | 2 | 0% |
+| 后端 W5（SelfImproving / Multimodal） | 2 | 1 | 0 | 1 | 50% |
 | 后端 W6（PM SOP / Canvas） | 2 | 0 | 0 | 2 | 0% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 0 | 0 | 2 | 0% |
 | 前端 9 项 | 9 | 2 | 2 | 5 | 22% |
 | 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 11 | 1 | ~38 | ~24% |
-| **合计** | **~80** | **21** | **3** | **~55** | **~30%** |
+| **合计** | **~80** | **22** | **3** | **~54** | **~31%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -74,7 +74,7 @@
 | ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
 |---|---|---|---|---|
 | W5-D1 | SelfImproving（执行反馈学习 / SOP 萃取） | ⚪ 未做 | 无 `internal/selfimproving/` | 收集 trace → 提炼 SOP → 写回 knowledge |
-| W5-D2 | Multimodal（图片 / 语音 / 文件统一管道） | ⚪ 未做 | `attach` 接口有，但后端未做 OCR / ASR | 加 provider 接口 + 缓存 |
+| W5-D2 | Multimodal（图片 / 语音 / 文件统一管道） | ✅ 完成 | 新 `internal/multimodal/`：Provider 接口（`Name/Kind/Available/Extract`）+ Registry 派发 + SHA256 缓存 + TTL 驱逐；内置 `ocrStubProvider` / `asrStubProvider`（env `DE_MULTIMODAL_OCR=stub` / `ASR=stub` 启用，CI 可跑）；`POST /api/multimodal/extract` 接 multipart `{file, kind}`，返回 `{text, segments, meta, provider, cached, latencyMS}`；错误码：501（无 provider）/ 503（provider 不可用）/ 400（提取失败）；env `DE_MULTIMODAL_CACHE_DIR` | ADR-033 + 11 包测 + 5 集成测 |
 
 ---
 
@@ -126,7 +126,8 @@
 | ADR-023 | ExpertInbox 数据生命周期 | ✅ 完成（[ADR-023](../adr/ADR-023-expert-inbox-lifecycle.md)） |
 | ADR-024 | HotReload watch + reload 安全语义 | ✅ 完成（[ADR-024](../adr/ADR-024-hotreload-watch-reload.md)） |
 | ADR-025 | VisualDiff 缓存与置信度 | ✅ 完成（[ADR-032](../adr/ADR-032-visualdiff-cache-confidence.md)） |
-| ADR-026 | SelfImproving 反馈回路与写入边界 | ⚪ |
+| ADR-033 | Multimodal provider 抽象与缓存 | ✅ 完成（[ADR-033](../adr/ADR-033-multimodal-provider-cache.md)） |
+| ADR-026 | SelfImproving 反馈回路与写入边界 | ⚪（W5-D1 待） |
 | ADR-027 | Canvas 协作 / CRDT 选型 | ⚪ |
 | ADR-028 | SQLite 双栈切换契约 | ⚪ |
 | ADR-029 | WeChat 渠道限流与同步策略 | ⚪ |

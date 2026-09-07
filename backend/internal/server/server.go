@@ -17,6 +17,7 @@ import (
 	"github.com/digital-employee-platform/backend/internal/deworkflow"
 	"github.com/digital-employee-platform/backend/internal/heartbeat"
 	"github.com/digital-employee-platform/backend/internal/infra"
+	"github.com/digital-employee-platform/backend/internal/multimodal"
 	memid "github.com/digital-employee-platform/backend/internal/memory/identity"
 	"github.com/digital-employee-platform/backend/internal/modelprov"
 	"github.com/digital-employee-platform/backend/internal/modelprov/trace"
@@ -104,6 +105,9 @@ type Server struct {
 	Heartbeat *heartbeat.Tracker
 	// HeartbeatCancel stops the sweeper goroutine on shutdown.
 	HeartbeatCancel context.CancelFunc
+	// W5-D2 · Multimodal extraction registry. nil until initMultimodal
+	// has registered a provider.
+	Multimodal *multimodal.Registry
 }
 
 // serverTestHooks groups the optional test seams. Field types are kept in
@@ -154,6 +158,8 @@ func New(st *store.Store) *Server {
 	var vdCtx context.Context
 	vdCtx, _ = context.WithCancel(context.Background())
 	go s.visualdiffJanitor(vdCtx)
+	// W5-D2 · Multimodal registry (OCR / ASR stubs gated by env flags).
+	s.initMultimodal()
 	return s
 }
 
@@ -720,6 +726,10 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		return
 	case strings.HasPrefix(path, "/api/visualdiff/") && method == http.MethodGet:
 		s.visualdiffFetchHandler(w, r)
+		return
+	// W5-D2 · Multimodal extraction
+	case path == "/api/multimodal/extract" && method == http.MethodPost:
+		s.multimodalExtractHandler(w, r)
 		return
 	case path == "/api/skill-integrations" && method == http.MethodGet:
 		data, err = s.listSkillIntegrations(r)
