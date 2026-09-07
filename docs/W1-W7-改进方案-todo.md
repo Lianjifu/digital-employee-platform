@@ -10,15 +10,15 @@
 | 段 | 项数 | ✅ 完成 | 🟡 部分 | ⚪ 未做 | 完成率 |
 |----|----:|------:|------:|------:|-----:|
 | 后端 W1（Skill Vetter / Gateway 硬墙 / Catalog / DS） | 4 | 2 | 1 | 1 | 50% |
-| 后端 W2（SubAgent / 3-列 / Vault） | 3 | 1 | 0 | 2 | 33% |
+| 后端 W2（SubAgent / 3-列 / Vault） | 3 | 2 | 0 | 1 | 67% |
 | 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 0 | 1 | 2 | 0% |
 | 后端 W4（Heartbeat / VisualDiff） | 2 | 0 | 0 | 2 | 0% |
 | 后端 W5（SelfImproving / Multimodal） | 2 | 0 | 0 | 2 | 0% |
 | 后端 W6（PM SOP / Canvas） | 2 | 0 | 0 | 2 | 0% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 0 | 0 | 2 | 0% |
 | 前端 9 项 | 9 | 2 | 2 | 5 | 22% |
-| 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 1 | 1 | ~48 | 4% |
-| **合计** | **~80** | **6** | **5** | **~68** | **~10%** |
+| 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 2 | 1 | ~47 | 6% |
+| **合计** | **~80** | **8** | **5** | **~66** | **~14%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -45,7 +45,7 @@
 | ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
 |---|---|---|---|---|
 | W2-D1 | Workspace Publisher Key（per-workspace Ed25519 + sidecar） | ✅ 完成 | commit `9ecc607`；`handlers_workspaces_publisher*.go`、`cmd/sign-skill-pack`、`internal/skills/parse_sidecar.go`；22 个测试 | — |
-| W2-D2 | Vault 集成（dev keypair / 私钥 / 模型凭据） | ⚪ 未做 | `internal/vault/client.go` 已存在（`Put/Resolve/Delete/Redact`），但 **未联任何调用方**；`signing.keystore.DevKeyStore` 仍走 `data/skill-keys/dev-keypair.json` | 抽 `KeyStore` 接口，新增 `VaultKeyStore`；`DE_VAULT_ADDR/TOKEN` env 已留 |
+| W2-D2 | Vault 集成（dev keypair / 私钥 / 模型凭据） | ✅ 完成 | `signing.SignerResolver` 接口（`Signer/TrustedKey/BackedByVault`）+ `signing.VaultKeyStore`（`vault:skill-keys/<keyID>` 路径，base64 私钥，本地缓存）+ `vault.Client.PutMap/ResolveMap` 批量；`Server.SkillSigner` slot + `bootstrapVaultSkillSigning()`（`DE_VAULT_ADDR` + `DE_SKILL_KEYSTORE=vault` 启用，probe 失败回退 dev）；11 个新测试；commit `217924c`；ADR-021 已出 | — |
 | W2-D3 | SubAgent（多 Agent 委派 / merge opinions） | ⚪ 未做 | `internal/agentos/subagent.go` 仅 stub；`mergeParticipantOpinions` 当前是 truncation | 实施真正的 sub-agent 调度 + 并发合并 |
 
 ---
@@ -121,7 +121,7 @@
 | ADR-018 | Skill Vetter 接入策略 | ⚪ |
 | ADR-019 | Gateway 硬墙策略 | ✅ 完成（[ADR-019](../adr/ADR-019-gateway-hardening.md)） |
 | ADR-020 | Workspace Publisher Key 信任链 | 🟡 草图（W2-D1 README 提到） |
-| ADR-021 | Vault 接入策略（dev/staging/prod 三段） | ⚪ |
+| ADR-021 | Vault 接入策略（dev/staging/prod 三段） | ✅ 完成（[ADR-021](../adr/ADR-021-vault-integration.md)） |
 | ADR-022 | SubAgent 调度与并发合并 | ⚪ |
 | ADR-023 | ExpertInbox 数据生命周期 | ⚪ |
 | ADR-024 | HotReload watch + reload 安全语义 | ⚪ |
