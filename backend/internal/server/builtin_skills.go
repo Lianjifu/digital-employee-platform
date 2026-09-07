@@ -298,15 +298,19 @@ func (s *Server) attachBuiltinPackageToSkill(item map[string]any, ws, skillID, b
 		switch mode {
 		case "warn_only":
 			if report.Decision != vetter.Allow {
+				summary := vetterSummary(builtinName, report)
 				log.Printf("skill vetter warn_only: builtin=%s verdict=%s findings=%d", builtinName, report.Verdict, len(report.Findings))
 				for _, f := range report.Findings {
 					log.Printf("  skill vetter finding: builtin=%s %s %s @%s:%d %s", builtinName, f.Category, f.Pattern, f.File, f.Line, f.Snippet)
 				}
+				s.Store.AppendAudit(ws, "系统", "skill 内容审查", builtinName, "warn", summary)
 			}
 		default: // "enabled"
 			if report.Decision == vetter.Deny {
+				summary := vetterSummary(builtinName, report)
+				s.Store.AppendAudit(ws, "系统", "skill 内容审查", builtinName, "denied", summary)
 				return apperr.BadReq(apperr.SkillVetDenied,
-					"builtin skill blocked by vetter: "+vetterSummary(builtinName, report))
+					"builtin skill blocked by vetter: "+summary)
 			}
 		}
 	}

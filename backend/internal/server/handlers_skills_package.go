@@ -40,17 +40,21 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 		switch mode {
 		case "warn_only":
 			if report.Decision != vetter.Allow {
+				summary := vetterSummary(meta.Name, report)
 				log.Printf("skill vetter warn_only: import=%s verdict=%s findings=%d",
 					meta.Name, report.Verdict, len(report.Findings))
 				for _, f := range report.Findings {
 					log.Printf("  skill vetter finding: import=%s %s %s @%s:%d %s",
 						meta.Name, f.Category, f.Pattern, f.File, f.Line, f.Snippet)
 				}
+				s.Store.AppendAudit(ws, id.Name, "skill 内容审查", meta.Name, "warn", summary)
 			}
 		default:
 			if report.Decision == vetter.Deny {
+				summary := vetterSummary(meta.Name, report)
+				s.Store.AppendAudit(ws, id.Name, "skill 内容审查", meta.Name, "denied", summary)
 				return nil, apperr.BadReq(apperr.SkillVetDenied,
-					"imported skill blocked by vetter: "+vetterSummary(meta.Name, report))
+					"imported skill blocked by vetter: "+summary)
 			}
 		}
 	}
