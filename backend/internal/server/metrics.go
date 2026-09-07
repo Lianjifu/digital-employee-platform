@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"sync/atomic"
 	"time"
+
+	"github.com/digital-employee-platform/backend/internal/metrics"
 )
 
 var processStart = time.Now()
@@ -224,6 +226,38 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_rate_limited_total Copilot rate limit hits\n# TYPE de_copilot_rate_limited_total counter\nde_copilot_rate_limited_total{service=%q} %d\n", svc, copilotRateLimited.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_safety_blocked_total Copilot content-safety blocks\n# TYPE de_copilot_safety_blocked_total counter\nde_copilot_safety_blocked_total{service=%q} %d\n", svc, copilotSafetyBlocked.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_cognitive_applied_total Copilot turns with cognitive framework applied\n# TYPE de_copilot_cognitive_applied_total counter\nde_copilot_cognitive_applied_total{service=%q} %d\n", svc, copilotCognitiveApplied.Load())
+
+	// W1-W7 cross-cutting metrics. Sourced from internal/metrics.Global.
+	allow, warn, deny := metrics.Global.Vetter.Snapshot()
+	_, _ = fmt.Fprintf(w, "# HELP de_skill_vetter_total Skill vetter outcomes\n# TYPE de_skill_vetter_total counter\n")
+	_, _ = fmt.Fprintf(w, "de_skill_vetter_total{service=%q,verdict=\"allow\"} %d\n", svc, allow)
+	_, _ = fmt.Fprintf(w, "de_skill_vetter_total{service=%q,verdict=\"warn\"} %d\n", svc, warn)
+	_, _ = fmt.Fprintf(w, "de_skill_vetter_total{service=%q,verdict=\"deny\"} %d\n", svc, deny)
+
+	signOK, signInvalid, verifyOK, verifyMiss, verifyBad := metrics.Global.Sign.Snapshot()
+	_, _ = fmt.Fprintf(w, "# HELP de_skill_sign_total Skill sign / verify outcomes\n# TYPE de_skill_sign_total counter\n")
+	_, _ = fmt.Fprintf(w, "de_skill_sign_total{service=%q,op=\"sign\",result=\"success\"} %d\n", svc, signOK)
+	_, _ = fmt.Fprintf(w, "de_skill_sign_total{service=%q,op=\"sign\",result=\"invalid\"} %d\n", svc, signInvalid)
+	_, _ = fmt.Fprintf(w, "de_skill_sign_total{service=%q,op=\"verify\",result=\"ok\"} %d\n", svc, verifyOK)
+	_, _ = fmt.Fprintf(w, "de_skill_sign_total{service=%q,op=\"verify\",result=\"unknown_key\"} %d\n", svc, verifyMiss)
+	_, _ = fmt.Fprintf(w, "de_skill_sign_total{service=%q,op=\"verify\",result=\"bad_signature\"} %d\n", svc, verifyBad)
+
+	skillN, skillSumNS, modelN, modelSumNS, otherN, otherSumNS := metrics.Global.Vault.Snapshot()
+	_, _ = fmt.Fprintf(w, "# HELP de_vault_resolve_seconds_sum Vault Resolve cumulative seconds\n# TYPE de_vault_resolve_seconds_sum counter\n")
+	_, _ = fmt.Fprintf(w, "de_vault_resolve_seconds_sum{service=%q,ref=\"skill-key\"} %f\n", svc, float64(skillSumNS)/1e9)
+	_, _ = fmt.Fprintf(w, "de_vault_resolve_seconds_sum{service=%q,ref=\"model-credential\"} %f\n", svc, float64(modelSumNS)/1e9)
+	_, _ = fmt.Fprintf(w, "de_vault_resolve_seconds_sum{service=%q,ref=\"other\"} %f\n", svc, float64(otherSumNS)/1e9)
+	_, _ = fmt.Fprintf(w, "# HELP de_vault_resolve_total Vault Resolve call count\n# TYPE de_vault_resolve_total counter\n")
+	_, _ = fmt.Fprintf(w, "de_vault_resolve_total{service=%q,ref=\"skill-key\"} %d\n", svc, skillN)
+	_, _ = fmt.Fprintf(w, "de_vault_resolve_total{service=%q,ref=\"model-credential\"} %d\n", svc, modelN)
+	_, _ = fmt.Fprintf(w, "de_vault_resolve_total{service=%q,ref=\"other\"} %d\n", svc, otherN)
+
+	// Expert inbox pending is a stub gauge — the W3-D1 store field
+	// hasn't been built yet. Publish 0 so dashboards don't 404 and
+	// alerts based on absence won't fire false positives during the gap.
+	_, _ = fmt.Fprintf(w, "# HELP de_expert_inbox_pending Expert inbox items awaiting review\n# TYPE de_expert_inbox_pending gauge\n")
+	_, _ = fmt.Fprintf(w, "de_expert_inbox_pending{service=%q} %d\n", svc, metrics.Global.ExpertInbox.Get())
+
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_cognitive_bypass_total Copilot cognitive framework bypasses\n# TYPE de_copilot_cognitive_bypass_total counter\nde_copilot_cognitive_bypass_total{service=%q} %d\n", svc, copilotCognitiveBypass.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_cognitive_framework_total Copilot cognitive primary framework selections\n# TYPE de_copilot_cognitive_framework_total counter\nde_copilot_cognitive_framework_total{service=%q,framework=%q} %d\n", svc, "logic", copilotCognitiveLogic.Load())
 	_, _ = fmt.Fprintf(w, "de_copilot_cognitive_framework_total{service=%q,framework=%q} %d\n", svc, "problem", copilotCognitiveProblem.Load())

@@ -20,6 +20,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/digital-employee-platform/backend/internal/metrics"
 )
 
 // Decision is the top-level verdict of a scan.
@@ -155,6 +157,7 @@ func Run(rootDir string) (Result, error) {
 	})
 	res.Decision = decide(res.Findings)
 	res.Verdict = res.Decision.String()
+	metrics.Global.Vetter.Inc(res.Verdict)
 	if walkErr != nil && len(res.Findings) == 0 {
 		return res, walkErr
 	}

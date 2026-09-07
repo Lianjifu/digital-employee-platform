@@ -1,0 +1,147 @@
+// Package metrics holds the W1-W7 cross-cutting Prometheus counters and
+// gauges. Implementation is lock-free via sync/atomic; the
+// metricsPrometheus handler in internal/server/metrics.go reads them when
+// scrapes hit /metrics.
+//
+// Each metric is labelled by a small enum (verdict / result / ref) so
+// dashboards can break down on the source — never on a high-cardinality
+// value like a full KeyID (use audit log for that).
+package metrics
+
+import (
+	"sync/atomic"
+	"time"
+)
+
+// Counter is an atomic uint64 with helper Increment.
+type Counter uint64
+
+func (c *Counter) Inc() { atomic.AddUint64((*uint64)(c), 1) }
+func (c *Counter) Add(n uint64) {
+	atomic.AddUint64((*uint64)(c), n)
+}
+func (c *Counter) Value() uint64 { return atomic.LoadUint64((*uint64)(c)) }
+
+// SkillVetterTotal counts vetter.Run outcomes across all builtin attach /
+// skill import paths. verdict ∈ {"allow", "warn", "deny"}.
+type VetterBuckets struct {
+	Allow Counter
+	Warn  Counter
+	Deny  Counter
+}
+
+func (v *VetterBuckets) Inc(verdict string) {
+	switch verdict {
+	case "allow":
+		v.Allow.Inc()
+	case "warn":
+		v.Warn.Inc()
+	case "deny":
+		v.Deny.Inc()
+	}
+}
+
+func (v *VetterBuckets) Snapshot() (allow, warn, deny uint64) {
+	return v.Allow.Value(), v.Warn.Value(), v.Deny.Value()
+}
+
+// SkillSignTotal counts Ed25519 sign + verify outcomes.
+// result ∈ {"success", "invalid", "unknown_key", "denied"}.
+//
+// "sign" and "verify" are tracked separately so dashboards can distinguish
+// publisher-side failures from consumer-side failures.
+type SignBuckets struct {
+	SignSuccess  Counter
+	SignInvalid  Counter
+	VerifyOK     Counter
+	VerifyMiss   Counter // unknown_key / key not in trust store
+	VerifyBadSig Counter // signature mismatch (tamper / wrong key)
+}
+
+func (s *SignBuckets) IncSign(result string) {
+	switch result {
+	case "success":
+		s.SignSuccess.Inc()
+	case "invalid":
+		s.SignInvalid.Inc()
+	}
+}
+
+func (s *SignBuckets) IncVerify(result string) {
+	switch result {
+	case "ok":
+		s.VerifyOK.Inc()
+	case "unknown_key":
+		s.VerifyMiss.Inc()
+	case "bad_signature":
+		s.VerifyBadSig.Inc()
+	}
+}
+
+func (s *SignBuckets) Snapshot() (signOK, signInvalid, verifyOK, verifyMiss, verifyBad uint64) {
+	return s.SignSuccess.Value(), s.SignInvalid.Value(),
+		s.VerifyOK.Value(), s.VerifyMiss.Value(), s.VerifyBadSig.Value()
+}
+
+// VaultResolveSeconds sums Resolve latency bucketed by ref class. ref
+// ∈ {"skill-key", "model-credential", "other"}. Sum is sufficient for the
+// W1-W7 plan — a per-ref histogram can come in W6 when a real
+// Grafana dashboard is wired up.
+type VaultBuckets struct {
+	SkillKeyCount      Counter
+	SkillKeySumNS      Counter
+	ModelCredCount     Counter
+	ModelCredSumNS     Counter
+	OtherCount         Counter
+	OtherSumNS         Counter
+}
+
+// Observe records one Resolve call. duration is the wall-clock time
+// elapsed since the call started.
+func (v *VaultBuckets) Observe(ref string, d time.Duration) {
+	ns := uint64(d.Nanoseconds())
+	switch ref {
+	case "skill-key":
+		v.SkillKeyCount.Inc()
+		v.SkillKeySumNS.Add(ns)
+	case "model-credential":
+		v.ModelCredCount.Inc()
+		v.ModelCredSumNS.Add(ns)
+	default:
+		v.OtherCount.Inc()
+		v.OtherSumNS.Add(ns)
+	}
+}
+
+func (v *VaultBuckets) Snapshot() (skillN, skillSumNS, modelN, modelSumNS, otherN, otherSumNS uint64) {
+	return v.SkillKeyCount.Value(), v.SkillKeySumNS.Value(),
+		v.ModelCredCount.Value(), v.ModelCredSumNS.Value(),
+		v.OtherCount.Value(), v.OtherSumNS.Value()
+}
+
+// ExpertInboxPending is a snapshot gauge, populated each scrape from the
+// store. Stored as atomic so the scrape handler can publish without
+// holding the store RLock for the duration of the HTTP write.
+type ExpertInboxGauge struct {
+	Value atomic.Uint64
+}
+
+func (g *ExpertInboxGauge) Set(n uint64) { g.Value.Store(n) }
+func (g *ExpertInboxGauge) Get() uint64  { return g.Value.Load() }
+
+// Registry is the single shared state for all metrics.
+type Registry struct {
+	Vetter       VetterBuckets
+	Sign         SignBuckets
+	Vault        VaultBuckets
+	ExpertInbox  ExpertInboxGauge
+	processStart time.Time
+}
+
+// Global is the default registry. All call sites use it directly so the
+// scrape handler can find values without indirection.
+var Global = &Registry{processStart: time.Now()}
+
+// ProcessStart returns when the registry was created. Used by the scrape
+// handler for the uptime metric.
+func (r *Registry) ProcessStart() time.Time { return r.processStart }

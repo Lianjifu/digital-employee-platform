@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/digital-employee-platform/backend/internal/metrics"
 )
 
 // Client resolves credentialRef → secret material. Never logs plaintext.
@@ -94,6 +96,10 @@ func (c *Client) Put(ctx context.Context, ref, value string) error {
 
 // Resolve returns secret for credentialRef (stub first, then Vault KV v2).
 func (c *Client) Resolve(ctx context.Context, ref string) (string, error) {
+	started := time.Now()
+	defer func() {
+		metrics.Global.Vault.Observe(classifyRef(ref), time.Since(started))
+	}()
 	if c == nil {
 		return "", errors.New("vault client nil")
 	}
@@ -269,4 +275,20 @@ func Redact(s string) string {
 		return "****"
 	}
 	return s[:2] + "****" + s[len(s)-2:]
+}
+
+// classifyRef maps a vault ref to one of three metric buckets.
+// skill-key / model-credential / other. Heuristic on path prefix; the
+// ref canonicalization happens via kvPath before this so we look at the
+// user-facing ref shape.
+func classifyRef(ref string) string {
+	r := strings.ToLower(ref)
+	switch {
+	case strings.Contains(r, "skill-keys"):
+		return "skill-key"
+	case strings.Contains(r, "model-providers"), strings.Contains(r, "model-providers/") || strings.Contains(r, "model-provider"):
+		return "model-credential"
+	default:
+		return "other"
+	}
 }

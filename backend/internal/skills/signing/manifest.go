@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"sort"
+
+	"github.com/digital-employee-platform/backend/internal/metrics"
 )
 
 // ManifestDigest is the canonical form that gets signed. It captures the
@@ -108,5 +110,10 @@ func VerifyManifest(pub []byte, sig []byte, in DigestInputs) error {
 	if err != nil {
 		return err
 	}
-	return Verify(pub, canon, sig)
+	if err := Verify(pub, canon, sig); err != nil {
+		metrics.Global.Sign.IncVerify("bad_signature")
+		return err
+	}
+	metrics.Global.Sign.IncVerify("ok")
+	return nil
 }
