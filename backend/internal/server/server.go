@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/digital-employee-platform/backend/internal/skills/registry"
 	"github.com/digital-employee-platform/backend/internal/skills/signing"
 	"github.com/digital-employee-platform/backend/internal/runtimeenv"
+	"github.com/digital-employee-platform/backend/internal/gateway"
 	"github.com/digital-employee-platform/backend/internal/store"
 	"github.com/digital-employee-platform/backend/internal/vault"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
@@ -781,6 +783,63 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 
 func writeErr(w http.ResponseWriter, err error) {
 	response.Fail(w, err)
+}
+
+// artifactPolicy reads DE_ARTIFACT_MAX_BYTES + DE_ARTIFACT_REQUIRE_AUTH
+// and returns the gate configuration for /api/skill-artifacts/*. Built
+// once at startup via lazy init; env reads are cached on the Server.
+func (s *Server) artifactPolicy() *gateway.ArtifactPolicy {
+	p := gateway.DefaultArtifactPolicy()
+	if v := strings.TrimSpace(os.Getenv("DE_ARTIFACT_MAX_BYTES")); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			p.MaxBytes = n
+		}
+	}
+	if envFlagFalse("DE_ARTIFACT_REQUIRE_AUTH") {
+		p.RequireAuth = false
+	}
+	return p
+}
+
+// appendAuditFn adapts store.AppendAudit to gateway.AuditFunc. workspace
+// falls back to "w1" so the audit pipeline never receives an empty scope.
+func (s *Server) appendAuditFn() gateway.AuditFunc {
+	return func(ws, actor, action, target, result, reason string) {
+		if s == nil || s.Store == nil {
+			return
+		}
+		if ws == "" {
+			ws = s.workspaceID(nil)
+		}
+		s.Store.AppendAudit(ws, actor, action, target, result, reason)
+	}
+}
+
+// identityAdapter wraps the request-scoped identity for the gateway's
+// IdentityProvider interface, so server-side handlers don't need to
+// reach into context plumbing themselves.
+func (s *Server) identityAdapter(r *http.Request) gateway.IdentityProvider {
+	id := identityFrom(r.Context())
+	return &serverIdentity{id: id, wsFallback: s.workspaceID(r)}
+}
+
+type serverIdentity struct {
+	id         *auth.Identity
+	wsFallback string
+}
+
+func (s *serverIdentity) ActorName() string {
+	if s.id == nil {
+		return ""
+	}
+	return s.id.Name
+}
+
+func (s *serverIdentity) WorkspaceID() string {
+	if s.id != nil && s.id.WorkspaceID != "" {
+		return s.id.WorkspaceID
+	}
+	return s.wsFallback
 }
 
 func (s *Server) alias(path, method string, r *http.Request) (any, error, bool) {

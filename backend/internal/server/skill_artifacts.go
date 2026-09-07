@@ -15,6 +15,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/digital-employee-platform/backend/internal/gateway"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 	"github.com/digital-employee-platform/backend/pkg/response"
 )
@@ -1130,9 +1131,9 @@ func contentDispositionAttachment(name string) string {
 func (s *Server) serveSkillArtifactPreview(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/skill-artifacts/")
 	path = strings.TrimSuffix(path, "/preview")
-	name := filepath.Base(strings.TrimSpace(path))
-	if decoded, err := url.PathUnescape(name); err == nil && decoded != "" {
-		name = decoded
+	name, ok := gateway.ValidateArtifactRequest(w, r, path, skillArtifactDir(), s.artifactPolicy(), s.identityAdapter(r), s.appendAuditFn())
+	if !ok {
+		return
 	}
 	name = skillArtifactStorageName(name)
 	if name == "" {
@@ -1179,24 +1180,14 @@ func writeJSON(w http.ResponseWriter, payload any) {
 }
 
 func (s *Server) serveSkillArtifact(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimPrefix(r.URL.Path, "/api/skill-artifacts/")
-	if decoded, err := url.PathUnescape(name); err == nil && decoded != "" {
-		name = decoded
-	}
-	name = filepath.Base(strings.TrimSpace(name))
-	name = strings.Trim(name, "`\"'")
-	if name == "" || name == "." || name == ".." {
-		writeErr(w, apperr.BadReq(apperr.BadRequest, "无效产物名"))
+	raw := strings.TrimPrefix(r.URL.Path, "/api/skill-artifacts/")
+	name, ok := gateway.ValidateArtifactRequest(w, r, raw, skillArtifactDir(), s.artifactPolicy(), s.identityAdapter(r), s.appendAuditFn())
+	if !ok {
 		return
 	}
-	root := filepath.Clean(skillArtifactDir())
-	path := filepath.Clean(filepath.Join(root, name))
-	if path != filepath.Join(root, name) && !strings.HasPrefix(path, root+string(os.PathSeparator)) {
-		writeErr(w, apperr.BadReq(apperr.BadRequest, "无效产物路径"))
-		return
-	}
+	path := filepath.Clean(filepath.Join(skillArtifactDir(), name))
 	if st, err := os.Stat(path); err != nil || st.IsDir() {
-		writeErr(w, apperr.NotFoundErr(apperr.NotFound, "产物不存在"))
+		// gateway already 404'd; this is a defense-in-depth recheck.
 		return
 	}
 	if strings.HasSuffix(strings.ToLower(name), ".docx") {

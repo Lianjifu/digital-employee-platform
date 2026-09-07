@@ -257,6 +257,28 @@ func TestValidateRejectsDirectory(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsBadExtEvenWhenMissing(t *testing.T) {
+	// Locks in the ext-before-stat ordering: a bad extension must 415
+	// whether or not the file exists, so attackers can't probe disk
+	// content via extension differences.
+	dir := t.TempDir()
+	root := filepath.Join(dir, "artifacts")
+	// No file created.
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/api/skill-artifacts/ghost.exe", nil)
+	cap := &captureAudit{}
+	id := &stubIdentity{name: "alice", ws: "w1"}
+
+	_, ok := ValidateArtifactRequest(rec, r, "ghost.exe", root, DefaultArtifactPolicy(), id, cap.fn())
+	if ok {
+		t.Fatalf("expected reject on bad ext")
+	}
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("expected 415 even when file missing, got %d", rec.Code)
+	}
+}
+
 func TestValidateAuditsDefaultWorkspaceWhenMissing(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "artifacts")

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/digital-employee-platform/backend/internal/gateway"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
@@ -459,9 +460,10 @@ func (s *Server) serveSkillArtifactSlidePNG(w http.ResponseWriter, r *http.Reque
 		writeErr(w, apperr.NotFoundErr(apperr.NotFound, "幻灯片预览不存在"))
 		return
 	}
-	name := parts[0]
-	if decoded, err := url.PathUnescape(name); err == nil && decoded != "" {
-		name = decoded
+	// Gateway gate: validates name, size cap (pptx base), auth, audit.
+	name, ok := gateway.ValidateArtifactRequest(w, r, parts[0], skillArtifactDir(), s.artifactPolicy(), s.identityAdapter(r), s.appendAuditFn())
+	if !ok {
+		return
 	}
 	name = skillArtifactStorageName(name)
 	numStr := strings.TrimSuffix(parts[2], ".png")

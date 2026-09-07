@@ -62,8 +62,31 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 			strings.HasPrefix(r.URL.Path, "/api/share/") ||
 			strings.HasPrefix(r.URL.Path, "/api/channel/feishu/events/") ||
 			strings.HasPrefix(r.URL.Path, "/api/channel/wecom/events/") ||
-			strings.HasPrefix(r.URL.Path, "/api/channel/dingtalk/events/") ||
-			(r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.HasPrefix(r.URL.Path, "/api/skill-artifacts/") {
+			strings.HasPrefix(r.URL.Path, "/api/channel/dingtalk/events/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// /api/skill-artifacts/*: try to parse Authorization so the gateway
+		// gate sees an identity and can audit who downloaded what. Absence
+		// of the header is NOT a 401 here — the gateway's RequireAuth
+		// policy (DE_ARTIFACT_REQUIRE_AUTH) decides.
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.HasPrefix(r.URL.Path, "/api/skill-artifacts/") {
+			if h := r.Header.Get("Authorization"); h != "" {
+				token := strings.TrimSpace(strings.TrimPrefix(h, "Bearer"))
+				token = strings.TrimSpace(strings.TrimPrefix(token, "bearer"))
+				if hasMockIdentityHeaders(r) && !allowMockIdentity() {
+					writeErr(w, apperr.New(apperr.IdentityMockForbidden, 401, "生产环境禁止使用 mock 身份头"))
+					return
+				}
+				if strings.HasPrefix(token, "mock-") && !allowMockIdentity() {
+					writeErr(w, apperr.New(apperr.IdentityMockForbidden, 401, "生产环境禁止使用 mock token"))
+					return
+				}
+				if id, err := auth.Parse(token); err == nil && id != nil {
+					ctx := withIdentity(r.Context(), id)
+					r = r.WithContext(ctx)
+				}
+			}
 			next.ServeHTTP(w, r)
 			return
 		}

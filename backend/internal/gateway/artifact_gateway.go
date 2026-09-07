@@ -83,8 +83,9 @@ func DefaultArtifactPolicy() *ArtifactPolicy {
 //  1. Empty / whitespace → 400 (cheap reject).
 //  2. URL-decode THEN re-base THEN clean → blocks encoded traversal like
 //     %2e%2e%2f that Base() on the raw string would miss.
-//  3. Stat + size cap → 404 / 413.
-//  4. Extension allow-list → 415.
+//  3. Extension allow-list → 415 (run BEFORE stat so a bad extension
+//     always 415s, never leaks whether the file exists).
+//  4. Stat + size cap → 404 / 413.
 //  5. Auth → 401 (only after file is otherwise valid so attackers can't
 //     probe identity state via timing).
 //  6. Audit row on every outcome (success or denied).
@@ -139,7 +140,17 @@ func ValidateArtifactRequest(w http.ResponseWriter, r *http.Request, rawName, ro
 		return "", false
 	}
 
-	// 3. Stat + size.
+	// 4. Extension allow-list (runs BEFORE stat so a bad extension always
+	// returns 415, even if the file is missing — avoids leaking whether
+	// an arbitrary extension exists on disk).
+	ext := strings.ToLower(filepath.Ext(name))
+	if !p.AllowExt[ext] {
+		deny(w, audit, ws, actor, name, "extension "+ext+" not allowed", http.StatusUnsupportedMediaType, apperr.UnsupportedMediaType, "该文件类型不允许下载")
+		return "", false
+	}
+
+	// 3. Stat + size (after extension is known good — no point telling
+	// a non-allowlisted extension about size).
 	st, err := os.Stat(cleaned)
 	if err != nil || st.IsDir() {
 		deny(w, audit, ws, actor, name, "not found", http.StatusNotFound, apperr.NotFound, "产物不存在")
@@ -147,13 +158,6 @@ func ValidateArtifactRequest(w http.ResponseWriter, r *http.Request, rawName, ro
 	}
 	if p.MaxBytes > 0 && st.Size() > p.MaxBytes {
 		deny(w, audit, ws, actor, name, fmt.Sprintf("oversize %d > %d", st.Size(), p.MaxBytes), http.StatusRequestEntityTooLarge, apperr.PayloadTooLarge, "产物超过大小上限")
-		return "", false
-	}
-
-	// 4. Extension allow-list.
-	ext := strings.ToLower(filepath.Ext(name))
-	if !p.AllowExt[ext] {
-		deny(w, audit, ws, actor, name, "extension "+ext+" not allowed", http.StatusUnsupportedMediaType, apperr.UnsupportedMediaType, "该文件类型不允许下载")
 		return "", false
 	}
 
