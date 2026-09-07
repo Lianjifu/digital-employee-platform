@@ -15,10 +15,10 @@
 | 后端 W4（Heartbeat / VisualDiff） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W5（SelfImproving / Multimodal） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W6（PM SOP / Canvas） | 2 | 2 | 0 | 0 | 100% |
-| 后端 W7（SQLite / WeChat-Sync） | 2 | 1 | 0 | 1 | 50% |
+| 后端 W7（SQLite / WeChat-Sync） | 2 | 2 | 0 | 0 | 100% |
 | 前端 9 项 | 9 | 2 | 2 | 5 | 22% |
 | 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 11 | 1 | ~38 | ~24% |
-| **合计** | **~80** | **26** | **3** | **~51** | **~34%** |
+| **合计** | **~80** | **27** | **3** | **~50** | **~35%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -92,7 +92,7 @@
 | ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
 |---|---|---|---|---|
 | W7-D1 | SQLite（嵌入式单机演示） | ✅ 完成 | 新 `internal/store/sqlite.go`：`OpenSQLite`（PRAGMA WAL + busy_timeout + foreign_keys）+ `PersistFunc`/`DeleteFunc`（shrink-heavy 走 replaceCollection，其余 upsertMany）+ `List`/`Count`；schema 对齐 PG `platform.kv_documents`；env `DE_STORE_BACKEND=sqlite` + `DE_SQLITE_PATH`（默认 `data/store.db`）由 `initSQLiteDurability()` 在 `server.New()` 末尾挂 `SetPersistHook`；失败回退 in-memory（不 panic）；依赖 `modernc.org/sqlite`（pure Go，无 CGO） | ADR-028 + 10 包测 + 3 集成测 |
-| W7-D2 | WeChat 同步渠道 | ⚪ 未做 | 仅飞书 / 企业微信 / 钉钉 entrypoint | 加 `internal/channel/wechat/` |
+| W7-D2 | WeChat 同步渠道 | ✅ 完成 | 新 `internal/weixin/`（Credentials 双形态：个人号 ilink sidecar + 公众号 Open API；自动 Mode 识别）；Client `Probe / SendText / AccessToken`；公众号 SHA1 + AES-CBC 回调加解密（`VerifySignature/EncryptCallback/DecryptCallback/ParseEncryptedCallback/ReplyText`）；`WeixinHTTP` 字段允许测试注入；修复 `handlers_channels.go` 既存的 `weixin.*` 编译错误 | ADR-029 + 22 包测 + 1 端到端集成测 |
 
 ---
 
@@ -130,7 +130,7 @@
 | ADR-026 | SelfImproving 反馈回路与写入边界 | ✅ 完成（[ADR-026](../adr/ADR-026-selfimproving-feedback-loop.md)） |
 | ADR-027 | Canvas 协作 / CRDT 选型 | ✅ 完成（[ADR-035](../adr/ADR-035-canvas-collaboration.md)） |
 | ADR-028 | SQLite 双栈切换契约 | ✅ 完成（[ADR-028](../adr/ADR-028-sqlite-dual-stack.md)） |
-| ADR-029 | WeChat 渠道限流与同步策略 | ⚪ |
+| ADR-029 | WeChat 渠道限流与同步策略 | ✅ 完成（[ADR-029](../adr/ADR-029-wechat-channel.md)） |
 | ADR-030 | Preview sandbox 语义（iframe / CSP / inline `?inline=1`） | ✅ 完成（[ADR-030](../adr/ADR-030-preview-sandbox.md)） |
 | ADR-031 | Heartbeat / 在线探测语义 | ✅ 完成（[ADR-031](../adr/ADR-031-heartbeat-presence.md)） |
 
