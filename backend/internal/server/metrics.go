@@ -323,4 +323,11 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "de_visualdiff_total{service=%q,size=\"medium\"} %d\n", svc, vdMedN)
 	_, _ = fmt.Fprintf(w, "de_visualdiff_total{service=%q,size=\"large\"} %d\n", svc, vdLargeN)
 	_, _ = fmt.Fprintf(w, "de_visualdiff_total{service=%q,size=\"huge\"} %d\n", svc, vdHugeN)
+
+	// W5-D1 · SelfImproving SOP verdicts
+	siCreated, siMerged, siRejected := metrics.Global.SelfImproving.Snapshot()
+	_, _ = fmt.Fprintf(w, "# HELP de_selfimproving_sop_total SelfImproving SOP generations by verdict\n# TYPE de_selfimproving_sop_total counter\n")
+	_, _ = fmt.Fprintf(w, "de_selfimproving_sop_total{service=%q,verdict=\"created\"} %d\n", svc, siCreated)
+	_, _ = fmt.Fprintf(w, "de_selfimproving_sop_total{service=%q,verdict=\"merged\"} %d\n", svc, siMerged)
+	_, _ = fmt.Fprintf(w, "de_selfimproving_sop_total{service=%q,verdict=\"rejected\"} %d\n", svc, siRejected)
 }

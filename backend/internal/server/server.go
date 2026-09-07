@@ -731,6 +731,10 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/multimodal/extract" && method == http.MethodPost:
 		s.multimodalExtractHandler(w, r)
 		return
+	// W5-D1 · SelfImproving SOP
+	case path == "/api/selfimproving/sop" && method == http.MethodPost:
+		s.selfimprovingGenerateHandler(w, r)
+		return
 	case path == "/api/skill-integrations" && method == http.MethodGet:
 		data, err = s.listSkillIntegrations(r)
 	case strings.HasPrefix(path, "/api/skill-integrations/") && (method == http.MethodPost || method == http.MethodPatch):

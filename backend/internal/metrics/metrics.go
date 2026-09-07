@@ -247,7 +247,30 @@ type Registry struct {
 	ExpertInbox  ExpertInboxGauge
 	HotReload    HotReloadBuckets
 	VisualDiff   VisualDiffBuckets
+	SelfImproving SelfImprovingBuckets
 	processStart time.Time
+}
+
+// SelfImprovingBuckets counts SOP generation verdicts.
+type SelfImprovingBuckets struct {
+	Created  Counter
+	Merged   Counter
+	Rejected Counter
+}
+
+func (s *SelfImprovingBuckets) Inc(verdict string) {
+	switch verdict {
+	case "created":
+		s.Created.Inc()
+	case "merged":
+		s.Merged.Inc()
+	case "rejected":
+		s.Rejected.Inc()
+	}
+}
+
+func (s *SelfImprovingBuckets) Snapshot() (created, merged, rejected uint64) {
+	return s.Created.Value(), s.Merged.Value(), s.Rejected.Value()
 }
 
 // Global is the default registry. All call sites use it directly so the
