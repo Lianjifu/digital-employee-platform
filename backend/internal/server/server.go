@@ -1,18 +1,26 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
+	"github.com/digital-employee-platform/backend/internal/channel"
 	"github.com/digital-employee-platform/backend/internal/deworkflow"
 	"github.com/digital-employee-platform/backend/internal/infra"
+	memid "github.com/digital-employee-platform/backend/internal/memory/identity"
 	"github.com/digital-employee-platform/backend/internal/modelprov"
+	"github.com/digital-employee-platform/backend/internal/modelprov/trace"
 	"github.com/digital-employee-platform/backend/internal/policy"
+	"github.com/digital-employee-platform/backend/internal/skills/registry"
+	"github.com/digital-employee-platform/backend/internal/skills/signing"
 	"github.com/digital-employee-platform/backend/internal/runtimeenv"
 	"github.com/digital-employee-platform/backend/internal/store"
 	"github.com/digital-employee-platform/backend/internal/vault"
@@ -48,24 +56,125 @@ type Server struct {
 	// ReplicaForced is set when Postgres is in recovery (pg_is_in_recovery).
 	ReplicaForced    bool
 	PostgresRecovery bool
+	// TraceRecorder captures per-invocation model traces for M7.
+	TraceRecorder *trace.Recorder
+	// SkillRegistry is the v2 skill spec registry (S1/S2).
+	SkillRegistry *registry.Registry
+	// IdentityProfiles holds durable digital-employee identity (Mem5).
+	IdentityProfiles *memid.Store
+	// ChannelRegistry routes sends/probes/parse to the right vendor adapter
+	// without per-vendor conditionals at call sites.
+	ChannelRegistry *channel.Registry
+	// lastMemoryBudgetReport is set by retrieveMemoryForTurnLocked so the
+	// copilot stream can flush a `memory.budget` SSE event. Single-slot:
+	// concurrent turns overwrite; that's acceptable for an observability tail
+	// (the live SSE always sees the latest write for its own turn).
+	lastMemoryBudgetReport *memoryBudgetReport
+	// participantMemoryBudgetReports collects per-participant memory budget
+	// reports during a panel dispatch so the supervisor can flush a single
+	// consolidated `memory.budget` event after the panel completes — without
+	// this, each participant overwrites the single-slot and the supervisor
+	// stream (which flushes before participants run) would only ever see the
+	// supervisor's own retrieval, never the per-specialist slicing.
+	participantMemoryBudgetReports map[string]*memoryBudgetReport
+	// participantMemoryBudgetMu guards participantMemoryBudgetReports.
+	participantMemoryBudgetMu sync.Mutex
+	// testHooks lets *_test.go files override behavior at well-defined seams
+	// (runParticipantTurn, runCopilotTool, runPlanExecuteTurn) without
+	// standing up the full LLM/RAG stack. Nil in production; nil fields
+	// inside mean "no override at that seam".
+	testHooks *serverTestHooks
+	// W1-D2 · Skill 签名信任锚
+	// SkillTrustStore 加载静态 trusted-publishers.json（prod 用），包含所有
+	// 受信任发布者的公钥。SkillDevKey 是 dev/demo 模式下自动生成的本地 keypair，
+	// 用于本地签名/校验 skills 且不污染 prod trust。
+	SkillTrustStore *signing.TrustStore
+	SkillDevKey     *signing.DevKeyStore
+}
+
+// serverTestHooks groups the optional test seams. Field types are kept in
+// this file (rather than exported per-hook fields on Server) so production
+// call sites can branch on a single nil check and tests can populate any
+// subset without touching the Server public API surface.
+type serverTestHooks struct {
+	// participantTurnOverride, when non-nil, replaces the body of
+	// runParticipantTurn. Used to inject panics for errgroup recovery tests.
+	participantTurnOverride func(ctx context.Context, pc participantContext) participantTurnResult
+	// runCopilotToolOverride, when non-nil, replaces runCopilotTool for
+	// builtin tools (knowledge.retrieve / memory.recall). Used to fake
+	// retrieval results without bringing up the sidecar.
+	runCopilotToolOverride func(ctx toolRunContext, t *registeredTool, call toolCallRequest) toolExecResult
+	// runPlanExecuteOverride, when non-nil, replaces runPlanExecuteTurn
+	// on the no-specialists fallback path so tests can observe the emit
+	// without depending on the harness.
+	runPlanExecuteOverride func(in reactTurnInput) reactTurnResult
 }
 
 func New(st *store.Store) *Server {
 	s := &Server{
-		Store:      st,
-		Mode:       ModeAll,
-		RuntimeURL: envOr("DE_AGENT_RUNTIME_URL", "http://127.0.0.1:8091"),
-		RAGURL:     envOr("DE_RAG_URL", "http://127.0.0.1:8092"),
-		Policy:     policy.New(),
-		Vault:      vault.NewFromEnv(),
-		OIDC:       auth.LoadOIDC(),
-		Workflows:  deworkflow.New(),
-		ModelProbe: modelprov.NewClient(),
+		Store:         st,
+		Mode:          ModeAll,
+		RuntimeURL:    envOr("DE_AGENT_RUNTIME_URL", "http://127.0.0.1:8091"),
+		RAGURL:        envOr("DE_RAG_URL", "http://127.0.0.1:8092"),
+		Policy:        policy.New(),
+		Vault:         vault.NewFromEnv(),
+		OIDC:          auth.LoadOIDC(),
+		Workflows:     deworkflow.New(),
+		ModelProbe:    modelprov.NewClient(),
+		TraceRecorder:    trace.NewRecorder(5000),
+		SkillRegistry:    defaultSkillRegistry(),
+		IdentityProfiles: memid.NewStore(),
+		ChannelRegistry:  channel.NewDefaultRegistry(),
 	}
 	if !vaultRequiredForCredentials() {
 		s.hydrateVaultFromSecrets()
 	}
+	st.MigrateProvenance()
+	s.bootstrapSkillSigning()
 	return s
+}
+
+// bootstrapSkillSigning wires the W1-D2 trust store + dev keypair onto the
+// running server. Always loads the static trusted-publishers.json (may be
+// empty in dev). Auto-provisions the dev keypair only when the runtime env
+// permits it (demo / development).
+func (s *Server) bootstrapSkillSigning() {
+	mode := runtimeenv.FromEnv()
+	tfPath := envOr("DE_TRUSTED_PUBLISHERS_PATH", "data/skill-keys/trusted-publishers.json")
+	tf, err := signing.LoadTrustFile(tfPath)
+	if err != nil {
+		log.Printf("skill signing: trust file load failed: %v", err)
+	}
+	s.SkillTrustStore = signing.NewTrustStore(tf)
+	if len(tf.Keys) > 0 {
+		log.Printf("skill signing: loaded %d trusted publishers from %s", len(tf.Keys), tfPath)
+	}
+	if !mode.AutoProvisionsSkillKeys() {
+		return
+	}
+	keyPath := envOr("DE_DEV_KEYPAIR_PATH", "data/skill-keys/dev-keypair.json")
+	d, err := signing.NewDevKeyStore(keyPath)
+	if err != nil {
+		log.Printf("skill signing: dev keypair provisioning failed: %v", err)
+		return
+	}
+	s.SkillDevKey = d
+	// Register the dev public key into the trust store so locally-produced
+	// signatures verify. AddedBy/AddedAt stamped here for the audit trail.
+	tk := d.TrustedKey()
+	if tk.KeyID == "" {
+		// Defensive: TrustedKey() may have raced with auto-provision.
+		// Re-derive from the signer directly.
+		tk.KeyID = d.Signer().KeyID()
+		if signerRec, ok := s.SkillTrustStore.Lookup(d.Signer().KeyID()); ok {
+			tk.PublicKey = signerRec.PublicKey
+			tk.Name = signerRec.Name
+		}
+	}
+	tk.AddedAt = time.Now().UTC()
+	tk.AddedBy = "dev-keypair-auto"
+	s.SkillTrustStore.Add(tk)
+	log.Printf("skill signing: dev keypair ready keyID=%s path=%s", tk.KeyID, keyPath)
 }
 
 // hydrateVaultFromSecrets reloads durable local secrets into the in-memory Vault stub
@@ -170,6 +279,17 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.listWorkspaces(r)
 	case path == "/api/workspaces" && method == http.MethodPost:
 		data, err = s.createWorkspace(r)
+	// W2-D1 · workspace publisher key CRUD. Must come BEFORE the generic
+	// /api/workspaces/ prefix matches below, otherwise
+	// workspaceSubresource / workspaceAction would 404 them.
+	case strings.HasPrefix(path, "/api/workspaces/") && strings.HasSuffix(path, "/publisher-key/rotate") && method == http.MethodPost:
+		data, err = s.rotateWorkspacePublisherKey(r)
+	case strings.HasPrefix(path, "/api/workspaces/") && strings.HasSuffix(path, "/publisher-key") && method == http.MethodGet:
+		data, err = s.getWorkspacePublisherKey(r)
+	case strings.HasPrefix(path, "/api/workspaces/") && strings.HasSuffix(path, "/publisher-key") && method == http.MethodPost:
+		data, err = s.createOrRegisterWorkspacePublisherKey(r)
+	case strings.HasPrefix(path, "/api/workspaces/") && strings.HasSuffix(path, "/publisher-key") && method == http.MethodDelete:
+		data, err = s.revokeWorkspacePublisherKey(r)
 	case path == "/api/workspace-switch-history" && method == http.MethodGet:
 		data, err = s.switchHistory(r)
 	case strings.HasPrefix(path, "/api/workspaces/") && method == http.MethodGet:
@@ -531,6 +651,12 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.patchMemoryPolicy(r)
 	case path == "/api/memory/audit" && method == http.MethodGet:
 		data, err = s.listMemoryAudits(r)
+	case path == "/api/memory/identity" && method == http.MethodGet:
+		data, err = s.listMemoryIdentity(r)
+	case path == "/api/memory/identity" && method == http.MethodPut:
+		data, err = s.upsertMemoryIdentity(r)
+	case strings.HasPrefix(path, "/api/memory/identity/") && method == http.MethodDelete:
+		data, err = s.deleteMemoryIdentity(r)
 
 	// Self-Evolution (Phase 4)
 	case path == "/api/evolve/candidates" && method == http.MethodGet:

@@ -4,3 +4,8 @@ data/
 .cache/
 **/*.tgz
 *.log
+# W1-D2 · skill signing — never commit dev keypairs; trusted-publishers.json
+# is opt-in and tracked only when it lists production publishers.
+data/skill-keys/dev-keypair.json
+data/skill-keys/dev-keypair.*.tmp
+data/skill-keys/*.priv

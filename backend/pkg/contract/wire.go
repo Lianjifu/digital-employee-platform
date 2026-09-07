@@ -70,8 +70,16 @@ var RiskLevels = []string{RiskLevelLow, RiskLevelMedium, RiskLevelHigh}
 var InboundChannels = []string{ChannelWeb, ChannelAPI, ChannelFeishu, ChannelWecom, ChannelDingtalk}
 
 // StreamEventTypes 为 SSE / Connect 共用事件词表（Connect/proto 子集）。
-// StreamThought 为 Web SSE 扩展事件，经 JSON 投递，暂不进 proto 枚举。
+// 注意：StreamThought / StreamTask 不在此列表，它们是 Web SSE 专有扩展事件，
+// 经 JSON 投递，暂不进 proto 枚举。
 var StreamEventTypes = []string{
+	StreamStage, StreamDelta, StreamMessageStart, StreamMessageDelta, StreamMessageDone,
+	StreamTool, StreamRoute, StreamEvidence, StreamDone, StreamError,
+}
+
+// AllStreamEventTypesIncludingExtensions adds StreamThought + StreamTask for
+// callers that need the SSE-only set (e.g. /api/copilot/... SSE validator).
+var AllStreamEventTypesIncludingExtensions = []string{
 	StreamStage, StreamDelta, StreamMessageStart, StreamMessageDelta, StreamMessageDone,
 	StreamTool, StreamRoute, StreamThought, StreamTask, StreamEvidence, StreamDone, StreamError,
 }

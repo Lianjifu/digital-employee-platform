@@ -7,12 +7,14 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -20,6 +22,7 @@ const (
 	maxSkillPackageBytes     = 10 << 20 // 10 MiB compressed
 	maxSkillPackageUnpacked  = 50 << 20 // 50 MiB
 	maxSkillPackageFileCount = 200
+	skillpkgSignatureFile    = ".skillpkg.signature.json" // W2-D1 · 包内签名 sidecar
 )
 
 var (
@@ -45,7 +48,26 @@ type skillPackageManifest struct {
 	HasScripts        bool
 	SHA256            string
 	SizeBytes         int
+	// W1-D2 · 发布者 Ed25519 签名（base64 64B）。覆盖 manifest + files
+	// canonical JSON，verify 在 attachBuiltinPackageToSkill / importSkillPackage
+	// 两个入口强制执行。
+	Signature  string    `json:"signature,omitempty"`
+	KeyID      string    `json:"keyId,omitempty"`
+	SignedAt   time.Time `json:"signedAt,omitempty"`
+	SignerName string    `json:"signerName,omitempty"`
 }
+
+// GetName / GetVersion / GetSkillMDRel / GetEntrypoints / GetRiskLevel 实现
+// signing.SkillMeta，让 server 包不直接 import signing 包的同时签 manifest。
+func (m *skillPackageManifest) GetName() string         { return m.Name }
+func (m *skillPackageManifest) GetVersion() string      { return m.Version }
+func (m *skillPackageManifest) GetSkillMDRel() string   { return m.SkillMDRel }
+func (m *skillPackageManifest) GetEntrypoints() []string {
+	out := make([]string, len(m.Entrypoints))
+	copy(out, m.Entrypoints)
+	return out
+}
+func (m *skillPackageManifest) GetRiskLevel() string { return m.RiskLevel }
 
 func skillPackageAllowedExt(name string) bool {
 	n := strings.ToLower(name)
@@ -78,6 +100,28 @@ func parseSkillPackage(fileName string, raw []byte) (*skillPackageManifest, map[
 	if err != nil {
 		return nil, nil, err
 	}
+
+	// W2-D1 · 读 .skillpkg.signature.json sidecar（如有）。解析失败不阻断 parse，
+	// 留给 verifyImportSignature 走 SkillSignatureMissing。sidecar 永不落盘，
+	// 仅作 verify 输入；malformed JSON 也兼容（向后兼容既有未签名包）。
+	if sigBytes, ok := files[filepath.Join(root, skillpkgSignatureFile)]; ok {
+		var sig struct {
+			KeyID      string    `json:"keyId"`
+			Signature  string    `json:"signature"`
+			SignedAt   time.Time `json:"signedAt"`
+			SignerName string    `json:"signerName"`
+		}
+		if err := json.Unmarshal(sigBytes, &sig); err == nil && sig.Signature != "" && sig.KeyID != "" {
+			meta.Signature = sig.Signature
+			meta.KeyID = sig.KeyID
+			meta.SignedAt = sig.SignedAt
+			meta.SignerName = sig.SignerName
+		}
+		// sidecar 自身不能进入 manifest digest —— digest 反映 *content*，
+		// 把签名产物算进 digest 会自我引用导致永远验不过。
+		delete(files, filepath.Join(root, skillpkgSignatureFile))
+	}
+
 	if meta.Name == "" {
 		meta.Name = filepath.Base(root)
 	}
@@ -111,6 +155,9 @@ func parseSkillPackage(fileName string, raw []byte) (*skillPackageManifest, map[
 		}
 		if shouldSkipSkillPackagePath(rel) {
 			continue
+		}
+		if rel == skillpkgSignatureFile {
+			continue // W2-D1 · sidecar 不出现在 meta.Files（仅作 verify 用）
 		}
 		relFiles = append(relFiles, rel)
 		if isSkillScriptPath(rel) {
@@ -242,6 +289,10 @@ func normalizeArchivePath(name string) string {
 }
 
 func shouldSkipSkillPackagePath(path string) bool {
+	// W2-D1 · 签名 sidecar 必须能进 files map（用于解析），但只允许这一个 dotfile。
+	if filepath.Base(path) == ".skillpkg.signature.json" {
+		return false
+	}
 	base := filepath.Base(path)
 	if base == ".DS_Store" || base == ".env" || strings.HasPrefix(base, ".") && base != ".gitkeep" {
 		if strings.Contains(path, "/.") || strings.HasPrefix(path, ".") {
@@ -401,6 +452,9 @@ func (s *Server) materializeSkillPackage(ws, skillID, rootDir string, files map[
 		}
 		if rel == "" || shouldSkipSkillPackagePath(rel) {
 			continue
+		}
+		if rel == skillpkgSignatureFile {
+			continue // W2-D1 · sidecar 不落盘，仅作 verify 用
 		}
 		target := filepath.Join(dest, filepath.FromSlash(rel))
 		if !strings.HasPrefix(target, dest+string(os.PathSeparator)) && target != dest {

@@ -107,6 +107,15 @@ const (
 	EvalSetFailed       Code = "E_EVAL_SET_FAILED"
 	ReplicaStandby      Code = "E_REPLICA_STANDBY"
 	CountersignRequired Code = "E_COUNTERSIGN_REQUIRED"
+
+	// W1-D1 · Skill Vetter
+	SkillVetDenied  Code = "E_SKILL_VET_DENIED"
+	SkillVetInvalid Code = "E_SKILL_VET_INVALID"
+
+	// W1-D2 · Skill 签名
+	SkillSignatureInvalid    Code = "E_SKILL_SIGNATURE_INVALID"
+	SkillSignatureMissing    Code = "E_SKILL_SIGNATURE_MISSING"
+	SkillSignatureUnknownKey Code = "E_SKILL_SIGNATURE_UNKNOWN_KEY"
 )
 
 // AppError 携带错误码与 HTTP 状态。

@@ -178,14 +178,21 @@ func maskSkillOutput(text string, enabled bool) string {
 	return reSecretLike.ReplaceAllString(text, "[REDACTED]")
 }
 
-func skillSupplyChainGate(candidate map[string]any) (decision string, reason string, checks []map[string]any) {
+// skillSupplyChainGate returns approval/review/blocked for a candidate
+// skill. W2-D1: replaces the legacy publisher-string whitelist with a
+// KeyID lookup against the candidate's workspace publisher key. The
+// legacy whitelist is kept as a tier-2 fallback for builtin skills
+// whose signedKeyId points at the global trust store.
+func (s *Server) skillSupplyChainGate(candidate map[string]any) (decision string, reason string, checks []map[string]any) {
 	signed := true
 	if candidate["signed"] != nil {
 		signed = boolFrom(candidate["signed"])
 	}
 	vuln := intFrom(candidate["vulnerabilityCount"])
-	publisher := str(candidate["publisher"])
-	trusted := publisher == "" || publisher == "企业能力商店" || publisher == "SRE 平台组" || publisher == "安全运营组" || publisher == "流程平台组" || publisher == "消息平台组"
+	keyID := str(candidate["publisherKeyId"])
+	workspaceID := str(candidate["workspaceId"])
+
+	trusted := s.publisherKeyTrusted(workspaceID, keyID, str(candidate["publisher"]))
 
 	checks = []map[string]any{
 		{"label": "发布方信任", "status": ternary(trusted, "passed", "review")},
@@ -214,4 +221,46 @@ func skillSupplyChainGate(candidate map[string]any) (decision string, reason str
 
 func errRateLimited(msg string) error {
 	return apperr.New(apperr.RateLimited, 429, msg)
+}
+
+// publisherKeyTrusted is the W2-D1 source of truth for whether a skill's
+// publisher KeyID is recognized for the candidate's workspace.
+//
+// Tiers (highest trust first):
+//   1. Workspace publisher key (active or rotated grace) — `keyID` matches
+//      the workspace's active key or any rotated entry.
+//   2. Legacy whitelist — keeps builtin skills whose publisher was set
+//      before W2-D1 working even though they have no signedKeyId.
+//   3. Dev/empty key — unsigned candidates always trusted when policy is
+//      PolicyOff; otherwise we let the gate reject via the empty-key check.
+//
+// Server may be nil in tests that predate Store wiring.
+func (s *Server) publisherKeyTrusted(workspaceID, keyID, legacyPublisher string) bool {
+	// Tier 1 — workspace publisher key.
+	if s != nil && s.Store != nil && keyID != "" {
+		// resolvePublisherKey covers workspace-active + workspace-rotated;
+		// it returns SkillSignatureUnknownKey on miss.
+		if _, trust, err := s.resolvePublisherKey(workspaceID, keyID); err == nil &&
+			(trust == "workspace-active" || trust == "workspace-rotated") {
+			return true
+		}
+		// global trust store (builtin publishers) — only counts under
+		// PolicyAny / PolicyOff. Caller decides final via policy gate.
+		if s.SkillTrustStore != nil {
+			if _, err := s.SkillTrustStore.LookupPublic(keyID); err == nil {
+				return true
+			}
+		}
+	}
+	// Tier 2 — legacy string whitelist for builtin publishers without
+	// signedKeyId. Kept for back-compat with skills seeded before W2-D1.
+	if legacyPublisher == "" ||
+		legacyPublisher == "企业能力商店" ||
+		legacyPublisher == "SRE 平台组" ||
+		legacyPublisher == "安全运营组" ||
+		legacyPublisher == "流程平台组" ||
+		legacyPublisher == "消息平台组" {
+		return true
+	}
+	return false
 }

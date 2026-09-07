@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/digital-employee-platform/backend/internal/memory/provenance"
 )
 
 // Store is an in-memory control-plane state (Phase A–C default; PG later).
@@ -69,11 +71,18 @@ type Store struct {
 	SkillHealth            []map[string]any
 	SkillIntegrations      []map[string]any
 	SkillExtra             map[string]any // policies, runtimes, permissions, versions, bindings, incidents, events
+	// W2-D1 · workspace publisher keypairs (per-workspace Ed25519 trust anchor).
+	// Flatted shape: each (workspaceId, keyId) is one entry; multiple keys
+	// per workspace represent rotation history (`status="rotated"` /
+	// `"revoked"`). There is at most ONE entry per workspace with
+	// status="active" — enforced by the mutation endpoints.
+	WorkspacePublisherKeys map[string]map[string]any
 	MemoryRecords          []map[string]any
 	MemoryCands            []map[string]any
 	EvolveCands            []map[string]any // Self-Evolution candidates (Phase 4)
 	MemoryPolicies         map[string]map[string]any
 	MemoryAudits           []map[string]any
+	MemoryExtra            map[string]any // identity profiles, provenance migration stamp, layer policies
 	Channels               []map[string]any
 	ChannelDeploys         []map[string]any
 	DeliveryPolicies       []map[string]any
@@ -137,6 +146,7 @@ func newStoreShell() *Store {
 		MemoryPolicies:       map[string]map[string]any{},
 		WorkflowVersions:     map[string][]map[string]any{},
 		KnowledgeExtra:       map[string]any{},
+		MemoryExtra:          map[string]any{},
 		ChannelHealth:        map[string]map[string]any{},
 		ActorExtraWorkspaces: map[string][]string{},
 		CopilotIdempotency:   map[string]map[string]any{},
@@ -144,7 +154,8 @@ func newStoreShell() *Store {
 			"name": "ACME Corp", "tenantId": "tenant-acme", "region": "cn-east-1",
 			"createdAt": "2024-03-12", "status": "active",
 		},
-		SkillGovernance: map[string]any{},
+		SkillGovernance:        map[string]any{},
+		WorkspacePublisherKeys: map[string]map[string]any{}, // W2-D1
 	}
 }
 
@@ -161,6 +172,41 @@ func (s *Store) ID(prefix string) string {
 // BumpSeqFromPrefixedIDs advances the ID counter past existing "{prefix}-N" values (post-hydrate).
 func (s *Store) BumpSeqFromPrefixedIDs(prefix string) {
 	s.bumpSeqFromMaps(prefix, s.Skills)
+}
+
+// MigrateProvenance stamps a Provenance on every MemoryRecord that lacks one
+// (Mem7). Idempotent — re-running on already-stamped records is a no-op.
+// Returns the number of records newly stamped.
+func (s *Store) MigrateProvenance() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.fillProvenanceLocked()
+}
+
+func (s *Store) fillProvenanceLocked() int {
+	n := 0
+	for _, m := range s.MemoryRecords {
+		if _, ok := m["provenance"]; ok {
+			continue
+		}
+		title, _ := m["title"].(string)
+		content, _ := m["content"].(string)
+		createdAt, _ := m["createdAt"].(string)
+		p := provenance.StampLegacy(title + "\n" + content)
+		if createdAt != "" {
+			p.CreatedAt = createdAt
+		}
+		m["provenance"] = p
+		n++
+	}
+	if n > 0 {
+		s.MemoryExtra["provenanceMigrationStamp"] = time.Now().UTC().Format(time.RFC3339)
+		s.MemoryExtra["provenanceMigrationCount"] = n
+	}
+	return n
 }
 
 func (s *Store) bumpSeqFromMaps(prefix string, items []map[string]any) {

@@ -1,0 +1,4 @@
+{
+  "suppressPatterns": ["system-install"],
+  "_comment": "frontend-slides' deploy.sh installs vercel globally to publish slide previews. The package is otherwise clean — no egress, credential, persistence, or destructive patterns."
+}

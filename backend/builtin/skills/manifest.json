@@ -1,25 +1,40 @@
 {
-  "version": "2.0.0",
   "packId": "general",
   "packName": "通用",
+  "version": "2.0.0",
   "generalPackSkills": [
-    "weather", "summarize", "github", "docx", "pdf", "pptx",
-    "frontend-design", "web-design-guidelines", "diagram-maker", "gog",
+    "weather",
+    "summarize",
+    "github",
+    "docx",
+    "pdf",
+    "pptx",
+    "frontend-design",
+    "web-design-guidelines",
+    "diagram-maker",
+    "gog",
     "general-logic-thinking-assistant",
     "general-problem-solving-analysis-assistant",
     "general-creative-decision-assistant"
   ],
-  "tierDOptIn": ["browser-use", "1password"],
+  "tierDOptIn": [
+    "browser-use",
+    "1password"
+  ],
   "packs": {
-    "office": {
-      "packName": "办公通用",
-      "phase": "P0",
-      "autoInstall": true,
+    "collab-ext": {
+      "packName": "协作扩展",
+      "phase": "P1",
+      "autoInstall": false,
       "skills": [
-        "summarize", "docx", "pdf", "pptx", "spreadsheets", "diagram-maker",
-        "general-logic-thinking-assistant",
-        "general-problem-solving-analysis-assistant",
-        "general-creative-decision-assistant"
+        "trello",
+        "spreadsheets",
+        "tmux",
+        "meeting-recorder-assistant",
+        "find-skills",
+        "karpathy-guidelines",
+        "react-next-best-practices",
+        "powershell"
       ]
     },
     "general": {
@@ -27,20 +42,19 @@
       "phase": "P0",
       "autoInstall": true,
       "skills": [
-        "weather", "summarize", "github", "docx", "pdf", "pptx",
-        "frontend-design", "web-design-guidelines", "diagram-maker", "gog",
+        "weather",
+        "summarize",
+        "github",
+        "docx",
+        "pdf",
+        "pptx",
+        "frontend-design",
+        "web-design-guidelines",
+        "diagram-maker",
+        "gog",
         "general-logic-thinking-assistant",
         "general-problem-solving-analysis-assistant",
         "general-creative-decision-assistant"
-      ]
-    },
-    "collab-ext": {
-      "packName": "协作扩展",
-      "phase": "P1",
-      "autoInstall": false,
-      "skills": [
-        "trello", "spreadsheets", "tmux", "meeting-recorder-assistant",
-        "find-skills", "karpathy-guidelines", "react-next-best-practices", "powershell"
       ]
     },
     "heavy-optin": {
@@ -49,7 +63,28 @@
       "autoInstall": false,
       "requiresApproval": true,
       "skills": [
-        "browser-use", "1password", "notion", "obsidian", "himalaya", "apple-notes"
+        "browser-use",
+        "1password",
+        "notion",
+        "obsidian",
+        "himalaya",
+        "apple-notes"
+      ]
+    },
+    "office": {
+      "packName": "办公通用",
+      "phase": "P0",
+      "autoInstall": true,
+      "skills": [
+        "summarize",
+        "docx",
+        "pdf",
+        "pptx",
+        "spreadsheets",
+        "diagram-maker",
+        "general-logic-thinking-assistant",
+        "general-problem-solving-analysis-assistant",
+        "general-creative-decision-assistant"
       ]
     },
     "pilotdeck-full": {
@@ -57,61 +92,547 @@
       "phase": "P3",
       "autoInstall": false,
       "skills": [
-        "1password", "apple-notes", "apple-reminders", "bear-notes", "blogwatcher",
-        "browser-use", "diagram-maker", "docx", "find-skills", "frontend-design",
-        "frontend-slides", "github", "gog", "himalaya", "karpathy-guidelines",
-        "meeting-recorder-assistant", "notion", "obsidian", "pdf",
-        "pilotdeck-skills-migration", "powershell", "pptx", "react-next-best-practices",
-        "skill-creator", "spike", "spreadsheets", "summarize", "tmux", "trello",
-        "weather", "web-design-guidelines"
+        "1password",
+        "apple-notes",
+        "apple-reminders",
+        "bear-notes",
+        "blogwatcher",
+        "browser-use",
+        "diagram-maker",
+        "docx",
+        "find-skills",
+        "frontend-design",
+        "frontend-slides",
+        "github",
+        "gog",
+        "himalaya",
+        "karpathy-guidelines",
+        "meeting-recorder-assistant",
+        "notion",
+        "obsidian",
+        "pdf",
+        "pilotdeck-skills-migration",
+        "powershell",
+        "pptx",
+        "react-next-best-practices",
+        "skill-creator",
+        "spike",
+        "spreadsheets",
+        "summarize",
+        "tmux",
+        "trello",
+        "weather",
+        "web-design-guidelines"
       ]
     }
   },
   "skillMeta": {
-    "github": { "externalBins": ["gh"], "tier": "A" },
-    "gog": { "externalBins": ["gog"], "tier": "A" },
-    "trello": { "externalBins": ["trello"], "tier": "A" },
-    "1password": { "externalBins": ["op"], "tier": "D" },
-    "browser-use": { "externalBins": ["python3"], "tier": "D" },
-    "spreadsheets": { "externalBins": ["node"], "tier": "B" },
-    "pptx": { "externalBins": ["node"], "tier": "B" },
-    "meeting-recorder-assistant": { "externalBins": ["python3"], "tier": "B" },
-    "himalaya": { "externalBins": ["himalaya"], "tier": "D" },
-    "notion": { "externalBins": ["ntn"], "tier": "D" },
-    "obsidian": { "externalBins": ["obsidian"], "tier": "D" },
-    "powershell": { "externalBins": ["pwsh", "powershell"], "tier": "A" },
-    "tmux": { "externalBins": ["tmux"], "tier": "A" }
+    "1password": {
+      "externalBins": [
+        "op"
+      ],
+      "tier": "D"
+    },
+    "browser-use": {
+      "externalBins": [
+        "python3"
+      ],
+      "tier": "D"
+    },
+    "github": {
+      "externalBins": [
+        "gh"
+      ],
+      "tier": "A"
+    },
+    "gog": {
+      "externalBins": [
+        "gog"
+      ],
+      "tier": "A"
+    },
+    "himalaya": {
+      "externalBins": [
+        "himalaya"
+      ],
+      "tier": "D"
+    },
+    "meeting-recorder-assistant": {
+      "externalBins": [
+        "python3"
+      ],
+      "tier": "B"
+    },
+    "notion": {
+      "externalBins": [
+        "ntn"
+      ],
+      "tier": "D"
+    },
+    "obsidian": {
+      "externalBins": [
+        "obsidian"
+      ],
+      "tier": "D"
+    },
+    "powershell": {
+      "externalBins": [
+        "pwsh",
+        "powershell"
+      ],
+      "tier": "A"
+    },
+    "pptx": {
+      "externalBins": [
+        "node"
+      ],
+      "tier": "B"
+    },
+    "spreadsheets": {
+      "externalBins": [
+        "node"
+      ],
+      "tier": "B"
+    },
+    "tmux": {
+      "externalBins": [
+        "tmux"
+      ],
+      "tier": "A"
+    },
+    "trello": {
+      "externalBins": [
+        "trello"
+      ],
+      "tier": "A"
+    }
   },
   "platformTools": [
-    { "name": "knowledge.retrieve", "kind": "platform", "mode": "execute", "description": "检索已发布知识库" },
-    { "name": "memory.recall", "kind": "platform", "mode": "execute", "description": "跨会话记忆检索" },
-    { "name": "skill.read", "kind": "platform", "mode": "execute", "description": "加载 SKILL.md 全文" },
-    { "name": "time.now", "kind": "platform", "mode": "execute", "description": "当前时间（ISO8601）" },
-    { "name": "todo_write", "kind": "platform", "phase": "P2", "mode": "execute", "description": "会话 Todo 列表" },
-    { "name": "ask_user_question", "kind": "platform", "phase": "P2", "mode": "execute", "description": "向用户提问" },
-    { "name": "structured_output", "kind": "platform", "phase": "P2", "mode": "execute", "description": "结构化 JSON 输出" },
-    { "name": "enter_plan_mode", "kind": "platform", "phase": "P3", "mode": "execute", "description": "进入研判/计划模式" },
-    { "name": "exit_plan_mode", "kind": "platform", "phase": "P3", "mode": "execute", "description": "退出计划模式" }
+    {
+      "name": "knowledge.retrieve",
+      "kind": "platform",
+      "mode": "execute",
+      "description": "检索已发布知识库"
+    },
+    {
+      "name": "memory.recall",
+      "kind": "platform",
+      "mode": "execute",
+      "description": "跨会话记忆检索"
+    },
+    {
+      "name": "skill.read",
+      "kind": "platform",
+      "mode": "execute",
+      "description": "加载 SKILL.md 全文"
+    },
+    {
+      "name": "time.now",
+      "kind": "platform",
+      "mode": "execute",
+      "description": "当前时间（ISO8601）"
+    },
+    {
+      "name": "todo_write",
+      "kind": "platform",
+      "phase": "P2",
+      "mode": "execute",
+      "description": "会话 Todo 列表"
+    },
+    {
+      "name": "ask_user_question",
+      "kind": "platform",
+      "phase": "P2",
+      "mode": "execute",
+      "description": "向用户提问"
+    },
+    {
+      "name": "structured_output",
+      "kind": "platform",
+      "phase": "P2",
+      "mode": "execute",
+      "description": "结构化 JSON 输出"
+    },
+    {
+      "name": "enter_plan_mode",
+      "kind": "platform",
+      "phase": "P3",
+      "mode": "execute",
+      "description": "进入研判/计划模式"
+    },
+    {
+      "name": "exit_plan_mode",
+      "kind": "platform",
+      "phase": "P3",
+      "mode": "execute",
+      "description": "退出计划模式"
+    }
   ],
   "runtimeTools": [
-    { "name": "read_file", "kind": "runtime", "mode": "execute", "description": "读取技能包内文件", "executor": "skill.open" },
-    { "name": "glob", "kind": "runtime", "mode": "execute", "description": "列出技能包文件", "executor": "skill.open" },
-    { "name": "grep", "kind": "runtime", "mode": "execute", "description": "搜索技能包内容", "executor": "skill.open" },
-    { "name": "bash", "kind": "runtime", "mode": "approval_required", "description": "沙箱命令执行", "executor": "skill.run" },
-    { "name": "write_file", "kind": "runtime", "phase": "P1", "mode": "approval_required", "description": "写入技能包 .copilot-ws", "executor": "skill.write" },
-    { "name": "edit_file", "kind": "runtime", "phase": "P1", "mode": "approval_required", "description": "Patch 编辑包内文件", "executor": "patch" },
-    { "name": "web_search", "kind": "runtime", "phase": "P1", "mode": "execute", "description": "Web 搜索", "executor": "http", "availability": "opt_in" },
-    { "name": "web_fetch", "kind": "runtime", "phase": "P2", "mode": "execute", "description": "HTTP GET 抓取 URL", "executor": "http", "availability": "opt_in" },
-    { "name": "execute_code", "kind": "runtime", "phase": "P2", "mode": "approval_required", "description": "沙箱代码执行", "executor": "skill.run" },
-    { "name": "edit_notebook", "kind": "runtime", "phase": "P2", "mode": "approval_required", "description": "编辑 Jupyter notebook", "executor": "patch" },
-    { "name": "send_attachment", "kind": "runtime", "phase": "P2", "mode": "execute", "description": "发送附件链接", "executor": "attachment" },
-    { "name": "agent", "kind": "runtime", "phase": "P3", "mode": "approval_required", "description": "子 Agent 委派", "executor": "agent" },
-    { "name": "task_create", "kind": "runtime", "phase": "P3", "mode": "execute", "description": "创建后台任务", "executor": "task" },
-    { "name": "task_list", "kind": "runtime", "phase": "P3", "mode": "execute", "description": "列出任务", "executor": "task" },
-    { "name": "task_output", "kind": "runtime", "phase": "P3", "mode": "execute", "description": "读取任务输出", "executor": "task" },
-    { "name": "task_wait", "kind": "runtime", "phase": "P3", "mode": "execute", "description": "等待任务完成", "executor": "task" },
-    { "name": "task_stop", "kind": "runtime", "phase": "P3", "mode": "approval_required", "description": "停止任务", "executor": "task" },
-    { "name": "list_mcp_resources", "kind": "runtime", "phase": "P3", "mode": "execute", "description": "列出 MCP 资源", "executor": "mcp" },
-    { "name": "read_mcp_resource", "kind": "runtime", "phase": "P3", "mode": "execute", "description": "读取 MCP 资源", "executor": "mcp" }
-  ]
+    {
+      "name": "read_file",
+      "kind": "runtime",
+      "mode": "execute",
+      "description": "读取技能包内文件",
+      "executor": "skill.open"
+    },
+    {
+      "name": "glob",
+      "kind": "runtime",
+      "mode": "execute",
+      "description": "列出技能包文件",
+      "executor": "skill.open"
+    },
+    {
+      "name": "grep",
+      "kind": "runtime",
+      "mode": "execute",
+      "description": "搜索技能包内容",
+      "executor": "skill.open"
+    },
+    {
+      "name": "bash",
+      "kind": "runtime",
+      "mode": "approval_required",
+      "description": "沙箱命令执行",
+      "executor": "skill.run"
+    },
+    {
+      "name": "write_file",
+      "kind": "runtime",
+      "phase": "P1",
+      "mode": "approval_required",
+      "description": "写入技能包 .copilot-ws",
+      "executor": "skill.write"
+    },
+    {
+      "name": "edit_file",
+      "kind": "runtime",
+      "phase": "P1",
+      "mode": "approval_required",
+      "description": "Patch 编辑包内文件",
+      "executor": "patch"
+    },
+    {
+      "name": "web_search",
+      "kind": "runtime",
+      "phase": "P1",
+      "mode": "execute",
+      "description": "Web 搜索",
+      "executor": "http",
+      "availability": "opt_in"
+    },
+    {
+      "name": "web_fetch",
+      "kind": "runtime",
+      "phase": "P2",
+      "mode": "execute",
+      "description": "HTTP GET 抓取 URL",
+      "executor": "http",
+      "availability": "opt_in"
+    },
+    {
+      "name": "execute_code",
+      "kind": "runtime",
+      "phase": "P2",
+      "mode": "approval_required",
+      "description": "沙箱代码执行",
+      "executor": "skill.run"
+    },
+    {
+      "name": "edit_notebook",
+      "kind": "runtime",
+      "phase": "P2",
+      "mode": "approval_required",
+      "description": "编辑 Jupyter notebook",
+      "executor": "patch"
+    },
+    {
+      "name": "send_attachment",
+      "kind": "runtime",
+      "phase": "P2",
+      "mode": "execute",
+      "description": "发送附件链接",
+      "executor": "attachment"
+    },
+    {
+      "name": "agent",
+      "kind": "runtime",
+      "phase": "P3",
+      "mode": "approval_required",
+      "description": "子 Agent 委派",
+      "executor": "agent"
+    },
+    {
+      "name": "task_create",
+      "kind": "runtime",
+      "phase": "P3",
+      "mode": "execute",
+      "description": "创建后台任务",
+      "executor": "task"
+    },
+    {
+      "name": "task_list",
+      "kind": "runtime",
+      "phase": "P3",
+      "mode": "execute",
+      "description": "列出任务",
+      "executor": "task"
+    },
+    {
+      "name": "task_output",
+      "kind": "runtime",
+      "phase": "P3",
+      "mode": "execute",
+      "description": "读取任务输出",
+      "executor": "task"
+    },
+    {
+      "name": "task_wait",
+      "kind": "runtime",
+      "phase": "P3",
+      "mode": "execute",
+      "description": "等待任务完成",
+      "executor": "task"
+    },
+    {
+      "name": "task_stop",
+      "kind": "runtime",
+      "phase": "P3",
+      "mode": "approval_required",
+      "description": "停止任务",
+      "executor": "task"
+    },
+    {
+      "name": "list_mcp_resources",
+      "kind": "runtime",
+      "phase": "P3",
+      "mode": "execute",
+      "description": "列出 MCP 资源",
+      "executor": "mcp"
+    },
+    {
+      "name": "read_mcp_resource",
+      "kind": "runtime",
+      "phase": "P3",
+      "mode": "execute",
+      "description": "读取 MCP 资源",
+      "executor": "mcp"
+    }
+  ],
+  "signers": {
+    "ed25519:9a5c62d02dc4a7f1": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "publicKey": "ykttJvuuWAIyr8diyru9QCVHYCiknCHhXOT8o2/wBRE=",
+      "name": "DEP Dev Keypair (auto-provisioned)",
+      "addedAt": "2026-09-07T13:02:23.178481Z",
+      "addedBy": "sign-skill"
+    }
+  },
+  "skillSignatures": {
+    "1password": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "TJuVulchExgTaGHw510f59jJZ9w3l4abLwaRbTD1VyMWZ/4/JM+2dmuMiCrV8kfq5iDSbe9htBpZH7Z7UQSYBw==",
+      "signedAt": "2026-09-07T13:02:19Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "apple-notes": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "soWp4q/nu0A250ECYpuyucZj9auZ5JuxCWKUSlZ7ok1SoS06CkdPFU9Rx838FeScrOM6/7StU34sOEiUpHRoDw==",
+      "signedAt": "2026-09-07T13:02:20Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "apple-reminders": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "G4nQkeEujlEGAW0dqOapZSskHXZswPw0Y+1qBbUkxrhC3fv2BViR0ms2ZkHYUi55kiSxjxM8e73ZVKh1ue/tAA==",
+      "signedAt": "2026-09-07T13:02:20Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "bear-notes": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "vKWuTNg/y83ng4tlG1i74Va6NHJdvuGYUhJFU854f3wNxY4QtgPWuSUKGCbpdTgbwHfFZWdsfpO12cbVOuvyDA==",
+      "signedAt": "2026-09-07T13:02:20Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "blogwatcher": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "SmIqZ5xCkRSs6R0UUDAVbF91u/C2OpdpklZrVcpGcCnyi/xbTW7XhVSyrTwsAErcYj97tq4RlbdanRdekNK0CA==",
+      "signedAt": "2026-09-07T13:02:20Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "browser-use": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "Kj8ZxbEgG+W2bK92VosVdoPWEFuen/Ugs6F6orijeR97XLXvsWCsZGUMFjK0lvKd3Ph/zT+yLup7EzOZL5dBAg==",
+      "signedAt": "2026-09-07T13:02:20Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "diagram-maker": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "4KuLJF4v7fjWxqLUKaeT7dVzeN+LxfGlLl+wVWzpgUN+Y4Nf6WCedNJDRPfJYyNypbZwjAUBwxFGAlitGTzaAg==",
+      "signedAt": "2026-09-07T13:02:20Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "docx": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "/Rf6bLsxyeXE1iUcXsn497vo4EYcEDBfwWL4VP9BX5+eqN+9Q/Lg+AGRKnGkBFk5eOCquaGBhack+H6pKDQuBw==",
+      "signedAt": "2026-09-07T13:02:20Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "find-skills": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "WCR5vOPyg3WivcapxspoCsFOAlM+RH2ns3MEi5ebj0QtnP6mj0CI40fhZ1OeCR/UvW+QIKCbZ+SL63SJoAoRAQ==",
+      "signedAt": "2026-09-07T13:02:20Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "frontend-design": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "D/QiOH8CNdVFV45TTEqiFHwe1ON5XB4SrtgsXSj/Mujc+DMhN7n3BXl3LdVbp2XsagAI6FGv5eEOJt6m3wwtBw==",
+      "signedAt": "2026-09-07T13:02:20Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "frontend-slides": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "KmeAtPpPuE7nU9CSAsZfZv9qrZ35hP18y+EiPNdbfjuY+BIapzgK85Gw8So3IHHNOuYysP+6T8e4cZIL85gVBw==",
+      "signedAt": "2026-09-07T13:02:20Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "general-creative-decision-assistant": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "6vtUE0IodzJ9PS0wAdYHBmBMy/EoXlkq4YY34srdVwvQdYBuYUOIwL58f+o+7TEHHtbW9ucfqZvuFnBLcCLfDA==",
+      "signedAt": "2026-09-07T13:02:20Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "general-logic-thinking-assistant": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "Z5Anh+n+62MK6A+kDTKUblgei0fBMZelgfn+FlWCnA2jJm/+sXsP61NyHOx+ymg3r2tvDkSv72qJY8NsIOq6DA==",
+      "signedAt": "2026-09-07T13:02:21Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "general-problem-solving-analysis-assistant": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "klFv+2nahos3KXG543NPyYH5C/jG1p1VlJFgZ6sAsaVBmVtOerdQYEo3Y2s0pZEWyyoY3n8lE/RoMaOGOZSmDA==",
+      "signedAt": "2026-09-07T13:02:21Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "github": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "xFCedlPzxyNX3odG8ADxyn8v+ZKwTH7BkEu+fr8imEhjfEfdmI/S7+UZUSUKQk24QOM6r7vsPCS5F84ttmoUDg==",
+      "signedAt": "2026-09-07T13:02:21Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "gog": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "/jpNYLDvhbkj7ZMlMGagBdjFwTpiS0vMtFpP1xrKWgRccAVVsg7tk/6MQyiDQTAF+T9jgIPSMsPIqTqUcO0BCg==",
+      "signedAt": "2026-09-07T13:02:21Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "himalaya": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "eOhJiNLE1MKPwKYot8+y/rgE2FYEfyUQM/iFXdTKTjFRqyyDwPdQ//BVlqS1228Xhtw34uaYxnoqE3kRO0pxCQ==",
+      "signedAt": "2026-09-07T13:02:21Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "karpathy-guidelines": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "tRbh0OGJJCGsrybbKdUl6to5IFJIXm3knjt2UR3XYfQxgd81PxAMEuNhGrI5pngZQ8B3Ji+eGq/QJPHRV0FVBg==",
+      "signedAt": "2026-09-07T13:02:21Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "meeting-recorder-assistant": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "rvwcANdpASna3sFq1pmgT3qJuOl+XOhpUZ04FKZhhS2MbI1kiGMYN9wv3YJkWZDNYUijT5S5gqwG3JQoRrP4AA==",
+      "signedAt": "2026-09-07T13:02:21Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "notion": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "DL7wlEXqk4bFIo9Lxhpb+tYC2h4SLKnQ6pAC6BHSUxKBdlxhRxa4sPDb8UQCVpXO70CeWTQLFu/t8HTwhfpQAw==",
+      "signedAt": "2026-09-07T13:02:21Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "obsidian": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "oXNgmHQD/HmMHQiDUCuvjs+HGJPFfbtWsrzcoCm12eFBs352RQIkdhL3qP6Gpwmni9HZIXB5kcbp+e+6cUF5CQ==",
+      "signedAt": "2026-09-07T13:02:21Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "pdf": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "yrXwbKXpwI0pb1eUqUduPWY5Xf5CCN8WQ+Sz2jHIr9s58mX0H9fYaDe3R4PogdRpLNObJQr2HHttVXK+0fzECg==",
+      "signedAt": "2026-09-07T13:02:21Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "pilotdeck-skills-migration": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "0HyYfobGUE10526ZaXU2Teuban6pu1G3E/te85NBee8V8JxH805T6qY83HbceNTZ77mv7MA88O0PbhRsmWV5BA==",
+      "signedAt": "2026-09-07T13:02:21Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "powershell": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "/zRKlL+REkGXHXi44wKAlP4QZOa+kxwVYHK0cfFQ/qm0CFXu5JMsYTrb/liUVIo5mHNBxhJ5of7Ee+D7xSstAA==",
+      "signedAt": "2026-09-07T13:02:21Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "pptx": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "bhj0zykDIkM7ZKfGyCNwNsF/azLHCLuGpzOfWkizZk+7J/eGnMiJvlnuSGH9CbPBcrsoYl5W/nnvv6GQjVzQAg==",
+      "signedAt": "2026-09-07T13:02:22Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "react-next-best-practices": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "dtHv1HIFryZMgNOhVo1Om8Xu47H3yXDPSFQNNiEDOeuOKE0G4zlrZ7z+J/w+DI/FzL3VH3TIV2E+FDweDWbrDQ==",
+      "signedAt": "2026-09-07T13:02:22Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "skill-creator": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "UjQLbQM4ZKgBjC0pvdn2Ad7JGS4D1wVC5ns5sYze66nxoCsfxmsmL4je/s3Aby/OUf1Vl14QubC5Yopq/l7tDg==",
+      "signedAt": "2026-09-07T13:02:22Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "spike": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "XXL5wHp+Sd2PvPPiuEBRAj7MEJHrUa6DbYqSuHrg3hdZGZf0+70jqcP25MeeKMr6BLpSx8D83LgYuOVnB2t4AA==",
+      "signedAt": "2026-09-07T13:02:22Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "spreadsheets": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "mIyfiZSi6M2RvUxi27OQQJLNzc/nALwfKLxm/dKqwYPo3ceU4p+zuWq/nySOd66vmAT2ossKCUm6isETnmBKBQ==",
+      "signedAt": "2026-09-07T13:02:22Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "summarize": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "tlugJnQjgzcYOld0GcOP8sg0HctXw3s4+O14Eds2dRhvvlovFenfkKNaasQtLnb717etySIzFDl3go7qvzfdDQ==",
+      "signedAt": "2026-09-07T13:02:22Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "tmux": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "H1mldQiBofS50hkbYMdieXehz55GYXPxwewJztcAq/+/X5CGkUe5p2nDnaunWrrMXUXtThMQoYQvlu2PAyOLAQ==",
+      "signedAt": "2026-09-07T13:02:22Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "trello": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "ysrumrbCvYrWowSu6jsSxJr/yAlSWBtF2D37msJf2yt+7pr8CxCySgmFfJbICATi9P2sVNxXUyAGe/0esPoNDw==",
+      "signedAt": "2026-09-07T13:02:23Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "weather": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "jn0GxvgG6SpT1qDRY6OuT/ZLeOajP0fkZIweWGQ9dTyl17lXTBLWoMKqvsaGkA09YueglP05Mr5YNbbPjdQ3Cg==",
+      "signedAt": "2026-09-07T13:02:23Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    },
+    "web-design-guidelines": {
+      "keyId": "ed25519:9a5c62d02dc4a7f1",
+      "signature": "3tE1a4uG0p8ODQTL35WFiHLOVaIMI/pCC97qdCiMOJNc9D3wFggWnWhseXSQaM1dcy8abSSBv4ne3YXFAox7DA==",
+      "signedAt": "2026-09-07T13:02:23Z",
+      "signerName": "DEP Dev Keypair (auto-provisioned)"
+    }
+  }
 }

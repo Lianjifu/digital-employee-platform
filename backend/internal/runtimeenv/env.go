@@ -82,6 +82,36 @@ func (m Mode) DualApproval() bool {
 	return m == ModeStaging || m == ModeProduction
 }
 
+// AutoProvisionsSkillKeys reports whether the runtime should auto-generate
+// a developer signing keypair on first start. True in demo / development
+// modes (and when explicitly opted-in elsewhere); false in staging / prod.
+func (m Mode) AutoProvisionsSkillKeys() bool {
+	if envFlagTrue("DE_FORCE_DEV_KEYPAIR") {
+		return true
+	}
+	if envFlagTrue("DE_BAN_DEV_KEYPAIR") {
+		return false
+	}
+	return m == ModeDemo || m == ModeDevelopment
+}
+
+// SkillSignatureRequired reports whether attachBuiltinPackageToSkill /
+// importSkillPackage MUST verify an Ed25519 signature. Defaults to true.
+// Disable with DE_REQUIRE_SKILL_SIGNATURE=disabled (or =warn_only).
+func (m Mode) SkillSignatureRequired() bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv("DE_REQUIRE_SKILL_SIGNATURE")))
+	switch raw {
+	case "disabled", "off", "0", "false":
+		return false
+	case "warn_only", "warn":
+		return false
+	}
+	if m == ModeStaging || m == ModeProduction {
+		return true
+	}
+	return true
+}
+
 // AllowsDemoIdentityHeaders controls x-mock-* identity forging.
 func (m Mode) AllowsDemoIdentityHeaders() bool {
 	if envFlagTrue("DE_ALLOW_MOCK_IDENTITY") || envFlagTrue("DE_ALLOW_DEMO_IDENTITY") {

@@ -1,15 +1,22 @@
 package server
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/digital-employee-platform/backend/internal/runtimeenv"
+	"github.com/digital-employee-platform/backend/internal/skills/signing"
+	"github.com/digital-employee-platform/backend/internal/skills/vetter"
 	"github.com/digital-employee-platform/backend/internal/store"
+	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
 // General pack — single default job pack「通用」.
@@ -41,6 +48,19 @@ type builtinManifest struct {
 	SkillMeta         map[string]map[string]any `json:"skillMeta"`
 	PlatformTools     []map[string]any          `json:"platformTools"`
 	RuntimeTools      []map[string]any          `json:"runtimeTools"`
+	// W1-D2 · 发布者公钥指纹 → TrustedKey 记录。signing.DevKeyStore 会把
+	// 自动生成的 keypair 自动挂进来；prod 用 LoadTrustFile 加载静态信任锚。
+	Signers map[string]signing.TrustedKey `json:"signers,omitempty"`
+	// W1-D2 · builtin name → per-skill signature block。
+	SkillSignatures map[string]builtinSkillSignature `json:"skillSignatures,omitempty"`
+}
+
+// builtinSkillSignature 是 builtin/skills/manifest.json 中每个 skill 的签名条目。
+type builtinSkillSignature struct {
+	KeyID      string `json:"keyId"`
+	Signature  string `json:"signature"`  // base64 of 64-byte Ed25519 signature
+	SignedAt   string `json:"signedAt"`   // ISO8601 UTC
+	SignerName string `json:"signerName"`
 }
 
 func builtinSkillsRoot() string {
@@ -269,6 +289,39 @@ func (s *Server) attachBuiltinPackageToSkill(item map[string]any, ws, skillID, b
 	if err != nil {
 		return err
 	}
+
+	// W1-D1 · Skill Vetter. Run static analysis on the package bytes before
+	// materializing them onto disk. mode=enabled (default) blocks SevBlock
+	// findings; warn_only logs but admits; disabled skips entirely.
+	if mode := vetterMode(); mode != "disabled" {
+		report := vetter.RunBytes(files)
+		switch mode {
+		case "warn_only":
+			if report.Decision != vetter.Allow {
+				log.Printf("skill vetter warn_only: builtin=%s verdict=%s findings=%d", builtinName, report.Verdict, len(report.Findings))
+				for _, f := range report.Findings {
+					log.Printf("  skill vetter finding: builtin=%s %s %s @%s:%d %s", builtinName, f.Category, f.Pattern, f.File, f.Line, f.Snippet)
+				}
+			}
+		default: // "enabled"
+			if report.Decision == vetter.Deny {
+				return apperr.BadReq(apperr.SkillVetDenied,
+					"builtin skill blocked by vetter: "+vetterSummary(builtinName, report))
+			}
+		}
+	}
+
+	// W1-D2 · Ed25519 发布者签名 verify。先 vetter 再 signer，避免给
+	// 攻击者透露未签名 manifest 内容。env 关闭后整段跳过。
+	if err := s.verifyBuiltinSignature(builtinName, meta, files); err != nil {
+		// W1-D3 · audit. Signature rejections are the highest-signal
+		// security observation in the skill install pipeline — log them
+		// even when the request is allowed to bubble up as an error.
+		s.Store.AppendAudit(ws, "系统", "skill 签名验证",
+			builtinName, "denied", err.Error())
+		return err
+	}
+
 	dest, err := s.materializeSkillPackage(ws, skillID, meta.RootDir, files)
 	if err != nil {
 		return err
@@ -296,6 +349,103 @@ func (s *Server) attachBuiltinPackageToSkill(item map[string]any, ws, skillID, b
 	enrichSkillMetadata(item)
 	return nil
 }
+
+// vetterMode reads DE_SKILL_VETTER. Default is "enabled". Values:
+//   - "enabled"   (default) — block SevBlock findings
+//   - "warn_only"           — log findings but allow the package through
+//   - "disabled"            — skip the vetter entirely
+func vetterMode() string {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DE_SKILL_VETTER"))) {
+	case "disabled", "off", "false", "0":
+		return "disabled"
+	case "warn", "warn_only":
+		return "warn_only"
+	default:
+		return "enabled"
+	}
+}
+
+// vetterSummary renders a compact human-readable one-line summary used in
+// SkillVetDenied error messages. Kept short so it fits in the audit log
+// without truncation.
+func vetterSummary(builtinName string, r vetter.Result) string {
+	parts := make([]string, 0, 3+len(r.Findings))
+	parts = append(parts, "builtin="+builtinName, "verdict="+r.Verdict, "findings="+fmt.Sprintf("%d", len(r.Findings)))
+	for i, f := range r.Findings {
+		if i >= 3 {
+			parts = append(parts, "…")
+			break
+		}
+		parts = append(parts, string(f.Category)+":"+f.Pattern+"@"+f.File+":"+fmt.Sprintf("%d", f.Line))
+	}
+	return strings.Join(parts, " ")
+}
+
+// skillSignatureRequired reads DE_REQUIRE_SKILL_SIGNATURE. Default = required
+// (true). Values that turn it off: "disabled", "off", "warn_only", "warn".
+//
+// W2-D1: thin wrapper over skillSignaturePolicy() (defined in
+// skill_signature_policy.go) so existing call sites and tests keep working.
+func skillSignatureRequired() bool {
+	return skillSignaturePolicy() != PolicyOff
+}
+
+// verifyBuiltinSignature verifies that the builtin package bytes were signed
+// by a publisher listed in builtinManifest.Signers. Returns nil when signing
+// is disabled (env) or the package has no signature record (legacy build),
+// since then vetter alone is the gate. Returns SkillSignatureInvalid / _Missing /
+// _UnknownKey otherwise.
+//
+// Order of checks:
+//  1. Env gate (skillSignatureRequired). Disabled → return nil.
+//  2. Pull builtinSkillSignature from pack-level manifest. Missing →
+//     SkillSignatureMissing.
+//  3. Lookup TrustedKey by KeyID in manifest.Signers. Unknown →
+//     SkillSignatureUnknownKey.
+//  4. Decode signature base64 → run ed25519.Verify over canonical manifest
+//     bytes. Mismatch → SkillSignatureInvalid.
+func (s *Server) verifyBuiltinSignature(builtinName string, meta *skillPackageManifest, files map[string][]byte) error {
+	if !skillSignatureRequired() {
+		return nil
+	}
+	pack := loadBuiltinManifest()
+	packSig, ok := pack.SkillSignatures[builtinName]
+	if !ok || packSig.Signature == "" {
+		return apperr.BadReq(apperr.SkillSignatureMissing,
+			"builtin skill missing signature: "+builtinName)
+	}
+	signerRec, ok := pack.Signers[packSig.KeyID]
+	if !ok {
+		return apperr.New(apperr.SkillSignatureUnknownKey, 400,
+			"unknown publisher keyID "+packSig.KeyID+" for builtin "+builtinName)
+	}
+	pub, err := base64.StdEncoding.DecodeString(signerRec.PublicKey)
+	if err != nil {
+		return apperr.BadReq(apperr.SkillSignatureUnknownKey,
+			"malformed publisher public key: "+err.Error())
+	}
+	if len(pub) != ed25519.PublicKeySize {
+		return apperr.BadReq(apperr.SkillSignatureUnknownKey,
+			"invalid publisher public key size for "+packSig.KeyID)
+	}
+	sigBytes, err := base64.StdEncoding.DecodeString(packSig.Signature)
+	if err != nil {
+		return apperr.BadReq(apperr.SkillSignatureInvalid,
+			"malformed signature base64: "+err.Error())
+	}
+	if err := signing.VerifyManifest(pub, sigBytes, signing.DigestInputs{
+		Meta: meta, Files: files,
+	}); err != nil {
+		return apperr.BadReq(apperr.SkillSignatureInvalid,
+			"builtin "+builtinName+" signature mismatch: "+err.Error())
+	}
+	return nil
+}
+
+// Mode is referenced here so the package compiles when runtimeenv helpers
+// are unused outside this file. The variable binding is never read but the
+// import is required by the verifier bootstrap path on cold start.
+var _ = runtimeenv.FromEnv
 
 func catalogBuiltinName(cat map[string]any) string {
 	if bn := strings.TrimSpace(str(cat["builtinSkillName"])); bn != "" {

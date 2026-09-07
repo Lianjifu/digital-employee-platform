@@ -73,6 +73,7 @@ var DurableCollections = []string{
 	"skill_integrations",
 	"skill_extra",
 	"workflow_skills",
+	"workspace_publisher_keys", // W2-D1
 }
 
 // SetPersistHook registers durable snapshot writer (Postgres kv_documents).
@@ -326,6 +327,19 @@ func (s *Store) snapshotLocked(collection string) []map[string]any {
 		return []map[string]any{{"id": "skill_extra", "workspaceId": "*", "payload": s.SkillExtra}}
 	case "workflow_skills":
 		return s.WorkflowSkills
+	case "workspace_publisher_keys": // W2-D1 · per-workspace Ed25519 trust anchors
+		out := make([]map[string]any, 0, len(s.WorkspacePublisherKeys))
+		for entryID, doc := range s.WorkspacePublisherKeys {
+			cp := make(map[string]any, len(doc))
+			for k, v := range doc {
+				cp[k] = v
+			}
+			if str(cp["id"]) == "" {
+				cp["id"] = entryID
+			}
+			out = append(out, cp)
+		}
+		return out
 	case "template_adoptions":
 		return s.TemplateAdoptions
 	case "config_versions":
@@ -536,6 +550,23 @@ func (s *Store) HydrateFrom(collection string, items []map[string]any) {
 		}
 	case "workflow_skills":
 		s.WorkflowSkills = items
+	case "workspace_publisher_keys": // W2-D1
+		if s.WorkspacePublisherKeys == nil {
+			s.WorkspacePublisherKeys = map[string]map[string]any{}
+		}
+		for _, doc := range items {
+			if doc == nil {
+				continue
+			}
+			entryID := str(doc["id"])
+			if entryID == "" {
+				entryID = str(doc["workspaceId"])
+			}
+			if entryID == "" {
+				continue
+			}
+			s.WorkspacePublisherKeys[entryID] = doc
+		}
 	case "template_adoptions":
 		s.TemplateAdoptions = items
 	case "config_versions":

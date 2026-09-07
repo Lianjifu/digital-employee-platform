@@ -10,6 +10,7 @@ require (
 	github.com/redis/go-redis/v9 v9.7.3
 	github.com/segmentio/kafka-go v0.4.47
 	go.temporal.io/sdk v1.32.1
+	golang.org/x/sync v0.17.0
 	google.golang.org/protobuf v1.35.2
 )
 
@@ -38,7 +39,6 @@ require (
 	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/exp v0.0.0-20231127185646-65229373498e // indirect
 	golang.org/x/net v0.28.0 // indirect
-	golang.org/x/sync v0.17.0 // indirect
 	golang.org/x/sys v0.28.0 // indirect
 	golang.org/x/text v0.29.0 // indirect
 	golang.org/x/time v0.3.0 // indirect

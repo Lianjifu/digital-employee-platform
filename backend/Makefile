@@ -302,3 +302,28 @@ test-python:
 	python3 runtimes/de_rag/test_vector.py
 	python3 runtimes/de_skill_runtime/test_runtoken.py
 	python3 runtimes/de_agent_runtime/test_run.py
+
+# W1-D3 · Skill 签名校验 CI gate。校验 builtin/skills/manifest.json
+# 中所有 skill 的 Ed25519 签名 + 每个文件 SHA256。CI 必跑：失败即阻断
+# 发布。失败时输出第一个 bad skill 的 keyID + 文件路径，便于定位。
+verify-builtins:
+	@echo "==> verifying all builtins against $(PWD)/builtin/skills/manifest.json"
+	@$(GO) run ./cmd/verify-skill --manifest $(PWD)/builtin/skills/manifest.json $(PWD)/builtin/skills
+
+# W1-D3 · Skill 内容静态扫描 CI gate。扫描 builtin + 用户上传 skill
+# 的 destructive / egress / credential / escalation / persistence 5 类
+# 危险模式。失败即阻断。
+vet-builtins:
+	@echo "==> vetting core builtins against dangerous-pattern scanner"
+	@$(GO) run ./cmd/check_skill $(PWD)/builtin/skills/weather
+	@$(GO) run ./cmd/check_skill $(PWD)/builtin/skills/docx
+	@$(GO) run ./cmd/check_skill $(PWD)/builtin/skills/pdf
+	@$(GO) run ./cmd/check_skill $(PWD)/builtin/skills/pptx
+	@$(GO) run ./cmd/check_skill $(PWD)/builtin/skills/spreadsheets
+
+# W1-D3 · Skill 安全全链路 CI gate。覆盖 vetter + signer 双闸门。
+# 任何 builtin 内容 / 签名变化必须通过本 target 才能合并。
+skill-gate: vet-builtins verify-builtins
+	@echo "==> skill-gate: PASS"
+
+.PHONY: verify-builtins vet-builtins skill-gate
