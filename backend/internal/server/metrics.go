@@ -310,4 +310,17 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	for ws, n := range hbOnline {
 		_, _ = fmt.Fprintf(w, "de_canvas_clients_online{service=%q,workspace=%q} %d\n", svc, ws, n)
 	}
+
+	// W4-D2 · VisualDiff cumulative latency by size bucket
+	vdSmallN, vdSmallSum, vdMedN, vdMedSum, vdLargeN, vdLargeSum, vdHugeN, vdHugeSum := metrics.Global.VisualDiff.Snapshot()
+	_, _ = fmt.Fprintf(w, "# HELP de_visualdiff_seconds_sum VisualDiff cumulative seconds by image size bucket\n# TYPE de_visualdiff_seconds_sum counter\n")
+	_, _ = fmt.Fprintf(w, "de_visualdiff_seconds_sum{service=%q,size=\"small\"} %f\n", svc, float64(vdSmallSum)/1e9)
+	_, _ = fmt.Fprintf(w, "de_visualdiff_seconds_sum{service=%q,size=\"medium\"} %f\n", svc, float64(vdMedSum)/1e9)
+	_, _ = fmt.Fprintf(w, "de_visualdiff_seconds_sum{service=%q,size=\"large\"} %f\n", svc, float64(vdLargeSum)/1e9)
+	_, _ = fmt.Fprintf(w, "de_visualdiff_seconds_sum{service=%q,size=\"huge\"} %f\n", svc, float64(vdHugeSum)/1e9)
+	_, _ = fmt.Fprintf(w, "# HELP de_visualdiff_total VisualDiff call count by image size bucket\n# TYPE de_visualdiff_total counter\n")
+	_, _ = fmt.Fprintf(w, "de_visualdiff_total{service=%q,size=\"small\"} %d\n", svc, vdSmallN)
+	_, _ = fmt.Fprintf(w, "de_visualdiff_total{service=%q,size=\"medium\"} %d\n", svc, vdMedN)
+	_, _ = fmt.Fprintf(w, "de_visualdiff_total{service=%q,size=\"large\"} %d\n", svc, vdLargeN)
+	_, _ = fmt.Fprintf(w, "de_visualdiff_total{service=%q,size=\"huge\"} %d\n", svc, vdHugeN)
 }

@@ -140,6 +140,49 @@ type HotReloadBuckets struct {
 	mu      sync.Mutex
 }
 
+// VisualDiffBuckets records per-size cumulative latency for visualdiff.
+// size ∈ {"small", "medium", "large", "huge"} — coarse buckets so the
+// dashboard can chart "tiny snapshot diffs" vs "1080p canvas diffs"
+// without per-resolution cardinality.
+type VisualDiffBuckets struct {
+	SmallCount  Counter
+	SmallSumNS  Counter
+	MediumCount Counter
+	MediumSumNS Counter
+	LargeCount  Counter
+	LargeSumNS  Counter
+	HugeCount   Counter
+	HugeSumNS   Counter
+}
+
+func (v *VisualDiffBuckets) Observe(size string, d time.Duration) {
+	ns := uint64(d.Nanoseconds())
+	switch size {
+	case "small":
+		v.SmallCount.Inc()
+		v.SmallSumNS.Add(ns)
+	case "medium":
+		v.MediumCount.Inc()
+		v.MediumSumNS.Add(ns)
+	case "large":
+		v.LargeCount.Inc()
+		v.LargeSumNS.Add(ns)
+	case "huge":
+		v.HugeCount.Inc()
+		v.HugeSumNS.Add(ns)
+	default:
+		v.MediumCount.Inc()
+		v.MediumSumNS.Add(ns)
+	}
+}
+
+func (v *VisualDiffBuckets) Snapshot() (smallN, smallSum, medN, medSum, largeN, largeSum, hugeN, hugeSum uint64) {
+	return v.SmallCount.Value(), v.SmallSumNS.Value(),
+		v.MediumCount.Value(), v.MediumSumNS.Value(),
+		v.LargeCount.Value(), v.LargeSumNS.Value(),
+		v.HugeCount.Value(), v.HugeSumNS.Value()
+}
+
 func (h *HotReloadBuckets) Inc(resource, result string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -203,6 +246,7 @@ type Registry struct {
 	Vault        VaultBuckets
 	ExpertInbox  ExpertInboxGauge
 	HotReload    HotReloadBuckets
+	VisualDiff   VisualDiffBuckets
 	processStart time.Time
 }
 

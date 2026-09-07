@@ -150,6 +150,10 @@ func New(st *store.Store) *Server {
 	st.MigrateProvenance()
 	s.bootstrapSkillSigning()
 	s.bootstrapVaultSkillSigning()
+	// W4-D2 · VisualDiff cache janitor (hourly eviction sweep).
+	var vdCtx context.Context
+	vdCtx, _ = context.WithCancel(context.Background())
+	go s.visualdiffJanitor(vdCtx)
 	return s
 }
 
@@ -709,6 +713,13 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		return
 	case path == "/api/online/stream" && method == http.MethodGet:
 		s.onlineStream(w, r)
+		return
+	// W4-D2 · VisualDiff
+	case path == "/api/visualdiff" && method == http.MethodPost:
+		s.visualdiffHandler(w, r)
+		return
+	case strings.HasPrefix(path, "/api/visualdiff/") && method == http.MethodGet:
+		s.visualdiffFetchHandler(w, r)
 		return
 	case path == "/api/skill-integrations" && method == http.MethodGet:
 		data, err = s.listSkillIntegrations(r)
