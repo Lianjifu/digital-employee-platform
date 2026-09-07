@@ -11,14 +11,14 @@
 |----|----:|------:|------:|------:|-----:|
 | 后端 W1（Skill Vetter / Gateway 硬墙 / Catalog / DS） | 4 | 3 | 0 | 1 | 75% |
 | 后端 W2（SubAgent / 3-列 / Vault） | 3 | 2 | 0 | 1 | 67% |
-| 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 0 | 1 | 2 | 0% |
+| 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 1 | 0 | 2 | 33% |
 | 后端 W4（Heartbeat / VisualDiff） | 2 | 0 | 0 | 2 | 0% |
 | 后端 W5（SelfImproving / Multimodal） | 2 | 0 | 0 | 2 | 0% |
 | 后端 W6（PM SOP / Canvas） | 2 | 0 | 0 | 2 | 0% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 0 | 0 | 2 | 0% |
 | 前端 9 项 | 9 | 2 | 2 | 5 | 22% |
-| 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 8 | 1 | ~41 | ~18% |
-| **合计** | **~80** | **15** | **4** | **~60** | **~22%** |
+| 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 10 | 1 | ~39 | ~22% |
+| **合计** | **~80** | **17** | **3** | **~58** | **~24%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -54,7 +54,7 @@
 
 | ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
 |---|---|---|---|---|
-| W3-D1 | ExpertInbox（邮件 / IM 类聚合） | 🟡 部分 | store 有 `expert_inbox_*`，handler 仅列表；无 review / approve 流 | 加 review / approve 端点 + 通知 |
+| W3-D1 | ExpertInbox（邮件 / IM 类聚合） | ✅ 完成 | store 加 `ExpertInbox []map[string]any`，路由 `GET /api/expert-inbox` + `POST /api/expert-inbox/:id/review` + `POST /api/expert-inbox`；状态机 `pending → approved/rejected/dismissed`；workspace 隔离；audit 行；metric `de_expert_inbox_pending` 已接真值 | ADR-023 + 手册 + 13 测试 |
 | W3-D2 | HotReload（配置变更热加载） | ⚪ 未做 | 无 watch 包 | 新增 `internal/hotreload/`，订阅 fsnotify + SIGHUP |
 | W3-D3 | Preview（artifact 预览服务端） | ⚪ 未做 | `/api/skill-artifacts/<f>/preview` 仅是文件返回，无 sanitize / sandbox | iframe sandbox + DOMPurify 同源代理 |
 
@@ -123,7 +123,7 @@
 | ADR-020 | Workspace Publisher Key 信任链 | ✅ 完成（[ADR-020](../adr/ADR-020-workspace-publisher-key.md)） |
 | ADR-021 | Vault 接入策略（dev/staging/prod 三段） | ✅ 完成（[ADR-021](../adr/ADR-021-vault-integration.md)） |
 | ADR-022 | SubAgent 调度与并发合并 | ⚪ |
-| ADR-023 | ExpertInbox 数据生命周期 | ⚪ |
+| ADR-023 | ExpertInbox 数据生命周期 | ✅ 完成（[ADR-023](../adr/ADR-023-expert-inbox-lifecycle.md)） |
 | ADR-024 | HotReload watch + reload 安全语义 | ⚪ |
 | ADR-025 | VisualDiff 缓存与置信度 | ⚪ |
 | ADR-026 | SelfImproving 反馈回路与写入边界 | ⚪ |
@@ -138,7 +138,7 @@
 | W1-vetter 安全策略 / 用户面对白名单 | ⚪ |
 | W2-publisher-key 运维手册 | ✅ 完成（[手册-W2-skill签名与vault.md](../手册-W2-skill签名与vault.md)） |
 | W2-vault 凭据管理手册 | ✅ 完成（同上 §4） |
-| W3-expert-inbox 审核手册 | ⚪ |
+| W3-expert-inbox 审核手册 | ✅ 完成（[手册-W3-expert-inbox-审核.md](../手册-W3-expert-inbox-审核.md)） |
 | W4-heartbeat & visualdiff 排查手册 | ⚪ |
 | W5-multimodal 上传规范 | ⚪ |
 | W6-pm-canvas 协作手册 | ⚪ |
@@ -152,7 +152,7 @@
 | `de_skill_sign_total{result}` | ✅ 完成（`metrics.Global.Sign`） |
 | `de_subagent_run_seconds` | ⚪ |
 | `de_vault_resolve_seconds{ref}` | ✅ 完成（`metrics.Global.Vault`） |
-| `de_expert_inbox_pending` | ✅ 完成（`metrics.Global.ExpertInbox`，stub gauge=0） |
+| `de_expert_inbox_pending` | ✅ 完成（已接真值：list/create 时刷新） |
 | `de_hotreload_reload_total{resource}` | ⚪ |
 | `de_heartbeat_lag_seconds` | ⚪ |
 | `de_visualdiff_seconds{size}` | ⚪ |
