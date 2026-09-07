@@ -7,6 +7,7 @@ import (
 	"time"
 
 	runtimev1 "github.com/digital-employee-platform/backend/gen/de/runtime/v1"
+	"github.com/digital-employee-platform/backend/internal/knowledge/scope"
 	"github.com/digital-employee-platform/backend/pkg/contract"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
@@ -190,8 +191,9 @@ func (s *Server) retrievePublished(r *http.Request, body map[string]any, corr st
 	ws := s.workspaceID(r)
 	if hits := s.callRAGPublished(query, ws, corr); hits != nil {
 		s.recordUsageWS(ws, "rag", 1, corr)
-		return hits, nil
+		return s.filterRAGHitsByScope(r, hits), nil
 	}
+	viewer := identityFrom(r.Context())
 	s.Store.RLock()
 	var results []map[string]any
 	published := 0
@@ -200,6 +202,13 @@ func (s *Server) retrievePublished(r *http.Request, body map[string]any, corr st
 			continue
 		}
 		if str(d["status"]) != "published" {
+			continue
+		}
+		// Honor per-doc scope ACL (role:/employee:/conversation:) — without
+		// this filter the panel path returns HR-private / role-scoped docs
+		// to non-privileged viewers (the eval path filters via
+		// scope.Allowed; the retrieval path did not).
+		if !scope.Allowed(scopeDocFromMap(d), scopeViewerFromIdentity(viewer, ws)) {
 			continue
 		}
 		published++
@@ -220,6 +229,65 @@ func (s *Server) retrievePublished(r *http.Request, body map[string]any, corr st
 		fallback["warning"] = "向量检索不可用，已降级到已发布关键词检索"
 	}
 	return fallback, nil
+}
+
+// filterRAGHitsByScope post-filters sidecar hits so the per-doc ACL applies
+// even when the RAG service returns hits the sidecar's broader filter would
+// have admitted. The hit-shape sidecar results may not carry scopes; we
+// look the doc up in the store and drop the hit if the doc isn't visible
+// to the current viewer.
+func (s *Server) filterRAGHitsByScope(r *http.Request, hits any) any {
+	m, ok := hits.(map[string]any)
+	if !ok {
+		return hits
+	}
+	viewer := identityFrom(r.Context())
+	ws := s.workspaceID(r)
+	raw, ok := m["results"]
+	if !ok {
+		return hits
+	}
+	items := knowledgeSliceMaps(raw)
+	if len(items) == 0 {
+		// results might be []any
+		if arr, ok := raw.([]any); ok {
+			for _, x := range arr {
+				if im, ok := x.(map[string]any); ok {
+					items = append(items, im)
+				}
+			}
+		}
+	}
+	if len(items) == 0 {
+		return hits
+	}
+	// Build docId → KnowledgeDoc lookup once.
+	docByID := map[string]map[string]any{}
+	s.Store.RLock()
+	for _, d := range s.Store.KnowledgeDocs {
+		if str(d["workspaceId"]) != ws {
+			continue
+		}
+		if str(d["status"]) != "published" {
+			continue
+		}
+		docByID[str(d["id"])] = d
+	}
+	s.Store.RUnlock()
+	filtered := make([]any, 0, len(items))
+	for _, h := range items {
+		id := coalesce(str(h["docId"]), str(h["id"]))
+		d, ok := docByID[id]
+		if !ok {
+			continue
+		}
+		if !scope.Allowed(scopeDocFromMap(d), scopeViewerFromIdentity(viewer, ws)) {
+			continue
+		}
+		filtered = append(filtered, h)
+	}
+	m["results"] = filtered
+	return m
 }
 
 func (s *Server) callRAGPublished(query, workspaceID, corr string) any {
