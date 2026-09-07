@@ -348,4 +348,21 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "de_canvas_comment_total{service=%q,action=\"edited\"} %d\n", svc, cvEdited)
 	_, _ = fmt.Fprintf(w, "de_canvas_comment_total{service=%q,action=\"resolved\"} %d\n", svc, cvResolved)
 	_, _ = fmt.Fprintf(w, "de_canvas_comment_total{service=%q,action=\"deleted\"} %d\n", svc, cvDeleted)
+
+	// W2-D3 · SubAgent dispatch primitive.
+	saCount, saSumNS, saSuccess, saRefused, saTimedOut, saFailed := metrics.Global.SubAgent.Snapshot()
+	avgSec := 0.0
+	if saCount > 0 {
+		avgSec = float64(saSumNS) / float64(saCount) / 1e9
+	}
+	_, _ = fmt.Fprintf(w, "# HELP de_subagent_run_seconds total wall-clock seconds across subagent task runs\n# TYPE de_subagent_run_seconds counter\n")
+	_, _ = fmt.Fprintf(w, "de_subagent_run_seconds_sum{service=%q} %f\n", svc, float64(saSumNS)/1e9)
+	_, _ = fmt.Fprintf(w, "de_subagent_run_seconds_count{service=%q} %d\n", svc, saCount)
+	_, _ = fmt.Fprintf(w, "# HELP de_subagent_run_avg_seconds average subagent run seconds (derived: sum/count)\n# TYPE de_subagent_run_avg_seconds gauge\n")
+	_, _ = fmt.Fprintf(w, "de_subagent_run_avg_seconds{service=%q} %f\n", svc, avgSec)
+	_, _ = fmt.Fprintf(w, "# HELP de_subagent_run_total subagent runs by outcome\n# TYPE de_subagent_run_total counter\n")
+	_, _ = fmt.Fprintf(w, "de_subagent_run_total{service=%q,status=\"success\"} %d\n", svc, saSuccess)
+	_, _ = fmt.Fprintf(w, "de_subagent_run_total{service=%q,status=\"refused\"} %d\n", svc, saRefused)
+	_, _ = fmt.Fprintf(w, "de_subagent_run_total{service=%q,status=\"timed_out\"} %d\n", svc, saTimedOut)
+	_, _ = fmt.Fprintf(w, "de_subagent_run_total{service=%q,status=\"failed\"} %d\n", svc, saFailed)
 }

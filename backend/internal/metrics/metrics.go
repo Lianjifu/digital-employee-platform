@@ -250,6 +250,7 @@ type Registry struct {
 	SelfImproving SelfImprovingBuckets
 	PMSop        PMSopBuckets
 	Canvas       CanvasBuckets
+	SubAgent     SubAgentBuckets
 	processStart time.Time
 }
 
@@ -334,6 +335,41 @@ func (s *SelfImprovingBuckets) Snapshot() (created, merged, rejected uint64) {
 // Global is the default registry. All call sites use it directly so the
 // scrape handler can find values without indirection.
 var Global = &Registry{processStart: time.Now()}
+
+// SubAgentBuckets tracks the multi-agent dispatch primitive: total run
+// wall-clock seconds and per-status run counts. status ∈
+// {"success","refused","timed_out","failed"}.
+type SubAgentBuckets struct {
+	TotalCount       Counter
+	TotalSumNS       Counter
+	SuccessCount     Counter
+	RefusedCount     Counter
+	TimedOutCount    Counter
+	FailedCount      Counter
+}
+
+// Observe records one subagent task outcome.
+func (s *SubAgentBuckets) Observe(d time.Duration, status string) {
+	s.TotalCount.Inc()
+	s.TotalSumNS.Add(uint64(d.Nanoseconds()))
+	switch status {
+	case "refused":
+		s.RefusedCount.Inc()
+	case "timed_out":
+		s.TimedOutCount.Inc()
+	case "failed":
+		s.FailedCount.Inc()
+	default:
+		s.SuccessCount.Inc()
+	}
+}
+
+// Snapshot returns totals for the scrape handler.
+func (s *SubAgentBuckets) Snapshot() (count, sumNS, success, refused, timedOut, failed uint64) {
+	return s.TotalCount.Value(), s.TotalSumNS.Value(),
+		s.SuccessCount.Value(), s.RefusedCount.Value(),
+		s.TimedOutCount.Value(), s.FailedCount.Value()
+}
 
 // ProcessStart returns when the registry was created. Used by the scrape
 // handler for the uptime metric.

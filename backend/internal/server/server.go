@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/digital-employee-platform/backend/internal/agentos"
 	"github.com/digital-employee-platform/backend/internal/auth"
 	"github.com/digital-employee-platform/backend/internal/channel"
 	"github.com/digital-employee-platform/backend/internal/deworkflow"
@@ -28,6 +29,7 @@ import (
 	"github.com/digital-employee-platform/backend/internal/skills/signing"
 	"github.com/digital-employee-platform/backend/internal/runtimeenv"
 	"github.com/digital-employee-platform/backend/internal/gateway"
+	"github.com/digital-employee-platform/backend/internal/metrics"
 	"github.com/digital-employee-platform/backend/internal/store"
 	"github.com/digital-employee-platform/backend/internal/vault"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
@@ -118,6 +120,9 @@ type Server struct {
 	CanvasBroadcaster *canvas.Broadcaster
 	// W7-D1 · SQLite durability hooks. nil when DE_STORE_BACKEND != "sqlite".
 	SQLite *store.SQLiteHooks
+	// W2-D3 · SubAgent dispatch engine. Built in New(); concurrency cap
+	// configured via DE_SUBAGENT_MAX_CONCURRENCY.
+	SubAgent *agentos.Engine
 }
 
 // serverTestHooks groups the optional test seams. Field types are kept in
@@ -176,7 +181,27 @@ func New(st *store.Store) *Server {
 	s.initCanvas()
 	// W7-D1 · SQLite durability layer (gated on DE_STORE_BACKEND=sqlite).
 	s.initSQLiteDurability()
+	// W2-D3 · SubAgent dispatch engine.
+	s.SubAgent = buildSubAgentEngine()
 	return s
+}
+
+// buildSubAgentEngine configures the bounded-concurrency dispatch engine
+// from env. Defaults: 4 concurrent participants, 30s per-task budget.
+func buildSubAgentEngine() *agentos.Engine {
+	maxConc := agentos.MaxConcurrencyDefault
+	if v := strings.TrimSpace(os.Getenv("DE_SUBAGENT_MAX_CONCURRENCY")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			maxConc = n
+		}
+	}
+	return &agentos.Engine{
+		MaxConc:        maxConc,
+		DefaultTimeout: agentos.DefaultTimeoutDefault,
+		OnMetric: func(d time.Duration, status string) {
+			metrics.Global.SubAgent.Observe(d, status)
+		},
+	}
 }
 
 // initSQLiteDurability wires the SQLite-backed PersistHook when env flag

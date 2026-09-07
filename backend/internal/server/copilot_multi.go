@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
+	"time"
 
+	"github.com/digital-employee-platform/backend/internal/agentos"
 	"github.com/digital-employee-platform/backend/internal/modelprov"
-	"golang.org/x/sync/errgroup"
 )
 
 const multiAgentMaxSpecialists = 3
@@ -418,49 +418,58 @@ func specialistMaps(picks []specialistRef) []map[string]any {
 }
 
 // dispatchParticipants runs the per-participant turn for every entry in
-// pcs in parallel via errgroup, with parent ctx cancellation propagated and
-// a defer-recover wrapper that converts participant panics into structured
-// "failed/panic_recovered" results. The slice order matches pcs.
+// pcs in parallel via agentos.Engine (bounded concurrency, per-task
+// timeout, panic recovery, parent-ctx cancellation). The slice order
+// matches pcs.
 //
 // Extracted from runMultiAgentTurn so tests can drive the dispatch path
 // directly with controlled panic injection (runMultiAgentTurn fans out
 // shared supervisor retrieves that the tests don't need).
 func (s *Server) dispatchParticipants(ctx context.Context, pcs []participantContext) []participantTurnResult {
-	results := make([]participantTurnResult, len(pcs))
-	var mu sync.Mutex
-	g, gctx := errgroup.WithContext(ctx)
+	tasks := make([]agentos.Task, len(pcs))
 	for i := range pcs {
 		i := i
-		g.Go(func() error {
-			defer func() {
-				if r := recover(); r != nil {
-					pc := pcs[i]
-					res := participantTurnResult{
-						ParticipantID: pc.DigitalEmployee,
-						Status:        "failed",
-						Reason:        "panic_recovered",
-					}
-					if pc.Emit != nil {
-						pc.Emit("agent", "multi", map[string]any{
-							"status":        "failed",
-							"participantId": pc.DigitalEmployee,
-							"reason":        "panic_recovered",
-						})
-					}
-					mu.Lock()
-					if results[i].ParticipantID == "" {
-						results[i] = res
-					}
-					mu.Unlock()
+		tasks[i] = agentos.Task{
+			ID: pcs[i].DigitalEmployee,
+			Fn: func(tctx context.Context) agentos.Result {
+				r := s.runParticipantTurn(tctx, pcs[i])
+				return agentos.Result{
+					Status:        r.Status,
+					Text:          r.Text,
+					Reason:        r.Reason,
+					HardNoRefusal: r.HardNoRefusal,
 				}
-			}()
-			r := s.runParticipantTurn(gctx, pcs[i])
-			mu.Lock()
-			results[i] = r
-			mu.Unlock()
-			return nil
-		})
+			},
+		}
 	}
-	_ = g.Wait()
+	eng := s.SubAgent
+	if eng == nil {
+		eng = &agentos.Engine{}
+	}
+	raw := eng.Run(ctx, tasks)
+	results := make([]participantTurnResult, len(raw))
+	for i, r := range raw {
+		results[i] = participantTurnResult{
+			ParticipantID: r.ID,
+			Text:          r.Text,
+			Status:        r.Status,
+			Reason:        r.Reason,
+			DurationMs:    int(r.Duration / time.Millisecond),
+			HardNoRefusal: r.HardNoRefusal,
+		}
+	}
+	// If any participant panicked, surface the event on its Emit channel
+	// so SSE consumers see the same shape as before.
+	for i, r := range results {
+		if r.Status == "failed" && r.Reason != "" && len(r.Reason) >= 16 && r.Reason[:16] == "panic_recovered" {
+			if pcs[i].Emit != nil {
+				pcs[i].Emit("agent", "multi", map[string]any{
+					"status":        "failed",
+					"participantId": pcs[i].DigitalEmployee,
+					"reason":        r.Reason,
+				})
+			}
+		}
+	}
 	return results
 }

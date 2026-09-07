@@ -10,7 +10,7 @@
 | 段 | 项数 | ✅ 完成 | 🟡 部分 | ⚪ 未做 | 完成率 |
 |----|----:|------:|------:|------:|-----:|
 | 后端 W1（Skill Vetter / Gateway 硬墙 / Catalog / DS） | 4 | 3 | 0 | 1 | 75% |
-| 后端 W2（SubAgent / 3-列 / Vault） | 3 | 2 | 0 | 1 | 67% |
+| 后端 W2（SubAgent / 3-列 / Vault） | 3 | 3 | 0 | 0 | 100% |
 | 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 3 | 0 | 0 | 100% |
 | 后端 W4（Heartbeat / VisualDiff） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W5（SelfImproving / Multimodal） | 2 | 2 | 0 | 0 | 100% |
@@ -18,7 +18,7 @@
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 2 | 0 | 0 | 100% |
 | 前端 9 项 | 9 | 2 | 2 | 5 | 22% |
 | 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 11 | 1 | ~38 | ~24% |
-| **合计** | **~80** | **27** | **3** | **~50** | **~35%** |
+| **合计** | **~80** | **28** | **3** | **~49** | **~36%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -46,7 +46,7 @@
 |---|---|---|---|---|
 | W2-D1 | Workspace Publisher Key（per-workspace Ed25519 + sidecar） | ✅ 完成 | commit `9ecc607`；`handlers_workspaces_publisher*.go`、`cmd/sign-skill-pack`、`internal/skills/parse_sidecar.go`；22 个测试 | — |
 | W2-D2 | Vault 集成（dev keypair / 私钥 / 模型凭据） | ✅ 完成 | `signing.SignerResolver` 接口（`Signer/TrustedKey/BackedByVault`）+ `signing.VaultKeyStore`（`vault:skill-keys/<keyID>` 路径，base64 私钥，本地缓存）+ `vault.Client.PutMap/ResolveMap` 批量；`Server.SkillSigner` slot + `bootstrapVaultSkillSigning()`（`DE_VAULT_ADDR` + `DE_SKILL_KEYSTORE=vault` 启用，probe 失败回退 dev）；11 个新测试；commit `217924c`；ADR-021 已出 | — |
-| W2-D3 | SubAgent（多 Agent 委派 / merge opinions） | ⚪ 未做 | `internal/agentos/subagent.go` 仅 stub；`mergeParticipantOpinions` 当前是 truncation | 实施真正的 sub-agent 调度 + 并发合并 |
+| W2-D3 | SubAgent（多 Agent 委派 / merge opinions） | ✅ 完成 | 新 `internal/agentos/`：`Engine{MaxConc, DefaultTimeout, OnMetric}` + `Run(ctx, tasks []Task)`；semaphore 限并发 + per-task `context.WithTimeout` + panic-recover 转 `failed/panic_recovered` + 父 ctx 取消传播；`mergeParticipantOpinions` 保留为线性拼接策略；`metrics.SubAgentBuckets` + scrape 输出 `de_subagent_run_seconds_sum/count/avg` + `de_subagent_run_total{status}`；env `DE_SUBAGENT_MAX_CONCURRENCY`（默认 4） | ADR-022 + 11 包测；既有 `dispatchParticipants` / `mergeParticipantOpinions` 测试 100% 兼容 |
 
 ---
 
@@ -122,7 +122,7 @@
 | ADR-019 | Gateway 硬墙策略 | ✅ 完成（[ADR-019](../adr/ADR-019-gateway-hardening.md)） |
 | ADR-020 | Workspace Publisher Key 信任链 | ✅ 完成（[ADR-020](../adr/ADR-020-workspace-publisher-key.md)） |
 | ADR-021 | Vault 接入策略（dev/staging/prod 三段） | ✅ 完成（[ADR-021](../adr/ADR-021-vault-integration.md)） |
-| ADR-022 | SubAgent 调度与并发合并 | ⚪ |
+| ADR-022 | SubAgent 调度与并发合并 | ✅ 完成（[ADR-022](../adr/ADR-022-subagent-dispatch.md)） |
 | ADR-023 | ExpertInbox 数据生命周期 | ✅ 完成（[ADR-023](../adr/ADR-023-expert-inbox-lifecycle.md)） |
 | ADR-024 | HotReload watch + reload 安全语义 | ✅ 完成（[ADR-024](../adr/ADR-024-hotreload-watch-reload.md)） |
 | ADR-025 | VisualDiff 缓存与置信度 | ✅ 完成（[ADR-032](../adr/ADR-032-visualdiff-cache-confidence.md)） |
@@ -153,7 +153,7 @@
 |---|---|
 | `de_skill_vetter_total{verdict}` | ✅ 完成（`metrics.Global.Vetter`） |
 | `de_skill_sign_total{result}` | ✅ 完成（`metrics.Global.Sign`） |
-| `de_subagent_run_seconds` | ⚪ |
+| `de_subagent_run_seconds` | ✅ 完成（`metrics.Global.SubAgent`；W2-D3 输出 sum/count/avg + per-status counter） |
 | `de_vault_resolve_seconds{ref}` | ✅ 完成（`metrics.Global.Vault`） |
 | `de_expert_inbox_pending` | ✅ 完成（已接真值：list/create 时刷新） |
 | `de_hotreload_reload_total{resource}` | ✅ 完成（`metrics.Global.HotReload` per-resource success/fail） |
@@ -181,7 +181,7 @@
 | `DE_TRUSTED_PUBLISHERS_PATH` | ✅ 已接 |
 | `DE_DEV_KEYPAIR_PATH` | ✅ 已接 |
 | `DE_VAULT_ADDR` / `DE_VAULT_TOKEN` / `DE_VAULT_KV_MOUNT` | 🟡 仅 Client.NewFromEnv 读，无 caller |
-| `DE_SUBAGENT_MAX_CONCURRENCY` | ⚪ |
+| `DE_SUBAGENT_MAX_CONCURRENCY` | ✅ 已接（W2-D3；默认 4） |
 | `DE_HEARTBEAT_INTERVAL` | ✅ 已接（W4-D1） |
 | `DE_CANVAS_COMMENT_TTL` | ⚪ |
 | `DE_VISUALDIFF_RETENTION` | ✅ 已接（W4-D2，默认 7 天） |
