@@ -12,13 +12,13 @@
 | 后端 W1（Skill Vetter / Gateway 硬墙 / Catalog / DS） | 4 | 3 | 0 | 1 | 75% |
 | 后端 W2（SubAgent / 3-列 / Vault） | 3 | 2 | 0 | 1 | 67% |
 | 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 3 | 0 | 0 | 100% |
-| 后端 W4（Heartbeat / VisualDiff） | 2 | 0 | 0 | 2 | 0% |
+| 后端 W4（Heartbeat / VisualDiff） | 2 | 1 | 0 | 1 | 50% |
 | 后端 W5（SelfImproving / Multimodal） | 2 | 0 | 0 | 2 | 0% |
 | 后端 W6（PM SOP / Canvas） | 2 | 0 | 0 | 2 | 0% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 0 | 0 | 2 | 0% |
 | 前端 9 项 | 9 | 2 | 2 | 5 | 22% |
 | 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 11 | 1 | ~38 | ~24% |
-| **合计** | **~80** | **19** | **3** | **~57** | **~27%** |
+| **合计** | **~80** | **20** | **3** | **~56** | **~28%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -64,7 +64,7 @@
 
 | ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
 |---|---|---|---|---|
-| W4-D1 | Heartbeat / 在线探测 | ⚪ 未做 | 无 `internal/heartbeat/` 包 | 加 active probe + SSE 推送在线状态 |
+| W4-D1 | Heartbeat / 在线探测 | ✅ 完成 | 新 `internal/heartbeat/` 包：`Tracker` + `Touch` / `Sweep` / `Online` / `Subscribe(wsID)` / `LagSinceLastTouch` / `Snapshot`；`withHeartbeat` 中间件挂在 `requireAuth` 之后，每个 authed 请求自动 Touch；3 个 handler：`GET /api/heartbeat`（active probe + lag）/ `GET /api/online`（presence 列表）/ `GET /api/online/stream`（SSE 推送 join/leave/tick/ping）；指标 `de_heartbeat_lag_seconds` + `de_canvas_clients_online{workspace}`；env `DE_HEARTBEAT_INTERVAL`（30s）/ `DE_HEARTBEAT_STALE`（90s） | ADR-031 + 排查手册 + 16 包测 + 5 集成测 |
 | W4-D2 | VisualDiff 服务端 | ⚪ 未做 | 无 rasterize / compare 包 | 用 headless chromium (rod) + pixelmatch，缓存 PNG |
 
 ---
@@ -131,6 +131,7 @@
 | ADR-028 | SQLite 双栈切换契约 | ⚪ |
 | ADR-029 | WeChat 渠道限流与同步策略 | ⚪ |
 | ADR-030 | Preview sandbox 语义（iframe / CSP / inline `?inline=1`） | ✅ 完成（[ADR-030](../adr/ADR-030-preview-sandbox.md)） |
+| ADR-031 | Heartbeat / 在线探测语义 | ✅ 完成（[ADR-031](../adr/ADR-031-heartbeat-presence.md)） |
 
 ### 9.2 用户手册（8 份，0 份已落）
 
@@ -140,7 +141,7 @@
 | W2-publisher-key 运维手册 | ✅ 完成（[手册-W2-skill签名与vault.md](../手册-W2-skill签名与vault.md)） |
 | W2-vault 凭据管理手册 | ✅ 完成（同上 §4） |
 | W3-expert-inbox 审核手册 | ✅ 完成（[手册-W3-expert-inbox-审核.md](../手册-W3-expert-inbox-审核.md)） |
-| W4-heartbeat & visualdiff 排查手册 | ⚪ |
+| W4-heartbeat & visualdiff 排查手册 | ✅ 完成（[手册-W4-heartbeat-排查.md](../手册-W4-heartbeat-排查.md) heartbeat 段；visualdiff 待） |
 | W5-multimodal 上传规范 | ⚪ |
 | W6-pm-canvas 协作手册 | ⚪ |
 | W7-sqlite / wechat 部署手册 | ⚪ |
@@ -155,9 +156,9 @@
 | `de_vault_resolve_seconds{ref}` | ✅ 完成（`metrics.Global.Vault`） |
 | `de_expert_inbox_pending` | ✅ 完成（已接真值：list/create 时刷新） |
 | `de_hotreload_reload_total{resource}` | ✅ 完成（`metrics.Global.HotReload` per-resource success/fail） |
-| `de_heartbeat_lag_seconds` | ⚪ |
+| `de_heartbeat_lag_seconds` | ✅ 完成（`metrics.Global` + scrape handler；W4-D1） |
 | `de_visualdiff_seconds{size}` | ⚪ |
-| `de_canvas_clients_online{workspace}` | ⚪ |
+| `de_canvas_clients_online{workspace}` | ✅ 完成（W4-D1 `Tracker.Snapshot()`；W6-D2 将叠加 deviceId） |
 | `de_session_sync_skew_ms{device}` | ⚪ |
 
 ### 9.4 权限（4 个，0 个已落）
@@ -180,7 +181,7 @@
 | `DE_DEV_KEYPAIR_PATH` | ✅ 已接 |
 | `DE_VAULT_ADDR` / `DE_VAULT_TOKEN` / `DE_VAULT_KV_MOUNT` | 🟡 仅 Client.NewFromEnv 读，无 caller |
 | `DE_SUBAGENT_MAX_CONCURRENCY` | ⚪ |
-| `DE_HEARTBEAT_INTERVAL` | ⚪ |
+| `DE_HEARTBEAT_INTERVAL` | ✅ 已接（W4-D1） |
 | `DE_CANVAS_COMMENT_TTL` | ⚪ |
 | `DE_VISUALDIFF_RETENTION` | ⚪ |
 | `DE_SESSION_SYNC_ENABLED` | ⚪ |

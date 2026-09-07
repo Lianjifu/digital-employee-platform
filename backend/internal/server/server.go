@@ -15,6 +15,7 @@ import (
 	"github.com/digital-employee-platform/backend/internal/auth"
 	"github.com/digital-employee-platform/backend/internal/channel"
 	"github.com/digital-employee-platform/backend/internal/deworkflow"
+	"github.com/digital-employee-platform/backend/internal/heartbeat"
 	"github.com/digital-employee-platform/backend/internal/infra"
 	memid "github.com/digital-employee-platform/backend/internal/memory/identity"
 	"github.com/digital-employee-platform/backend/internal/modelprov"
@@ -97,6 +98,12 @@ type Server struct {
 	// and future server-side flows can pick the prod-safe path without
 	// touching the dev auto-provisioning logic.
 	SkillSigner signing.SignerResolver
+	// Heartbeat (W4-D1) tracks active identity presence per workspace.
+	// Touch() is called by the auth middleware on every authed request;
+	// the SSE stream and /api/online endpoint read from it.
+	Heartbeat *heartbeat.Tracker
+	// HeartbeatCancel stops the sweeper goroutine on shutdown.
+	HeartbeatCancel context.CancelFunc
 }
 
 // serverTestHooks groups the optional test seams. Field types are kept in
@@ -132,7 +139,11 @@ func New(st *store.Store) *Server {
 		SkillRegistry:    defaultSkillRegistry(),
 		IdentityProfiles: memid.NewStore(),
 		ChannelRegistry:  channel.NewDefaultRegistry(),
+		Heartbeat:        heartbeat.New(heartbeatConfigFromEnv(), nil),
 	}
+	var hbCtx context.Context
+	hbCtx, s.HeartbeatCancel = context.WithCancel(context.Background())
+	go s.Heartbeat.Run(hbCtx)
 	if !vaultRequiredForCredentials() {
 		s.hydrateVaultFromSecrets()
 	}
@@ -237,6 +248,26 @@ func envOr(k, def string) string {
 	return def
 }
 
+// heartbeatConfigFromEnv reads DE_HEARTBEAT_INTERVAL and DE_HEARTBEAT_STALE.
+// Both default to heartbeat.DefaultConfig().
+func heartbeatConfigFromEnv() heartbeat.Config {
+	def := heartbeat.DefaultConfig()
+	cfg := def
+	if v := strings.TrimSpace(lookupEnv("DE_HEARTBEAT_INTERVAL")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.Interval = d
+			cfg.SweepEvery = d
+			cfg.StaleAfter = d * 3
+		}
+	}
+	if v := strings.TrimSpace(lookupEnv("DE_HEARTBEAT_STALE")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			cfg.StaleAfter = d
+		}
+	}
+	return cfg
+}
+
 func (s *Server) Handler() http.Handler {
 	mode := s.Mode
 	if mode == "" {
@@ -288,7 +319,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.HandleFunc("/metrics", s.metricsPrometheus)
 	mux.HandleFunc("/", s.route)
-	return cors(s.withHTTPMetrics(s.requireAuth(mux)))
+	return cors(s.withHTTPMetrics(s.requireAuth(s.withHeartbeat(mux))))
 }
 
 func (s *Server) route(w http.ResponseWriter, r *http.Request) {
@@ -669,6 +700,16 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		return
 	case strings.HasPrefix(path, "/api/skills/") && (method == http.MethodGet || method == http.MethodPost || method == http.MethodPatch):
 		data, err = s.skillByID(r)
+	// W4-D1 · Heartbeat + 在线探测
+	case path == "/api/heartbeat" && method == http.MethodGet:
+		s.heartbeatProbe(w, r)
+		return
+	case path == "/api/online" && method == http.MethodGet:
+		s.onlineList(w, r)
+		return
+	case path == "/api/online/stream" && method == http.MethodGet:
+		s.onlineStream(w, r)
+		return
 	case path == "/api/skill-integrations" && method == http.MethodGet:
 		data, err = s.listSkillIntegrations(r)
 	case strings.HasPrefix(path, "/api/skill-integrations/") && (method == http.MethodPost || method == http.MethodPatch):

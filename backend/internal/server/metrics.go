@@ -297,4 +297,17 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP de_task_retry_total task retries\n# TYPE de_task_retry_total counter\nde_task_retry_total{service=%q} %d\n", svc, taskRetryTotal.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_task_version_conflict_total optimistic lock conflicts\n# TYPE de_task_version_conflict_total counter\nde_task_version_conflict_total{service=%q} %d\n", svc, taskVersionConflictTotal.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_task_persist_fail_total task persist failures\n# TYPE de_task_persist_fail_total counter\nde_task_persist_fail_total{service=%q} %d\n", svc, taskPersistFailTotal.Load())
+
+	// W4-D1 · Heartbeat / presence
+	var hbLagSeconds float64
+	var hbOnline map[string]int
+	if s.Heartbeat != nil {
+		hbLagSeconds = s.Heartbeat.LagSinceLastTouch().Seconds()
+		hbOnline = s.Heartbeat.Snapshot()
+	}
+	_, _ = fmt.Fprintf(w, "# HELP de_heartbeat_lag_seconds seconds since most recent authed request\n# TYPE de_heartbeat_lag_seconds gauge\nde_heartbeat_lag_seconds{service=%q} %f\n", svc, hbLagSeconds)
+	_, _ = fmt.Fprintf(w, "# HELP de_canvas_clients_online online identities per workspace\n# TYPE de_canvas_clients_online gauge\n")
+	for ws, n := range hbOnline {
+		_, _ = fmt.Fprintf(w, "de_canvas_clients_online{service=%q,workspace=%q} %d\n", svc, ws, n)
+	}
 }
