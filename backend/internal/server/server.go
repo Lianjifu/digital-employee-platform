@@ -606,6 +606,18 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.upsertSkillCatalogAPI(r)
 	case path == "/api/internal/skill/invocation" && method == http.MethodPost:
 		data, err = s.skillInvocationAPI(r)
+
+	// W3-D1 · Expert Inbox review flow. Order matters: the /:id/review
+	// suffix match must precede the generic /api/expert-inbox/:id match
+	// (we don't have a single-item GET — only list + review), so this is
+	// safe to keep at the top of the inbox block.
+	case path == "/api/expert-inbox" && method == http.MethodGet:
+		data, err = s.listExpertInbox(r)
+	case path == "/api/expert-inbox" && method == http.MethodPost:
+		data, err = s.createExpertInbox(r)
+	case strings.HasPrefix(path, "/api/expert-inbox/") && strings.HasSuffix(path, "/review") && method == http.MethodPost:
+		data, err = s.reviewExpertInbox(r)
+
 	case path == "/api/skills" && method == http.MethodGet:
 		data, err = s.listSkillsAligned(r)
 	case path == "/api/skills" && method == http.MethodPost:

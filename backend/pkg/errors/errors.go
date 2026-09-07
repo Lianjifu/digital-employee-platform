@@ -118,6 +118,11 @@ const (
 	SkillSignatureInvalid    Code = "E_SKILL_SIGNATURE_INVALID"
 	SkillSignatureMissing    Code = "E_SKILL_SIGNATURE_MISSING"
 	SkillSignatureUnknownKey Code = "E_SKILL_SIGNATURE_UNKNOWN_KEY"
+
+	// W3-D1 · Expert Inbox
+	ExpertInboxForbidden Code = "E_EXPERT_INBOX_FORBIDDEN"
+	ExpertInboxNotFound Code = "E_EXPERT_INBOX_NOT_FOUND"
+	ExpertInboxInvalid  Code = "E_EXPERT_INBOX_INVALID"
 )
 
 // AppError 携带错误码与 HTTP 状态。

@@ -74,6 +74,7 @@ var DurableCollections = []string{
 	"skill_extra",
 	"workflow_skills",
 	"workspace_publisher_keys", // W2-D1
+	"expert_inbox",             // W3-D1
 }
 
 // SetPersistHook registers durable snapshot writer (Postgres kv_documents).

@@ -94,6 +94,15 @@ type Store struct {
 	ChannelHealth          map[string]map[string]any
 	ChannelInbound         []map[string]any // Feishu/Lark inbound events (normalized)
 	ContextSnapshots       []map[string]any // Agent OS ContextSnapshot + replay events (ADR-013)
+	// ExpertInbox is the W3-D1 inbox for human review of items that the
+	// automation pipeline can't resolve on its own (escalations from
+	// copilot turns, ambiguous agent outputs, sensitive skill runs).
+	// Each item carries: id, workspaceId, source ("copilot" / "skill" /
+	// "channel" / "manual"), severity ("info" / "warn" / "block"),
+	// status ("pending" / "approved" / "rejected" / "dismissed"),
+	// createdAt, createdBy, payload, reviewedAt?, reviewer?, decision?,
+	// note?. Lifecycle in ADR-023.
+	ExpertInbox []map[string]any
 
 	HomeKPIs             map[string]any
 	HomeExtra            map[string]any

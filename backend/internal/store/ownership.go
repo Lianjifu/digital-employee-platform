@@ -46,6 +46,7 @@ var collectionDomain = map[string]Domain{
 	"employees":          DomainCollab,
 	"template_adoptions": DomainCollab,
 	"config_versions":    DomainCollab,
+	"expert_inbox":       DomainCollab, // W3-D1
 
 	"model_providers":          DomainCap,
 	"routing_policies":         DomainCap,
