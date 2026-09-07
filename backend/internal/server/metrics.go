@@ -330,4 +330,14 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "de_selfimproving_sop_total{service=%q,verdict=\"created\"} %d\n", svc, siCreated)
 	_, _ = fmt.Fprintf(w, "de_selfimproving_sop_total{service=%q,verdict=\"merged\"} %d\n", svc, siMerged)
 	_, _ = fmt.Fprintf(w, "de_selfimproving_sop_total{service=%q,verdict=\"rejected\"} %d\n", svc, siRejected)
+
+	// W6-D1 · PM SOP plan actions
+	psCreated, psStarted, psComplete, psBlock, psUnblock, psNote := metrics.Global.PMSop.Snapshot()
+	_, _ = fmt.Fprintf(w, "# HELP de_pmsop_plan_total PM SOP plan creations and event applications\n# TYPE de_pmsop_plan_total counter\n")
+	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"created\"} %d\n", svc, psCreated)
+	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"task.start\"} %d\n", svc, psStarted)
+	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"task.complete\"} %d\n", svc, psComplete)
+	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"task.block\"} %d\n", svc, psBlock)
+	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"task.unblock\"} %d\n", svc, psUnblock)
+	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"task.note\"} %d\n", svc, psNote)
 }

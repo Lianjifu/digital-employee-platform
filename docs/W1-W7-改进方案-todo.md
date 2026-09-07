@@ -14,11 +14,11 @@
 | 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 3 | 0 | 0 | 100% |
 | 后端 W4（Heartbeat / VisualDiff） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W5（SelfImproving / Multimodal） | 2 | 2 | 0 | 0 | 100% |
-| 后端 W6（PM SOP / Canvas） | 2 | 0 | 0 | 2 | 0% |
+| 后端 W6（PM SOP / Canvas） | 2 | 1 | 0 | 1 | 50% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 0 | 0 | 2 | 0% |
 | 前端 9 项 | 9 | 2 | 2 | 5 | 22% |
 | 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 11 | 1 | ~38 | ~24% |
-| **合计** | **~80** | **23** | **3** | **~53** | **~32%** |
+| **合计** | **~80** | **24** | **3** | **~53** | **~32%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -82,7 +82,7 @@
 
 | ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
 |---|---|---|---|---|
-| W6-D1 | PM SOP（项目管理模板引擎） | ⚪ 未做 | 无 `internal/pmsop/` | 引入 PM 模板 DSL + 状态机 |
+| W6-D1 | PM SOP（项目管理模板引擎） | ✅ 完成 | 新 `internal/pmsop/`：Engine + Template/Plan + 状态机（5 个 task.* 事件 + 自动 stage/plan 完成判定）；内置 `agile-sprint` / `launch-checklist` 模板；`POST /api/pmsop/plans` 渲染、`GET /api/pmsop/plans/<id>` 详情、`POST /api/pmsop/plans/<id>/events` 应用事件；持久化在 `Store.KnowledgeExtra["pmsop_plans"]`；`de_pmsop_plan_total{action}` 指标 | ADR-034 + 12 包测 + 8 集成测 |
 | W6-D2 | Canvas 协作后端（presence / CRDT） | ⚪ 未做 | 无 realtime 包 | Yjs / 自托管 WS hub + 持久化 |
 
 ---

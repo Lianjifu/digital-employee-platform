@@ -248,7 +248,39 @@ type Registry struct {
 	HotReload    HotReloadBuckets
 	VisualDiff   VisualDiffBuckets
 	SelfImproving SelfImprovingBuckets
+	PMSop        PMSopBuckets
 	processStart time.Time
+}
+
+// PMSopBuckets counts PM plan creations and event types applied.
+type PMSopBuckets struct {
+	Created  Counter
+	Started  Counter
+	Complete Counter
+	Block    Counter
+	Unblock  Counter
+	Note     Counter
+}
+
+func (p *PMSopBuckets) Inc(action string) {
+	switch action {
+	case "created":
+		p.Created.Inc()
+	case "task.start":
+		p.Started.Inc()
+	case "task.complete":
+		p.Complete.Inc()
+	case "task.block":
+		p.Block.Inc()
+	case "task.unblock":
+		p.Unblock.Inc()
+	case "task.note":
+		p.Note.Inc()
+	}
+}
+
+func (p *PMSopBuckets) Snapshot() (created, started, complete, block, unblock, note uint64) {
+	return p.Created.Value(), p.Started.Value(), p.Complete.Value(), p.Block.Value(), p.Unblock.Value(), p.Note.Value()
 }
 
 // SelfImprovingBuckets counts SOP generation verdicts.

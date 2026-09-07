@@ -18,6 +18,7 @@ import (
 	"github.com/digital-employee-platform/backend/internal/heartbeat"
 	"github.com/digital-employee-platform/backend/internal/infra"
 	"github.com/digital-employee-platform/backend/internal/multimodal"
+	"github.com/digital-employee-platform/backend/internal/pmsop"
 	memid "github.com/digital-employee-platform/backend/internal/memory/identity"
 	"github.com/digital-employee-platform/backend/internal/modelprov"
 	"github.com/digital-employee-platform/backend/internal/modelprov/trace"
@@ -108,6 +109,8 @@ type Server struct {
 	// W5-D2 · Multimodal extraction registry. nil until initMultimodal
 	// has registered a provider.
 	Multimodal *multimodal.Registry
+	// W6-D1 · PM SOP engine + bundled templates. nil until initPMsop.
+	PMSop *pmsop.Engine
 }
 
 // serverTestHooks groups the optional test seams. Field types are kept in
@@ -160,6 +163,8 @@ func New(st *store.Store) *Server {
 	go s.visualdiffJanitor(vdCtx)
 	// W5-D2 · Multimodal registry (OCR / ASR stubs gated by env flags).
 	s.initMultimodal()
+	// W6-D1 · PM SOP templates + plan state machine.
+	s.initPMsop()
 	return s
 }
 
@@ -734,6 +739,22 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	// W5-D1 · SelfImproving SOP
 	case path == "/api/selfimproving/sop" && method == http.MethodPost:
 		s.selfimprovingGenerateHandler(w, r)
+		return
+	// W6-D1 · PM SOP templates + plans
+	case path == "/api/pmsop/templates" && method == http.MethodGet:
+		s.pmsopTemplatesHandler(w, r)
+		return
+	case path == "/api/pmsop/plans" && method == http.MethodPost:
+		s.pmsopCreatePlanHandler(w, r)
+		return
+	case path == "/api/pmsop/plans" && method == http.MethodGet:
+		s.pmsopListPlansHandler(w, r)
+		return
+	case strings.HasPrefix(path, "/api/pmsop/plans/") && method == http.MethodGet:
+		s.pmsopPlanDetailHandler(w, r)
+		return
+	case strings.HasSuffix(path, "/events") && strings.HasPrefix(path, "/api/pmsop/plans/") && method == http.MethodPost:
+		s.pmsopPlanEventHandler(w, r)
 		return
 	case path == "/api/skill-integrations" && method == http.MethodGet:
 		data, err = s.listSkillIntegrations(r)
