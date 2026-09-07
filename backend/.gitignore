@@ -9,3 +9,8 @@ data/
 data/skill-keys/dev-keypair.json
 data/skill-keys/dev-keypair.*.tmp
 data/skill-keys/*.priv
+# Stray cmd/ binaries built into repo root by `go build .` (use `go build -o bin/...` instead)
+sign-skill-pack
+sign-skill
+verify-skill
+check-skill
