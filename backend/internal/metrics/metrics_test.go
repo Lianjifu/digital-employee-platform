@@ -128,6 +128,34 @@ func TestConcurrentIncrement(t *testing.T) {
 	}
 }
 
+// TestHotReloadBuckets: per-resource success/fail counters are
+// separate dimensions. Unknown result labels are ignored.
+func TestHotReloadBuckets(t *testing.T) {
+	r := &Registry{}
+	r.HotReload.Inc("publisher-key", "success")
+	r.HotReload.Inc("publisher-key", "success")
+	r.HotReload.Inc("publisher-key", "fail")
+	r.HotReload.Inc("routing-policy", "success")
+	r.HotReload.Inc("routing-policy", "nonsense") // ignored
+
+	resources, ok, fail := r.HotReload.Snapshot()
+	if len(resources) != 2 {
+		t.Fatalf("resources: want 2, got %d (%v)", len(resources), resources)
+	}
+	if resources[0] != "publisher-key" || resources[1] != "routing-policy" {
+		t.Fatalf("resources order: want publisher-key then routing-policy, got %v", resources)
+	}
+	if ok["publisher-key"] != 2 {
+		t.Fatalf("publisher-key success: want 2, got %d", ok["publisher-key"])
+	}
+	if fail["publisher-key"] != 1 {
+		t.Fatalf("publisher-key fail: want 1, got %d", fail["publisher-key"])
+	}
+	if ok["routing-policy"] != 1 {
+		t.Fatalf("routing-policy success: want 1, got %d", ok["routing-policy"])
+	}
+}
+
 // TestProcessStartMonotonic guards against the Registry being cloned
 // (processStart must move forward).
 func TestProcessStartMonotonic(t *testing.T) {

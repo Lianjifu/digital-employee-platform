@@ -9,6 +9,8 @@
 package metrics
 
 import (
+	"sort"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -129,12 +131,78 @@ type ExpertInboxGauge struct {
 func (g *ExpertInboxGauge) Set(n uint64) { g.Value.Store(n) }
 func (g *ExpertInboxGauge) Get() uint64  { return g.Value.Load() }
 
+// HotReloadReloadTotal counts successful + failed reload attempts
+// across all watched config resources. label: resource name (e.g.
+// "publisher-key", "routing-policy"); result ∈ {"success", "fail"}.
+type HotReloadBuckets struct {
+	Success map[string]*Counter
+	Fail    map[string]*Counter
+	mu      sync.Mutex
+}
+
+func (h *HotReloadBuckets) Inc(resource, result string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	var m map[string]*Counter
+	switch result {
+	case "success":
+		if h.Success == nil {
+			h.Success = map[string]*Counter{}
+		}
+		m = h.Success
+	case "fail":
+		if h.Fail == nil {
+			h.Fail = map[string]*Counter{}
+		}
+		m = h.Fail
+	default:
+		return
+	}
+	c, ok := m[resource]
+	if !ok {
+		c = new(Counter)
+		m[resource] = c
+	}
+	c.Inc()
+}
+
+// Snapshot returns per-resource counters in a stable slice for the
+// scrape handler to publish.
+func (h *HotReloadBuckets) Snapshot() (resources []string, success, fail map[string]uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	seen := map[string]bool{}
+	for r := range h.Success {
+		seen[r] = true
+	}
+	for r := range h.Fail {
+		seen[r] = true
+	}
+	resources = make([]string, 0, len(seen))
+	for r := range seen {
+		resources = append(resources, r)
+	}
+	sort.Strings(resources)
+	success = map[string]uint64{}
+	fail = map[string]uint64{}
+	for _, r := range resources {
+		if c, ok := h.Success[r]; ok {
+			success[r] = c.Value()
+		}
+		if c, ok := h.Fail[r]; ok {
+			fail[r] = c.Value()
+		}
+	}
+	return resources, success, fail
+}
+
 // Registry is the single shared state for all metrics.
 type Registry struct {
 	Vetter       VetterBuckets
 	Sign         SignBuckets
 	Vault        VaultBuckets
 	ExpertInbox  ExpertInboxGauge
+	HotReload    HotReloadBuckets
 	processStart time.Time
 }
 

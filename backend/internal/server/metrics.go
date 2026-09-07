@@ -258,6 +258,16 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "# HELP de_expert_inbox_pending Expert inbox items awaiting review\n# TYPE de_expert_inbox_pending gauge\n")
 	_, _ = fmt.Fprintf(w, "de_expert_inbox_pending{service=%q} %d\n", svc, metrics.Global.ExpertInbox.Get())
 
+	// W3-D2 HotReload: per-resource success/fail counters.
+	resources, hotOK, hotFail := metrics.Global.HotReload.Snapshot()
+	if len(resources) > 0 {
+		_, _ = fmt.Fprintf(w, "# HELP de_hotreload_reload_total HotReload attempts by resource and result\n# TYPE de_hotreload_reload_total counter\n")
+		for _, r := range resources {
+			_, _ = fmt.Fprintf(w, "de_hotreload_reload_total{service=%q,resource=%q,result=\"success\"} %d\n", svc, r, hotOK[r])
+			_, _ = fmt.Fprintf(w, "de_hotreload_reload_total{service=%q,resource=%q,result=\"fail\"} %d\n", svc, r, hotFail[r])
+		}
+	}
+
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_cognitive_bypass_total Copilot cognitive framework bypasses\n# TYPE de_copilot_cognitive_bypass_total counter\nde_copilot_cognitive_bypass_total{service=%q} %d\n", svc, copilotCognitiveBypass.Load())
 	_, _ = fmt.Fprintf(w, "# HELP de_copilot_cognitive_framework_total Copilot cognitive primary framework selections\n# TYPE de_copilot_cognitive_framework_total counter\nde_copilot_cognitive_framework_total{service=%q,framework=%q} %d\n", svc, "logic", copilotCognitiveLogic.Load())
 	_, _ = fmt.Fprintf(w, "de_copilot_cognitive_framework_total{service=%q,framework=%q} %d\n", svc, "problem", copilotCognitiveProblem.Load())
