@@ -9,7 +9,7 @@
 
 | 段 | 项数 | ✅ 完成 | 🟡 部分 | ⚪ 未做 | 完成率 |
 |----|----:|------:|------:|------:|-----:|
-| 后端 W1（Skill Vetter / Gateway 硬墙 / Catalog / DS） | 4 | 3 | 0 | 1 | 75% |
+| 后端 W1（Skill Vetter / Gateway 硬墙 / Catalog / DS） | 4 | 4 | 0 | 0 | 100% |
 | 后端 W2（SubAgent / 3-列 / Vault） | 3 | 3 | 0 | 0 | 100% |
 | 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 3 | 0 | 0 | 100% |
 | 后端 W4（Heartbeat / VisualDiff） | 2 | 2 | 0 | 0 | 100% |
@@ -18,7 +18,7 @@
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 2 | 0 | 0 | 100% |
 | 前端 9 项 | 9 | 2 | 2 | 5 | 22% |
 | 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 11 | 1 | ~38 | ~24% |
-| **合计** | **~80** | **28** | **3** | **~49** | **~36%** |
+| **合计** | **~80** | **29** | **3** | **~48** | **~37%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -34,7 +34,7 @@
 | W1-D1 | Skill Vetter（内容危险模式） | ✅ 完成 | `internal/skills/vetter/` 已联通 builtin + import 两条 server 路径（`builtin_skills.go:296`、`handlers_skills_package.go:38`），正确排序在 signer 之前；audit 行写入（denied / warn / allow=无）；`cmd/verify-skill --vet=strict` CLI parity；`internal/server/skill_vetter_integration_test.go` 3 个集成测试；`cmd/check_skill/` 已清理 |
 | W1-D2 | Skill 签名（ed25519 + trust store） | ✅ 完成 | `signing/keystore.go`、`signing/canonical.go`、`signing/signer.go`、`cmd/sign-skill`、`cmd/verify-skill`、`cmd/check-skill`、`hard_delete_persist_test.go`；13+ 测试通过 | — |
 | W1-D3 | Gateway 硬墙（SSRF / path traversal / size / mime） | ✅ 完成 | `internal/gateway/artifact_gateway.go` + `artifact_gateway_test.go`（12 个测试）；3 个 handler 路由改造 `serveSkillArtifact` / `serveSkillArtifactPreview` / `serveSkillArtifactSlidePNG`；env `DE_ARTIFACT_MAX_BYTES`（默认 100 MB）/`DE_ARTIFACT_REQUIRE_AUTH`（默认 true）；ext 白名单放在 stat 前避免 404 vs 415 信息泄漏；2 个 commit (`fcee0c7`, `e0d3edc`) | ADR-019 待出 |
-| W1-D4 | Catalog / DS 数据源契约 | ⚪ 未做 | 无 `internal/catalog/` 包 | 新建 Catalog store + contract test |
+| W1-D4 | Catalog / DS 数据源契约 | ✅ 完成 | 新 `internal/catalog/`：`Option{ID,Name,Meta,Kind}` + `Section map[Kind][]Option` + `Source{Kind,Fetch(ctx,ws)}` 接口 + `Registry{Assemble, FailOpen}` + 纯函数 `MergeOptions` + `StaticSource`（内存 / Web channel 注入）；`Section` 空 kind 仍为非 nil 空 slice；workspace 隔离 = source 责任；fail-open / fail-closed + ctx 取消语义 | ADR-036 + 10 个 contract 测试（跨源合并 / workspace / ctx 传递 / fail-mode / 空 Name / SortedNames 确定性） |
 
 **W1 退出门槛**：CI 上 `make skill-gate` 实际阻断 PR — 当前仅 enabled 标记位被读，失败不阻断。
 
@@ -133,6 +133,7 @@
 | ADR-029 | WeChat 渠道限流与同步策略 | ✅ 完成（[ADR-029](../adr/ADR-029-wechat-channel.md)） |
 | ADR-030 | Preview sandbox 语义（iframe / CSP / inline `?inline=1`） | ✅ 完成（[ADR-030](../adr/ADR-030-preview-sandbox.md)） |
 | ADR-031 | Heartbeat / 在线探测语义 | ✅ 完成（[ADR-031](../adr/ADR-031-heartbeat-presence.md)） |
+| ADR-036 | Catalog 数据源契约 | ✅ 完成（[ADR-036](../adr/ADR-036-catalog-source-contract.md)） |
 
 ### 9.2 用户手册（8 份，0 份已落）
 
