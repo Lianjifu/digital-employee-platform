@@ -654,7 +654,13 @@ func (s *Server) copilotMessageFeedback(r *http.Request) (any, error) {
 	ws := s.workspaceID(r)
 
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	msgs := s.Store.Messages[cid]
 	var target map[string]any
 	for _, m := range msgs {
@@ -668,6 +674,8 @@ func (s *Server) copilotMessageFeedback(r *http.Request) (any, error) {
 	}
 	if kind == "none" || kind == "" {
 		delete(target, "feedback")
+		unlocked = true
+		s.Store.Unlock()
 		go s.Store.Persist("messages")
 		return map[string]any{"ok": true, "messageId": mid, "feedback": nil}, nil
 	}
@@ -683,6 +691,8 @@ func (s *Server) copilotMessageFeedback(r *http.Request) (any, error) {
 	if kind == "like" || kind == "dislike" {
 		cand = s.createFeedbackEvolveCandidateLocked(ws, id.ID, id.Name, cid, mid, kind, comment, target)
 	}
+	unlocked = true
+	s.Store.Unlock()
 	go func() {
 		s.Store.Persist("messages")
 		s.persistEvolve()

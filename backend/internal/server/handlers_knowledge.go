@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
+	"github.com/digital-employee-platform/backend/internal/knowledge/citationlog"
+	"github.com/digital-employee-platform/backend/internal/knowledge/eval"
+	"github.com/digital-employee-platform/backend/internal/knowledge/scope"
 	"github.com/digital-employee-platform/backend/internal/policy"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
@@ -966,7 +969,13 @@ func (s *Server) knowledgePackageAction(r *http.Request) (any, error) {
 	}
 
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	pkgs := knowledgeSliceMaps(s.Store.KnowledgeExtra["packages"])
 	var pkg map[string]any
 	idx := -1
@@ -1015,6 +1024,8 @@ func (s *Server) knowledgePackageAction(r *http.Request) (any, error) {
 			}
 		}
 		s.appendKnowledgeAuditLocked(ws, id.Name, "纳管知识文档", str(pkg["name"]), "success", fmt.Sprintf("added=%d", added))
+		unlocked = true
+		s.Store.Unlock()
 		go func() { s.Store.Persist("knowledge_docs"); s.persistKnowledgeExtra() }()
 		return pkg, nil
 	case "publish":
@@ -1113,6 +1124,8 @@ func (s *Server) knowledgePackageAction(r *http.Request) (any, error) {
 			}
 		}
 		s.appendKnowledgeAuditLocked(ws, id.Name, "发布知识包", str(pkg["name"]), "success", verName)
+		unlocked = true
+		s.Store.Unlock()
 		go func() { s.Store.Persist("knowledge_docs"); s.persistKnowledgeExtra(); _, _ = s.syncRAGIndexStrict(ws) }()
 		return pkg, nil
 	case "process":
@@ -1184,6 +1197,8 @@ func (s *Server) knowledgePackageAction(r *http.Request) (any, error) {
 		filterExtra("retrievalProfiles")
 		filterExtra("evaluations")
 		s.appendKnowledgeAuditLocked(ws, id.Name, "删除知识包", str(pkg["name"]), "success", pkgID)
+		unlocked = true
+		s.Store.Unlock()
 		go func() { s.Store.Persist("knowledge_docs"); s.persistKnowledgeExtra() }()
 		return map[string]any{"id": pkgID, "deleted": true}, nil
 	default:
@@ -1244,7 +1259,13 @@ func (s *Server) syncKnowledgeSource(r *http.Request) (any, error) {
 	srcID := parts[3]
 	ws := s.workspaceID(r)
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	srcs := knowledgeSliceMaps(s.Store.KnowledgeExtra["sources"])
 	for i, src := range srcs {
 		if str(src["id"]) != srcID {
@@ -1270,6 +1291,8 @@ func (s *Server) syncKnowledgeSource(r *http.Request) (any, error) {
 		}
 		s.Store.KnowledgeDocs = append([]map[string]any{doc}, s.Store.KnowledgeDocs...)
 		s.appendKnowledgeAuditLocked(ws, id.Name, "同步知识数据源", str(src["name"]), "success", "")
+		unlocked = true
+		s.Store.Unlock()
 		go func() { s.Store.Persist("knowledge_docs"); s.persistKnowledgeExtra() }()
 		return normalizeSourceItem(src), nil
 	}
@@ -1473,6 +1496,13 @@ func (s *Server) deleteKnowledgeDocsByIDs(r *http.Request, actor *auth.Identity,
 			want[id] = struct{}{}
 		}
 	}
+	// K10 — block delete when docs still have un-retracted citations.
+	log := s.citationLog()
+	for id := range want {
+		if err := log.EnsureDeleted(ws, id); err != nil {
+			return nil, apperr.Conflict("knowledge.citation_active", err.Error())
+		}
+	}
 	s.Store.Lock()
 	kept := make([]map[string]any, 0, len(s.Store.KnowledgeDocs))
 	deleted := make([]map[string]any, 0)
@@ -1584,43 +1614,156 @@ func (s *Server) runKnowledgeEvaluation(r *http.Request) (any, error) {
 	ws := s.workspaceID(r)
 	pkgID := str(body["packageId"])
 	profileID := str(body["profileId"])
+
+	gold := s.loadGoldSetLocked(ws, pkgID)
+	if len(gold) == 0 {
+		gold = eval.DefaultGoldSet
+	}
+
+	type docRow struct {
+		id      string
+		title   string
+		content string
+	}
+	docs := []docRow{}
 	s.Store.RLock()
-	docN := 0
 	for _, d := range s.Store.KnowledgeDocs {
-		if str(d["workspaceId"]) == ws && (str(d["status"]) == "ready" || str(d["status"]) == "published") {
-			docN++
+		if str(d["workspaceId"]) != ws {
+			continue
 		}
+		if str(d["status"]) != "ready" && str(d["status"]) != "published" {
+			continue
+		}
+		if !scope.Allowed(scopeDocFromMap(d), scopeViewerFromIdentity(id, ws)) {
+			continue
+		}
+		title := coalesce(str(d["title"]), str(d["id"]))
+		body := coalesce(str(d["snippet"]), title)
+		docs = append(docs, docRow{id: str(d["id"]), title: title, content: title + " " + body})
 	}
 	s.Store.RUnlock()
-	recall := 0.55
-	if docN > 0 {
-		recall = minFloat(0.95, 0.6+float64(docN)*0.05)
+
+	corpusMap := make(map[string]string, len(docs))
+	for _, d := range docs {
+		corpusMap[d.id] = d.content
 	}
-	status := "needs_review"
-	if recall >= 0.75 {
-		status = "passed"
-	} else if recall < 0.55 {
-		status = "failed"
+	retriever := func(query string, k int) []eval.Hit {
+		if len(corpusMap) == 0 {
+			return nil
+		}
+		tokens := eval.TokenizeQuery(query)
+		if len(tokens) == 0 {
+			return nil
+		}
+		out := make([]eval.Hit, 0, len(corpusMap))
+		for id, body := range corpusMap {
+			bl := strings.ToLower(body)
+			hits := 0
+			for _, tok := range tokens {
+				if strings.Contains(bl, tok) {
+					hits++
+				}
+			}
+			if hits > 0 {
+				out = append(out, eval.Hit{DocID: id, Score: float64(hits)})
+			}
+		}
+		out = eval.SortHitsByScore(out)
+		if len(out) > k {
+			out = out[:k]
+		}
+		return out
 	}
-	p95 := 180 + docN*10
+
+	started := time.Now()
+	rep, err := eval.RunEvaluation(retriever, gold, eval.Options{Ks: []int{5, 10}})
+	if err != nil {
+		return nil, err
+	}
+	latencyMs := float64(time.Since(started).Milliseconds())
+
+	hitRate := 0.0
+	if rep.HitRate > 0 {
+		hitRate = rep.HitRate
+	}
 	item := map[string]any{
-		"id": s.Store.ID("kev"), "workspaceId": ws, "packageId": pkgID, "profileId": profileID,
-		"baselineVersion": "baseline", "evaluatedVersion": "candidate",
-		"status": status, "recallAtK": recall, "mrr": recall * 0.9, "ndcg": recall * 0.95,
-		"citationAccuracy": minFloat(0.98, recall+0.05), "p95LatencyMs": p95,
-		"evaluatedAt": time.Now().UTC().Format(time.RFC3339),
+		"id":               s.Store.ID("kev"),
+		"workspaceId":      ws,
+		"packageId":        pkgID,
+		"profileId":        profileID,
+		"baselineVersion":  "baseline",
+		"evaluatedVersion": "candidate",
+		"status":           rep.Status,
+		"recallAt5":        rep.RecallAt5,
+		"recallAt10":       rep.RecallAt10,
+		"recallAtK":        rep.RecallAt10,
+		"mrr":              rep.MRR,
+		"ndcg":             rep.NDCGAt10,
+		"ndcgAt10":         rep.NDCGAt10,
+		"hitRate":          hitRate,
+		"hallucinationRate": rep.HallucinationRate,
+		"sampleSize":       rep.SampleSize,
+		"hallucinatedHits": rep.HallucinatedHits,
+		"failReasons":      rep.FailReasons,
+		"citationAccuracy": 1.0 - rep.HallucinationRate,
+		"p95LatencyMs":     latencyMs,
+		"evaluatedAt":      time.Now().UTC().Format(time.RFC3339),
 	}
+
 	s.Store.Lock()
 	evals := knowledgeSliceMaps(s.Store.KnowledgeExtra["evaluations"])
 	s.Store.KnowledgeExtra["evaluations"] = append([]map[string]any{item}, evals...)
 	s.Store.KnowledgeExtra["eval"] = normalizeEvalMetrics(map[string]any{
-		"workspaceId": ws, "recallAtK": recall, "citationAccuracy": item["citationAccuracy"],
-		"p95Latency": p95, "hitRate": docN,
+		"workspaceId":      ws,
+		"recallAtK":        rep.RecallAt10,
+		"recallAt10":       rep.RecallAt10,
+		"mrr":              rep.MRR,
+		"ndcg":             rep.NDCGAt10,
+		"hitRate":          hitRate,
+		"hallucinationRate": rep.HallucinationRate,
+		"sampleSize":       rep.SampleSize,
+		"status":           rep.Status,
+		"p95Latency":       latencyMs,
 	})
-	s.appendKnowledgeAuditLocked(ws, id.Name, "运行知识评测", pkgID, "success", fmt.Sprintf("recallAtK=%.2f", recall))
+	s.appendKnowledgeAuditLocked(ws, id.Name, "运行知识评测", pkgID, "success",
+		fmt.Sprintf("status=%s recall@10=%.4f halluc=%.4f n=%d",
+			rep.Status, rep.RecallAt10, rep.HallucinationRate, rep.SampleSize))
 	s.Store.Unlock()
 	s.persistKnowledgeExtra()
 	return item, nil
+}
+
+func (s *Server) loadGoldSetLocked(ws, pkgID string) []eval.GoldItem {
+	type goldShape struct {
+		Items []struct {
+			Query          string   `json:"query"`
+			RelevantDocIDs []string `json:"relevantDocIds"`
+		} `json:"items"`
+	}
+	for _, m := range knowledgeSliceMaps(s.Store.KnowledgeExtra["goldSets"]) {
+		if str(m["workspaceId"]) != ws {
+			continue
+		}
+		if pkgID != "" && str(m["packageId"]) != pkgID {
+			continue
+		}
+		js, _ := json.Marshal(m["items"])
+		var g goldShape
+		if err := json.Unmarshal(js, &g); err != nil {
+			continue
+		}
+		out := make([]eval.GoldItem, 0, len(g.Items))
+		for _, it := range g.Items {
+			if strings.TrimSpace(it.Query) == "" || len(it.RelevantDocIDs) == 0 {
+				continue
+			}
+			out = append(out, eval.GoldItem{Query: it.Query, RelevantDocIDs: it.RelevantDocIDs})
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+	return nil
 }
 
 func minFloat(a, b float64) float64 {
@@ -1628,6 +1771,111 @@ func minFloat(a, b float64) float64 {
 		return a
 	}
 	return b
+}
+
+func scopeDocFromMap(d map[string]any) scope.Source {
+	roles := []string{}
+	for _, r := range knowledgeSliceMaps(d["roles"]) {
+		roles = append(roles, str(r["id"]))
+	}
+	for _, r := range knowledgeSliceAny(d["roles"]) {
+		if s, ok := r.(string); ok && s != "" {
+			roles = append(roles, s)
+		}
+	}
+	scopes := []string{}
+	for _, s := range knowledgeSliceAny(d["scopes"]) {
+		if v, ok := s.(string); ok && v != "" {
+			scopes = append(scopes, v)
+		}
+	}
+	tags := []string{}
+	for _, t := range knowledgeSliceAny(d["scopeTags"]) {
+		if v, ok := t.(string); ok && v != "" {
+			tags = append(tags, v)
+		}
+	}
+	return scope.Source{
+		ID:        str(d["id"]),
+		Workspace: str(d["workspaceId"]),
+		Status:    str(d["status"]),
+		Scopes:    scopes,
+		ScopeTags: tags,
+		OwnerID:   str(d["digitalEmployeeId"]),
+		Roles:     roles,
+	}
+}
+
+func scopeViewerFromIdentity(id *auth.Identity, ws string) scope.Viewer {
+	if id == nil {
+		return scope.Viewer{WorkspaceID: ws}
+	}
+	return scope.Viewer{
+		IdentityID:  id.Name,
+		WorkspaceID: ws,
+		Roles:       append([]string{}, id.Permissions...),
+	}
+}
+
+func knowledgeSliceAny(v any) []any {
+	switch x := v.(type) {
+	case []any:
+		return x
+	case []map[string]any:
+		out := make([]any, 0, len(x))
+		for _, m := range x {
+			out = append(out, m)
+		}
+		return out
+	}
+	return nil
+}
+
+// citationLog returns the per-Server citation log, hydrating it from
+// KnowledgeExtra["citationLog"] on first use. All persistence happens
+// in KnowledgeExtra so the existing snapshot machinery covers it.
+func (s *Server) citationLog() *citationlog.Log {
+	s.Store.Lock()
+	defer s.Store.Unlock()
+	if v, ok := s.Store.KnowledgeExtra["__citationLog"].(*citationlog.Log); ok {
+		return v
+	}
+	l := citationlog.NewLog()
+	if rows := knowledgeSliceMaps(s.Store.KnowledgeExtra["citationLog"]); len(rows) > 0 {
+		for _, r := range rows {
+			created, _ := time.Parse(time.RFC3339, str(r["createdAt"]))
+			retracted, _ := time.Parse(time.RFC3339, str(r["retractedAt"]))
+			l.Append(citationlog.Record{
+				WorkspaceID: str(r["workspaceId"]),
+				TurnID:      str(r["turnId"]),
+				DocID:       str(r["docId"]),
+				ChunkID:     str(r["chunkId"]),
+				Tier:        str(r["tier"]),
+				QuoteHash:   str(r["quoteHash"]),
+				Score:       toFloat(r["score"]),
+				CreatedAt:   created,
+				RetractedAt: retracted,
+			})
+		}
+	}
+	s.Store.KnowledgeExtra["__citationLog"] = l
+	return l
+}
+
+// LogCitation appends a citation event to the per-Server log. Idempotent
+// for callers that may fire multiple citations per turn. Caller may be
+// invoked from chat handlers; safe to call concurrently.
+func (s *Server) LogCitation(workspaceID, turnID, docID, chunkID, tier, quoteHash string, score float64) {
+	l := s.citationLog()
+	l.Append(citationlog.Record{
+		WorkspaceID: workspaceID,
+		TurnID:      turnID,
+		DocID:       docID,
+		ChunkID:     chunkID,
+		Tier:        tier,
+		QuoteHash:   quoteHash,
+		Score:       score,
+	})
 }
 
 func (s *Server) rescoreKnowledgeChunks(r *http.Request) (any, error) {

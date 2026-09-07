@@ -66,7 +66,7 @@ func normalizeRiskLevel(v any) string {
 	}
 }
 
-func normalizeSkillItem(m map[string]any) map[string]any {
+func (s *Server) normalizeSkillItem(m map[string]any) map[string]any {
 	out := cloneMap(m)
 	if str(out["description"]) == "" {
 		out["description"] = str(out["name"])
@@ -97,7 +97,103 @@ func normalizeSkillItem(m map[string]any) map[string]any {
 	if str(out["version"]) == "" {
 		out["version"] = "0.1.0"
 	}
+	// W2-D1 · publisher provenance. Reads workspaceId from the item and
+	// stamps 4 fields so the UI can render a trust badge without a
+	// second round-trip.
+	s.annotateSkillPublisher(out)
 	return out
+}
+
+// normalizeSkillItemLocked is the lock-free variant for callers that
+// already hold Store.Lock / RLock. It MUST NOT be called otherwise — the
+// active-publisher lookup below dereferences the store without
+// synchronization.
+func (s *Server) normalizeSkillItemLocked(m map[string]any) map[string]any {
+	out := cloneMap(m)
+	if str(out["description"]) == "" {
+		out["description"] = str(out["name"])
+	}
+	if out["rating"] == nil {
+		out["rating"] = 0
+	}
+	if out["installCount"] == nil {
+		out["installCount"] = 0
+	}
+	if out["cacheable"] == nil {
+		out["cacheable"] = false
+	}
+	out["riskLevel"] = normalizeRiskLevel(coalesce(str(out["riskLevel"]), str(out["risk"])))
+	delete(out, "risk")
+	if str(out["lifecycleStatus"]) == "" {
+		out["lifecycleStatus"] = "enabled"
+	}
+	if str(out["kind"]) == "" {
+		out["kind"] = "skill"
+	}
+	if str(out["status"]) == "" {
+		out["status"] = "installed"
+	}
+	if str(out["source"]) == "" {
+		out["source"] = "import"
+	}
+	if str(out["version"]) == "" {
+		out["version"] = "0.1.0"
+	}
+	annotateSkillPublisherLocked(s, out)
+	return out
+}
+
+// annotateSkillPublisher sets publisherKeyId / publisherStatus /
+// workspacePublisherStatus / signatureTrust on a normalized skill item.
+// Safe to call without a server context (Store==nil becomes no-op).
+//
+// The caller MUST NOT hold Store.Lock / RLock when invoking this method;
+// it acquires RLock internally. If the caller already holds the lock,
+// call annotateSkillPublisherLocked instead.
+func (s *Server) annotateSkillPublisher(item map[string]any) {
+	if s == nil || s.Store == nil {
+		annotateSkillPublisherLocked(nil, item)
+		return
+	}
+	s.Store.RLock()
+	defer s.Store.RUnlock()
+	annotateSkillPublisherLocked(s, item)
+}
+
+// annotateSkillPublisherLocked is the lock-free core. Caller must hold
+// at least RLock on s.Store (or pass nil s when Store is unavailable).
+func annotateSkillPublisherLocked(s *Server, item map[string]any) {
+	wsID := str(item["workspaceId"])
+	item["publisherKeyId"] = coalesce(str(item["signedKeyId"]), str(item["publisherKeyId"]))
+	item["signatureTrust"] = "missing"
+	item["workspacePublisherStatus"] = "none"
+	item["publisherStatus"] = ""
+
+	if s == nil || s.Store == nil || wsID == "" {
+		return
+	}
+	if str(item["signedKeyId"]) != "" || str(item["publisherKeyId"]) != "" {
+		item["signatureTrust"] = "workspace"
+	}
+	active := s.Store.ActivePublisherKey(wsID)
+	if active != nil {
+		item["workspacePublisherStatus"] = str(active["status"])
+		if item["publisherKeyId"] == str(active["keyId"]) {
+			item["publisherStatus"] = "active"
+		} else if str(item["publisherKeyId"]) != "" {
+			if _, _, err := s.resolvePublisherKey(wsID, str(item["publisherKeyId"])); err == nil {
+				item["publisherStatus"] = "rotated"
+			} else {
+				item["publisherStatus"] = "revoked"
+			}
+		}
+	} else if str(item["publisherKeyId"]) != "" {
+		if _, _, err := s.resolvePublisherKey(wsID, str(item["publisherKeyId"])); err == nil {
+			item["publisherStatus"] = "rotated"
+		} else {
+			item["publisherStatus"] = "revoked"
+		}
+	}
 }
 
 func cloneMap(m map[string]any) map[string]any {
@@ -306,7 +402,7 @@ func (s *Server) listSkills(r *http.Request) (any, error) {
 	out := make([]map[string]any, 0)
 	for _, sk := range s.Store.Skills {
 		if str(sk["workspaceId"]) == ws {
-			out = append(out, normalizeSkillItem(sk))
+			out = append(out, s.normalizeSkillItem(sk))
 		}
 	}
 	return out, nil
@@ -516,7 +612,7 @@ func (s *Server) createSkill(r *http.Request) (any, error) {
 	s.Store.AppendAudit(ws, id.Name, "创建技能", name, "success", "")
 	s.Store.Unlock()
 	s.persistSkills()
-	return normalizeSkillItem(item), nil
+	return s.normalizeSkillItem(item), nil
 }
 
 func ternary(cond bool, a, b string) string {
@@ -584,7 +680,7 @@ func (s *Server) importSkills(r *http.Request) (any, error) {
 			"writeApprovalRequired": risk == "high",
 			"allowedEgress":         []string{"registry.internal.example.com"},
 		}}, s.Store.SkillIntegrations...)
-		created = append(created, normalizeSkillItem(item))
+		created = append(created, item)
 	}
 	if len(created) == 0 {
 		s.Store.Unlock()
@@ -592,8 +688,13 @@ func (s *Server) importSkills(r *http.Request) (any, error) {
 	}
 	s.Store.AppendAudit(ws, id.Name, "批量导入技能", strconv.Itoa(len(created))+" 项", "success", "")
 	s.Store.Unlock()
+	// 在 Lock 外 normalize：normalizeSkillItem 内部 RLock，否则同 goroutine 自死锁。
+	normalized := make([]map[string]any, 0, len(created))
+	for _, item := range created {
+		normalized = append(normalized, s.normalizeSkillItem(item))
+	}
 	s.persistSkills()
-	return created, nil
+	return normalized, nil
 }
 
 func (s *Server) skillByID(r *http.Request) (any, error) {
@@ -651,7 +752,13 @@ func (s *Server) skillByID(r *http.Request) (any, error) {
 		}
 		body, _ := decodeMap(r)
 		s.Store.Lock()
-		defer s.Store.Unlock()
+		// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+		unlocked := false
+		defer func() {
+			if !unlocked {
+				s.Store.Unlock()
+			}
+		}()
 		_, sk := s.findSkillLocked(ws, skillID)
 		if sk == nil {
 			return nil, apperr.NotFoundErr(apperr.NotFound, "技能不存在")
@@ -676,6 +783,8 @@ func (s *Server) skillByID(r *http.Request) (any, error) {
 		}
 		s.skillExtraMap("permissions")[skillID] = perms
 		s.Store.AppendAudit(ws, id.Name, "更新调用权限", str(sk["name"])+":"+roleName, "success", "")
+		unlocked = true
+		s.Store.Unlock()
 		go s.persistSkillExtra()
 		return updated, nil
 	case action == "governance" && r.Method == http.MethodGet:
@@ -695,7 +804,13 @@ func (s *Server) skillByID(r *http.Request) (any, error) {
 		}
 		body, _ := decodeMap(r)
 		s.Store.Lock()
-		defer s.Store.Unlock()
+		// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+		unlocked := false
+		defer func() {
+			if !unlocked {
+				s.Store.Unlock()
+			}
+		}()
 		_, sk := s.findSkillLocked(ws, skillID)
 		if sk == nil {
 			return nil, apperr.NotFoundErr(apperr.NotFound, "技能不存在")
@@ -714,6 +829,8 @@ func (s *Server) skillByID(r *http.Request) (any, error) {
 		}
 		s.skillExtraMap("policies")[skillID] = policy
 		s.Store.AppendAudit(ws, id.Name, "更新运行治理策略", str(sk["name"]), "success", "")
+		unlocked = true
+		s.Store.Unlock()
 		go s.persistSkillExtra()
 		return policy, nil
 	case action == "runtime" && (r.Method == http.MethodGet || r.Method == http.MethodPatch):
@@ -725,7 +842,13 @@ func (s *Server) skillByID(r *http.Request) (any, error) {
 			return nil, err
 		}
 		s.Store.Lock()
-		defer s.Store.Unlock()
+		// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+		unlocked := false
+		defer func() {
+			if !unlocked {
+				s.Store.Unlock()
+			}
+		}()
 		_, sk := s.findSkillLocked(ws, skillID)
 		if sk == nil {
 			return nil, apperr.NotFoundErr(apperr.NotFound, "技能不存在")
@@ -744,6 +867,8 @@ func (s *Server) skillByID(r *http.Request) (any, error) {
 			}
 			s.skillExtraMap("runtimes")[skillID] = cfg
 			s.Store.AppendAudit(ws, id.Name, "更新运行配置", str(sk["name"]), "success", "")
+			unlocked = true
+			s.Store.Unlock()
 			go s.persistSkillExtra()
 		}
 		return cfg, nil
@@ -816,7 +941,7 @@ func (s *Server) skillPreflight(r *http.Request, id *auth.Identity, ws, skillID 
 			collectDeps(name)
 		}
 	}
-	supplyDecision, supplyReason, supplyChecks := skillSupplyChainGate(candidate)
+	supplyDecision, supplyReason, supplyChecks := s.skillSupplyChainGate(candidate)
 	decision := "approved"
 	reason := ""
 	if len(deps) > 0 {
@@ -851,9 +976,16 @@ func (s *Server) skillInstall(r *http.Request, id *auth.Identity, ws, skillID st
 	}
 	body, _ := decodeMap(r)
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock。spawn persistSkills 必须在 Unlock 之后，
+	// 否则 goroutine 在持 Lock 的 thread 上调 Store.Persist → RLock 自死锁。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	if _, existing := s.findSkillLocked(ws, skillID); existing != nil {
-		return normalizeSkillItem(existing), nil
+		return s.normalizeSkillItem(existing), nil
 	}
 	// already installed under different id matching catalog name?
 	cat := s.findCatalogLocked(ws, skillID)
@@ -864,7 +996,7 @@ func (s *Server) skillInstall(r *http.Request, id *auth.Identity, ws, skillID st
 	if risk == "high" && strings.TrimSpace(str(body["approvalTicket"])) == "" {
 		return nil, apperr.Forbidden(apperr.ReleaseRequestRequired, "E_APPROVAL_REQUIRED: 高风险技能安装需要安全负责人审批")
 	}
-	supplyDecision, supplyReason, _ := skillSupplyChainGate(cat)
+	supplyDecision, supplyReason, _ := s.skillSupplyChainGate(cat)
 	if supplyDecision == "blocked" {
 		return nil, apperr.BadReq(apperr.BadRequest, supplyReason)
 	}
@@ -905,8 +1037,10 @@ func (s *Server) skillInstall(r *http.Request, id *auth.Identity, ws, skillID st
 	s.Store.Skills = append([]map[string]any{item}, s.Store.Skills...)
 	s.ensureSkillHealthLocked(item)
 	s.Store.AppendAudit(ws, id.Name, "安装技能", str(item["name"]), "success", "")
+	unlocked = true
+	s.Store.Unlock()
 	go s.persistSkills()
-	return normalizeSkillItem(item), nil
+	return s.normalizeSkillItem(item), nil
 }
 
 func (s *Server) skillUninstall(r *http.Request, id *auth.Identity, ws, skillID string) (any, error) {
@@ -915,7 +1049,14 @@ func (s *Server) skillUninstall(r *http.Request, id *auth.Identity, ws, skillID 
 	}
 	body, _ := decodeMap(r)
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后，否则
+	// goroutine 在持 Lock 的 thread 上调 Store.Persist → RLock 自死锁。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	idx, sk := s.findSkillLocked(ws, skillID)
 	if sk == nil {
 		return nil, apperr.NotFoundErr(apperr.NotFound, "技能不存在")
@@ -951,6 +1092,8 @@ func (s *Server) skillUninstall(r *http.Request, id *auth.Identity, ws, skillID 
 		auditAction = "强制卸载技能"
 	}
 	s.Store.AppendAudit(ws, id.Name, auditAction, skillName, "success", "")
+	unlocked = true
+	s.Store.Unlock()
 	go func() {
 		s.persistSkills()
 		s.persistSkillExtra()
@@ -979,7 +1122,13 @@ func (s *Server) skillLifecycle(r *http.Request, id *auth.Identity, ws, skillID 
 		return nil, apperr.BadReq(apperr.BadRequest, "不支持的技能生命周期状态")
 	}
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	_, sk := s.findSkillLocked(ws, skillID)
 	if sk == nil {
 		return nil, apperr.NotFoundErr(apperr.NotFound, "技能不存在")
@@ -998,8 +1147,10 @@ func (s *Server) skillLifecycle(r *http.Request, id *auth.Identity, ws, skillID 
 	}
 	h["updatedAt"] = "刚刚"
 	s.Store.AppendAudit(ws, id.Name, "更新技能状态为 "+next, str(sk["name"]), "success", "")
+	unlocked = true
+	s.Store.Unlock()
 	go s.persistSkills()
-	return normalizeSkillItem(sk), nil
+	return s.normalizeSkillItem(sk), nil
 }
 
 func (s *Server) skillUpgrade(r *http.Request, id *auth.Identity, ws, skillID string) (any, error) {
@@ -1008,7 +1159,13 @@ func (s *Server) skillUpgrade(r *http.Request, id *auth.Identity, ws, skillID st
 	}
 	body, _ := decodeMap(r)
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	_, sk := s.findSkillLocked(ws, skillID)
 	if sk == nil {
 		return nil, apperr.NotFoundErr(apperr.NotFound, "技能不存在")
@@ -1024,8 +1181,10 @@ func (s *Server) skillUpgrade(r *http.Request, id *auth.Identity, ws, skillID st
 	sk["hasUpdate"] = false
 	delete(sk, "upgradeVersion")
 	s.Store.AppendAudit(ws, id.Name, "升级技能", str(sk["name"]), "success", "version="+target)
+	unlocked = true
+	s.Store.Unlock()
 	go s.persistSkills()
-	return normalizeSkillItem(sk), nil
+	return s.normalizeSkillItem(sk), nil
 }
 
 func bumpMinor(version string) string {
@@ -1214,7 +1373,13 @@ func (s *Server) skillRevalidate(r *http.Request, id *auth.Identity, ws, skillID
 		return nil, err
 	}
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	_, sk := s.findSkillLocked(ws, skillID)
 	if sk == nil {
 		return nil, apperr.NotFoundErr(apperr.NotFound, "技能不存在")
@@ -1228,6 +1393,8 @@ func (s *Server) skillRevalidate(r *http.Request, id *auth.Identity, ws, skillID
 	sk["lastVerifiedAt"] = "刚刚"
 	s.appendSkillGovEventLocked(ws, str(sk["name"]), "call", "重新验证通过", id.Name, "success")
 	s.Store.AppendAudit(ws, id.Name, "重新验证通过", str(sk["name"]), "success", "")
+	unlocked = true
+	s.Store.Unlock()
 	go s.persistSkills()
 	return h, nil
 }
@@ -1237,7 +1404,13 @@ func (s *Server) skillIsolate(r *http.Request, id *auth.Identity, ws, skillID st
 		return nil, err
 	}
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	_, sk := s.findSkillLocked(ws, skillID)
 	if sk == nil {
 		return nil, apperr.NotFoundErr(apperr.NotFound, "技能不存在")
@@ -1248,6 +1421,8 @@ func (s *Server) skillIsolate(r *http.Request, id *auth.Identity, ws, skillID st
 	h["updatedAt"] = "刚刚"
 	s.appendSkillGovEventLocked(ws, str(sk["name"]), "lifecycle", "隔离能力", id.Name, "success")
 	s.Store.AppendAudit(ws, id.Name, "隔离能力", str(sk["name"]), "success", "")
+	unlocked = true
+	s.Store.Unlock()
 	go s.persistSkills()
 	return h, nil
 }
@@ -1262,7 +1437,13 @@ func (s *Server) skillsGovernanceBatch(r *http.Request) (any, error) {
 	rawIDs, _ := body["skillIds"].([]any)
 	ws := s.workspaceID(r)
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	out := make([]map[string]any, 0)
 	for _, x := range rawIDs {
 		sid := str(x)
@@ -1282,6 +1463,8 @@ func (s *Server) skillsGovernanceBatch(r *http.Request) (any, error) {
 		out = append(out, cloneMap(h))
 	}
 	s.Store.AppendAudit(ws, id.Name, ternary(action == "pause", "批量暂停技能", "批量重新验证技能"), strconv.Itoa(len(out))+" 项", "success", "")
+	unlocked = true
+	s.Store.Unlock()
 	go s.persistSkills()
 	return out, nil
 }
@@ -1377,7 +1560,7 @@ func (s *Server) createMCPConnection(r *http.Request) (any, error) {
 	s.Store.AppendAudit(ws, id.Name, "配置 MCP 并预检", name+":"+authMode+":"+mcpProtocolLabel(protocol), "success", "")
 	s.Store.Unlock()
 	s.persistSkills()
-	return normalizeSkillItem(item), nil
+	return s.normalizeSkillItem(item), nil
 }
 
 func (s *Server) createTool(r *http.Request) (any, error) {
@@ -1427,7 +1610,7 @@ func (s *Server) createTool(r *http.Request) (any, error) {
 	s.Store.AppendAudit(ws, id.Name, "配置 Tool 并预检", name, "success", "")
 	s.Store.Unlock()
 	s.persistSkills()
-	return normalizeSkillItem(item), nil
+	return s.normalizeSkillItem(item), nil
 }
 
 func resolveIntegrationSkillID(item map[string]any) string {
@@ -1480,7 +1663,13 @@ func (s *Server) skillIntegrationAction(r *http.Request) (any, error) {
 	}
 	ws := s.workspaceID(r)
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	var item map[string]any
 	for _, it := range s.Store.SkillIntegrations {
 		if str(it["id"]) == intID && (str(it["workspaceId"]) == ws || str(it["workspaceId"]) == "") {
@@ -1506,6 +1695,8 @@ func (s *Server) skillIntegrationAction(r *http.Request) (any, error) {
 				item["status"] = "failed"
 				item["lastError"] = errMsg
 				s.Store.AppendAudit(ws, id.Name, "执行接入连通性验证", str(item["name"]), "failed", errMsg)
+				unlocked = true
+				s.Store.Unlock()
 				go s.persistSkills()
 				return nil, apperr.BadReq(apperr.BadRequest, errMsg)
 			}
@@ -1520,6 +1711,8 @@ func (s *Server) skillIntegrationAction(r *http.Request) (any, error) {
 			item["status"] = "enabled"
 		}
 		s.Store.AppendAudit(ws, id.Name, "执行接入连通性验证", str(item["name"]), "success", "verifiedAt="+verifiedAt)
+		unlocked = true
+		s.Store.Unlock()
 		go s.persistSkills()
 		return item, nil
 	case action == "discover" && r.Method == http.MethodPost:
@@ -1540,6 +1733,8 @@ func (s *Server) skillIntegrationAction(r *http.Request) (any, error) {
 			item["status"] = "enabled"
 		}
 		s.Store.AppendAudit(ws, id.Name, "发现接入能力", str(item["name"]), "success", "")
+		unlocked = true
+		s.Store.Unlock()
 		go s.persistSkills()
 		return item, nil
 	default:
@@ -1595,7 +1790,13 @@ func (s *Server) publishWorkflowSkill(r *http.Request) (any, error) {
 	wfsID := parts[2]
 	ws := s.workspaceID(r)
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	for _, item := range s.Store.WorkflowSkills {
 		if str(item["id"]) != wfsID {
 			continue
@@ -1620,6 +1821,8 @@ func (s *Server) publishWorkflowSkill(r *http.Request) (any, error) {
 			s.syncWorkflowSkillCatalogLocked(item)
 			s.Store.AppendAudit(ws, id.Name, "流程技能会签待副署", str(item["name"]), "success", "pending_countersign")
 			itemCopy := cloneMap(item)
+			unlocked = true
+			s.Store.Unlock()
 			go func() {
 				s.Store.Persist("workflow_skills")
 				s.applyWorkflowSkillCatalog(id, itemCopy, r)
@@ -1637,6 +1840,8 @@ func (s *Server) publishWorkflowSkill(r *http.Request) (any, error) {
 		s.enableWorkflowSkillCatalogLocked(item)
 		s.Store.AppendAudit(ws, id.Name, "治理发布流程技能", str(item["name"]), "success", "")
 		itemCopy := cloneMap(item)
+		unlocked = true
+		s.Store.Unlock()
 		go func() {
 			s.Store.Persist("workflow_skills")
 			s.applyWorkflowSkillCatalog(id, itemCopy, r)

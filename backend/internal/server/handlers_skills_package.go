@@ -4,12 +4,16 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
+	"github.com/digital-employee-platform/backend/internal/skills/signing"
+	"github.com/digital-employee-platform/backend/internal/skills/vetter"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
@@ -26,7 +30,44 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 	if err != nil {
 		return nil, apperr.BadReq(apperr.BadRequest, err.Error())
 	}
+
 	ws := s.workspaceID(r)
+
+	// W1-D1 · vetter — content-level guard. Runs before signer so an attacker
+	// can't probe signature internals via timing.
+	if mode := vetterMode(); mode != "disabled" {
+		report := vetter.RunBytes(files)
+		switch mode {
+		case "warn_only":
+			if report.Decision != vetter.Allow {
+				log.Printf("skill vetter warn_only: import=%s verdict=%s findings=%d",
+					meta.Name, report.Verdict, len(report.Findings))
+				for _, f := range report.Findings {
+					log.Printf("  skill vetter finding: import=%s %s %s @%s:%d %s",
+						meta.Name, f.Category, f.Pattern, f.File, f.Line, f.Snippet)
+				}
+			}
+		default:
+			if report.Decision == vetter.Deny {
+				return nil, apperr.BadReq(apperr.SkillVetDenied,
+					"imported skill blocked by vetter: "+vetterSummary(meta.Name, report))
+			}
+		}
+	}
+
+	// W1-D2 · signer — provenance guard. Imported packages must carry a
+	// signature whose KeyID is in the trust store (prod) or the dev keypair.
+	// W2-D1 · extended to (wsID, meta, files): workspace-scoped KeyID
+	// resolves first, then global trust as fallback. PolicyWorkspace
+	// rejects non-workspace publishers.
+	if err := s.verifyImportSignature(ws, meta, files); err != nil {
+		// W1-D3 · audit. Foreign-package signature rejection must be
+		// observable in the workspace's audit trail; the response itself
+		// only shows the error code to the caller.
+		s.Store.AppendAudit(ws, id.Name, "skill 签名验证",
+			meta.Name, "denied", err.Error())
+		return nil, err
+	}
 	skillID := ""
 	s.Store.Lock()
 	skillID = s.Store.ID("sk")
@@ -50,7 +91,8 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 		"source":          "package", "environment": "sandbox", "classification": "internal",
 		"lastVerifiedAt": "刚刚", "team": "当前工作区",
 		"license": meta.License, "tags": meta.Tags,
-		"signed": false, "publisher": id.Name,
+		"signed": meta.KeyID != "", "publisher": id.Name,
+		"publisherKeyId": meta.KeyID, "signerName": meta.SignerName,
 		"packagePath": dest, "packageRoot": meta.RootDir,
 		"skillMdPath": meta.SkillMDRel, "hasScripts": meta.HasScripts,
 		"scripts": meta.Scripts, "packageFiles": meta.Files,
@@ -121,7 +163,10 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 		"writeApprovalRequired":  risk == "high",
 		"allowedEgress":          []string{},
 	}}, s.Store.SkillIntegrations...)
-	s.Store.AppendAudit(ws, id.Name, "导入技能包", meta.Name+"@"+meta.Version, "success", "sha256="+meta.SHA256+";scripts="+itoaPolicy(len(meta.Scripts)))
+	s.Store.AppendAudit(ws, id.Name, "导入技能包", meta.Name+"@"+meta.Version, "success", "sha256="+meta.SHA256+";scripts="+itoaPolicy(len(meta.Scripts))+";signer="+meta.SignerName+";keyId="+meta.KeyID)
+	if meta.KeyID != "" {
+		s.Store.AppendAudit(ws, id.Name, "skill 签名验证", meta.Name, "success", "keyId="+meta.KeyID+";signer="+meta.SignerName)
+	}
 	s.Store.Unlock()
 	if len(removedSkillIDs) > 0 {
 		s.Store.PersistDelete("skills", removedSkillIDs...)
@@ -132,7 +177,7 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 	s.persistSkills()
 	go s.persistSkillExtra()
 
-	out := normalizeSkillItem(item)
+	out := s.normalizeSkillItem(item)
 	out["packagePreview"] = map[string]any{
 		"files": meta.Files, "scripts": meta.Scripts, "hasScripts": meta.HasScripts,
 		"sha256": meta.SHA256, "markdownBytes": len(meta.Markdown),
@@ -269,3 +314,70 @@ func decodeStringSlice(v any) []string {
 		return nil
 	}
 }
+
+// verifyImportSignature is the user-upload counterpart to verifyBuiltinSignature.
+// The skill package's manifest carries Signature/KeyID/SignerName (added W1-D2);
+// the server consults TrustStore + DevKeyStore to resolve a public key and runs
+// ed25519.Verify against the canonical manifest bytes.
+//
+// W2-D1 · policy gate (skillSignaturePolicy):
+//   - PolicyOff → no check (legacy dev escape hatch, prod auto-promotes)
+//   - PolicyAny → workspace key OR global trust store (W1-D2 default)
+//   - PolicyWorkspace → must be a workspace key (active or rotated); global
+//     + dev-auto trust is rejected
+//
+// Caller must NOT have already replaced meta.KeyID/Signature from sidecar
+// parsing — that happens earlier in parseSkillPackage.
+func (s *Server) verifyImportSignature(wsID string, meta *skillPackageManifest, files map[string][]byte) error {
+	policy := skillSignaturePolicy()
+	if policy == PolicyOff {
+		return nil
+	}
+	if meta.Signature == "" || meta.KeyID == "" {
+		return apperr.BadReq(apperr.SkillSignatureMissing,
+			"imported skill missing signature: "+meta.Name)
+	}
+	pub, trust, err := s.resolvePublisherKey(wsID, meta.KeyID)
+	if err != nil {
+		return err
+	}
+	if policy == PolicyWorkspace && trust != "workspace-active" && trust != "workspace-rotated" {
+		return apperr.New(apperr.SkillSignatureUnknownKey, 400,
+			"workspace policy rejects non-workspace publisher (trust="+trust+")")
+	}
+	sig, err := base64.StdEncoding.DecodeString(meta.Signature)
+	if err != nil {
+		return apperr.BadReq(apperr.SkillSignatureInvalid,
+			"malformed signature base64: "+err.Error())
+	}
+	if err := signing.VerifyManifest(pub, sig, signing.DigestInputs{
+		Meta: meta, Files: files,
+	}); err != nil {
+		return apperr.BadReq(apperr.SkillSignatureInvalid,
+			"imported skill signature mismatch: "+err.Error())
+	}
+	return nil
+}
+
+// trustStoreForSkillVerify returns a TrustStore that includes the dev keypair
+// (auto-provisioned on first read) when AutoProvisionsSkillKeys is true. In
+// prod the caller is expected to have loaded trusted-publishers.json via
+// EnsureTrustStoreLoaded — this helper is a fallback that includes the dev
+// key so local `go test` flows continue to work without an extra bootstrap.
+func (s *Server) trustStoreForSkillVerify() (*signing.TrustStore, error) {
+	if s.SkillTrustStore != nil {
+		return s.SkillTrustStore, nil
+	}
+	ts := signing.NewTrustStore(signing.TrustFile{})
+	if s.SkillDevKey != nil {
+		tk := s.SkillDevKey.TrustedKey()
+		tk.AddedAt = timeNow()
+		tk.AddedBy = "dev-keypair"
+		ts.Add(tk)
+	}
+	return ts, nil
+}
+
+// timeNow is a tiny seam so tests can stub clock without importing time
+// at every call site.
+func timeNow() time.Time { return time.Now().UTC() }

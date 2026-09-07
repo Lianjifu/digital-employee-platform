@@ -343,7 +343,13 @@ func (s *Server) bindAgentSkill(r *http.Request) (any, error) {
 	ws := s.workspaceID(r)
 
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	var agent map[string]any
 	for _, e := range s.Store.Employees {
 		if str(e["id"]) == agentID && (str(e["workspaceId"]) == ws || str(e["workspaceId"]) == "") {
@@ -376,6 +382,8 @@ func (s *Server) bindAgentSkill(r *http.Request) (any, error) {
 	s.Store.SkillExtra["bindings"] = append([]map[string]any{item}, bindings...)
 	s.skillImpactLocked(ws, skillID)
 	s.Store.AppendAudit(ws, id.Name, "分配技能到智能体", str(sk["name"])+":"+str(agent["name"]), "success", "")
+	unlocked = true
+	s.Store.Unlock()
 	go func() { s.persistSkills(); s.persistSkillExtra() }()
 	return item, nil
 }
@@ -398,7 +406,13 @@ func (s *Server) bindWorkflowCapability(r *http.Request) (any, error) {
 	ws := s.workspaceID(r)
 
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	var wf map[string]any
 	for _, w := range s.Store.Workflows {
 		if str(w["id"]) == workflowID && (str(w["workspaceId"]) == ws || str(w["workspaceId"]) == "") {
@@ -433,6 +447,8 @@ func (s *Server) bindWorkflowCapability(r *http.Request) (any, error) {
 	s.Store.SkillExtra["bindings"] = append([]map[string]any{item}, bindings...)
 	s.skillImpactLocked(ws, capID)
 	s.Store.AppendAudit(ws, id.Name, "引用技能到工作流", str(sk["name"])+":"+str(wf["name"]), "success", "")
+	unlocked = true
+	s.Store.Unlock()
 	go func() { s.persistSkills(); s.persistSkillExtra() }()
 	return item, nil
 }

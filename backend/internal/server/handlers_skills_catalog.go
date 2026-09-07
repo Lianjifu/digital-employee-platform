@@ -51,8 +51,38 @@ func catalogChannelLabel(ch string) string {
 	}
 }
 
-func normalizeCatalogItem(m map[string]any) map[string]any {
-	out := normalizeSkillItem(m)
+func (s *Server) normalizeCatalogItem(m map[string]any) map[string]any {
+	out := s.normalizeSkillItem(m)
+	out["channel"] = normalizeCatalogChannel(str(out["channel"]))
+	out["visibilityScope"] = normalizeVisibilityScope(str(out["visibilityScope"]))
+	out["releaseChannel"] = normalizeReleaseChannel(str(out["releaseChannel"]))
+	if str(out["syncedAt"]) == "" {
+		if out["channel"] == "builtin" {
+			out["syncedAt"] = "种子目录"
+		} else {
+			out["syncedAt"] = "—"
+		}
+	}
+	out["channelLabel"] = catalogChannelLabel(str(out["channel"]))
+	if out["signed"] == nil {
+		out["signed"] = true
+	}
+	if out["vulnerabilityCount"] == nil {
+		out["vulnerabilityCount"] = 0
+	}
+	if str(out["publisher"]) == "" {
+		out["publisher"] = "企业能力商店"
+	}
+	if str(out["status"]) == "" {
+		out["status"] = "available"
+	}
+	return out
+}
+
+// normalizeCatalogItemLocked is the lock-free variant for callers that
+// already hold Store.Lock (the sync handler does).
+func (s *Server) normalizeCatalogItemLocked(m map[string]any) map[string]any {
+	out := s.normalizeSkillItemLocked(m)
 	out["channel"] = normalizeCatalogChannel(str(out["channel"]))
 	out["visibilityScope"] = normalizeVisibilityScope(str(out["visibilityScope"]))
 	out["releaseChannel"] = normalizeReleaseChannel(str(out["releaseChannel"]))
@@ -113,7 +143,7 @@ func (s *Server) listSkillCatalog(r *http.Request) (any, error) {
 		if !catalogVisibleToWorkspace(item, ws) {
 			continue
 		}
-		norm := normalizeCatalogItem(item)
+		norm := s.normalizeCatalogItem(item)
 		if filterChannel != "" && str(norm["channel"]) != normalizeCatalogChannel(filterChannel) {
 			continue
 		}
@@ -152,7 +182,13 @@ func (s *Server) publishSkillToCatalog(r *http.Request) (any, error) {
 	ws := s.workspaceID(r)
 
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	_, sk := s.findSkillLocked(ws, skillID)
 	if sk == nil {
 		return nil, apperr.NotFoundErr(apperr.NotFound, "工作区技能不存在，无法晋升上架")
@@ -163,7 +199,7 @@ func (s *Server) publishSkillToCatalog(r *http.Request) (any, error) {
 		src := str(sk["source"])
 		candidate["signed"] = src == "market" || src == "builtin" || boolFrom(sk["signed"])
 	}
-	decision, reason, checks := skillSupplyChainGate(candidate)
+	decision, reason, checks := s.skillSupplyChainGate(candidate)
 	risk := normalizeRiskLevel(sk["riskLevel"])
 	needsApproval := decision == "review_required" || risk == "high" || scope == "global" || scope == "org"
 	if decision == "blocked" {
@@ -217,11 +253,14 @@ func (s *Server) publishSkillToCatalog(r *http.Request) (any, error) {
 	}
 	s.Store.SkillCatalog = append([]map[string]any{entry}, kept...)
 	s.Store.AppendAudit(ws, id.Name, "晋升技能上架", name+"@"+version, "success", "scope="+scope+";channel="+release+";ticket="+ticket)
+	unlocked = true
+	s.Store.Unlock()
 	go s.persistSkills()
 	if len(removedCatalogIDs) > 0 {
 		s.Store.PersistDelete("skill_catalog", removedCatalogIDs...)
 	}
-	return normalizeCatalogItem(entry), nil
+	// Caller still holds Store.Lock — use the lock-free annotation path.
+	return s.normalizeCatalogItemLocked(entry), nil
 }
 
 func coalesceNum(v any, def float64) float64 {
@@ -280,7 +319,13 @@ func (s *Server) syncSkillCatalog(r *http.Request) (any, error) {
 	removedCatalogIDs := make([]string, 0)
 
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	for _, x := range rawItems {
 		m, ok := x.(map[string]any)
 		if !ok {
@@ -296,7 +341,7 @@ func (s *Server) syncSkillCatalog(r *http.Request) (any, error) {
 		if candidate["signed"] == nil {
 			candidate["signed"] = false
 		}
-		decision, reason, checks := skillSupplyChainGate(candidate)
+		decision, reason, checks := s.skillSupplyChainGate(candidate)
 		if decision == "blocked" {
 			rejected = append(rejected, map[string]any{"name": name, "version": version, "reason": reason, "checks": checks})
 			continue
@@ -339,9 +384,13 @@ func (s *Server) syncSkillCatalog(r *http.Request) (any, error) {
 		}
 		kept = append([]map[string]any{entry}, kept...)
 		s.Store.SkillCatalog = kept
-		accepted = append(accepted, normalizeCatalogItem(entry))
+		// Caller holds Store.Lock — must use the lock-free annotation
+		// variant to avoid RLock-on-Lock deadlock.
+		accepted = append(accepted, s.normalizeCatalogItemLocked(entry))
 	}
 	s.Store.AppendAudit(ws, id.Name, "同步技能商店 Registry", strconv.Itoa(len(accepted))+" 接受/"+strconv.Itoa(len(rejected))+" 拒绝", "success", "")
+	unlocked = true
+	s.Store.Unlock()
 	go s.persistSkills()
 	if len(removedCatalogIDs) > 0 {
 		s.Store.PersistDelete("skill_catalog", removedCatalogIDs...)

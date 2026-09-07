@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
+	memid "github.com/digital-employee-platform/backend/internal/memory/identity"
 	"github.com/digital-employee-platform/backend/internal/store"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
@@ -334,7 +335,13 @@ func (s *Server) memoryCandidateActionAligned(r *http.Request) (any, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	var cand map[string]any
 	for _, c := range s.Store.MemoryCands {
 		if str(c["id"]) == cid {
@@ -403,6 +410,8 @@ func (s *Server) memoryCandidateActionAligned(r *http.Request) (any, error) {
 		actionLabel = "审核通过知识候选"
 	}
 	s.appendMemoryAuditLocked(ws, id.Name, actionLabel, str(cand["title"]), "success", str(cand["sourceCorrelationId"]))
+	unlocked = true
+	s.Store.Unlock()
 	go func() {
 		s.persistMemory()
 		s.persistKnowledgeExtra()
@@ -613,6 +622,76 @@ func (s *Server) listMemoryAudits(r *http.Request) (any, error) {
 		out = []map[string]any{}
 	}
 	return store.DedupeMapsByID(out), nil
+}
+
+// ---- Mem5: digital-employee identity profiles ----
+
+func (s *Server) identityStore() *memid.Store {
+	if s.IdentityProfiles == nil {
+		s.IdentityProfiles = memid.NewStore()
+	}
+	return s.IdentityProfiles
+}
+
+func (s *Server) listMemoryIdentity(r *http.Request) (any, error) {
+	ws := s.workspaceID(r)
+	if _, err := s.requireMemoryGovernance(r, "查看身份画像"); err != nil {
+		return nil, err
+	}
+	return s.identityStore().ListAll(ws), nil
+}
+
+func (s *Server) upsertMemoryIdentity(r *http.Request) (any, error) {
+	id := identityFrom(r.Context())
+	ws := s.workspaceID(r)
+	if _, err := s.requireMemoryGovernance(r, "写入身份画像"); err != nil {
+		return nil, err
+	}
+	body, err := decodeMap(r)
+	if err != nil {
+		return nil, err
+	}
+	de := strings.TrimSpace(str(body["digitalEmployeeId"]))
+	if de == "" {
+		return nil, apperr.BadReq(apperr.BadRequest, "E_IDENTITY_DE_REQUIRED: 必须提供 digitalEmployeeId")
+	}
+	profile := memid.Profile{
+		WorkspaceID:        ws,
+		DigitalEmployeeID:  de,
+		PreferredName:      strings.TrimSpace(str(body["preferredName"])),
+		Locale:             strings.TrimSpace(str(body["locale"])),
+		PrimaryLanguage:    strings.TrimSpace(str(body["primaryLanguage"])),
+		CommunicationStyle: strings.TrimSpace(str(body["communicationStyle"])),
+		HardNo:             stringSlice(body["hardNo"]),
+		CustomFacts:        stringSlice(body["customFacts"]),
+	}
+	profile.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if err := s.identityStore().Set(profile); err != nil {
+		return nil, apperr.BadReq(apperr.BadRequest, err.Error())
+	}
+	s.Store.Lock()
+	s.appendMemoryAuditLocked(ws, id.Name, "写入身份画像", de, "success", "")
+	s.Store.Unlock()
+	return profile, nil
+}
+
+func (s *Server) deleteMemoryIdentity(r *http.Request) (any, error) {
+	id := identityFrom(r.Context())
+	ws := s.workspaceID(r)
+	if _, err := s.requireMemoryGovernance(r, "删除身份画像"); err != nil {
+		return nil, err
+	}
+	de := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/api/memory/identity/"))
+	if de == "" {
+		return nil, apperr.BadReq(apperr.BadRequest, "E_IDENTITY_DE_REQUIRED: 路径缺少 digitalEmployeeId")
+	}
+	if err := s.identityStore().Delete(ws, de); err != nil {
+		return nil, apperr.NotFoundErr("memory.identity_not_found", "身份画像不存在")
+	}
+	s.Store.Lock()
+	s.appendMemoryAuditLocked(ws, id.Name, "删除身份画像", de, "success", "")
+	s.Store.Unlock()
+	return map[string]any{"deleted": de}, nil
 }
 
 type runtimeMemoryInput struct {

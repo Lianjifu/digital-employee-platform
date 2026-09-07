@@ -62,7 +62,13 @@ func (s *Server) workflowByID(r *http.Request) (any, error) {
 	}
 	id := identityFrom(r.Context())
 	s.Store.Lock()
-	defer s.Store.Unlock()
+	// unlocked 防止 defer 二次 Unlock；spawn persist 必须在 Unlock 之后。
+	unlocked := false
+	defer func() {
+		if !unlocked {
+			s.Store.Unlock()
+		}
+	}()
 	resolveWorkflow := func(want string) map[string]any {
 		aliases := []string{want}
 		if want == "wf1" {
@@ -188,6 +194,8 @@ func (s *Server) workflowByID(r *http.Request) (any, error) {
 		}
 		cat, _ := skill["_catalog"].(map[string]any)
 		delete(skill, "_catalog")
+		unlocked = true
+		s.Store.Unlock()
 		go func() {
 			s.Store.Persist("workflow_skills")
 			s.applyWorkflowSkillCatalog(id, cat, r)
