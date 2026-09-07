@@ -1176,6 +1176,7 @@ func (s *Server) serveSkillArtifactPreview(w http.ResponseWriter, r *http.Reques
 }
 
 func writeJSON(w http.ResponseWriter, payload any) {
+	writePreviewSandboxHeaders(w)
 	response.OK(w, payload)
 }
 
@@ -1201,8 +1202,16 @@ func (s *Server) serveSkillArtifact(w http.ResponseWriter, r *http.Request) {
 	} else {
 		w.Header().Set("Content-Type", "application/octet-stream")
 	}
-	w.Header().Set("Content-Disposition", contentDispositionAttachment(name))
-	w.Header().Set("X-Content-Type-Options", "nosniff")
+	// W3-D3 iframe sandbox: same-origin frame embed only, no MIME
+	// guessing, no shared cache. ?inline=1 flips disposition to inline
+	// so the browser can render the artifact without forcing download.
+	writePreviewSandboxHeaders(w)
+	w.Header().Set("Cache-Control", "private, max-age=0, no-store")
+	if wantInline(r) {
+		w.Header().Set("Content-Disposition", inlineContentDisposition(name))
+	} else {
+		w.Header().Set("Content-Disposition", contentDispositionAttachment(name))
+	}
 	http.ServeFile(w, r, path)
 }
 

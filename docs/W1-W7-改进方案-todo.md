@@ -11,14 +11,14 @@
 |----|----:|------:|------:|------:|-----:|
 | 后端 W1（Skill Vetter / Gateway 硬墙 / Catalog / DS） | 4 | 3 | 0 | 1 | 75% |
 | 后端 W2（SubAgent / 3-列 / Vault） | 3 | 2 | 0 | 1 | 67% |
-| 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 2 | 0 | 1 | 67% |
+| 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 3 | 0 | 0 | 100% |
 | 后端 W4（Heartbeat / VisualDiff） | 2 | 0 | 0 | 2 | 0% |
 | 后端 W5（SelfImproving / Multimodal） | 2 | 0 | 0 | 2 | 0% |
 | 后端 W6（PM SOP / Canvas） | 2 | 0 | 0 | 2 | 0% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 0 | 0 | 2 | 0% |
 | 前端 9 项 | 9 | 2 | 2 | 5 | 22% |
 | 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 11 | 1 | ~38 | ~24% |
-| **合计** | **~80** | **18** | **3** | **~58** | **~25%** |
+| **合计** | **~80** | **19** | **3** | **~57** | **~27%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -56,7 +56,7 @@
 |---|---|---|---|---|
 | W3-D1 | ExpertInbox（邮件 / IM 类聚合） | ✅ 完成 | store 加 `ExpertInbox []map[string]any`，路由 `GET /api/expert-inbox` + `POST /api/expert-inbox/:id/review` + `POST /api/expert-inbox`；状态机 `pending → approved/rejected/dismissed`；workspace 隔离；audit 行；metric `de_expert_inbox_pending` 已接真值 | ADR-023 + 手册 + 13 测试 |
 | W3-D2 | HotReload（配置变更热加载） | ✅ 完成 | 新 `internal/hotreload/` 包：mtime 轮询 + SIGHUP；解析/应用失败保留旧值；`de_hotreload_reload_total{resource,result}` 指标 | ADR-024 + 9 测试 |
-| W3-D3 | Preview（artifact 预览服务端） | ⚪ 未做 | `/api/skill-artifacts/<f>/preview` 仅是文件返回，无 sanitize / sandbox | iframe sandbox + DOMPurify 同源代理 |
+| W3-D3 | Preview（artifact 预览服务端） | ✅ 完成 | `internal/server/preview_sandbox.go`：X-Frame-Options / CSP (`frame-ancestors 'self'` / `img-src 'self' data: blob:`) / X-Content-Type-Options: nosniff / Referrer-Policy: no-referrer / Cache-Control private；`?inline=1` 翻转 Content-Disposition；接入 3 个 handler (`serveSkillArtifact` / `serveSkillArtifactSlidePNG` / `writeJSON`) | ADR-030 + 4 测试 |
 
 ---
 
@@ -130,6 +130,7 @@
 | ADR-027 | Canvas 协作 / CRDT 选型 | ⚪ |
 | ADR-028 | SQLite 双栈切换契约 | ⚪ |
 | ADR-029 | WeChat 渠道限流与同步策略 | ⚪ |
+| ADR-030 | Preview sandbox 语义（iframe / CSP / inline `?inline=1`） | ✅ 完成（[ADR-030](../adr/ADR-030-preview-sandbox.md)） |
 
 ### 9.2 用户手册（8 份，0 份已落）
 

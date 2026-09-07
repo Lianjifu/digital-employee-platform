@@ -483,6 +483,9 @@ func (s *Server) serveSkillArtifactSlidePNG(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	w.Header().Set("Content-Type", "image/png")
+	// W3-D3 iframe sandbox. The slide image is meant to be embedded by
+	// the in-app preview; same-origin frame only + nosniff.
+	writePreviewSandboxHeaders(w)
 	w.Header().Set("Cache-Control", "private, max-age=3600")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
