@@ -7,6 +7,9 @@ import (
 	"unicode"
 
 	"github.com/digital-employee-platform/backend/internal/auth"
+	"github.com/digital-employee-platform/backend/internal/knowledge/citation"
+	membudget "github.com/digital-employee-platform/backend/internal/memory/budget"
+	memret "github.com/digital-employee-platform/backend/internal/memory/retrieval"
 	"github.com/digital-employee-platform/backend/internal/modelprov"
 )
 
@@ -16,7 +19,9 @@ const (
 	copilotHistoryPriorRunes  = 600 // 较早轮次更短，为最近轮留出 token
 	copilotMemoryMaxItems     = 5
 	copilotMemoryMaxRunes     = 400
-	copilotToolSummaryRunes   = 200 // 历史工具观察摘要（每条工具）
+	copilotMemoryBudgetTokens = 1000 // 跨会话记忆合计 token 上限（≈ 5 条 × 200 token）
+	copilotMemoryPriorityBase = 1    // long_term=3, working=2, short_term=1
+	copilotToolSummaryRunes   = 200  // 历史工具观察摘要（每条工具）
 )
 
 // assembleCopilotChatMessages projects stored conversation messages into LLM turns.
@@ -125,24 +130,66 @@ func citationsFromRagHits(ragHits any) []map[string]any {
 	if len(results) == 0 {
 		return nil
 	}
-	out := make([]map[string]any, 0, len(results))
-	for i, h := range results {
-		if i >= 8 {
-			break
+	now := time.Now().UTC()
+	hits := make([]citation.Hit, 0, len(results))
+	for _, h := range results {
+		docID := coalesce(str(h["docId"]), str(h["id"]))
+		if docID == "" {
+			continue
 		}
-		score := toFloat(h["score"])
-		if score <= 0 {
-			score = 0.5
-		}
+		hits = append(hits, citation.Hit{
+			ID:        str(h["id"]),
+			DocID:     docID,
+			ChunkID:   str(h["chunkId"]),
+			Source:    firstNonEmptyStr(str(h["source"]), str(h["title"]), "knowledge"),
+			Title:     str(h["title"]),
+			Tier:      citationTierFromDocStatus(str(h["status"])),
+			Score:     toFloat(h["score"]),
+			Snippet:   coalesce(str(h["snippet"]), str(h["text"])),
+			EvalRunID: str(h["evalRunId"]),
+		})
+	}
+	cites := citation.Build(hits, now)
+	out := make([]map[string]any, 0, len(cites))
+	for _, c := range cites {
 		out = append(out, map[string]any{
-			"id":     coalesce(str(h["id"]), "cite_"+str(h["docId"])),
-			"docId":  coalesce(str(h["docId"]), coalesce(str(h["id"]), "doc")),
-			"source": coalesce(str(h["source"]), coalesce(str(h["title"]), "knowledge")),
-			"text":   coalesce(str(h["snippet"]), str(h["text"])),
-			"score":  score,
+			"id":          c.ID,
+			"docId":       c.DocID,
+			"chunkId":     c.ChunkID,
+			"source":      c.Source,
+			"title":       c.Title,
+			"tier":        string(c.Tier),
+			"score":       c.Score,
+			"quoted":      c.Quoted,
+			"charStart":   c.CharStart,
+			"charEnd":     c.CharEnd,
+			"quoteHash":   c.QuoteHash,
+			"retrievedAt": c.RetrievedAt.Format(time.RFC3339),
+			"evalRunId":   c.EvalRunID,
 		})
 	}
 	return out
+}
+
+func citationTierFromDocStatus(status string) citation.Tier {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "published":
+		return citation.TierPublished
+	case "ready":
+		return citation.TierReview
+	case "draft", "archived":
+		return citation.TierWorkspace
+	}
+	return citation.TierReview
+}
+
+func firstNonEmptyStr(vs ...string) string {
+	for _, v := range vs {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func ragHitResults(ragHits any) []map[string]any {
@@ -184,6 +231,10 @@ type memoryHit struct {
 	Source  string
 }
 
+type memRecord struct {
+	id, title, content, layer, sourceID string
+}
+
 // memoryProvenanceMaps turns injected hits into white-box audit rows for SSE / message store.
 func memoryProvenanceMaps(hits []memoryHit) []map[string]any {
 	if len(hits) == 0 {
@@ -205,11 +256,7 @@ func memoryProvenanceMaps(hits []memoryHit) []map[string]any {
 // Skips short_term from the current conversation (already covered by history).
 func (s *Server) retrieveMemoryForTurnLocked(ws, ownerID, deID, excludeSourceID, query string, viewer *auth.Identity) []memoryHit {
 	now := time.Now().UTC()
-	type scored struct {
-		hit   memoryHit
-		score float64
-	}
-	var candidates []scored
+	var pool []memRecord
 	qTokens := tokenizeQuery(query)
 
 	for _, m := range s.Store.MemoryRecords {
@@ -232,7 +279,13 @@ func (s *Server) retrieveMemoryForTurnLocked(ws, ownerID, deID, excludeSourceID,
 			}
 		}
 		memDE := str(m["digitalEmployeeId"])
-		if deID != "" && memDE != "" && memDE != deID {
+		// DE-id scoping must be strict: when the specialist is bound to a
+		// specific digital employee, unkeyed memories (memDE=="" — legacy
+		// admin ingest, task writes without DE) must NOT leak across every
+		// specialist. The old guard `deID != "" && memDE != "" && memDE != deID`
+		// short-circuited to false when memDE=="" so DE-less records were
+		// surfaced to every specialist regardless of which DE was queried.
+		if deID != "" && memDE != deID {
 			continue
 		}
 		sourceID := str(m["sourceId"])
@@ -242,52 +295,191 @@ func (s *Server) retrieveMemoryForTurnLocked(ws, ownerID, deID, excludeSourceID,
 		}
 		title := str(m["title"])
 		content := str(m["content"])
-		score := scoreMemoryText(title+" "+content, qTokens, layer)
-		if score <= 0 && len(qTokens) > 0 {
-			continue
-		}
-		if score <= 0 {
-			// No query tokens: still allow working/long for cross-session continuity.
-			switch layer {
-			case "working":
-				score = 0.35
-			case "long_term":
-				score = 0.4
-			default:
-				continue
-			}
-		}
 		// Prefer owner-scoped short_term for the same user.
 		if layer == "short_term" && ownerID != "" && str(m["ownerId"]) != ownerID && str(m["scope"]) == "user" {
 			continue
 		}
-		candidates = append(candidates, scored{
-			score: score,
-			hit: memoryHit{
-				ID:      str(m["id"]),
-				Title:   title,
-				Content: truncateRunes(content, copilotMemoryMaxRunes),
-				Layer:   layer,
-				Score:   score,
-				Source:  coalesce(sourceID, str(m["id"])),
-			},
+		pool = append(pool, memRecord{
+			id:       str(m["id"]),
+			title:    title,
+			content:  content,
+			layer:    layer,
+			sourceID: sourceID,
 		})
 	}
 
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].score == candidates[j].score {
-			return layerRank(candidates[i].hit.Layer) > layerRank(candidates[j].hit.Layer)
+	if len(pool) == 0 {
+		// No candidates at all (filtered by workspace/scope/layer/de-id).
+		// Surface a zero report for the same reason as the BM25-empty case:
+		// downstream consumers rely on every retrieval — even an empty one —
+		// leaving a trace so participant memory.budget events line up.
+		s.recordMemoryBudgetReport(deID, &membudget.Report{})
+		return nil
+	}
+
+	// No query tokens: keep working/long_term for cross-session continuity.
+	if len(qTokens) == 0 {
+		var keep []memRecord
+		for _, r := range pool {
+			if r.layer == "working" || r.layer == "long_term" {
+				keep = append(keep, r)
+			}
 		}
-		return candidates[i].score > candidates[j].score
+		sort.SliceStable(keep, func(i, j int) bool { return layerRank(keep[i].layer) > layerRank(keep[j].layer) })
+		if len(keep) > copilotMemoryMaxItems {
+			keep = keep[:copilotMemoryMaxItems]
+		}
+		out := make([]memoryHit, 0, len(keep))
+		for _, k := range keep {
+			out = append(out, memoryHit{
+				ID:      k.id,
+				Title:   k.title,
+				Content: truncateRunes(k.content, copilotMemoryMaxRunes),
+				Layer:   k.layer,
+				Score:   0.3 + 0.1*float64(layerRank(k.layer)),
+				Source:  coalesce(k.sourceID, k.id),
+			})
+		}
+		return out
+	}
+
+	// Real BM25 + MMR over the filtered corpus.
+	corpus := make([]memret.Doc, len(pool))
+	for i, r := range pool {
+		corpus[i] = memret.Doc{ID: r.id, Title: r.title, Content: r.content, Layer: r.layer}
+	}
+	scored := memret.Score(corpus, memret.Query{Text: query, TopK: copilotMemoryMaxItems, FetchK: 20, Lambda: 0.7})
+	if len(scored) == 0 {
+		// No candidates: still surface a (zero) report so operators can
+		// distinguish "memory pool is empty" from "memory.budget event
+		// never fired". The drain block downstream relies on every
+		// retrieval attempt producing an entry.
+		s.recordMemoryBudgetReport(deID, &membudget.Report{})
+		return nil
+	}
+	cands := make([]membudget.Candidate, 0, len(scored))
+	for _, sd := range scored {
+		cands = append(cands, membudget.Candidate{
+			ID:        sd.ID,
+			Title:     sd.Title,
+			Content:   sd.Content,
+			Score:     sd.Final,
+			Priority:  memPriority(sd.Layer),
+			Source:    sourceForMemID(pool, sd.ID),
+			RecencyNs: memRecencyNs(sd),
+		})
+	}
+	items, report := membudget.Select(cands, copilotMemoryBudgetTokens, 0.5)
+	out := make([]memoryHit, 0, len(items))
+	for _, it := range items {
+		out = append(out, memoryHit{
+			ID:      it.ID,
+			Title:   it.Title,
+			Content: it.Content,
+			Layer:   memLayerForID(pool, it.ID),
+			Score:   it.Score,
+			Source:  it.Source,
+		})
+	}
+	// Surface the budget decision so operators can explain silent memory
+	// recall gaps. Budget truncation/drop happens; if the audit trail doesn't
+	// say so, debuggers have to reverse-engineer the policy from logs.
+	s.recordMemoryBudgetReport(deID, &membudget.Report{
+		UsedTokens:     report.UsedTokens,
+		Kept:           report.Kept,
+		TruncatedItems: report.TruncatedItems,
+		DroppedIDs:     report.DroppedIDs,
 	})
-	if len(candidates) > copilotMemoryMaxItems {
-		candidates = candidates[:copilotMemoryMaxItems]
-	}
-	out := make([]memoryHit, 0, len(candidates))
-	for _, c := range candidates {
-		out = append(out, c.hit)
-	}
 	return out
+}
+
+// memoryBudgetReport is the observability tail of one memory retrieval pass.
+// Stored on Server so copilot_stream can flush it as a SSE event after the
+// memory section of the system prompt has been built.
+type memoryBudgetReport struct {
+	BudgetTokens   int
+	UsedTokens     int
+	Kept           int
+	Dropped        int
+	TruncatedItems int
+	DroppedIDs     []string
+}
+
+// consumeLastMemoryBudgetReport 原子地读出 lastMemoryBudgetReport 并清空 slot。
+// 用于 SSE flush，避免与并发 recordMemoryBudgetReport 写者撞 race。
+func (s *Server) consumeLastMemoryBudgetReport() *memoryBudgetReport {
+	s.participantMemoryBudgetMu.Lock()
+	rep := s.lastMemoryBudgetReport
+	s.lastMemoryBudgetReport = nil
+	s.participantMemoryBudgetMu.Unlock()
+	return rep
+}
+
+// recordMemoryBudgetReport stores one report on the single-slot (for the
+// supervisor SSE flush in handlers_c.go) AND, when deID is set, into the
+// per-participant collector (for the runMultiAgentTurn drain block).
+//
+// Called from retrieveMemoryForTurnLocked so every retrieval — even an
+// empty one — leaves a trace; the per-turn drain relies on entries always
+// being written.
+func (s *Server) recordMemoryBudgetReport(deID string, r *membudget.Report) {
+	if r == nil {
+		return
+	}
+	rep := &memoryBudgetReport{
+		BudgetTokens:   copilotMemoryBudgetTokens,
+		UsedTokens:     r.UsedTokens,
+		Kept:           r.Kept,
+		Dropped:        len(r.DroppedIDs),
+		TruncatedItems: r.TruncatedItems,
+		DroppedIDs:     append([]string(nil), r.DroppedIDs...),
+	}
+	// lastMemoryBudgetReport 与 participantMemoryBudgetReports 共用同一把 mutex：
+	// 单 slot 字段在并发 wecom webhook 下也会被同时读写，必须加锁。
+	s.participantMemoryBudgetMu.Lock()
+	s.lastMemoryBudgetReport = rep
+	if deID == "" {
+		s.participantMemoryBudgetMu.Unlock()
+		return
+	}
+	if s.participantMemoryBudgetReports == nil {
+		s.participantMemoryBudgetReports = map[string]*memoryBudgetReport{}
+	}
+	s.participantMemoryBudgetReports[deID] = rep
+	s.participantMemoryBudgetMu.Unlock()
+}
+
+func memPriority(layer string) int {
+	switch layer {
+	case "long_term":
+		return copilotMemoryPriorityBase + 2
+	case "working":
+		return copilotMemoryPriorityBase + 1
+	default:
+		return copilotMemoryPriorityBase
+	}
+}
+
+// memRecencyNs uses the doc's update hint if present in pool; otherwise
+// the retrieval engine doesn't carry a timestamp, so fall back to 0.
+func memRecencyNs(sd memret.ScoredDoc) int64 { return 0 }
+
+func memLayerForID(pool []memRecord, id string) string {
+	for _, r := range pool {
+		if r.id == id {
+			return r.layer
+		}
+	}
+	return ""
+}
+
+func sourceForMemID(pool []memRecord, id string) string {
+	for _, r := range pool {
+		if r.id == id {
+			return coalesce(r.sourceID, r.id)
+		}
+	}
+	return id
 }
 
 func layerRank(layer string) int {
@@ -365,24 +557,6 @@ func uniqueStrings(in []string) []string {
 		out = append(out, s)
 	}
 	return out
-}
-
-func scoreMemoryText(text string, tokens []string, layer string) float64 {
-	if len(tokens) == 0 {
-		return 0
-	}
-	lower := strings.ToLower(text)
-	hits := 0
-	for _, t := range tokens {
-		if strings.Contains(lower, t) {
-			hits++
-		}
-	}
-	if hits == 0 {
-		return 0
-	}
-	base := float64(hits) / float64(len(tokens))
-	return base + 0.05*float64(layerRank(layer))
 }
 
 func buildCopilotSystemPrompt(emp map[string]any, ragHits any, memoryHits []memoryHit) string {

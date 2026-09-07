@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/digital-employee-platform/backend/pkg/contract"
@@ -222,11 +223,17 @@ type thoughtDedupKey struct {
 	title string
 }
 
-var thoughtDedupLast = make(map[thoughtDedupKey]time.Time)
+var (
+	thoughtDedupMu      sync.Mutex
+	thoughtDedupLast    = make(map[thoughtDedupKey]time.Time)
+)
 
 func shouldEmitThought(phase, title string) bool {
 	key := thoughtDedupKey{phase: phase, title: title}
 	now := time.Now()
+	// 并发 wecom webhook 会同时调这里，必须加锁保护全局 dedup map。
+	thoughtDedupMu.Lock()
+	defer thoughtDedupMu.Unlock()
 	if last, ok := thoughtDedupLast[key]; ok && now.Sub(last) < thoughtDedupWindow {
 		return false
 	}

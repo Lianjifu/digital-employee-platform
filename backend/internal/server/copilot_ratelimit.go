@@ -118,6 +118,9 @@ func rememberIdempotentTurn(s *Server, cid, clientMsgID string, messages []map[s
 	rec := map[string]any{"v": 2, "messages": messages}
 	streamIdempot.Store(key, rec)
 	if s != nil && s.Store != nil {
+		// 并发 wecom webhook 都会走到这里；CopilotIdempotency 是 Store.RWMutex 保护的 map，
+		// 写者必须持 Lock 才能避免 DATA RACE。
+		s.Store.Lock()
 		if s.Store.CopilotIdempotency == nil {
 			s.Store.CopilotIdempotency = map[string]map[string]any{}
 		}
@@ -126,6 +129,7 @@ func rememberIdempotentTurn(s *Server, cid, clientMsgID string, messages []map[s
 			cp[k] = v
 		}
 		s.Store.CopilotIdempotency[key] = cp
+		s.Store.Unlock()
 	}
 }
 

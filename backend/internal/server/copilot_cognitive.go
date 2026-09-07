@@ -560,6 +560,31 @@ func cognitiveSnapshot(d cognitiveDecision) map[string]any {
 	}
 }
 
+// cloneEmployeeForCognitiveSkills 返回 emp 的浅拷贝 + 仅 capabilities / boundaryPolicy 两个嵌套 map 的深拷贝。
+// 目的：让 ensureEmployeeCognitiveSkills 可以就地修改而不污染 Store.Employees 里的共享对象。
+// 修复 copilotStream wecom webhook 并发触发的 DATA RACE（两个 goroutine 同时拿到同一员工引用）。
+func cloneEmployeeForCognitiveSkills(src map[string]any) map[string]any {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]any, len(src)+4)
+	for k, v := range src {
+		switch k {
+		case "capabilities", "boundaryPolicy":
+			if inner, ok := v.(map[string]any); ok {
+				cp := make(map[string]any, len(inner)+4)
+				for ik, iv := range inner {
+					cp[ik] = iv
+				}
+				dst[k] = cp
+				continue
+			}
+		}
+		dst[k] = v
+	}
+	return dst
+}
+
 // ensureEmployeeCognitiveSkills merges base cognitive skills into employee capabilities.
 func ensureEmployeeCognitiveSkills(emp map[string]any) {
 	if emp == nil {

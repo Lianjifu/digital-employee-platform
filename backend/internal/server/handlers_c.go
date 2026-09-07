@@ -432,6 +432,33 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	firstMessageID := strings.TrimSpace(str(body["firstMessageId"]))
 	ws := s.workspaceID(r)
 	deID := coalesce(str(body["digitalEmployeeId"]), "")
+	// Mem5: hard-no guard — short-circuit the LLM when the user query
+	// touches a topic the digital employee is configured to refuse.
+	if deID != "" {
+		if profile, err := s.identityStore().Get(ws, deID); err == nil {
+			if reason, hit := profile.ShouldRefuse(userMsg); hit {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.Header().Set("Cache-Control", "no-cache")
+				w.Header().Set("Connection", "keep-alive")
+				flusher, _ := w.(http.Flusher)
+				refusal := fmt.Sprintf("根据当前岗位设定，「%s」属于不回答范围，已记录审计。", reason)
+				writeSSE(w, "stage", map[string]any{"status": "refused", "reason": reason, "stage": "memory"})
+				writeSSE(w, "delta", map[string]any{"text": refusal})
+				writeSSE(w, "done", map[string]any{
+					"status":         "refused",
+					"reason":         reason,
+					"correlationId":  corr,
+					"clientMsgId":    clientMsgID,
+					"firstMessageId": firstMessageID,
+				})
+				if flusher != nil {
+					flusher.Flush()
+				}
+				s.appendMemoryAuditLocked(ws, id.Name, "硬性拒绝", reason, "refused", corr)
+				return
+			}
+		}
+	}
 	requestedModel := coalesce(str(body["modelId"]), coalesce(str(body["model"]), ""))
 	modeHint := coalesce(str(body["modeHint"]), str(body["mode"]))
 	reflectHint := coalesce(str(body["reflectHint"]), str(body["feedback"]))
@@ -615,6 +642,12 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 	emp, _ := s.resolveActiveEmployee(r, deID)
 	empMap, _ := emp.(map[string]any)
 	if empMap != nil {
+		// 防止并发 wecom webhook goroutine 共享同一个员工 map 导致 DATA RACE。
+		// ensureEmployeeCognitiveSkills 会就地修改 capabilities / boundaryPolicy，
+		// 而 resolveActiveEmployee 返回的是 Store.Employees 里的引用，必须先 clone 再 mutate。
+		empMap = cloneEmployeeForCognitiveSkills(empMap)
+	}
+	if empMap != nil {
 		ensureEmployeeCognitiveSkills(empMap)
 	}
 	if empMap != nil && empMap["skipped"] == true {
@@ -668,6 +701,19 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		"status": "ok", "hitCount": len(memoryHits),
 		"provenance": memoryProvenanceMaps(memoryHits),
 	})
+	// Flush the budget decision so operators can debug silent memory-recall
+	// failures from logs ("why did my 5 hits become 2?"). The tail carries
+	// dropped IDs + truncation count, both of which were previously invisible.
+	if rep := s.consumeLastMemoryBudgetReport(); rep != nil {
+		emit("memory", "budget", map[string]any{
+			"budgetTokens":   rep.BudgetTokens,
+			"usedTokens":     rep.UsedTokens,
+			"kept":           rep.Kept,
+			"dropped":        rep.Dropped,
+			"truncatedItems": rep.TruncatedItems,
+			"droppedIds":     rep.DroppedIDs,
+		})
+	}
 	if n := len(memoryHits); n > 0 {
 		titles := make([]string, 0, 3)
 		for _, p := range memoryProvenanceMaps(memoryHits) {
@@ -778,7 +824,8 @@ func (s *Server) copilotStream(w http.ResponseWriter, r *http.Request) {
 		Messages: chatMessages, Registry: registry, UserMessage: userMsg,
 		ConversationID: cid, CorrelationID: corr, DigitalEmployee: resolvedDE,
 		Viewer: id, Emit: emit, ModeHint: modeHint, ReflectHint: reflectHint,
-		SessionMode: sessionMode, RiskLevel: riskLevel, RAGPrefetched: ragCount > 0,
+		SessionMode: sessionMode, RiskLevel: riskLevel, Channel: channel,
+		RAGPrefetched: ragCount > 0,
 		SnapshotID: snapID, Binding: binding, MemoryProvenance: memoryProvenanceMaps(memoryHits),
 		ReplyMode: replyMode, SegmentPolicy: segmentPolicy, FirstMessageID: firstMessageID, StepSegments: &stepSegSink,
 		Employee: empMap,
