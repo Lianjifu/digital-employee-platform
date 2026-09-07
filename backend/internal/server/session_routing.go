@@ -56,6 +56,8 @@ func (s *Server) ensureChannelSession(ws, channel, threadID, deployID, employeeI
 		}
 	}
 	title := channelSessionTitle(channel)
+	sessionMode := s.resolveDefaultSessionMode(employeeID)
+	riskLevel := s.resolveDefaultRiskLevel(employeeID)
 	s.Store.Conversations = append([]map[string]any{{
 		"id": convID, "workspaceId": ws, "title": title,
 		"digitalEmployeeId": employeeID, "updatedAt": now,
@@ -67,7 +69,7 @@ func (s *Server) ensureChannelSession(ws, channel, threadID, deployID, employeeI
 		"digitalEmployeeId": employeeID, "digitalEmployeeName": deName,
 		"conversationId": convID, "status": "active",
 		"channel": channel, "channelThreadId": threadID, "channelDeploymentId": deployID,
-		"sessionMode": contract.SessionModeInvestigate, "riskLevel": contract.RiskLevelMedium,
+		"sessionMode": sessionMode, "riskLevel": riskLevel,
 		"createdAt": now, "updatedAt": now, "lastMessageAt": now,
 	}}, s.Store.Sessions...)
 	if s.Store.Messages[convID] == nil {
@@ -163,6 +165,67 @@ func channelSessionTitle(channel string) string {
 	default:
 		return "渠道会话"
 	}
+}
+
+// resolveDefaultSessionMode returns the digital employee's configured
+// session mode (Ch7), or SessionModeInvestigate when unspecified.
+//
+// The mode lives under employee["spec"]["defaultSessionMode"]. Legacy
+// employees without an explicit Spec fall back to the safe default.
+func (s *Server) resolveDefaultSessionMode(employeeID string) string {
+	if employeeID == "" || s.Store == nil {
+		return contract.SessionModeInvestigate
+	}
+	for _, emp := range s.Store.Employees {
+		if str(emp["id"]) != employeeID {
+			continue
+		}
+		spec, _ := emp["spec"].(map[string]any)
+		if spec != nil {
+			if m := strings.TrimSpace(str(spec["defaultSessionMode"])); m != "" && validSessionMode(m) {
+				return m
+			}
+		}
+		break
+	}
+	return contract.SessionModeInvestigate
+}
+
+// resolveDefaultRiskLevel returns the digital employee's configured risk
+// floor (Ch7), or RiskLevelMedium when unspecified.
+func (s *Server) resolveDefaultRiskLevel(employeeID string) string {
+	if employeeID == "" || s.Store == nil {
+		return contract.RiskLevelMedium
+	}
+	for _, emp := range s.Store.Employees {
+		if str(emp["id"]) != employeeID {
+			continue
+		}
+		spec, _ := emp["spec"].(map[string]any)
+		if spec != nil {
+			if r := strings.TrimSpace(str(spec["defaultRiskLevel"])); r != "" && validRiskLevel(r) {
+				return r
+			}
+		}
+		break
+	}
+	return contract.RiskLevelMedium
+}
+
+func validSessionMode(m string) bool {
+	switch m {
+	case contract.SessionModeInvestigate, contract.SessionModeExecute:
+		return true
+	}
+	return false
+}
+
+func validRiskLevel(r string) bool {
+	switch r {
+	case contract.RiskLevelLow, contract.RiskLevelMedium, contract.RiskLevelHigh:
+		return true
+	}
+	return false
 }
 
 func channelInboundIdentity(channel, ws, openID string) *auth.Identity {
@@ -290,14 +353,21 @@ func (s *Server) pushChannelDLQ(ws, deployID, channel, target, summary, corr, er
 	now := time.Now().UTC().Format(time.RFC3339)
 	item := map[string]any{
 		"id": s.Store.ID("dlq"), "workspaceId": ws, "deploymentId": deployID,
-		"channelId": deployID, "kind": channel, "status": "dead_letter",
-		"targetMasked": maskTarget(target), "payloadSummary": truncateRunes(summary, 48),
+		// channelId stores the REAL chat/thread identifier (Feishu chatID,
+		// Wecom/Dingtalk threadID) — earlier this stored deployID which
+		// made the DLQ unfilterable for replay tooling ("which chat thread
+		// do I retry on" is the natural filter, and the deploy id answered
+		// the wrong question).
+		"channelId":       target,
+		"channelThreadId": target,
+		"kind":            channel, "status": "dead_letter",
+		"targetMasked":    maskTarget(target), "payloadSummary": truncateRunes(summary, 48),
 		"error": errMsg, "at": now, "createdAt": now, "attempts": 1,
 		"replayable": true, "correlationId": corr,
 	}
 	s.Store.Lock()
 	s.Store.ChannelDLQ = append([]map[string]any{item}, s.Store.ChannelDLQ...)
-	s.appendChannelAuditLocked(ws, channel+"-webhook", "渠道出站失败入DLQ", deployID, "failed", errMsg, corr)
+	s.appendChannelAuditLocked(ws, channel+"-webhook", "渠道出站失败入DLQ", target, "failed", errMsg, corr)
 	s.Store.Unlock()
 	s.Store.Persist("channel_dlq")
 	s.Store.Persist("channel_audit")

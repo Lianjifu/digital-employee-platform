@@ -200,12 +200,18 @@ func filterRegistryBySessionMode(reg []registeredTool, mode string) []registered
 	}
 	out := make([]registeredTool, 0, len(reg))
 	for _, t := range reg {
+		// Capture operator intent BEFORE we touch the Enabled flag, otherwise
+		// we can't distinguish "disabled because RequiresApproval" from
+		// "disabled because operator unchecked this in enabledTools". The
+		// allowlist branch below may only re-enable the former, never the
+		// latter — the old code unconditionally flipped Enabled=true.
+		operatorEnabled := t.Enabled
 		if t.RequiresApproval || t.Mode == toolModeApproval {
 			t.Enabled = false
 		}
 		// investigate: keep builtins + recommend/execute non-approval skills
 		if t.Kind == "skill" && t.RequiresApproval {
-			if isAllowlistedExecutableTool(t.Name, t.Kind) {
+			if isAllowlistedExecutableTool(t.Name, t.Kind) && operatorEnabled {
 				t.Enabled = true
 				out = append(out, t)
 			}

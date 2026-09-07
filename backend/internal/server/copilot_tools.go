@@ -469,6 +469,9 @@ func authorizeToolCall(reg []registeredTool, call toolCallRequest) (*registeredT
 }
 
 func (s *Server) runCopilotTool(ctx toolRunContext, t *registeredTool, call toolCallRequest) toolExecResult {
+	if s.testHooks != nil && s.testHooks.runCopilotToolOverride != nil {
+		return s.testHooks.runCopilotToolOverride(ctx, t, call)
+	}
 	started := time.Now()
 	switch {
 	case t.Name == "knowledge.retrieve" || t.Key == "builtin:knowledge.retrieve":

@@ -308,6 +308,7 @@ func (s *Server) reactInputFromRunRequest(r *http.Request, req *runtimev1.RunReq
 		MaxSteps: int(req.GetMaxSteps()), SnapshotID: snapID,
 		SessionMode: contract.SessionModeFromProto(env.GetSessionMode()),
 		RiskLevel:   contract.RiskLevelFromProto(env.GetRiskLevel()),
+		Channel:     contract.ChannelKindFromProto(env.GetChannel()),
 	}
 }
 

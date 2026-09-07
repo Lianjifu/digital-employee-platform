@@ -1,6 +1,7 @@
 package server
 
 import (
+	"regexp"
 	"strings"
 	"unicode/utf8"
 )
@@ -62,12 +63,19 @@ func classifyCopilotMode(userMsg, modeHint, reflectHint string) routeDecision {
 	return routeDecision{Mode: modeReact, Reason: "default_react", PolicyLevel: "P1"}
 }
 
+// multiAgentHandoffRe matches "转给...同时..." style handoff phrases — the
+// only regex on the multi-agent hot path. Pre-compiled at package init.
+var multiAgentHandoffRe = regexp.MustCompile(`转给.{1,12}同时`)
+
 func looksLikeMultiAgent(msg, lower string) bool {
 	if containsAnyFold(msg, lower,
 		"跨部门", "联合", "会商", "多方", "协作会诊", "拉上", "一起看",
 		"运维和", "和人事", "和财务", "和法务", "和客服", "和安全",
-		"多专家", "多个数字工作伙伴", "转给.*同时",
+		"多专家", "多个数字工作伙伴",
 	) {
+		return true
+	}
+	if multiAgentHandoffRe.MatchString(msg) {
 		return true
 	}
 	// Two distinct domain cues in one utterance
@@ -104,7 +112,16 @@ func containsAnyFold(msg, lower string, needles ...string) bool {
 
 // resolveModelByPolicyLevel returns primaryModelId from a published routing policy at level.
 // Explicit non-demo requested model always wins.
-func (s *Server) resolveModelByPolicyLevel(ws, requested, level string) (modelID, policyID, usedLevel string) {
+//
+// riskLevel: low|medium|high (defaults to "medium"). When set, the requested
+// level is floored to the minimum level appropriate for the risk:
+//   - high   → must run at P0 (most capable) unless user explicitly asked for a model
+//   - medium → floor P1
+//   - low    → floor P2 (cheapest acceptable tier)
+//
+// This guarantees that a high-risk prompt cannot be silently downgraded to a
+// lightweight model even if no exact-level policy exists. See copilot_route_test.go.
+func (s *Server) resolveModelByPolicyLevel(ws, requested, level, riskLevel string) (modelID, policyID, usedLevel string) {
 	requested = strings.TrimSpace(requested)
 	if requested != "" && !isDemoModelAlias(requested) {
 		return requested, "", ""
@@ -112,6 +129,11 @@ func (s *Server) resolveModelByPolicyLevel(ws, requested, level string) (modelID
 	level = strings.TrimSpace(level)
 	if level == "" {
 		level = "P1"
+	}
+	if floor := riskLevelFloor(strings.TrimSpace(riskLevel)); floor != "" {
+		if levelRank(floor) < levelRank(level) {
+			level = floor
+		}
 	}
 	s.Store.RLock()
 	defer s.Store.RUnlock()
@@ -151,4 +173,32 @@ func (s *Server) resolveModelByPolicyLevel(ws, requested, level string) (modelID
 		}
 	}
 	return requested, "", level
+}
+
+// riskLevelFloor returns the lowest acceptable policy level for a risk.
+// "" means no floor (caller's choice respected).
+func riskLevelFloor(risk string) string {
+	switch strings.ToLower(strings.TrimSpace(risk)) {
+	case "high":
+		return "P0"
+	case "medium":
+		return "P1"
+	case "low":
+		return "P2"
+	}
+	return ""
+}
+
+func levelRank(level string) int {
+	switch strings.ToUpper(strings.TrimSpace(level)) {
+	case "P0", "P0+":
+		return 0
+	case "P1":
+		return 1
+	case "P2":
+		return 2
+	case "P3":
+		return 3
+	}
+	return 4
 }

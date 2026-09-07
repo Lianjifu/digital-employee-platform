@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
-	"time"
+	"sync"
 
 	"github.com/digital-employee-platform/backend/internal/modelprov"
+	"golang.org/x/sync/errgroup"
 )
 
 const multiAgentMaxSpecialists = 3
@@ -74,9 +76,6 @@ func scoreSpecialist(emp map[string]any, userMsg string) int {
 	hit(4, []string{"质检", "客服", "qa", "运营"}, []string{"质检", "客服", "对客", "投诉", "QA"})
 	hit(4, []string{"财务", "报销"}, []string{"财务", "报销", "预算", "发票"})
 	hit(4, []string{"法务", "合规", "审计"}, []string{"法务", "合规", "合同", "审计"})
-	if score == 0 {
-		score = 1
-	}
 	return score
 }
 
@@ -150,7 +149,19 @@ func specialistSystemPrompt(emp map[string]any) string {
 	return b.String()
 }
 
-// runMultiAgentTurn: Supervisor selects specialists → isolated sub-calls → aggregate.
+// runMultiAgentTurn: Supervisor selects specialists → each specialist runs
+// in its own participantContext (Phase 1 MVE) → supervisor aggregate.
+//
+// The participant pipeline gives every specialist its own:
+//
+//   - identity profile + hard-no guard (Mem5)
+//   - memory slice (Mem2/6 BM25+MMR retrieval keyed by specialist DE id)
+//   - model selection (modelprov risk-floor policy routing)
+//   - skill registry filtered by specialist session mode
+//
+// Sub-calls run in parallel (errgroup) with a 30s per-participant budget
+// and propagate parent ctx cancellation. Aggregation merges the opinions in
+// the supervisor's persona.
 func (s *Server) runMultiAgentTurn(ctx context.Context, in reactTurnInput) reactTurnResult {
 	reg := in.Registry
 	supervisorID := in.DigitalEmployee
@@ -158,9 +169,24 @@ func (s *Server) runMultiAgentTurn(ctx context.Context, in reactTurnInput) react
 	picks := pickSpecialists(cands, in.UserMessage, multiAgentMaxSpecialists)
 
 	if len(picks) == 0 {
+		// Distinguish "workspace has zero active specialists" from "active
+		// specialists exist but none scored against this prompt". The former
+		// is a deployment/registry gap; the latter is a routing-tuning gap.
+		// Conflating them produces misleading readiness metrics.
+		fallbackReason := "no_specialists_scored"
+		if len(cands) == 0 {
+			fallbackReason = "no_active_specialists"
+		}
 		in.Emit("agent", "multi", map[string]any{
-			"status": "fallback", "reason": "no_active_specialists",
+			"status": "fallback", "reason": fallbackReason,
+			"candidates": len(cands),
 		})
+		// Test-only override: when set, return a zero reactTurnResult so
+		// tests can observe the emit and reason without exercising the full
+		// plan/exec harness.
+		if s.testHooks != nil && s.testHooks.runPlanExecuteOverride != nil {
+			return s.testHooks.runPlanExecuteOverride(in)
+		}
 		// Fall back to plan_exec when no peers available
 		return s.runPlanExecuteTurn(ctx, in)
 	}
@@ -178,21 +204,26 @@ func (s *Server) runMultiAgentTurn(ctx context.Context, in reactTurnInput) react
 		"specialists": specialistMaps(picks),
 	})
 
+	empByID := map[string]map[string]any{}
+	for _, e := range cands {
+		empByID[str(e["id"])] = e
+	}
+
+	// Supervisor-side shared retrieve. This is in ADDITION to each
+	// participant's own knowledge.retrieve: the supervisor's RAG hits are
+	// folded into the aggregate prompt so cross-domain context reaches the
+	// final synthesis even when individual specialists didn't surface it.
 	var toolCalls []map[string]any
 	var opinions []string
-	resolvedModel := in.ModelID
-	var lastRT resolvedTurn
-
-	// Optional shared retrieve for supervisor context
-	runCtx := toolRunContext{
-		Request: in.Request, WorkspaceID: in.WorkspaceID,
-		DigitalEmployee: in.DigitalEmployee, ConversationID: in.ConversationID,
-		CorrelationID: in.CorrelationID, UserMessage: in.UserMessage, Viewer: in.Viewer,
-	}
-	if in.Viewer != nil {
-		runCtx.OwnerID = in.Viewer.ID
-	}
 	if t := registryLookup(reg, "knowledge.retrieve"); t != nil && t.Enabled {
+		runCtx := toolRunContext{
+			Request: in.Request, WorkspaceID: in.WorkspaceID,
+			DigitalEmployee: in.DigitalEmployee, ConversationID: in.ConversationID,
+			CorrelationID: in.CorrelationID, UserMessage: in.UserMessage, Viewer: in.Viewer,
+		}
+		if in.Viewer != nil {
+			runCtx.OwnerID = in.Viewer.ID
+		}
 		call := toolCallRequest{Name: "knowledge.retrieve", Args: map[string]any{"query": in.UserMessage}}
 		res := s.runCopilotTool(runCtx, t, call)
 		tcID := "tc_multi_kr"
@@ -200,61 +231,125 @@ func (s *Server) runMultiAgentTurn(ctx context.Context, in reactTurnInput) react
 		in.Emit("tool", "multi", map[string]any{
 			"name": call.Name, "status": res.Status, "id": tcID, "durationMs": res.DurationMs, "hits": res.Hits,
 		})
+		// Supervisor shared retrieve writes to citationlog too, but with a
+		// supervisor-scoped turnID (no participant suffix) so an audit can
+		// distinguish supervisor-aggregated hits from per-specialist hits.
+		if hits := ragHitResults(res.Hits); len(hits) > 0 {
+			turnID := in.CorrelationID
+			if turnID == "" {
+				turnID = in.ConversationID
+			}
+			turnID += ":supervisor"
+			s.logCitationsForRAG(in.WorkspaceID, turnID, hits)
+		}
 		if res.Output != "" {
 			opinions = append(opinions, "【共享知识检索】\n"+truncateRunes(res.Output, 800))
 		}
 	}
 
-	empByID := map[string]map[string]any{}
-	for _, e := range cands {
-		empByID[str(e["id"])] = e
+	// Build per-participant contexts up front (deterministic, cheap).
+	// OwnerID is taken from the viewer once (if available) so we don't
+	// retrieve memory with an empty owner ID and then re-retrieve with
+	// the real one — the empty-OwnerID pass short-circuits the user-scope
+	// filter and runs BM25+MMR over a strictly larger pool.
+	ownerID := ""
+	if in.Viewer != nil {
+		ownerID = in.Viewer.ID
 	}
-
-	for i, sp := range picks {
-		in.Emit("agent", "multi", map[string]any{
-			"status": "delegating", "index": i + 1, "total": len(picks),
-			"employeeId": sp.ID, "name": sp.Name, "role": sp.Role, "department": sp.Department,
-			"task": sp.Task,
-		})
+	participants := make([]participantContext, 0, len(picks))
+	for _, sp := range picks {
 		emp := empByID[sp.ID]
-		sys := specialistSystemPrompt(emp)
-		msgs := []modelprov.ChatMessage{
-			{Role: "user", Content: "用户问题：\n" + in.UserMessage + "\n\n委派任务：\n" + sp.Task},
+		pc := s.buildParticipantContext(participantCtxInput{
+			WorkspaceID:     in.WorkspaceID,
+			ConversationID:  in.ConversationID,
+			CorrelationID:   in.CorrelationID,
+			OwnerID:         ownerID,
+			UserMessage:     in.UserMessage,
+			Channel:         in.Channel,
+			EnabledTools:    enabledToolKeys(reg),
+			Viewer:          in.Viewer,
+			Request:         in.Request,
+			Emit:            in.Emit,
+			SessionModeHint: s.resolveDefaultSessionMode(sp.ID),
+			RiskLevelHint:   s.resolveDefaultRiskLevel(sp.ID),
+		}, emp)
+		// Floor the participant's risk level by the inbound turn's risk so
+		// a high-risk query is never silently floored to a P1-tier specialist
+		// when the specialist's default risk is medium/low.
+		if in.RiskLevel != "" && levelRank(riskLevelFloor(in.RiskLevel)) < levelRank(riskLevelFloor(pc.RiskLevel)) {
+			pc.RiskLevel = in.RiskLevel
+			pc.ModelID, _, _ = s.resolveModelByPolicyLevel(in.WorkspaceID, "", "P1", pc.RiskLevel)
 		}
-		var buf strings.Builder
-		text, rt, err := s.streamLLMForCopilot(ctx, in.Request, in.WorkspaceID, in.ModelID, msgs, sys, func(chunk, mid string) error {
-			if mid != "" {
-				resolvedModel = mid
-			}
-			buf.WriteString(chunk)
-			return nil
-		})
-		status := "success"
-		if err != nil && buf.Len() == 0 && text == "" {
-			status = "failed"
-			text = "子专家调用失败：" + err.Error()
-		} else {
-			if err == nil {
-				lastRT = rt
-				resolvedModel = coalesce(rt.ModelID, resolvedModel)
-			}
-			text = coalesce(text, buf.String())
-		}
-		text = stripToolCallMarkers(strings.TrimSpace(text))
-		opinions = append(opinions, fmt.Sprintf("【%s · %s】\n%s", sp.Name, coalesce(sp.Role, sp.Department), truncateRunes(text, 1200)))
-		toolCalls = append(toolCalls, map[string]any{
-			"id": fmt.Sprintf("tc_agent_%s", sp.ID), "name": "agent.delegate",
-			"args":   map[string]any{"employeeId": sp.ID, "name": sp.Name, "role": sp.Role},
-			"status": status, "result": truncateRunes(text, 400), "durationMs": 0,
-		})
+		// Emit pick intent before dispatch.
 		in.Emit("agent", "multi", map[string]any{
-			"status": "delegated", "employeeId": sp.ID, "name": sp.Name,
-			"resultStatus": status, "preview": truncateRunes(text, 160),
+			"status":        "delegating",
+			"participantId": sp.ID,
+			"name":          sp.Name,
+			"role":          sp.Role,
+			"department":    sp.Department,
+			"modelId":       pc.ModelID,
+			"sessionMode":   pc.SessionMode,
+			"riskLevel":     pc.RiskLevel,
+			"memoryHits":    len(pc.MemoryHits),
 		})
-		time.Sleep(2 * time.Millisecond)
+		participants = append(participants, pc)
 	}
 
-	// Supervisor aggregate under primary employee persona
+	// Dispatch participants in parallel. errgroup cancels siblings if any
+	// panics, and we propagate parent ctx so client disconnect cancels the
+	// whole panel.
+	results := s.dispatchParticipants(ctx, participants)
+
+	// Drain per-participant memory budget reports (populated inside
+	// buildParticipantContext → retrieveMemoryForTurnLocked) and surface a
+	// single consolidated memory.budget event so operators see how each
+	// specialist's memory slice was sized/truncated. Without this the
+	// single-slot flush in copilotStream races with — and typically loses
+	// to — the participant retrievals.
+	if len(s.participantMemoryBudgetReports) > 0 {
+		s.participantMemoryBudgetMu.Lock()
+		reports := s.participantMemoryBudgetReports
+		s.participantMemoryBudgetReports = nil
+		s.participantMemoryBudgetMu.Unlock()
+		ids := make([]string, 0, len(reports))
+		for id := range reports {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			rep := reports[id]
+			in.Emit("memory", "budget", map[string]any{
+				"participantId": id,
+				"budgetTokens":   rep.BudgetTokens,
+				"usedTokens":     rep.UsedTokens,
+				"kept":           rep.Kept,
+				"dropped":        rep.Dropped,
+				"truncatedItems": rep.TruncatedItems,
+				"droppedIds":     rep.DroppedIDs,
+			})
+		}
+	}
+
+	opinions = append(opinions, mergeParticipantOpinions(results, 1200)...)
+
+	// Tool calls: one entry per participant with real timing.
+	for _, r := range results {
+		// Per-participant inner tool calls (knowledge.retrieve / memory.recall)
+		// get threaded through first so the audit trail shows the full panel
+		// activity, not just the delegation summary.
+		toolCalls = append(toolCalls, r.ToolCalls...)
+		toolCalls = append(toolCalls, map[string]any{
+			"id":         fmt.Sprintf("tc_agent_%s", r.ParticipantID),
+			"name":       "agent.delegate",
+			"args":       map[string]any{"employeeId": r.ParticipantID},
+			"status":     r.Status,
+			"result":     truncateRunes(r.Text, 400),
+			"durationMs": r.DurationMs,
+			"reason":     r.Reason,
+		})
+	}
+
+	// Supervisor aggregate under primary employee persona.
 	in.Emit("stage", "aggregate", map[string]any{"status": "running", "mode": modeMultiAgent})
 	aggSystem := strings.TrimSpace(in.System)
 	if aggSystem != "" {
@@ -266,6 +361,9 @@ func (s *Server) runMultiAgentTurn(ctx context.Context, in reactTurnInput) react
 		Role:    "user",
 		Content: "用户请求：\n" + in.UserMessage + "\n\n子专家意见：\n" + strings.Join(opinions, "\n\n") + "\n\n请汇总最终答复。",
 	})
+
+	resolvedModel := in.ModelID
+	var lastRT resolvedTurn
 	var aggBuf strings.Builder
 	aggText, rt2, err2 := s.streamLLMForCopilot(ctx, in.Request, in.WorkspaceID, in.ModelID, aggMsgs, aggSystem, func(chunk, mid string) error {
 		if mid != "" {
@@ -317,4 +415,52 @@ func specialistMaps(picks []specialistRef) []map[string]any {
 		})
 	}
 	return out
+}
+
+// dispatchParticipants runs the per-participant turn for every entry in
+// pcs in parallel via errgroup, with parent ctx cancellation propagated and
+// a defer-recover wrapper that converts participant panics into structured
+// "failed/panic_recovered" results. The slice order matches pcs.
+//
+// Extracted from runMultiAgentTurn so tests can drive the dispatch path
+// directly with controlled panic injection (runMultiAgentTurn fans out
+// shared supervisor retrieves that the tests don't need).
+func (s *Server) dispatchParticipants(ctx context.Context, pcs []participantContext) []participantTurnResult {
+	results := make([]participantTurnResult, len(pcs))
+	var mu sync.Mutex
+	g, gctx := errgroup.WithContext(ctx)
+	for i := range pcs {
+		i := i
+		g.Go(func() error {
+			defer func() {
+				if r := recover(); r != nil {
+					pc := pcs[i]
+					res := participantTurnResult{
+						ParticipantID: pc.DigitalEmployee,
+						Status:        "failed",
+						Reason:        "panic_recovered",
+					}
+					if pc.Emit != nil {
+						pc.Emit("agent", "multi", map[string]any{
+							"status":        "failed",
+							"participantId": pc.DigitalEmployee,
+							"reason":        "panic_recovered",
+						})
+					}
+					mu.Lock()
+					if results[i].ParticipantID == "" {
+						results[i] = res
+					}
+					mu.Unlock()
+				}
+			}()
+			r := s.runParticipantTurn(gctx, pcs[i])
+			mu.Lock()
+			results[i] = r
+			mu.Unlock()
+			return nil
+		})
+	}
+	_ = g.Wait()
+	return results
 }

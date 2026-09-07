@@ -38,7 +38,8 @@ type reactTurnInput struct {
 	MaxSteps        int
 	SessionMode     string
 	RiskLevel       string
-	RAGPrefetched   bool // 主路径已预检索知识并写入 system，跳过 bootstrap retrieve
+	Channel         string // inbound channel (feishu/wecom/dingtalk); propagated into participantChannel
+	RAGPrefetched   bool   // 主路径已预检索知识并写入 system，跳过 bootstrap retrieve
 	SnapshotID      string
 	Binding         map[string]any
 	MemoryProvenance []map[string]any

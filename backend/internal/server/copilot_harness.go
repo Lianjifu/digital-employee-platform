@@ -14,7 +14,7 @@ func (s *Server) runHarnessTurn(ctx context.Context, in reactTurnInput) reactTur
 	in.SkipStream = true
 
 	// Dynamic routing: map difficulty → published routing_policies level → primaryModelId
-	resolvedModel, policyID, usedLevel := s.resolveModelByPolicyLevel(in.WorkspaceID, in.ModelID, decision.PolicyLevel)
+	resolvedModel, policyID, usedLevel := s.resolveModelByPolicyLevel(in.WorkspaceID, in.ModelID, decision.PolicyLevel, in.RiskLevel)
 	if resolvedModel != "" {
 		in.ModelID = resolvedModel
 	}

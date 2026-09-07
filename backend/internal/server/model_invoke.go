@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/modelprov"
+	"github.com/digital-employee-platform/backend/internal/modelprov/trace"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
@@ -270,13 +271,27 @@ func (s *Server) streamResolvedChat(ctx context.Context, rt resolvedTurn, messag
 	}
 	req.Messages = messages
 	client := modelprov.NewClient()
+	started := time.Now()
+	traceID := s.newTraceID()
 	ch, err := client.StreamChat(ctx, req)
 	if err != nil {
+		s.recordTrace(traceID, "", "", rt, started, trace.StatusError, err)
 		return "", err
 	}
 	var b strings.Builder
 	for chunk := range ch {
 		if chunk.Err != nil {
+			status := trace.StatusError
+			if isCapUnreachable(chunk.Err) {
+				status = trace.StatusError
+			}
+			if strings.Contains(strings.ToLower(chunk.Err.Error()), "timeout") || strings.Contains(strings.ToLower(chunk.Err.Error()), "deadline") {
+				status = trace.StatusTimeout
+			}
+			if strings.Contains(chunk.Err.Error(), "429") {
+				status = trace.Status429
+			}
+			s.recordTrace(traceID, "", "", rt, started, status, chunk.Err)
 			if b.Len() > 0 {
 				return b.String(), chunk.Err
 			}
@@ -288,14 +303,48 @@ func (s *Server) streamResolvedChat(ctx context.Context, rt resolvedTurn, messag
 		b.WriteString(chunk.Text)
 		if onDelta != nil {
 			if err := onDelta(chunk.Text); err != nil {
+				s.recordTrace(traceID, "", "", rt, started, trace.StatusError, err)
 				return b.String(), err
 			}
 		}
 	}
 	if b.Len() == 0 {
-		return "", fmt.Errorf("empty model response")
+		err := fmt.Errorf("empty model response")
+		s.recordTrace(traceID, "", "", rt, started, trace.StatusError, err)
+		return "", err
 	}
+	s.recordTrace(traceID, "", "", rt, started, trace.StatusOK, nil)
 	return b.String(), nil
+}
+
+// recordTrace emits a single trace.Event to the Server's recorder. Safe to
+// call with nil recorder (test stubs).
+func (s *Server) recordTrace(traceID, ws, turnID string, rt resolvedTurn, started time.Time, status trace.Status, err error) {
+	if s == nil || s.TraceRecorder == nil {
+		return
+	}
+	ev := trace.Event{
+		TraceID:     traceID,
+		WorkspaceID: ws,
+		TurnID:      turnID,
+		ModelID:     rt.ModelID,
+		ProviderID:  rt.ProviderID,
+		Level:       rt.Level,
+		Source:      rt.Source,
+		Status:      status,
+		StartedAt:   started,
+		EndedAt:     time.Now().UTC(),
+	}
+	if err != nil {
+		ev.ErrorClass = trace.ClassifyError(err.Error())
+		ev.ErrorMessage = err.Error()
+	}
+	s.TraceRecorder.Append(ev)
+}
+
+func (s *Server) newTraceID() string {
+	// Cheap correlation id; uniqueness is best-effort within process.
+	return fmt.Sprintf("tr-%d", time.Now().UnixNano())
 }
 
 // streamLocalCandidates tries provider candidates, then DE_LLM_*, then embedded chat.
