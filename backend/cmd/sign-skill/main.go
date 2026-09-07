@@ -71,7 +71,12 @@ func main() {
 	}
 
 	// 4. Sign the manifest canonical bytes.
-	sigBytes, err := signing.SignManifest(dev.Signer(), signing.DigestInputs{
+	signer, err := dev.Signer("")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "load signer: %v\n", err)
+		os.Exit(1)
+	}
+	sigBytes, err := signing.SignManifest(signer, signing.DigestInputs{
 		Meta: meta, Files: files,
 	})
 	if err != nil {
@@ -83,7 +88,7 @@ func main() {
 	// new skill signature, write atomically. If the manifest file is
 	// missing we create a fresh one.
 	sigB64 := base64.StdEncoding.EncodeToString(sigBytes)
-	pubB64 := base64.StdEncoding.EncodeToString(dev.Signer().PublicKey())
+	pubB64 := base64.StdEncoding.EncodeToString(signer.PublicKey())
 	signedAt := time.Now().UTC().Format(time.RFC3339)
 
 	packPath, _ := filepath.Abs(manifestIn)
@@ -95,10 +100,10 @@ func main() {
 	if pack.Signers == nil {
 		pack.Signers = map[string]signing.TrustedKey{}
 	}
-	pack.Signers[dev.Signer().KeyID()] = signing.TrustedKey{
-		KeyID:     dev.Signer().KeyID(),
+	pack.Signers[signer.KeyID()] = signing.TrustedKey{
+		KeyID:     signer.KeyID(),
 		PublicKey: pubB64,
-		Name:      dev.Signer().Name(),
+		Name:      signer.Name(),
 		AddedAt:   time.Now().UTC(),
 		AddedBy:   "sign-skill",
 	}
@@ -106,10 +111,10 @@ func main() {
 		pack.SkillSignatures = map[string]json.RawMessage{}
 	}
 	entry := map[string]any{
-		"keyId":      dev.Signer().KeyID(),
+		"keyId":      signer.KeyID(),
 		"signature":  sigB64,
 		"signedAt":   signedAt,
-		"signerName": dev.Signer().Name(),
+		"signerName": signer.Name(),
 	}
 	entryJSON, err := json.Marshal(entry)
 	if err != nil {
@@ -128,7 +133,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Printf("signed skill=%s keyId=%s bytes=%d\n", meta.Name, dev.Signer().KeyID(), len(sigBytes))
+	fmt.Printf("signed skill=%s keyId=%s bytes=%d\n", meta.Name, signer.KeyID(), len(sigBytes))
 }
 
 // loadSkillPackage walks skillDir, collects every non-skipped file under

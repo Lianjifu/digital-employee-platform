@@ -179,6 +179,51 @@ func (c *Client) kvPath(ref string) (string, error) {
 	}
 }
 
+// PutMap writes many secrets in one batch. Use when rotating a set of
+// model-provider credentials together so partial failures are visible.
+// Each entry's ref must already pass kvPath (i.e. start with vault:
+// or secret/). Returns the first error encountered and continues with
+// remaining entries so one bad ref doesn't block the rest.
+func (c *Client) PutMap(ctx context.Context, entries map[string]string) error {
+	if c == nil {
+		return errors.New("vault client nil")
+	}
+	if len(entries) == 0 {
+		return nil
+	}
+	var firstErr error
+	for ref, value := range entries {
+		if err := c.Put(ctx, ref, value); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+// ResolveMap fetches many secrets in one batch. Entries that miss are
+// returned in the second return value so the caller can decide whether
+// to retry, prompt for re-entry, or fall back to defaults. Resolved
+// entries are returned in the same map shape for direct swap-in.
+func (c *Client) ResolveMap(ctx context.Context, refs []string) (map[string]string, []string, error) {
+	if c == nil {
+		return nil, nil, errors.New("vault client nil")
+	}
+	if len(refs) == 0 {
+		return map[string]string{}, nil, nil
+	}
+	out := make(map[string]string, len(refs))
+	var missing []string
+	for _, ref := range refs {
+		v, err := c.Resolve(ctx, ref)
+		if err != nil {
+			missing = append(missing, ref)
+			continue
+		}
+		out[ref] = v
+	}
+	return out, missing, nil
+}
+
 // Delete removes a secret from the local stub and best-effort from Vault KV v2.
 func (c *Client) Delete(ctx context.Context, ref string) error {
 	if c == nil {

@@ -88,7 +88,11 @@ func TestDevKeyStoreAutoProvisions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDevKeyStore: %v", err)
 	}
-	if d.Signer() == nil {
+	s, err := d.Signer("")
+	if err != nil {
+		t.Fatalf("Signer(): %v", err)
+	}
+	if s == nil {
 		t.Fatalf("nil signer after provisioning")
 	}
 	// File on disk.
@@ -100,21 +104,24 @@ func TestDevKeyStoreAutoProvisions(t *testing.T) {
 		t.Fatalf("empty file")
 	}
 	// TrustedKey record is consistent with signer.
-	tk := d.TrustedKey()
-	if tk.KeyID != d.Signer().KeyID() {
-		t.Fatalf("keyID drift: %s vs %s", tk.KeyID, d.Signer().KeyID())
+	tk, err := d.TrustedKey("")
+	if err != nil {
+		t.Fatalf("TrustedKey: %v", err)
+	}
+	if tk.KeyID != s.KeyID() {
+		t.Fatalf("keyID drift: %s vs %s", tk.KeyID, s.KeyID())
 	}
 	// Sign → verify roundtrip through TrustStore.
 	ts := NewTrustStore(TrustFile{})
 	ts.Add(tk)
-	sig, err := SignManifest(d.Signer(), DigestInputs{
+	sig, err := SignManifest(s, DigestInputs{
 		Meta:  &fakeMeta{name: "x", ver: "1"},
 		Files: map[string][]byte{"a": []byte("x")},
 	})
 	if err != nil {
 		t.Fatalf("sign: %v", err)
 	}
-	pub, err := ts.LookupPublic(d.Signer().KeyID())
+	pub, err := ts.LookupPublic(s.KeyID())
 	if err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
@@ -133,13 +140,21 @@ func TestDevKeyStoreReusesExisting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first: %v", err)
 	}
-	firstKeyID := d1.Signer().KeyID()
+	firstSigner, err := d1.Signer("")
+	if err != nil {
+		t.Fatalf("first signer: %v", err)
+	}
+	firstKeyID := firstSigner.KeyID()
 	d2, err := NewDevKeyStore(path)
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}
-	if d2.Signer().KeyID() != firstKeyID {
-		t.Fatalf("keypair changed between calls: %s vs %s", firstKeyID, d2.Signer().KeyID())
+	secondSigner, err := d2.Signer("")
+	if err != nil {
+		t.Fatalf("second signer: %v", err)
+	}
+	if secondSigner.KeyID() != firstKeyID {
+		t.Fatalf("keypair changed between calls: %s vs %s", firstKeyID, secondSigner.KeyID())
 	}
 }
 

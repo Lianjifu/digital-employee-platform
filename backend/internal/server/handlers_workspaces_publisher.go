@@ -330,7 +330,7 @@ func (s *Server) resolvePublisherKey(wsID, keyID string) (pub ed25519.PublicKey,
 	}
 	// 4. dev-mode auto keypair (for tests / local)
 	if s.SkillDevKey != nil {
-		tk := s.SkillDevKey.TrustedKey()
+		tk, _ := s.SkillDevKey.TrustedKey("")
 		if tk.KeyID == keyID {
 			raw, _ := base64.StdEncoding.DecodeString(tk.PublicKey)
 			if len(raw) == ed25519.PublicKeySize {

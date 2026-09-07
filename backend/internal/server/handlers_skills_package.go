@@ -374,7 +374,7 @@ func (s *Server) trustStoreForSkillVerify() (*signing.TrustStore, error) {
 	}
 	ts := signing.NewTrustStore(signing.TrustFile{})
 	if s.SkillDevKey != nil {
-		tk := s.SkillDevKey.TrustedKey()
+		tk, _ := s.SkillDevKey.TrustedKey("")
 		tk.AddedAt = timeNow()
 		tk.AddedBy = "dev-keypair"
 		ts.Add(tk)

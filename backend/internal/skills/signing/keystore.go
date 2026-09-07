@@ -1,6 +1,7 @@
 package signing
 
 import (
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
@@ -9,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -242,25 +244,6 @@ func (d *DevKeyStore) loadOrGenerate() error {
 	return nil
 }
 
-// Signer returns the loaded Ed25519Signer. Safe for concurrent use.
-func (d *DevKeyStore) Signer() *Ed25519Signer {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.signer
-}
-
-// TrustedKey returns a TrustedKey record suitable for adding to a TrustStore.
-// The AddedAt / AddedBy fields are filled by the caller.
-func (d *DevKeyStore) TrustedKey() TrustedKey {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	return TrustedKey{
-		KeyID:     d.file.KeyID,
-		PublicKey: d.file.PublicKey,
-		Name:      d.file.Name,
-	}
-}
-
 // File returns the on-disk record (for debugging / observability).
 func (d *DevKeyStore) File() DevKeyFile {
 	d.mu.Lock()
@@ -285,3 +268,163 @@ func (d *DevKeyStore) KeyIDHex() string {
 func EncodePublicHex(pub ed25519.PublicKey) string {
 	return hex.EncodeToString(pub)
 }
+
+// VaultSecretFetcher is the minimal vault surface VaultKeyStore needs.
+// *vault.Client implements it implicitly via Put/Resolve. Decoupling lets
+// tests substitute an in-memory fetcher without dragging HTTP plumbing.
+type VaultSecretFetcher interface {
+	Resolve(ctx context.Context, ref string) (string, error)
+	Put(ctx context.Context, ref, value string) error
+}
+
+// VaultKeyStore resolves skill signing keys from HashiCorp Vault KV v2
+// instead of writing them to disk. ref format: `vault:skill-keys/<keyID>`
+// where the stored value is a base64 of the 64-byte Ed25519 private seed.
+//
+// Cache is in-process per (ref → *Ed25519Signer). Vault lookups are
+// expensive enough that repeated signing within one command shouldn't pay
+// them again.
+type VaultKeyStore struct {
+	fetcher VaultSecretFetcher
+	cache   sync.Map // ref → *Ed25519Signer
+}
+
+// NewVaultKeyStore wraps a Vault fetcher. Returns an error if fetcher is
+// nil so wiring mistakes fail fast at startup.
+func NewVaultKeyStore(fetcher VaultSecretFetcher) (*VaultKeyStore, error) {
+	if fetcher == nil {
+		return nil, errors.New("vault keystore: nil fetcher")
+	}
+	return &VaultKeyStore{fetcher: fetcher}, nil
+}
+
+// refForKeyID returns the canonical vault: path used to look up the
+// private key for a given Ed25519 key ID.
+func refForKeyID(keyID string) string {
+	return "vault:skill-keys/" + keyID
+}
+
+// Signer fetches (and caches) the Ed25519Signer for keyID. keyID is
+// expected in either bare form (`ed25519:abcdef...`) or with the
+// `vault:skill-keys/` prefix already attached.
+func (v *VaultKeyStore) Signer(keyID string) (*Ed25519Signer, error) {
+	if keyID == "" {
+		return nil, errors.New("vault keystore: empty keyID")
+	}
+	ref := keyID
+	if !strings.HasPrefix(ref, "vault:") {
+		ref = refForKeyID(keyID)
+	}
+	if cached, ok := v.cache.Load(ref); ok {
+		if s, ok := cached.(*Ed25519Signer); ok && s != nil {
+			return s, nil
+		}
+	}
+	raw, err := v.fetcher.Resolve(context.Background(), ref)
+	if err != nil {
+		return nil, fmt.Errorf("vault keystore: resolve %s: %w", ref, err)
+	}
+	privBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(raw))
+	if err != nil {
+		return nil, fmt.Errorf("vault keystore: decode %s: %w", ref, err)
+	}
+	if len(privBytes) != ed25519.PrivateKeySize {
+		return nil, fmt.Errorf("vault keystore: %s has invalid private key length %d", ref, len(privBytes))
+	}
+	// Derive KeyID from the public half so the in-memory signer matches
+	// what the trust store has registered.
+	pub := ed25519.PrivateKey(privBytes).Public().(ed25519.PublicKey)
+	signer := NewEd25519Signer(ed25519.PrivateKey(privBytes), "vault:"+keyID)
+	_ = pub
+	v.cache.Store(ref, signer)
+	return signer, nil
+}
+
+// TrustedKey returns a TrustedKey with KeyID + PublicKey populated from
+// the derived signer. Name is left empty since Vault doesn't carry it.
+func (v *VaultKeyStore) TrustedKey(keyID string) (TrustedKey, error) {
+	s, err := v.Signer(keyID)
+	if err != nil {
+		return TrustedKey{}, err
+	}
+	pubBytes := s.priv.Public().(ed25519.PublicKey)
+	return TrustedKey{
+		KeyID:     s.KeyID(),
+		PublicKey: base64.StdEncoding.EncodeToString(pubBytes),
+	}, nil
+}
+
+// BackedByVault is true — operators can use this to assert the prod path.
+func (v *VaultKeyStore) BackedByVault() bool { return true }
+
+// PutKey is a convenience that uploads a base64-encoded private key to
+// Vault at the canonical ref. Useful for the bootstrap flow that
+// migrates from DevKeyStore on first prod boot.
+func (v *VaultKeyStore) PutKey(ctx context.Context, keyID string, priv ed25519.PrivateKey) error {
+	if len(priv) != ed25519.PrivateKeySize {
+		return fmt.Errorf("vault keystore: invalid private key length %d", len(priv))
+	}
+	encoded := base64.StdEncoding.EncodeToString(priv)
+	return v.fetcher.Put(ctx, refForKeyID(keyID), encoded)
+}
+
+// SignerResolver is the lookup seam between callers that need to *sign*
+// (sign-skill CLI, sign-skill-pack, future server-side flows) and the
+// storage that holds the private key. The same interface is implemented
+// by both the dev-only auto-provisioned DevKeyStore and the prod Vault-
+// backed VaultKeyStore. CLI tools pick the impl via --keystore=dev|vault;
+// server-side flows hold a Server.SkillSigner.
+type SignerResolver interface {
+	// Signer returns the Ed25519Signer for keyID. keyID is matched against
+	// either the dev keypair's KeyID (DevKeyStore) or a vault: ref like
+	// `vault:skill-keys/<keyID>` (VaultKeyStore).
+	Signer(keyID string) (*Ed25519Signer, error)
+	// TrustedKey returns the public-key half for trust-store registration.
+	TrustedKey(keyID string) (TrustedKey, error)
+	// BackedByVault reports whether the resolver stores secrets in Vault
+	// (true) or on disk (false). Used by startup gating / audit.
+	BackedByVault() bool
+}
+
+// Ensure DevKeyStore implements SignerResolver at compile time.
+var _ SignerResolver = (*DevKeyStore)(nil)
+
+// Signer returns the loaded Ed25519Signer. The single-key DevKeyStore
+// always returns its own signer regardless of keyID — there is only one.
+// Callers that pass an unexpected keyID get an error so misrouted calls
+// don't silently fall back to the dev key.
+func (d *DevKeyStore) Signer(keyID string) (*Ed25519Signer, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.signer == nil {
+		return nil, errors.New("dev keystore: not initialized")
+	}
+	if keyID == "" {
+		return d.signer, nil
+	}
+	if d.file.KeyID != "" && keyID != d.file.KeyID {
+		return nil, fmt.Errorf("dev keystore: keyID mismatch %q vs %q", keyID, d.file.KeyID)
+	}
+	return d.signer, nil
+}
+
+// TrustedKey looks up the public half for keyID. DevKeyStore only knows
+// about its own key.
+func (d *DevKeyStore) TrustedKey(keyID string) (TrustedKey, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.signer == nil {
+		return TrustedKey{}, errors.New("dev keystore: not initialized")
+	}
+	if keyID != "" && d.file.KeyID != "" && keyID != d.file.KeyID {
+		return TrustedKey{}, fmt.Errorf("dev keystore: keyID mismatch %q vs %q", keyID, d.file.KeyID)
+	}
+	return TrustedKey{
+		KeyID:     d.file.KeyID,
+		PublicKey: d.file.PublicKey,
+		Name:      d.file.Name,
+	}, nil
+}
+
+// BackedByVault is false for the dev store — secrets live on disk.
+func (d *DevKeyStore) BackedByVault() bool { return false }

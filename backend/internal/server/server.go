@@ -92,6 +92,11 @@ type Server struct {
 	// 用于本地签名/校验 skills 且不污染 prod trust。
 	SkillTrustStore *signing.TrustStore
 	SkillDevKey     *signing.DevKeyStore
+	// SkillSigner is the SignerResolver in effect (dev or vault). Server
+	// never signs during runtime today, but this slot exists so cmd/sign-skill
+	// and future server-side flows can pick the prod-safe path without
+	// touching the dev auto-provisioning logic.
+	SkillSigner signing.SignerResolver
 }
 
 // serverTestHooks groups the optional test seams. Field types are kept in
@@ -133,6 +138,7 @@ func New(st *store.Store) *Server {
 	}
 	st.MigrateProvenance()
 	s.bootstrapSkillSigning()
+	s.bootstrapVaultSkillSigning()
 	return s
 }
 
@@ -163,12 +169,13 @@ func (s *Server) bootstrapSkillSigning() {
 	s.SkillDevKey = d
 	// Register the dev public key into the trust store so locally-produced
 	// signatures verify. AddedBy/AddedAt stamped here for the audit trail.
-	tk := d.TrustedKey()
+	tk, _ := d.TrustedKey("")
 	if tk.KeyID == "" {
 		// Defensive: TrustedKey() may have raced with auto-provision.
 		// Re-derive from the signer directly.
-		tk.KeyID = d.Signer().KeyID()
-		if signerRec, ok := s.SkillTrustStore.Lookup(d.Signer().KeyID()); ok {
+		sign, _ := d.Signer("")
+		tk.KeyID = sign.KeyID()
+		if signerRec, ok := s.SkillTrustStore.Lookup(tk.KeyID); ok {
 			tk.PublicKey = signerRec.PublicKey
 			tk.Name = signerRec.Name
 		}
@@ -177,6 +184,35 @@ func (s *Server) bootstrapSkillSigning() {
 	tk.AddedBy = "dev-keypair-auto"
 	s.SkillTrustStore.Add(tk)
 	log.Printf("skill signing: dev keypair ready keyID=%s path=%s", tk.KeyID, keyPath)
+	// Slot the dev store as the active SignerResolver so callers that
+	// already have a keyID in hand can sign without re-loading from disk.
+	s.SkillSigner = d
+}
+
+// bootstrapVaultSkillSigning wires VaultKeyStore as the active
+// SignerResolver when DE_VAULT_ADDR + DE_VAULT_TOKEN are configured and
+// DE_SKILL_KEYSTORE=vault is set. The dev auto-provision path is skipped
+// so no dev-keypair.json ever lands on disk in production. A bootstrap
+// lookup against the vault is done to fail fast on misconfiguration.
+func (s *Server) bootstrapVaultSkillSigning() {
+	if s.Vault == nil || !s.Vault.Enabled() {
+		return
+	}
+	if !envFlagTrue("DE_SKILL_KEYSTORE") {
+		return
+	}
+	ks, err := signing.NewVaultKeyStore(s.Vault)
+	if err != nil {
+		log.Printf("skill signing: vault keystore init failed: %v", err)
+		return
+	}
+	probe := envOr("DE_VAULT_KEYSTORE_PROBE", "ed25519:probe")
+	if _, err := ks.Signer(probe); err != nil {
+		log.Printf("skill signing: vault keystore probe %q failed: %v", probe, err)
+		return
+	}
+	s.SkillSigner = ks
+	log.Printf("skill signing: vault keystore active probe=%s", probe)
 }
 
 // hydrateVaultFromSecrets reloads durable local secrets into the in-memory Vault stub
