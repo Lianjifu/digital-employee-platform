@@ -116,6 +116,8 @@ type Server struct {
 	Canvas *canvas.Store
 	// CanvasBroadcaster fans board events to per-board subscribers.
 	CanvasBroadcaster *canvas.Broadcaster
+	// W7-D1 · SQLite durability hooks. nil when DE_STORE_BACKEND != "sqlite".
+	SQLite *store.SQLiteHooks
 }
 
 // serverTestHooks groups the optional test seams. Field types are kept in
@@ -172,7 +174,31 @@ func New(st *store.Store) *Server {
 	s.initPMsop()
 	// W6-D2 · Canvas collaboration store + broadcaster.
 	s.initCanvas()
+	// W7-D1 · SQLite durability layer (gated on DE_STORE_BACKEND=sqlite).
+	s.initSQLiteDurability()
 	return s
+}
+
+// initSQLiteDurability wires the SQLite-backed PersistHook when env flag
+// is set. Default backend remains in-memory (no durability); the PG path
+// in infra.KVStore is selected by infra.OpenPostgres in main. ADR-028.
+func (s *Server) initSQLiteDurability() {
+	backend := strings.ToLower(strings.TrimSpace(os.Getenv("DE_STORE_BACKEND")))
+	if backend != "sqlite" {
+		return
+	}
+	path := strings.TrimSpace(os.Getenv("DE_SQLITE_PATH"))
+	if path == "" {
+		path = "data/store.db"
+	}
+	h, err := store.OpenSQLite(path)
+	if err != nil {
+		log.Printf("sqlite durability: open failed (%s): %v — falling back to in-memory", path, err)
+		return
+	}
+	s.Store.SetPersistHook(h.Persist)
+	s.SQLite = h
+	log.Printf("sqlite durability: hooked PersistFunc path=%s", path)
 }
 
 // bootstrapSkillSigning wires the W1-D2 trust store + dev keypair onto the
