@@ -23,15 +23,18 @@ import (
 	"strings"
 
 	"github.com/digital-employee-platform/backend/internal/skills/signing"
+	"github.com/digital-employee-platform/backend/internal/skills/vetter"
 )
 
 func main() {
 	var (
 		manifestPath string
 		strict       bool
+		vetMode      string
 	)
 	flag.StringVar(&manifestPath, "manifest", "builtin/skills/manifest.json", "pack-level manifest JSON")
 	flag.BoolVar(&strict, "strict", true, "fail if a builtin is missing from the manifest signature block")
+	flag.StringVar(&vetMode, "vet", "off", "vetter mode: off | info | strict (runs vetter after signature verify)")
 	flag.Parse()
 
 	if flag.NArg() < 1 {
@@ -75,7 +78,7 @@ func main() {
 		for _, d := range dirs {
 			total++
 			name := filepath.Base(d)
-			ok, why := verifyOne(pack, d)
+			ok, why := verifyOne(pack, d, vetMode)
 			if !ok {
 				fmt.Fprintf(os.Stderr, "FAIL %s: %s\n", name, why)
 				failed++
@@ -107,7 +110,7 @@ func hasSKILLMD(dir string) bool {
 	return false
 }
 
-func verifyOne(pack *packManifest, skillDir string) (bool, string) {
+func verifyOne(pack *packManifest, skillDir, vetMode string) (bool, string) {
 	skillName := filepath.Base(skillDir)
 	rawSig, ok := pack.SkillSignatures[skillName]
 	if !ok {
@@ -145,7 +148,45 @@ func verifyOne(pack *packManifest, skillDir string) (bool, string) {
 	}); err != nil {
 		return false, "ed25519 verify: " + err.Error()
 	}
+	if msg := vetSkill(skillDir, vetMode); msg != "" {
+		return false, msg
+	}
 	return true, ""
+}
+
+// vetSkill runs the vetter against skillDir (which honors .vetter-allow.json)
+// per the --vet flag. Returns "" on pass / disabled, or a non-empty failure
+// reason when --vet=strict rejects the package.
+func vetSkill(skillDir, mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "off", "false", "0":
+		return ""
+	}
+	r, err := vetter.Run(skillDir)
+	if err != nil {
+		return "vetter run: " + err.Error()
+	}
+	if r.Decision == vetter.Allow {
+		return ""
+	}
+	// Non-Allow findings — print first three for human-readable context.
+	summary := fmt.Sprintf("verdict=%s findings=%d", r.Verdict, len(r.Findings))
+	for i, f := range r.Findings {
+		if i >= 3 {
+			summary += " …"
+			break
+		}
+		summary += fmt.Sprintf(" %s:%s@%s:%d", f.Category, f.Pattern, f.File, f.Line)
+	}
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "strict":
+		return "vetter deny: " + summary
+	case "info":
+		fmt.Printf("INFO vetter %s: %s\n", filepath.Base(skillDir), summary)
+		return ""
+	default:
+		return "unknown --vet mode: " + mode
+	}
 }
 
 // packManifest mirrors the server-side struct (kept trimmed here to avoid

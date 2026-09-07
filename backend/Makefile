@@ -312,14 +312,11 @@ verify-builtins:
 
 # W1-D3 · Skill 内容静态扫描 CI gate。扫描 builtin + 用户上传 skill
 # 的 destructive / egress / credential / escalation / persistence 5 类
-# 危险模式。失败即阻断。
+# 危险模式。失败即阻断。CLI 走 verify-skill --vet=strict，避免维护
+# 第二条 skill 列举清单。
 vet-builtins:
 	@echo "==> vetting core builtins against dangerous-pattern scanner"
-	@$(GO) run ./cmd/check_skill $(PWD)/builtin/skills/weather
-	@$(GO) run ./cmd/check_skill $(PWD)/builtin/skills/docx
-	@$(GO) run ./cmd/check_skill $(PWD)/builtin/skills/pdf
-	@$(GO) run ./cmd/check_skill $(PWD)/builtin/skills/pptx
-	@$(GO) run ./cmd/check_skill $(PWD)/builtin/skills/spreadsheets
+	@$(GO) run ./cmd/verify-skill --vet=strict --manifest $(PWD)/builtin/skills/manifest.json $(PWD)/builtin/skills
 
 # W1-D3 · Skill 安全全链路 CI gate。覆盖 vetter + signer 双闸门。
 # 任何 builtin 内容 / 签名变化必须通过本 target 才能合并。

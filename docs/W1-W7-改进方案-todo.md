@@ -1,0 +1,262 @@
+# 7 周改进方案 — 实施进度总览（Todo 清单）
+
+> **生成日期**：2026-09-08
+> **状态**：审计快照（4 路并发审查）
+> **口径**：后端 = 已合并到 `main` 的代码；前端 = `frontend/web/src` + `frontend/packages/*`；横切 = ADR / 手册 / 指标 / 权限 / CI / env flag。
+> **下一步**：按本文 `P0` 段落地，每完成一段把 `[ ]` 改为 `[x]` 并写 commit 哈希。
+
+## 0. 总览
+
+| 段 | 项数 | ✅ 完成 | 🟡 部分 | ⚪ 未做 | 完成率 |
+|----|----:|------:|------:|------:|-----:|
+| 后端 W1（Skill Vetter / Gateway 硬墙 / Catalog / DS） | 4 | 1 | 1 | 2 | 25% |
+| 后端 W2（SubAgent / 3-列 / Vault） | 3 | 1 | 0 | 2 | 33% |
+| 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 0 | 1 | 2 | 0% |
+| 后端 W4（Heartbeat / VisualDiff） | 2 | 0 | 0 | 2 | 0% |
+| 后端 W5（SelfImproving / Multimodal） | 2 | 0 | 0 | 2 | 0% |
+| 后端 W6（PM SOP / Canvas） | 2 | 0 | 0 | 2 | 0% |
+| 后端 W7（SQLite / WeChat-Sync） | 2 | 0 | 0 | 2 | 0% |
+| 前端 9 项 | 9 | 2 | 2 | 5 | 22% |
+| 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 1 | 0 | ~49 | 2% |
+| **合计** | **~80** | **4** | **4** | **~70** | **~5%** |
+
+**关键结论**：
+- 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
+- 其余 W1-D1（vetter 联通）、W1-D3（gateway 硬墙）、W2-D2（Vault）、W3 全部 / W4–W7 全部、前端 W2–W7、横切 12 个 ADR / 8 个手册 / 10 个指标 / 4 个权限 / 10 个 env flag 均为 **未做**。
+- 前端已完成的 2 项是 `document-preview`（W5）与 SSE `STREAM_EVENT_TYPES`（W2/W5/W6 共用基线）。
+
+---
+
+## 1. 后端 — W1（Skill 安全）
+
+| ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
+|---|---|---|---|---|
+| W1-D1 | Skill Vetter（内容危险模式） | ✅ 完成 | `internal/skills/vetter/` 已联通 builtin + import 两条 server 路径（`builtin_skills.go:296`、`handlers_skills_package.go:38`），正确排序在 signer 之前；audit 行写入（denied / warn / allow=无）；`cmd/verify-skill --vet=strict` CLI parity；`internal/server/skill_vetter_integration_test.go` 3 个集成测试；`cmd/check_skill/` 已清理 |
+| W1-D2 | Skill 签名（ed25519 + trust store） | ✅ 完成 | `signing/keystore.go`、`signing/canonical.go`、`signing/signer.go`、`cmd/sign-skill`、`cmd/verify-skill`、`cmd/check-skill`、`hard_delete_persist_test.go`；13+ 测试通过 | — |
+| W1-D3 | Gateway 硬墙（SSRF / path traversal / size / mime） | ⚪ 未做 | 无 `/api/skill-artifacts/*` 网关包 | 新增 `internal/gateway/`，对路由逐项白名单 |
+| W1-D4 | Catalog / DS 数据源契约 | ⚪ 未做 | 无 `internal/catalog/` 包 | 新建 Catalog store + contract test |
+
+**W1 退出门槛**：CI 上 `make skill-gate` 实际阻断 PR — 当前仅 enabled 标记位被读，失败不阻断。
+
+---
+
+## 2. 后端 — W2（Agent OS 多 Agent + Vault）
+
+| ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
+|---|---|---|---|---|
+| W2-D1 | Workspace Publisher Key（per-workspace Ed25519 + sidecar） | ✅ 完成 | commit `9ecc607`；`handlers_workspaces_publisher*.go`、`cmd/sign-skill-pack`、`internal/skills/parse_sidecar.go`；22 个测试 | — |
+| W2-D2 | Vault 集成（dev keypair / 私钥 / 模型凭据） | ⚪ 未做 | `internal/vault/client.go` 已存在（`Put/Resolve/Delete/Redact`），但 **未联任何调用方**；`signing.keystore.DevKeyStore` 仍走 `data/skill-keys/dev-keypair.json` | 抽 `KeyStore` 接口，新增 `VaultKeyStore`；`DE_VAULT_ADDR/TOKEN` env 已留 |
+| W2-D3 | SubAgent（多 Agent 委派 / merge opinions） | ⚪ 未做 | `internal/agentos/subagent.go` 仅 stub；`mergeParticipantOpinions` 当前是 truncation | 实施真正的 sub-agent 调度 + 并发合并 |
+
+---
+
+## 3. 后端 — W3（ExpertInbox / HotReload / Preview）
+
+| ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
+|---|---|---|---|---|
+| W3-D1 | ExpertInbox（邮件 / IM 类聚合） | 🟡 部分 | store 有 `expert_inbox_*`，handler 仅列表；无 review / approve 流 | 加 review / approve 端点 + 通知 |
+| W3-D2 | HotReload（配置变更热加载） | ⚪ 未做 | 无 watch 包 | 新增 `internal/hotreload/`，订阅 fsnotify + SIGHUP |
+| W3-D3 | Preview（artifact 预览服务端） | ⚪ 未做 | `/api/skill-artifacts/<f>/preview` 仅是文件返回，无 sanitize / sandbox | iframe sandbox + DOMPurify 同源代理 |
+
+---
+
+## 4. 后端 — W4（Heartbeat / VisualDiff）
+
+| ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
+|---|---|---|---|---|
+| W4-D1 | Heartbeat / 在线探测 | ⚪ 未做 | 无 `internal/heartbeat/` 包 | 加 active probe + SSE 推送在线状态 |
+| W4-D2 | VisualDiff 服务端 | ⚪ 未做 | 无 rasterize / compare 包 | 用 headless chromium (rod) + pixelmatch，缓存 PNG |
+
+---
+
+## 5. 后端 — W5（SelfImproving / Multimodal）
+
+| ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
+|---|---|---|---|---|
+| W5-D1 | SelfImproving（执行反馈学习 / SOP 萃取） | ⚪ 未做 | 无 `internal/selfimproving/` | 收集 trace → 提炼 SOP → 写回 knowledge |
+| W5-D2 | Multimodal（图片 / 语音 / 文件统一管道） | ⚪ 未做 | `attach` 接口有，但后端未做 OCR / ASR | 加 provider 接口 + 缓存 |
+
+---
+
+## 6. 后端 — W6（PM SOP / Canvas）
+
+| ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
+|---|---|---|---|---|
+| W6-D1 | PM SOP（项目管理模板引擎） | ⚪ 未做 | 无 `internal/pmsop/` | 引入 PM 模板 DSL + 状态机 |
+| W6-D2 | Canvas 协作后端（presence / CRDT） | ⚪ 未做 | 无 realtime 包 | Yjs / 自托管 WS hub + 持久化 |
+
+---
+
+## 7. 后端 — W7（SQLite / WeChat-Sync）
+
+| ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
+|---|---|---|---|---|
+| W7-D1 | SQLite（嵌入式单机演示） | ⚪ 未做 | 全栈 PG；无 sqlite driver 接入 | 新增 `internal/store/sqlite.go`，按 env 切换 |
+| W7-D2 | WeChat 同步渠道 | ⚪ 未做 | 仅飞书 / 企业微信 / 钉钉 entrypoint | 加 `internal/channel/wechat/` |
+
+---
+
+## 8. 前端 — 9 项
+
+| ID | 项 | 状态 | 证据 / 缺口 |
+|---|---|---|---|
+| FE-1 | Copilot 三列布局（桌面会话历史 + 主区 + 上下文） | ⚪ 未做 | `features/copilot/layout.ts` 仅 4 行：`sessionHistoryPresentation()` 返回 `'pinned' \| 'drawer'`；无第三列容器 |
+| FE-2 | Composer 多模态（mic / 拍照 / 粘贴 / 拖拽） | 🟡 部分 | `pages/Copilot.tsx:1508/1555/2348` 有 `onPaste`(image) + `onDrop`；**mic / camera 未实现** |
+| FE-3 | Document Preview（xlsx/docx/pdf/pptx） | ✅ 完成 | `features/copilot/document-preview.tsx` 654 行，sheets / 段落 / 页码 / 幻灯片齐全 |
+| FE-4 | UI 组件目录 + Design Token 导出 | ✅ 完成 | `packages/ui/src/index.tsx` 628 行，与 `docs/视觉设计规范.md` Token 对齐 |
+| FE-5 | SSE Stream 事件协议（stage/delta/tool/route/thought/evidence/done/error） | ✅ 完成 | `packages/types/src/agent-os.ts:18` `STREAM_EVENT_TYPES` 8 项齐全 |
+| FE-6 | PM Canvas / 协作画布（白板 / 评论 / presence） | ⚪ 未做 | 无 PM canvas 组件；`presence` 在 copilot 仅出现 1 次（CSS） |
+| FE-7 | Visual Diff（前后截图 / 像素差 / 高亮） | ⚪ 未做 | 无 pixelmatch / puppeteer 调用 |
+| FE-8 | Workflow Canvas（react-flow 编排） | 🟡 部分 | `pages/WorkflowOrchestrationSession.tsx` + `Knowledge.tsx` 用 react-flow；**无 presence / 评论** |
+| FE-9 | Session Sync（跨设备 / heartbeat / 标签同步） | ⚪ 未做 | 无 `BroadcastChannel` / `heartbeat` / `deviceId` 实现 |
+
+---
+
+## 9. 横切 — ADR / 手册 / 指标 / 权限 / Env / CI
+
+### 9.1 ADR（12 份，0 份已落）
+
+| ADR | 主题 | 状态 |
+|---|---|---|
+| ADR-018 | Skill Vetter 接入策略 | ⚪ |
+| ADR-019 | Gateway 硬墙策略 | ⚪ |
+| ADR-020 | Workspace Publisher Key 信任链 | 🟡 草图（W2-D1 README 提到） |
+| ADR-021 | Vault 接入策略（dev/staging/prod 三段） | ⚪ |
+| ADR-022 | SubAgent 调度与并发合并 | ⚪ |
+| ADR-023 | ExpertInbox 数据生命周期 | ⚪ |
+| ADR-024 | HotReload watch + reload 安全语义 | ⚪ |
+| ADR-025 | VisualDiff 缓存与置信度 | ⚪ |
+| ADR-026 | SelfImproving 反馈回路与写入边界 | ⚪ |
+| ADR-027 | Canvas 协作 / CRDT 选型 | ⚪ |
+| ADR-028 | SQLite 双栈切换契约 | ⚪ |
+| ADR-029 | WeChat 渠道限流与同步策略 | ⚪ |
+
+### 9.2 用户手册（8 份，0 份已落）
+
+| 手册 | 状态 |
+|---|---|
+| W1-vetter 安全策略 / 用户面对白名单 | ⚪ |
+| W2-publisher-key 运维手册 | ⚪ |
+| W2-vault 凭据管理手册 | ⚪ |
+| W3-expert-inbox 审核手册 | ⚪ |
+| W4-heartbeat & visualdiff 排查手册 | ⚪ |
+| W5-multimodal 上传规范 | ⚪ |
+| W6-pm-canvas 协作手册 | ⚪ |
+| W7-sqlite / wechat 部署手册 | ⚪ |
+
+### 9.3 Prometheus 指标（10 条，0 条已落）
+
+| 指标 | 状态 |
+|---|---|
+| `de_skill_vetter_total{verdict}` | ⚪ |
+| `de_skill_sign_total{result}` | ⚪ |
+| `de_subagent_run_seconds` | ⚪ |
+| `de_vault_resolve_seconds{ref}` | ⚪ |
+| `de_expert_inbox_pending` | ⚪ |
+| `de_hotreload_reload_total{resource}` | ⚪ |
+| `de_heartbeat_lag_seconds` | ⚪ |
+| `de_visualdiff_seconds{size}` | ⚪ |
+| `de_canvas_clients_online{workspace}` | ⚪ |
+| `de_session_sync_skew_ms{device}` | ⚪ |
+
+### 9.4 权限（4 个，0 个已落）
+
+| 权限 | 状态 |
+|---|---|
+| `skill.vet.override` | ⚪ |
+| `publisher_key.rotate` | ⚪ |
+| `vault.read` | ⚪ |
+| `canvas.comment` | ⚪ |
+
+### 9.5 环境变量（11 个，1 个已接）
+
+| Env | 状态 |
+|---|---|
+| `DE_SKILL_VETTER` | ✅ 已接 |
+| `DE_REQUIRE_SKILL_SIGNATURE` | ✅ 已接（`off/enabled/workspace/builtin_only`） |
+| `DE_BAN_DEV_KEYPAIR` | 🟡 已读，未与启动 fail 绑定 |
+| `DE_TRUSTED_PUBLISHERS_PATH` | ✅ 已接 |
+| `DE_DEV_KEYPAIR_PATH` | ✅ 已接 |
+| `DE_VAULT_ADDR` / `DE_VAULT_TOKEN` / `DE_VAULT_KV_MOUNT` | 🟡 仅 Client.NewFromEnv 读，无 caller |
+| `DE_SUBAGENT_MAX_CONCURRENCY` | ⚪ |
+| `DE_HEARTBEAT_INTERVAL` | ⚪ |
+| `DE_CANVAS_COMMENT_TTL` | ⚪ |
+| `DE_VISUALDIFF_RETENTION` | ⚪ |
+| `DE_SESSION_SYNC_ENABLED` | ⚪ |
+
+### 9.6 CI（1 项已绿）
+
+| CI | 状态 |
+|---|---|
+| `.github/workflows/backend-contract.yml` | ✅ 已绿（PR unit + 契约探针） |
+| `make skill-gate` job | ⚪ 未入库 |
+| visual regression job | ⚪ |
+
+---
+
+## 10. P0 行动（本周可落地）
+
+> 顺序遵守「先契约后迁包」「先 ADR 后代码」「hard_delete_persist_test 必须新增」三条原则。
+
+1. **W1-D1 vetter 联通**（2 人日）
+   - 在 `verifyBuiltinSignature` 之前 vetter 跑
+   - 加 `TestImportRejectedWhenVetterFails`
+   - 出 ADR-018
+2. **W1-D3 gateway 硬墙**（3 人日）
+   - `internal/gateway/` 包：SSRF / path traversal / size / mime / iframe sandbox
+   - `/api/skill-artifacts/<f>/preview` 同源代理
+   - 出 ADR-019 + 4 个测试
+3. **W2-D2 Vault 接入**（3 人日）
+   - 抽 `signing.KeyStore` 接口
+   - 新增 `VaultKeyStore`，`DevKeyStore` 改 `FileKeyStore`
+   - 加 `vault.PutMap/ResolveMap` 用于模型凭据
+   - 出 ADR-021 + 5 个测试
+4. **横切批次**（1 人日）
+   - ADR-020（publisher key）定稿
+   - W2 运维手册 1 篇
+   - 4 个 Prometheus 指标（vetter / sign / vault / expert_inbox）
+
+完成 P0 后完成率 5% → ~20%。
+
+---
+
+## 11. P1（接下来 2 周）
+
+- W3-D1 ExpertInbox review 流
+- W3-D2 HotReload
+- W3-D3 Preview sandbox
+- 前端 FE-1 三列布局
+- 前端 FE-2 mic / camera
+- ADR-022 / 023 / 024
+- 5 个指标 + 2 个权限
+
+---
+
+## 12. 证据索引（grep 锚点）
+
+```
+# 后端
+backend/internal/skills/vetter/                    # W1-D1
+backend/internal/skills/signing/keystore.go       # W1-D2 ✓
+backend/internal/skills/signing/canonical.go      # W1-D2 ✓
+backend/internal/skills/signing/signer.go         # W1-D2 ✓
+backend/cmd/sign-skill/                           # W1-D2 ✓
+backend/cmd/verify-skill/                         # W1-D2 ✓
+backend/cmd/sign-skill-pack/                      # W2-D1 ✓
+backend/internal/server/handlers_workspaces_publisher*.go  # W2-D1 ✓
+backend/internal/vault/client.go                  # W2-D2 (client only)
+backend/internal/agentos/subagent.go              # W2-D3 (stub)
+backend/internal/server/skill_vetter_integration_test.go  # W1-D1 集成测试 ✓
+
+# 前端
+frontend/web/src/features/copilot/document-preview.tsx       # FE-3 ✓
+frontend/packages/ui/src/index.tsx                            # FE-4 ✓
+frontend/packages/types/src/agent-os.ts                       # FE-5 ✓
+frontend/web/src/features/copilot/layout.ts                    # FE-1 (4 lines, no 3-col)
+frontend/web/src/pages/Copilot.tsx:1508/1555/2348             # FE-2 (paste/drop)
+frontend/web/src/pages/WorkflowOrchestrationSession.tsx       # FE-8 (react-flow)
+
+# 横切
+docs/adr/ADR-014-scope-layers.md               # 已存在（不算 018-029）
+.github/workflows/backend-contract.yml         # ✓
+```
