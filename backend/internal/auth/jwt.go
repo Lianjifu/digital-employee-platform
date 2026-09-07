@@ -127,7 +127,7 @@ func RolePermissions(role string) []string {
 			"skill.read", "skill.write", "skill.execute", "model.read", "model.write",
 			"task.read", "task.write", "task.approve", "channel.read", "channel.write",
 			"audit.read", "audit.export", "access.read", "access.write", "release.approve",
-			"billing.read", "billing.write",
+			"billing.read", "billing.write", "canvas.comment",
 		}
 	case "auditor":
 		return []string{

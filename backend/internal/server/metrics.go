@@ -340,4 +340,12 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"task.block\"} %d\n", svc, psBlock)
 	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"task.unblock\"} %d\n", svc, psUnblock)
 	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"task.note\"} %d\n", svc, psNote)
+
+	// W6-D2 · Canvas comment lifecycle
+	cvCreated, cvEdited, cvResolved, cvDeleted := metrics.Global.Canvas.Snapshot()
+	_, _ = fmt.Fprintf(w, "# HELP de_canvas_comment_total Canvas comment lifecycle events\n# TYPE de_canvas_comment_total counter\n")
+	_, _ = fmt.Fprintf(w, "de_canvas_comment_total{service=%q,action=\"created\"} %d\n", svc, cvCreated)
+	_, _ = fmt.Fprintf(w, "de_canvas_comment_total{service=%q,action=\"edited\"} %d\n", svc, cvEdited)
+	_, _ = fmt.Fprintf(w, "de_canvas_comment_total{service=%q,action=\"resolved\"} %d\n", svc, cvResolved)
+	_, _ = fmt.Fprintf(w, "de_canvas_comment_total{service=%q,action=\"deleted\"} %d\n", svc, cvDeleted)
 }

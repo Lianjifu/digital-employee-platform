@@ -14,11 +14,11 @@
 | 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 3 | 0 | 0 | 100% |
 | 后端 W4（Heartbeat / VisualDiff） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W5（SelfImproving / Multimodal） | 2 | 2 | 0 | 0 | 100% |
-| 后端 W6（PM SOP / Canvas） | 2 | 1 | 0 | 1 | 50% |
+| 后端 W6（PM SOP / Canvas） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 0 | 0 | 2 | 0% |
 | 前端 9 项 | 9 | 2 | 2 | 5 | 22% |
 | 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 11 | 1 | ~38 | ~24% |
-| **合计** | **~80** | **24** | **3** | **~53** | **~32%** |
+| **合计** | **~80** | **25** | **3** | **~52** | **~33%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -83,7 +83,7 @@
 | ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
 |---|---|---|---|---|
 | W6-D1 | PM SOP（项目管理模板引擎） | ✅ 完成 | 新 `internal/pmsop/`：Engine + Template/Plan + 状态机（5 个 task.* 事件 + 自动 stage/plan 完成判定）；内置 `agile-sprint` / `launch-checklist` 模板；`POST /api/pmsop/plans` 渲染、`GET /api/pmsop/plans/<id>` 详情、`POST /api/pmsop/plans/<id>/events` 应用事件；持久化在 `Store.KnowledgeExtra["pmsop_plans"]`；`de_pmsop_plan_total{action}` 指标 | ADR-034 + 12 包测 + 8 集成测 |
-| W6-D2 | Canvas 协作后端（presence / CRDT） | ⚪ 未做 | 无 realtime 包 | Yjs / 自托管 WS hub + 持久化 |
+| W6-D2 | Canvas 协作后端（presence / CRDT） | ✅ 完成 | 新 `internal/canvas/`：Store（boards / comments / presence map）+ Broadcaster（per-board SSE fan-out）；9 个路由：`/api/canvas/boards[/{id}][/{comments,presence,stream}]` 与 `/api/canvas/comments/{id}`；SSE 事件 `snapshot / presence / comment / tick`；新增权限 `canvas.comment`；`de_canvas_comment_total{action}` 指标 | ADR-035 + 13 包测 + 10 集成测 |
 
 ---
 
@@ -128,7 +128,7 @@
 | ADR-025 | VisualDiff 缓存与置信度 | ✅ 完成（[ADR-032](../adr/ADR-032-visualdiff-cache-confidence.md)） |
 | ADR-033 | Multimodal provider 抽象与缓存 | ✅ 完成（[ADR-033](../adr/ADR-033-multimodal-provider-cache.md)） |
 | ADR-026 | SelfImproving 反馈回路与写入边界 | ✅ 完成（[ADR-026](../adr/ADR-026-selfimproving-feedback-loop.md)） |
-| ADR-027 | Canvas 协作 / CRDT 选型 | ⚪ |
+| ADR-027 | Canvas 协作 / CRDT 选型 | ✅ 完成（[ADR-035](../adr/ADR-035-canvas-collaboration.md)） |
 | ADR-028 | SQLite 双栈切换契约 | ⚪ |
 | ADR-029 | WeChat 渠道限流与同步策略 | ⚪ |
 | ADR-030 | Preview sandbox 语义（iframe / CSP / inline `?inline=1`） | ✅ 完成（[ADR-030](../adr/ADR-030-preview-sandbox.md)） |
@@ -169,7 +169,7 @@
 | `skill.vet.override` | ⚪ |
 | `publisher_key.rotate` | ⚪ |
 | `vault.read` | ⚪ |
-| `canvas.comment` | ⚪ |
+| `canvas.comment` | ✅ 完成（W6-D2） |
 
 ### 9.5 环境变量（11 个，1 个已接）
 

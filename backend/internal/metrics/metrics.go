@@ -249,7 +249,33 @@ type Registry struct {
 	VisualDiff   VisualDiffBuckets
 	SelfImproving SelfImprovingBuckets
 	PMSop        PMSopBuckets
+	Canvas       CanvasBuckets
 	processStart time.Time
+}
+
+// CanvasBuckets counts canvas comment lifecycle events.
+type CanvasBuckets struct {
+	Created  Counter
+	Edited   Counter
+	Resolved Counter
+	Deleted  Counter
+}
+
+func (c *CanvasBuckets) Inc(action string) {
+	switch action {
+	case "created":
+		c.Created.Inc()
+	case "edited":
+		c.Edited.Inc()
+	case "resolved":
+		c.Resolved.Inc()
+	case "deleted":
+		c.Deleted.Inc()
+	}
+}
+
+func (c *CanvasBuckets) Snapshot() (created, edited, resolved, deleted uint64) {
+	return c.Created.Value(), c.Edited.Value(), c.Resolved.Value(), c.Deleted.Value()
 }
 
 // PMSopBuckets counts PM plan creations and event types applied.

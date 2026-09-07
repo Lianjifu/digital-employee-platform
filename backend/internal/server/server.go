@@ -17,6 +17,7 @@ import (
 	"github.com/digital-employee-platform/backend/internal/deworkflow"
 	"github.com/digital-employee-platform/backend/internal/heartbeat"
 	"github.com/digital-employee-platform/backend/internal/infra"
+	"github.com/digital-employee-platform/backend/internal/canvas"
 	"github.com/digital-employee-platform/backend/internal/multimodal"
 	"github.com/digital-employee-platform/backend/internal/pmsop"
 	memid "github.com/digital-employee-platform/backend/internal/memory/identity"
@@ -111,6 +112,10 @@ type Server struct {
 	Multimodal *multimodal.Registry
 	// W6-D1 · PM SOP engine + bundled templates. nil until initPMsop.
 	PMSop *pmsop.Engine
+	// W6-D2 · Canvas collaboration. nil until initCanvas.
+	Canvas *canvas.Store
+	// CanvasBroadcaster fans board events to per-board subscribers.
+	CanvasBroadcaster *canvas.Broadcaster
 }
 
 // serverTestHooks groups the optional test seams. Field types are kept in
@@ -165,6 +170,8 @@ func New(st *store.Store) *Server {
 	s.initMultimodal()
 	// W6-D1 · PM SOP templates + plan state machine.
 	s.initPMsop()
+	// W6-D2 · Canvas collaboration store + broadcaster.
+	s.initCanvas()
 	return s
 }
 
@@ -755,6 +762,34 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		return
 	case strings.HasSuffix(path, "/events") && strings.HasPrefix(path, "/api/pmsop/plans/") && method == http.MethodPost:
 		s.pmsopPlanEventHandler(w, r)
+		return
+	// W6-D2 · Canvas collaboration
+	case path == "/api/canvas/boards" && method == http.MethodPost:
+		s.canvasCreateBoardHandler(w, r)
+		return
+	case path == "/api/canvas/boards" && method == http.MethodGet:
+		s.canvasListBoardsHandler(w, r)
+		return
+	case strings.HasSuffix(path, "/stream") && strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodGet:
+		s.canvasStreamHandler(w, r)
+		return
+	case strings.HasSuffix(path, "/presence") && strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodPost:
+		s.canvasTouchPresenceHandler(w, r)
+		return
+	case strings.HasSuffix(path, "/comments") && strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodPost:
+		s.canvasCreateCommentHandler(w, r)
+		return
+	case strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodGet:
+		s.canvasBoardDetailHandler(w, r)
+		return
+	case strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodDelete:
+		s.canvasDeleteBoardHandler(w, r)
+		return
+	case strings.HasPrefix(path, "/api/canvas/comments/") && method == http.MethodPatch:
+		s.canvasEditCommentHandler(w, r)
+		return
+	case strings.HasPrefix(path, "/api/canvas/comments/") && method == http.MethodDelete:
+		s.canvasDeleteCommentHandler(w, r)
 		return
 	case path == "/api/skill-integrations" && method == http.MethodGet:
 		data, err = s.listSkillIntegrations(r)
