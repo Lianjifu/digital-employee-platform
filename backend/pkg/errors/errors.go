@@ -91,6 +91,8 @@ const (
 	CredentialsRequired                  Code = "E_CREDENTIALS_REQUIRED"
 	NotFound                             Code = "E_NOT_FOUND"
 	BadRequest                           Code = "E_BAD_REQUEST"
+	PayloadTooLarge                      Code = "E_PAYLOAD_TOO_LARGE"
+	UnsupportedMediaType                 Code = "E_UNSUPPORTED_MEDIA_TYPE"
 
 	// Agent OS 内核（ADR-013）。阶段 1 起用于 Session Routing / Replay / 身份门禁。
 	SessionClosed         Code = "E_SESSION_CLOSED"
