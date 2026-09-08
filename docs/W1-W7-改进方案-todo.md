@@ -17,8 +17,8 @@
 | 后端 W6（PM SOP / Canvas） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 2 | 0 | 0 | 100% |
 | 前端 9 项 | 9 | 9 | 0 | 0 | 100% |
-| 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 19 | 1 | ~30 | ~41% |
-| **合计** | **~80** | **43** | **1** | **~36** | **~58%** |
+| 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 21 | 0 | ~29 | ~45% |
+| **合计** | **~80** | **45** | **0** | **~35** | **~61%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -178,10 +178,10 @@
 |---|---|
 | `DE_SKILL_VETTER` | ✅ 已接 |
 | `DE_REQUIRE_SKILL_SIGNATURE` | ✅ 已接（`off/enabled/workspace/builtin_only`） |
-| `DE_BAN_DEV_KEYPAIR` | 🟡 已读，未与启动 fail 绑定 |
+| `DE_BAN_DEV_KEYPAIR` | ✅ 已接（`internal/runtimeenv/env.go:92` `AutoProvisionsSkillKeys()`：prod/staging 默认 false；设 `true` 强制不走 dev keypair 路径；与 `DE_FORCE_DEV_KEYPAIR` 互斥） |
 | `DE_TRUSTED_PUBLISHERS_PATH` | ✅ 已接 |
 | `DE_DEV_KEYPAIR_PATH` | ✅ 已接 |
-| `DE_VAULT_ADDR` / `DE_VAULT_TOKEN` / `DE_VAULT_KV_MOUNT` | 🟡 仅 Client.NewFromEnv 读，无 caller |
+| `DE_VAULT_ADDR` / `DE_VAULT_TOKEN` / `DE_VAULT_KV_MOUNT` | ✅ 已接（`internal/vault/client.go` `NewFromEnv` + `internal/server/builtin_skills.go` `bootstrapVaultSkillSigning()`：env 三个全读，probe 失败回退 dev） |
 | `DE_SUBAGENT_MAX_CONCURRENCY` | ✅ 已接（W2-D3；默认 4） |
 | `DE_HEARTBEAT_INTERVAL` | ✅ 已接（W4-D1） |
 | `DE_CANVAS_COMMENT_TTL` | ✅ 已接（W6-D2 `canvasJanitor`；TTL=0 关闭；过期 comments 触发 `de_canvas_comment_total{action="expired"}`） |
