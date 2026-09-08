@@ -2,8 +2,10 @@ package server
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 	"runtime"
+	"runtime/debug"
 	"sync/atomic"
 	"time"
 
@@ -175,6 +177,44 @@ func (s *Server) withHTTPMetrics(next http.Handler) http.Handler {
 		httpRequestsTotal.Add(1)
 		httpRequestDurationMS.Add(uint64(time.Since(start).Milliseconds()))
 		_ = rec.code
+	})
+}
+
+// withRecover catches any panic from downstream handlers and converts
+// it into a 500 response + audit row + counter. Wraps the entire
+// middleware chain so a panic in any handler (including auth, metrics,
+// business logic) does not hang the connection.
+//
+// Local recover() in handlers (e.g. webhook parsers) runs first and
+// suppresses the panic before this layer sees it. This is the intended
+// layering: local for "graceful degradation" of optional side-effects,
+// global for "the request itself must respond 500".
+func (s *Server) withRecover(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			rec := recover()
+			if rec == nil {
+				return
+			}
+			stack := debug.Stack()
+			log.Printf("handler panic: method=%s path=%s panic=%v\n%s", r.Method, r.URL.Path, rec, stack)
+			metrics.Global.HandlerPanics.Inc()
+			if s.Store != nil {
+				ws, actor := "", ""
+				if id := identityFrom(r.Context()); id != nil {
+					ws = id.WorkspaceID
+					actor = id.Name
+				}
+				if ws == "" {
+					ws = "w1"
+				}
+				s.Store.AppendAudit(ws, actor, "handler panic", r.URL.Path, "failed", fmt.Sprintf("%v", rec))
+			}
+			if w.Header().Get("Content-Type") == "" {
+				http.Error(w, `{"code":"INTERNAL","message":"内部错误"}`, http.StatusInternalServerError)
+			}
+		}()
+		next.ServeHTTP(w, r)
 	})
 }
 
@@ -374,4 +414,10 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "de_subagent_run_total{service=%q,status=\"refused\"} %d\n", svc, saRefused)
 	_, _ = fmt.Fprintf(w, "de_subagent_run_total{service=%q,status=\"timed_out\"} %d\n", svc, saTimedOut)
 	_, _ = fmt.Fprintf(w, "de_subagent_run_total{service=%q,status=\"failed\"} %d\n", svc, saFailed)
+
+	// P1-2 · Outer-middleware panic counter. Per-request context (path,
+	// method, stack) is logged separately; metric stays label-free to
+	// bound Prometheus cardinality.
+	_, _ = fmt.Fprintf(w, "# HELP de_http_handler_panics_total panics caught by the outer withRecover middleware\n# TYPE de_http_handler_panics_total counter\n")
+	_, _ = fmt.Fprintf(w, "de_http_handler_panics_total{service=%q} %d\n", svc, metrics.Global.HandlerPanics.Value())
 }

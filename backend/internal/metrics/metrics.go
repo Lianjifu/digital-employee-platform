@@ -256,7 +256,12 @@ type Registry struct {
 	Canvas       CanvasBuckets
 	SubAgent     SubAgentBuckets
 	SessionSync  SessionSync
-	processStart time.Time
+	// HandlerPanics counts panics caught by the outer withRecover middleware
+	// (see internal/server/metrics.go). No labels — full context (path,
+	// method, stack) is logged separately to avoid Prometheus cardinality
+	// explosion.
+	HandlerPanics Counter
+	processStart  time.Time
 }
 
 // CanvasBuckets counts canvas comment lifecycle events.

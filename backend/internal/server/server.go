@@ -220,6 +220,14 @@ func (s *Server) Shutdown(_ context.Context) error {
 	return nil
 }
 
+// WithRecoverForTest exposes the withRecover middleware for unit tests
+// that need to wrap a stand-alone handler (e.g. a panicking route) without
+// pulling in the full cors/requireAuth chain. Production wiring goes
+// through Handler().
+func (s *Server) WithRecoverForTest(next http.Handler) http.Handler {
+	return s.withRecover(next)
+}
+
 // buildSubAgentEngine configures the bounded-concurrency dispatch engine
 // from env. Defaults: 4 concurrent participants, 30s per-task budget.
 func buildSubAgentEngine() *agentos.Engine {
@@ -426,7 +434,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	mux.HandleFunc("/metrics", s.metricsPrometheus)
 	mux.HandleFunc("/", s.route)
-	return cors(s.withHTTPMetrics(s.requireAuth(s.withHeartbeat(mux))))
+	return s.withRecover(cors(s.withHTTPMetrics(s.requireAuth(s.withHeartbeat(mux)))))
 }
 
 func (s *Server) route(w http.ResponseWriter, r *http.Request) {
