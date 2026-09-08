@@ -18,7 +18,7 @@
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 2 | 0 | 0 | 100% |
 | 前端 9 项 | 9 | 9 | 0 | 0 | 100% |
 | 横切（ADR × 16 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI × 3） | ~52 | 52 | 0 | 0 | 100% |
-| **合计** | **~82** | **78** | **0** | **~4** | **~95%** |
+| **合计** | **82** | **78** | **0** | **4** | **95%** |
 
 **关键结论**（2026-09-08）：
 - W1（Skill 安全）：D1 vetter + D3 gateway + D4 catalog + D2 签名 — 4/4 ✅
@@ -31,7 +31,7 @@
 - 前端：FE-1 三列 / FE-2 多模态 / FE-3 文档预览 / FE-4 UI / FE-5 SSE / FE-6 Canvas / FE-7 VisualDiff / FE-8 Workflow / FE-9 Session Sync — 9/9 ✅
 - 横切：ADR × 16 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI × 3 — 52/52 ✅
 - 性能 / 可靠性硬化：P1-1 cancel/Shutdown + P1-2 panic recover + P1-3 close 注册 + P1-4 Kafka 注入 — 6 commits ✅（见 §11）
-- 合计 **~95%** 完成，剩余项均为 §0 「已知小事项」（deprecation 注释 / docs typo 等）
+- 合计 **95%** 完成；剩余 **4 项 ⚪** 均为「已知小事项」（`deprecation` 注释 / docs typo / `infra.OpenSearchAudit` Close / Store 整体 Close 概念 —— 见 §11 §6 out-of-scope 与 §0 「已知小事项」）
 
 ---
 
