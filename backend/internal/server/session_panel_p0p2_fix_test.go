@@ -102,8 +102,10 @@ func TestP0_PanicRecoveredToFailedResult(t *testing.T) {
 	}
 	// de-b must be a failed/panic_recovered — NOT a zero-value result that
 	// would otherwise emit a fake "agent.delegate" event downstream.
-	if results[1].ParticipantID != panicID || results[1].Status != "failed" || results[1].Reason != "panic_recovered" {
-		t.Fatalf("de-b should be failed/panic_recovered, got %+v", results[1])
+	// agentos appends the recovered panic value as "<reason>: <panic value>";
+	// accept any string that starts with the canonical reason.
+	if results[1].ParticipantID != panicID || results[1].Status != "failed" || !strings.HasPrefix(results[1].Reason, "panic_recovered") {
+		t.Fatalf("de-b should be failed/panic_recovered*, got %+v", results[1])
 	}
 }
 
