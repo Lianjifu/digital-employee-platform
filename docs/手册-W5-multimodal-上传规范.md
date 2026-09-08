@@ -92,7 +92,7 @@ curl -sf -X POST -H "Authorization: Bearer $TOKEN" \
 前端 `features/copilot/composer-media.ts` 已经做了：
 - `isOverCap(8 MB)` — 在 composer 阶段就拒绝 8 MB+ 文件
 - `pickSupportedAudioMime()` — 自动选浏览器支持的 mime（webm/ogg/mp4）
-- `captureAudio/captureImage` — mic / 摄像头采集后 `<8MB` 才入队
+- `captureAudio/captureImage` — mic / 摄像头采集后 `<8 MB` 才入队
 
 服务端侧 20 MB 上限是 **hard cap**（handler `io.LimitReader` + `r.ParseMultipartForm(20 << 20)`）；客户端 8 MB 是 **soft cap**（UX 防抖）。
 

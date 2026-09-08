@@ -65,6 +65,7 @@ func Stamp(source Source, actorID, actorName, reference, content, note string) (
 	}, nil
 }
 
+// Deprecated: For migrating pre-provenance records only. New content should use NewProvenance(...). Will be removed in v2 once historical migration completes.
 // StampLegacy is for records that pre-date provenance tracking.
 // Source is set to SourceMigration and Actor is "system".
 func StampLegacy(content string) Provenance {

@@ -1034,6 +1034,7 @@ function KnowledgeGraphCanvasStatic({ entities, relations, selectedEntityId, onS
   return <div className="knowledge-reactflow-canvas"><ReactFlow nodes={nodes} edges={edges} nodeTypes={KNOWLEDGE_GRAPH_NODE_TYPES} onNodesChange={onNodesChange} onEdgesChange={onEdgesChange} onNodeClick={(_, node) => onSelect(node.id)} nodesDraggable edgesUpdatable elementsSelectable defaultViewport={{ x: 0, y: 0, zoom: 1 }} minZoom={.55} maxZoom={1.8} proOptions={{ hideAttribution: true }}><Background gap={18} size={1} color="#e2e8f0" /><Controls showInteractive={false} /></ReactFlow></div>;
 }
 
+/** @deprecated Use KnowledgeGraphCanvas (ReactFlow renderer). Kept as a fallback for environments without ReactFlow; will be removed in v2. */
 function KnowledgeGraphCanvasLegacy({ entities, relations, selectedEntityId, onSelect }: { entities: KnowledgeGraphEntity[]; relations: KnowledgeGraphRelation[]; selectedEntityId: string | null; onSelect: (id: string) => void }) {
   const positionFor = (entity: KnowledgeGraphEntity, index: number): [number, number] => GRAPH_NODE_POSITIONS[entity.id] ?? [130 + (index % 4) * 170, 90 + Math.floor(index / 4) * 150];
   const selected = entities.find((entity) => entity.id === selectedEntityId) ?? entities[0];

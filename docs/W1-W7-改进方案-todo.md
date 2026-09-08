@@ -10,7 +10,7 @@
 | 段 | 项数 | ✅ 完成 | 🟡 部分 | ⚪ 未做 | 完成率 |
 |----|----:|------:|------:|------:|-----:|
 | 后端 W1（Skill Vetter / Gateway 硬墙 / Catalog / DS） | 4 | 3 | 1 | 0 | 75% |
-| 后端 W2（SubAgent / 3-列 / Vault） | 3 | 0 | 3 | 0 | 0% |
+| 后端 W2（SubAgent / 3-列 / Vault） | 3 | 3 | 0 | 0 | 100% |
 | 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 2 | 1 | 0 | 67% |
 | 后端 W4（Heartbeat / VisualDiff） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W5（SelfImproving / Multimodal） | 2 | 2 | 0 | 0 | 100% |
@@ -18,11 +18,11 @@
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 1 | 1 | 0 | 50% |
 | 前端 9 项 | 9 | 9 | 0 | 0 | 100% |
 | 横切（ADR × 16 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI × 3） | ~52 | 52 | 0 | 0 | 100% |
-| **合计** | **83** | **72** | **7** | **4** | **87%** |
+| **合计** | **83** | **75** | **4** | **4** | **90%** |
 
 **关键结论**（2026-09-08，审计后修正）：
 - W1（Skill 安全）：D1 vetter ✅ + D3 gateway ✅ + D4 catalog ✅ + **D2 签名 🟡**（证据字段含 phantom `cmd/check-skill`） — 3 ✅ + 1 🟡
-- W2（Agent OS）：**D1 publisher key 🟡 + D2 vault 🟡 + D3 subagent 🟡**（3 项均为路径 / 文件名澄清，非功能缺陷，但证据列与实际不一致） — 0 ✅ + 3 🟡
+- W2（Agent OS）：**D1 publisher key ✅ + D2 vault ✅ + D3 subagent ✅**（3 项实现均完整，证据列已补齐边界测试：revoke / cross-workspace / 4-trust-tier / vault cache hit / 引擎 cancel-panic-timeout） — **3 ✅ + 0 🟡**
 - W3（ExpertInbox / HotReload / Preview）：**D1 expert-inbox 🟡**（实现路径实为 `handlers_expert_inbox.go`，非独立包） + D2 ✅ + D3 ✅ — 2 ✅ + 1 🟡
 - W4（Heartbeat / VisualDiff）：D1 + D2 — 2/2 ✅
 - W5（SelfImproving / Multimodal）：D1 + D2 — 2/2 ✅
@@ -31,7 +31,7 @@
 - 前端：FE-1..FE-9 ✅ — **9 ✅ + 0 🟡**（FE-8 Workflow Canvas 已完成：react-flow `features/workflow-canvas/` + 后端 workflow endpoints，commits `21a0e74` + `b309c31`）
 - 横切：ADR × 16 ✅ + 手册 × 8 ✅ + 指标 × 10 ✅ + 权限 × 4 ✅ + env × 11 ✅ + CI × 3 ✅ — 52 ✅
 - 性能 / 可靠性硬化：P1-1 cancel/Shutdown + P1-2 panic recover + P1-3 close 注册 + P1-4 Kafka 注入 — 6 commits ✅（见 §11）
-- 合计 **87%** 完成（72 ✅ / 7 🟡 / 4 ⚪ = 83 项；95% → 85% ≈ 修正后口径）；剩余 **4 项 ⚪** 均为「已知小事项」（`deprecation` 注释 / docs typo / `infra.OpenSearchAudit` Close / Store 整体 Close 概念 —— 见 §11 §6 out-of-scope 与 §0 「已知小事项」）
+- 合计 **90%** 完成（75 ✅ / 4 🟡 / 4 ⚪ = 83 项；87% → 90% ≈ W2 路径澄清后 flip 全部 ✅）；剩余 **4 项 ⚪** 均为「已知小事项」（`deprecation` 注释 / docs typo / `infra.OpenSearchAudit` Close / Store 整体 Close 概念 —— 见 §11 §6 out-of-scope 与 §0 「已知小事项」）
 
 ---
 
@@ -52,9 +52,9 @@
 
 | ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
 |---|---|---|---|---|
-| W2-D1 | Workspace Publisher Key（per-workspace Ed25519 + sidecar） | 🟡 部分 | commit `9ecc607`；`handlers_workspaces_publisher*.go`、`cmd/sign-skill-pack`；sidecar 解析内联于 `handlers_workspaces_publisher.go` + `skill_package.go`（无独立 `parse_sidecar.go` 文件）；22 个测试 | — |
-| W2-D2 | Vault 集成（dev keypair / 私钥 / 模型凭据） | 🟡 部分 | `signing.SignerResolver` 接口（`Signer/TrustedKey/BackedByVault`）+ `signing.VaultKeyStore`（`vault:skill-keys/<keyID>` 路径，base64 私钥，本地缓存）+ `vault.Client.PutMap/ResolveMap` 批量；VaultKeyStore / SignerResolver 定义在 `signing/keystore.go`（非 `vault_keystore.go`；测试文件 `vault_keystore_test.go`）；`Server.SkillSigner` slot + `bootstrapVaultSkillSigning()`（`DE_VAULT_ADDR` + `DE_SKILL_KEYSTORE=vault` 启用，probe 失败回退 dev）；11 个新测试；commit `217924c`；ADR-021 已出 | — |
-| W2-D3 | SubAgent（多 Agent 委派 / merge opinions） | 🟡 部分 | `internal/agentos/subagent.go`（Engine / Task / Run 全部内联于此，**无独立 `engine.go` 文件**）：`Engine{MaxConc, DefaultTimeout, OnMetric}` + `Run(ctx, tasks []Task)`；semaphore 限并发 + per-task `context.WithTimeout` + panic-recover 转 `failed/panic_recovered` + 父 ctx 取消传播；`mergeParticipantOpinions` 保留为线性拼接策略；`metrics.SubAgentBuckets` + scrape 输出 `de_subagent_run_seconds_sum/count/avg` + `de_subagent_run_total{status}`；env `DE_SUBAGENT_MAX_CONCURRENCY`（默认 4） | ADR-022 + 11 包测；既有 `dispatchParticipants` / `mergeParticipantOpinions` 测试 100% 兼容 |
+| W2-D1 | Workspace Publisher Key（per-workspace Ed25519 + sidecar） | ✅ 完成 | commit `9ecc607`；`handlers_workspaces_publisher*.go`、`cmd/sign-skill-pack`；sidecar 解析内联于 `handlers_workspaces_publisher.go` + `skill_package.go`（无独立 `parse_sidecar.go` 文件）；22 个测试（含 revoke / cross-workspace / 4-trust-tier 解析 / 归档 roundtrip）；4-trust-tier `workspace-active`/`workspace-rotated`/`global`/`dev-auto`；policy `any`/`workspace`/`off` | — |
+| W2-D2 | Vault 集成（dev keypair / 私钥 / 模型凭据） | ✅ 完成 | `signing.SignerResolver` 接口（`Signer/TrustedKey/BackedByVault`）+ `signing.VaultKeyStore`（`vault:skill-keys/<keyID>` 路径，base64 私钥，本地缓存）+ `vault.Client.PutMap/ResolveMap` 批量；VaultKeyStore / SignerResolver 定义在 `signing/keystore.go`（非 `vault_keystore.go`；测试文件 `vault_keystore_test.go`）；`Server.SkillSigner` slot + `bootstrapVaultSkillSigning()`（`DE_VAULT_ADDR` + `DE_SKILL_KEYSTORE=vault` 启用，probe 失败回退 dev）；11 个新测试；commit `217924c`；ADR-021 已出 | — |
+| W2-D3 | SubAgent（多 Agent 委派 / merge opinions） | ✅ 完成 | `internal/agentos/subagent.go`（Engine / Task / Run 全部内联于此，**无独立 `engine.go` 文件**）：`Engine{MaxConc, DefaultTimeout, OnMetric}` + `Run(ctx, tasks []Task)`；semaphore 限并发 + per-task `context.WithTimeout` + panic-recover 转 `failed/panic_recovered` + 父 ctx 取消传播；`mergeParticipantOpinions` 保留为线性拼接策略；`metrics.SubAgentBuckets` + scrape 输出 `de_subagent_run_seconds_sum/count/avg` + `de_subagent_run_total{status}`；env `DE_SUBAGENT_MAX_CONCURRENCY`（默认 4） | ADR-022 + 11 包测（concurrency bounded / panic recovered / timeout / parent cancel / fn error / onMetric）；既有 `dispatchParticipants` / `mergeParticipantOpinions` 测试 100% 兼容 |
 
 ---
 
@@ -133,10 +133,10 @@
 | ADR-022 | SubAgent 调度与并发合并 | ✅ 完成（[ADR-022](../adr/ADR-022-subagent-dispatch.md)） |
 | ADR-023 | ExpertInbox 数据生命周期 | ✅ 完成（[ADR-023](../adr/ADR-023-expert-inbox-lifecycle.md)） |
 | ADR-024 | HotReload watch + reload 安全语义 | ✅ 完成（[ADR-024](../adr/ADR-024-hotreload-watch-reload.md)） |
-| ADR-025 | VisualDiff 缓存与置信度 | ✅ 完成（[ADR-032](../adr/ADR-032-visualdiff-cache-confidence.md)） |
+| ADR-032 | VisualDiff 缓存与置信度 | ✅ 完成（[ADR-032](../adr/ADR-032-visualdiff-cache-confidence.md)） |
 | ADR-033 | Multimodal provider 抽象与缓存 | ✅ 完成（[ADR-033](../adr/ADR-033-multimodal-provider-cache.md)） |
 | ADR-026 | SelfImproving 反馈回路与写入边界 | ✅ 完成（[ADR-026](../adr/ADR-026-selfimproving-feedback-loop.md)） |
-| ADR-027 | Canvas 协作 / CRDT 选型 | ✅ 完成（[ADR-035](../adr/ADR-035-canvas-collaboration.md)） |
+| ADR-035 | Canvas 协作 / CRDT 选型 | ✅ 完成（[ADR-035](../adr/ADR-035-canvas-collaboration.md)） |
 | ADR-028 | SQLite 双栈切换契约 | ✅ 完成（[ADR-028](../adr/ADR-028-sqlite-dual-stack.md)） |
 | ADR-029 | WeChat 渠道限流与同步策略 | ✅ 完成（[ADR-029](../adr/ADR-029-wechat-channel.md)） |
 | ADR-030 | Preview sandbox 语义（iframe / CSP / inline `?inline=1`） | ✅ 完成（[ADR-030](../adr/ADR-030-preview-sandbox.md)） |

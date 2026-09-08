@@ -59,9 +59,9 @@ timeout 5 curl -N -H "Authorization: Bearer $TOKEN" -H "X-Workspace-Id: w1" \
 - **Stale 期间** — 用户最后一次请求到驱逐之间最长 `StaleAfter`（默认 90s），期间仍会显示在线。
 - **SSE 在 nginx 后** — 必须 `proxy_buffering off` + `proxy_read_timeout 120s`，否则 60s 默认超时。
 
-## 2. VisualDiff 视觉回归
+## 5. VisualDiff 视觉回归
 
-### 2.1 现象对照
+### 5.1 现象对照
 
 | 现象 | 可能原因 | 怎么查 |
 |---|---|---|
@@ -71,7 +71,7 @@ timeout 5 curl -N -H "Authorization: Bearer $TOKEN" -H "X-Workspace-Id: w1" \
 | `de_visualdiff_total{size="huge"}` 暴涨 | 上传了 1080p+ 大图 | 看 `DE_VISUALDIFF_CACHE_DIR` 磁盘；`huge` 是 ≥ 1920×1080 |
 | 文件锁 / janitor 写失败 | 多进程同时启动 sweep | 默认 1h 一次；`ErrCacheLocked` 写日志但不 panic，下次 sweep 重试 |
 
-### 2.2 配置
+### 5.2 配置
 
 | Env | 默认 | 说明 |
 |---|---|---|
@@ -80,7 +80,7 @@ timeout 5 curl -N -H "Authorization: Bearer $TOKEN" -H "X-Workspace-Id: w1" \
 
 合法值：任何 Go `time.ParseDuration` 能解析的字符串（如 `24h` / `30m`）。
 
-### 2.3 端到端 smoke
+### 5.3 端到端 smoke
 
 ```bash
 TOKEN=$(curl -sf -X POST http://127.0.0.1:8089/api/auth/login \
@@ -105,7 +105,7 @@ curl -sf http://127.0.0.1:8089/metrics | grep de_visualdiff
 # → de_visualdiff_seconds_sum{size="small"} ...
 ```
 
-### 2.4 已知边界
+### 5.4 已知边界
 
 - **必须同分辨率** — 当前版本要求两张图 `width × height` 一致；否则返回 400 `size_mismatch`。
 - **大图慢** — `huge` bucket（≥ 1920×1080）单次 50–200ms；批量跑要串行。

@@ -68,7 +68,7 @@ W3-D1 把 `ExpertInbox` 从 metric stub 升级成真实数据表。每条记录�
 |---|---|---|
 | `de_expert_inbox_pending{service}` | 当前 workspace 待审条目数 | 持续 > 20 = ops 漏看 |
 
-Gague 值 = 「上一次 list / create 调用所在 workspace」的 pending 计数。
+Gauge 值 = 「上一次 list / create 调用所在 workspace」的 pending 计数。
 要看精确值，调 `GET /api/audit-center?filter=expert_inbox` 或
 `GET /api/expert-inbox`。
 

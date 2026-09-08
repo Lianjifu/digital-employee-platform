@@ -16,6 +16,7 @@ func (s *Server) approveAction(r *http.Request) (any, error) {
 	return s.approveActionSingle(r)
 }
 
+// Deprecated: Use approveActionSingle (single-person authorization). Retained for legacy dual-sign clients; will be removed in v2.
 func (s *Server) approveActionLegacy(r *http.Request) (any, error) {
 	id := identityFrom(r.Context())
 	if id == nil {
