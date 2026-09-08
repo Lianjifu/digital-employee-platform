@@ -16,9 +16,9 @@
 | 后端 W5（SelfImproving / Multimodal） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W6（PM SOP / Canvas） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 2 | 0 | 0 | 100% |
-| 前端 9 项 | 9 | 3 | 2 | 4 | 33% |
+| 前端 9 项 | 9 | 4 | 2 | 3 | 44% |
 | 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 11 | 1 | ~38 | ~24% |
-| **合计** | **~80** | **30** | **3** | **~47** | **~38%** |
+| **合计** | **~80** | **31** | **3** | **~46** | **~39%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -108,7 +108,7 @@
 | FE-6 | PM Canvas / 协作画布（白板 / 评论 / presence） | ⚪ 未做 | 无 PM canvas 组件；`presence` 在 copilot 仅出现 1 次（CSS） |
 | FE-7 | Visual Diff（前后截图 / 像素差 / 高亮） | ✅ 完成 | 新 `features/visualdiff/`：`VisualDiffViewer`（两 slot 上传 + threshold/tolerance/highlight 控件 + verdict 徽章 + before/after/diff 三联显示 + diffPNG 下载）+ `visualdiff-api.ts`（POST /api/visualdiff wrapper，自动拆 `{ok,data}` 信封）+ `visualdiff-types.ts`（base64 reader / clamp / 格式化）；新页面 `pages/VisualDiff.tsx` + 路由 `/visualdiff`（admin/auditor/user + `access.write` 权限）+ 侧栏 admin「数据治理」与 auditor「核查」组均含 /visualdiff；i18n 中文键「视觉对比」；18 个测试通过（13 api 单测 + 5 组件测） |
 | FE-8 | Workflow Canvas（react-flow 编排） | 🟡 部分 | `pages/WorkflowOrchestrationSession.tsx` + `Knowledge.tsx` 用 react-flow；**无 presence / 评论** |
-| FE-9 | Session Sync（跨设备 / heartbeat / 标签同步） | ⚪ 未做 | 无 `BroadcastChannel` / `heartbeat` / `deviceId` 实现 |
+| FE-9 | Session Sync（跨设备 / heartbeat / 标签同步） | ✅ 完成 | 新 `features/session-sync/`：`session-sync-types.ts`（UUID 设备 ID / tab ID / 事件协议 `tab:joined / tab:left / state:updated / conversation:focus / heartbeat` + `clampNowSkewMs` + 纯函数 `makeLocalStorageDeviceId`）；`session-sync-channel.ts`（BroadcastChannel 封装 + 自检过滤 + 关闭安全 + noop fallback）+ `createSessionSync` 工厂；`useSessionSync.ts`（hooks 组件：自忽略 echo / peer 心跳 / 30s offline / 15s 自身 heartbeat）；`SessionSyncIndicator.tsx`（chip 显示标签数）；新页面 `pages/SessionSync.tsx` + 路由 `/session-sync`（user/admin/auditor）+ 侧栏 admin「数据治理」与 auditor「核查」组均含 /session-sync；i18n 中文「会话同步」/英文「Session Sync」；34 测试（11 types + 14 channel + 7 hook + 2 page）；commit `60ec6ed` |
 
 ---
 
