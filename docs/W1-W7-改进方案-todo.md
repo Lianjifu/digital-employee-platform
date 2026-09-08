@@ -16,9 +16,9 @@
 | 后端 W5（SelfImproving / Multimodal） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W6（PM SOP / Canvas） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 2 | 0 | 0 | 100% |
-| 前端 9 项 | 9 | 2 | 2 | 5 | 22% |
+| 前端 9 项 | 9 | 3 | 2 | 4 | 33% |
 | 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 11 | 1 | ~38 | ~24% |
-| **合计** | **~80** | **29** | **3** | **~48** | **~37%** |
+| **合计** | **~80** | **30** | **3** | **~47** | **~38%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -106,7 +106,7 @@
 | FE-4 | UI 组件目录 + Design Token 导出 | ✅ 完成 | `packages/ui/src/index.tsx` 628 行，与 `docs/视觉设计规范.md` Token 对齐 |
 | FE-5 | SSE Stream 事件协议（stage/delta/tool/route/thought/evidence/done/error） | ✅ 完成 | `packages/types/src/agent-os.ts:18` `STREAM_EVENT_TYPES` 8 项齐全 |
 | FE-6 | PM Canvas / 协作画布（白板 / 评论 / presence） | ⚪ 未做 | 无 PM canvas 组件；`presence` 在 copilot 仅出现 1 次（CSS） |
-| FE-7 | Visual Diff（前后截图 / 像素差 / 高亮） | ⚪ 未做 | 无 pixelmatch / puppeteer 调用 |
+| FE-7 | Visual Diff（前后截图 / 像素差 / 高亮） | ✅ 完成 | 新 `features/visualdiff/`：`VisualDiffViewer`（两 slot 上传 + threshold/tolerance/highlight 控件 + verdict 徽章 + before/after/diff 三联显示 + diffPNG 下载）+ `visualdiff-api.ts`（POST /api/visualdiff wrapper，自动拆 `{ok,data}` 信封）+ `visualdiff-types.ts`（base64 reader / clamp / 格式化）；新页面 `pages/VisualDiff.tsx` + 路由 `/visualdiff`（admin/auditor/user + `access.write` 权限）+ 侧栏 admin「数据治理」与 auditor「核查」组均含 /visualdiff；i18n 中文键「视觉对比」；18 个测试通过（13 api 单测 + 5 组件测） |
 | FE-8 | Workflow Canvas（react-flow 编排） | 🟡 部分 | `pages/WorkflowOrchestrationSession.tsx` + `Knowledge.tsx` 用 react-flow；**无 presence / 评论** |
 | FE-9 | Session Sync（跨设备 / heartbeat / 标签同步） | ⚪ 未做 | 无 `BroadcastChannel` / `heartbeat` / `deviceId` 实现 |
 

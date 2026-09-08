@@ -63,6 +63,7 @@ export const ROLE_NAV: Record<AppRole, RoleNavGroup[]> = {
         { to: '/skills', i18n: 'nav.skills', icon: 'Wrench' },
         { to: '/memory', i18n: 'nav.memory', icon: 'BrainCircuit' },
         { to: '/channels', i18n: 'nav.channels', icon: 'Send' },
+        { to: '/visualdiff', i18n: 'nav.visualdiff', icon: 'Camera' },
       ],
     },
   ],
@@ -86,6 +87,7 @@ export const ROLE_NAV: Record<AppRole, RoleNavGroup[]> = {
         { to: '/skills', i18n: 'nav.skills.auditor', icon: 'Wrench' },
         { to: '/memory', i18n: 'nav.memory.auditor', icon: 'BrainCircuit' },
         { to: '/models', i18n: 'nav.models.auditor', icon: 'Brain' },
+        { to: '/visualdiff', i18n: 'nav.visualdiff', icon: 'Camera' },
       ],
     },
   ],
@@ -108,6 +110,7 @@ export function navLabelKeyForPath(pathname: string, role: Role | undefined | nu
   if (pathname.startsWith('/governance')) return 'nav.accessControl';
   if (pathname.startsWith('/zero-trust')) return 'nav.zeroTrust';
   if (pathname.startsWith('/audit-center')) return 'nav.auditCenter';
+  if (pathname.startsWith('/visualdiff')) return 'nav.visualdiff';
   if (pathname.startsWith('/workspaces')) return 'workspace.manage';
   return 'nav.home';
 }

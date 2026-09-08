@@ -24,6 +24,7 @@ const Channels = lazy(() => import('./pages/Channels'));
 const Settings = lazy(() => import('./pages/Settings'));
 const AuditCenter = lazy(() => import('./pages/AuditCenter'));
 const ZeroTrust = lazy(() => import('./pages/ZeroTrust'));
+const VisualDiff = lazy(() => import('./pages/VisualDiff'));
 
 function PageFallback() {
   return (
@@ -93,6 +94,7 @@ export default function App() {
                 </ProtectedRoute>
               )}
             />
+            <Route path="/visualdiff" element={<ProtectedRoute roles={['admin', 'auditor', 'user']} permission="access.write"><ErrorBoundary><VisualDiff /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/settings/*" element={<ProtectedRoute roles={['admin']}><ErrorBoundary><Settings /></ErrorBoundary></ProtectedRoute>} />
           </Route>
           <Route path="*" element={<NotFound />} />

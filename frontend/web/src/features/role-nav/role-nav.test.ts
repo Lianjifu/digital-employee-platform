@@ -24,10 +24,12 @@ describe('role-nav IA', () => {
     ]);
     expect(getRoleNavGroups('admin').flatMap((g) => g.items.map((i) => i.to))).toContain('/memory');
     expect(getRoleNavGroups('admin').flatMap((g) => g.items.map((i) => i.to))).toContain('/models');
+    expect(getRoleNavGroups('admin').flatMap((g) => g.items.map((i) => i.to))).toContain('/visualdiff');
     expect(getRoleNavGroups('auditor').flatMap((g) => g.items.map((i) => i.to))).toEqual([
-      '/home', '/audit-center', '/zero-trust', '/tasks', '/copilot', '/partners', '/workflows', '/knowledge', '/skills', '/memory', '/models',
+      '/home', '/audit-center', '/zero-trust', '/tasks', '/copilot', '/partners', '/workflows', '/knowledge', '/skills', '/memory', '/models', '/visualdiff',
     ]);
     expect(getRoleNavGroups('user').flatMap((g) => g.items.map((i) => i.to))).not.toContain('/memory');
+    expect(getRoleNavGroups('user').flatMap((g) => g.items.map((i) => i.to))).not.toContain('/visualdiff');
   });
 
   it('keeps Chinese nav label keys four characters when resolved via DICTS-like map', () => {
@@ -52,6 +54,7 @@ describe('role-nav IA', () => {
       'nav.models': '模型服务',
       'nav.models.auditor': '模型审计',
       'nav.channels': '消息渠道',
+      'nav.visualdiff': '视觉对比',
       'nav.auditCenter': '审计中心',
       'nav.zeroTrust': '持续验证',
       'nav.copilot.auditor': '协作记录',
