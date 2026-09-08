@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/digital-employee-platform/backend/internal/auth"
 	"github.com/digital-employee-platform/backend/internal/skills/signing"
 	"github.com/digital-employee-platform/backend/internal/store"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
@@ -139,6 +140,9 @@ func (s *Server) createOrRegisterWorkspacePublisherKey(r *http.Request) (any, er
 // Body: {mode?="generate"|"register", name?, publicKey?}.
 func (s *Server) rotateWorkspacePublisherKey(r *http.Request) (any, error) {
 	id := identityFrom(r.Context())
+	if !auth.Has(id, "publisher_key.rotate") {
+		return nil, apperr.Forbidden(apperr.RoleForbidden, "需要 publisher_key.rotate 权限")
+	}
 	if err := requireSkillWrite(id); err != nil {
 		return nil, err
 	}

@@ -34,7 +34,10 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 	ws := s.workspaceID(r)
 
 	// W1-D1 · vetter — content-level guard. Runs before signer so an attacker
-	// can't probe signature internals via timing.
+	// can't probe signature internals via timing. Admins with the
+	// `skill.vet.override` permission may bypass a Deny verdict; the bypass
+	// is recorded in the audit trail (result=override) so it is observable.
+	overrideVet := auth.Has(id, "skill.vet.override")
 	if mode := vetterMode(); mode != "disabled" {
 		report := vetter.RunBytes(files)
 		switch mode {
@@ -52,6 +55,11 @@ func (s *Server) importSkillPackage(r *http.Request) (any, error) {
 		default:
 			if report.Decision == vetter.Deny {
 				summary := vetterSummary(meta.Name, report)
+				if overrideVet {
+					s.Store.AppendAudit(ws, id.Name, "skill 内容审查",
+						meta.Name, "override", "admin override via skill.vet.override: "+summary)
+					break
+				}
 				s.Store.AppendAudit(ws, id.Name, "skill 内容审查", meta.Name, "denied", summary)
 				return nil, apperr.BadReq(apperr.SkillVetDenied,
 					"imported skill blocked by vetter: "+summary)

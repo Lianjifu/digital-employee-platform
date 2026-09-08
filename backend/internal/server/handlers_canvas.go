@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -16,6 +17,21 @@ import (
 
 const canvasPresenceTTL = 90 * time.Second
 
+// canvasCommentTTL is the retention window for resolved comments.
+// DE_CANVAS_COMMENT_TTL accepts a Go duration string ("168h", "7d" not
+// supported — use plain Go). Empty / 0 disables sweeping entirely.
+var canvasCommentTTL = func() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("DE_CANVAS_COMMENT_TTL"))
+	if raw == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return 0
+	}
+	return d
+}()
+
 func (s *Server) initCanvas() {
 	idGen := s.Store.ID
 	s.Canvas = canvas.New(time.Now, func() string { return idGen("cv") })
@@ -23,7 +39,8 @@ func (s *Server) initCanvas() {
 	go s.canvasJanitor()
 }
 
-// canvasJanitor sweeps stale presence every minute.
+// canvasJanitor sweeps stale presence every minute and resolved comments
+// per the DE_CANVAS_COMMENT_TTL retention window.
 func (s *Server) canvasJanitor() {
 	if s.Canvas == nil {
 		return
@@ -31,6 +48,12 @@ func (s *Server) canvasJanitor() {
 	for {
 		time.Sleep(60 * time.Second)
 		s.Canvas.SweepPresence(canvasPresenceTTL)
+		if canvasCommentTTL > 0 {
+			dropped := s.Canvas.SweepComments(canvasCommentTTL)
+			if dropped > 0 {
+				metrics.Global.Canvas.Inc("expired")
+			}
+		}
 	}
 }
 

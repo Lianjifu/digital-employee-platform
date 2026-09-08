@@ -193,3 +193,55 @@ func TestUniqueID(t *testing.T) {
 		t.Fatalf("expected unique ids, got %q == %q", a, b)
 	}
 }
+func TestSweepCommentsDisabledWhenTTLZero(t *testing.T) {
+	s := newStore(t)
+	b, _ := s.CreateBoard("w1", "B", "alice")
+	c, _ := s.CreateComment(b.ID, "w1", "alice", "test", 0.1, 0.2)
+	if _, err := s.EditComment(c.ID, "alice", canvas.CommentResolved, ""); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if swept := s.SweepComments(0); swept != 0 {
+		t.Errorf("ttl=0 must disable sweep, got %d", swept)
+	}
+}
+
+func TestSweepCommentsRemovesResolvedOlderThanTTL(t *testing.T) {
+	now := time.Date(2026, 9, 8, 10, 0, 0, 0, time.UTC)
+	var counter int
+	s := canvas.New(func() time.Time { return now }, func() string {
+		counter++
+		return counterID(counter)
+	})
+	b, _ := s.CreateBoard("w1", "B", "alice")
+	c, _ := s.CreateComment(b.ID, "w1", "alice", "test", 0.1, 0.2)
+	if _, err := s.EditComment(c.ID, "alice", canvas.CommentResolved, ""); err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	// 1h later, ttl=30m → should drop
+	now = now.Add(1 * time.Hour)
+	if swept := s.SweepComments(30 * time.Minute); swept != 1 {
+		t.Errorf("expected 1 swept, got %d", swept)
+	}
+	comments := s.ListComments(b.ID)
+	if len(comments) != 0 {
+		t.Errorf("expected comment removed, got %d", len(comments))
+	}
+}
+
+func TestSweepCommentsKeepsOpen(t *testing.T) {
+	now := time.Date(2026, 9, 8, 10, 0, 0, 0, time.UTC)
+	var counter int
+	s := canvas.New(func() time.Time { return now }, func() string {
+		counter++
+		return counterID(counter)
+	})
+	b, _ := s.CreateBoard("w1", "B", "alice")
+	_, _ = s.CreateComment(b.ID, "w1", "alice", "still open", 0.1, 0.2)
+	now = now.Add(1 * time.Hour)
+	if swept := s.SweepComments(30 * time.Minute); swept != 0 {
+		t.Errorf("open comments must be preserved, got swept=%d", swept)
+	}
+	if got := len(s.ListComments(b.ID)); got != 1 {
+		t.Errorf("open comment missing after sweep, got %d", got)
+	}
+}

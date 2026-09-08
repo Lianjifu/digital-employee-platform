@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +51,23 @@ func (c *Client) Enabled() bool {
 // PutStub stores a secret under ref for local Compose without real Vault.
 func (c *Client) PutStub(ref, value string) {
 	_ = c.Put(context.Background(), ref, value)
+}
+
+// Refs returns the list of credentialRef keys known to the local stub store.
+// When real Vault is enabled, this only returns the in-process stub refs that
+// have been mirrored; it does not enumerate Vault directly. Always redacted.
+func (c *Client) Refs() []string {
+	if c == nil {
+		return nil
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	out := make([]string, 0, len(c.stub))
+	for k := range c.stub {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Put writes secret to Vault KV v2 when configured; always mirrors into local stub for Resolve fallback.

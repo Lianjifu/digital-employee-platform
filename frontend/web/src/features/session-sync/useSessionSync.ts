@@ -43,6 +43,15 @@ type TabPeer = {
 
 const TAB_OFFLINE_AFTER_MS = 30_000;
 
+function isSessionSyncEnabled(): boolean {
+  if (typeof import.meta === 'undefined' || !import.meta.env) {
+    return true;
+  }
+  const raw = import.meta.env.VITE_SESSION_SYNC_ENABLED;
+  if (raw === undefined || raw === null || raw === '') return true;
+  return !(String(raw).toLowerCase() === 'false' || String(raw) === '0');
+}
+
 function resolveDeviceId(storage: DeviceIdStorage | null, fallbackKey: string): string {
   if (typeof window === 'undefined' || !storage) {
     return 'ssr';
@@ -87,6 +96,11 @@ export function useSessionSync(options: UseSessionSyncOptions = {}): SessionSync
   // Open the BroadcastChannel + announce + listen.
   useEffect(() => {
     if (typeof BroadcastChannel === 'undefined') {
+      return;
+    }
+    if (!isSessionSyncEnabled()) {
+      // Operator opt-out: skip channel + announcements. State still
+      // resolves so the UI can render an offline indicator.
       return;
     }
     const ch = new BroadcastChannel('de.session-sync.v1');
@@ -182,6 +196,7 @@ export function useSessionSync(options: UseSessionSyncOptions = {}): SessionSync
     if (typeof window === 'undefined' || typeof BroadcastChannel === 'undefined') {
       return;
     }
+    if (!isSessionSyncEnabled()) return;
     const id = window.setInterval(() => {
       const ch = channelRef.current;
       if (!ch || !deviceIdRef.current || !tabIdRef.current) {

@@ -256,10 +256,11 @@ type Registry struct {
 
 // CanvasBuckets counts canvas comment lifecycle events.
 type CanvasBuckets struct {
-	Created  Counter
-	Edited   Counter
-	Resolved Counter
-	Deleted  Counter
+	Created         Counter
+	Edited          Counter
+	Resolved        Counter
+	Deleted         Counter
+	CommentsExpired Counter
 }
 
 func (c *CanvasBuckets) Inc(action string) {
@@ -272,11 +273,13 @@ func (c *CanvasBuckets) Inc(action string) {
 		c.Resolved.Inc()
 	case "deleted":
 		c.Deleted.Inc()
+	case "expired":
+		c.CommentsExpired.Add(1)
 	}
 }
 
-func (c *CanvasBuckets) Snapshot() (created, edited, resolved, deleted uint64) {
-	return c.Created.Value(), c.Edited.Value(), c.Resolved.Value(), c.Deleted.Value()
+func (c *CanvasBuckets) Snapshot() (created, edited, resolved, deleted, expired uint64) {
+	return c.Created.Value(), c.Edited.Value(), c.Resolved.Value(), c.Deleted.Value(), c.CommentsExpired.Value()
 }
 
 // PMSopBuckets counts PM plan creations and event types applied.

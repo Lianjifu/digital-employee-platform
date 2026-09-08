@@ -90,7 +90,9 @@ func TestImportSkillVetterDeniedAuditWritten(t *testing.T) {
 	srv := server.New(store.New())
 	h := srv.Handler()
 
-	code, body := uploadSkillZip(t, h, "mock-admin-token", badDestructiveSkillZip(t))
+	// Use a user token (not admin) so the `skill.vet.override` bypass is
+	// not triggered; we want to verify the strict Deny path still blocks.
+	code, body := uploadSkillZip(t, h, "mock-user-token", badDestructiveSkillZip(t))
 	if code != 400 {
 		t.Fatalf("expected 400 on vetter deny, got %d %s", code, body)
 	}
@@ -99,6 +101,33 @@ func TestImportSkillVetterDeniedAuditWritten(t *testing.T) {
 	}
 	if got := countAudits(srv.Store, "skill 内容审查", "denied"); got == 0 {
 		t.Fatalf("expected at least 1 audit row for vetter deny, got %d (have %d audits total)", got, len(srv.Store.Audits))
+	}
+}
+
+// TestImportSkillVetterOverrideAdmitsAndAudits verifies the admin override
+// path: an admin with the `skill.vet.override` permission can import a
+// destructive skill that the vetter would otherwise block, and the bypass
+// is observable in the audit trail as a result=override row.
+func TestImportSkillVetterOverrideAdmitsAndAudits(t *testing.T) {
+	isolatedDevKeypair(t)
+	t.Setenv("DE_REQUIRE_SKILL_SIGNATURE", "off")
+	t.Setenv("DE_SKILL_VETTER", "enabled")
+	tmp := t.TempDir()
+	t.Setenv("DE_SKILL_PACKAGE_DIR", tmp)
+	t.Setenv("DE_SKILL_RUNTIME_URL", "http://127.0.0.1:1")
+
+	srv := server.New(store.New())
+	h := srv.Handler()
+
+	code, body := uploadSkillZip(t, h, "mock-admin-token", badDestructiveSkillZip(t))
+	if code != http.StatusOK {
+		t.Fatalf("admin override should admit the package, got HTTP %d body=%s", code, body)
+	}
+	if got := countAudits(srv.Store, "skill 内容审查", "override"); got == 0 {
+		t.Fatalf("expected at least 1 override audit row, got %d (have %d audits total)", got, len(srv.Store.Audits))
+	}
+	if got := countAudits(srv.Store, "skill 内容审查", "denied"); got != 0 {
+		t.Fatalf("override path must not write denied rows, got %d", got)
 	}
 }
 
@@ -116,7 +145,7 @@ func TestImportSkillVetterWarnAuditWritten(t *testing.T) {
 	srv := server.New(store.New())
 	h := srv.Handler()
 
-	code, _ := uploadSkillZip(t, h, "mock-admin-token", badDestructiveSkillZip(t))
+	code, _ := uploadSkillZip(t, h, "mock-user-token", badDestructiveSkillZip(t))
 	if code != 200 {
 		t.Fatalf("warn_only must admit the package, got HTTP %d", code)
 	}

@@ -432,6 +432,8 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.createOrRegisterWorkspacePublisherKey(r)
 	case strings.HasPrefix(path, "/api/workspaces/") && strings.HasSuffix(path, "/publisher-key") && method == http.MethodDelete:
 		data, err = s.revokeWorkspacePublisherKey(r)
+	case path == "/api/vault/keys" && method == http.MethodGet:
+		data, err = s.listVaultKeys(r)
 	case path == "/api/workspace-switch-history" && method == http.MethodGet:
 		data, err = s.switchHistory(r)
 	case strings.HasPrefix(path, "/api/workspaces/") && method == http.MethodGet:

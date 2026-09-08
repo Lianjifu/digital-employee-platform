@@ -304,6 +304,29 @@ func (s *Store) SweepPresence(ttl time.Duration) int {
 	return dropped
 }
 
+// SweepComments removes resolved comments older than ttl. Returns the
+// number of comments deleted. ttl == 0 disables sweeping entirely.
+func (s *Store) SweepComments(ttl time.Duration) int {
+	if ttl <= 0 {
+		return 0
+	}
+	cutoff := s.now().Add(-ttl)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	dropped := 0
+	for cid, c := range s.comments {
+		if c == nil || c.Status != "resolved" {
+			continue
+		}
+		ts, err := time.Parse(time.RFC3339, c.UpdatedAt)
+		if err != nil || !ts.After(cutoff) {
+			delete(s.comments, cid)
+			dropped++
+		}
+	}
+	return dropped
+}
+
 // PresenceForBoard returns the identities currently on a board, sorted
 // for stable output.
 func (s *Store) PresenceForBoard(boardID string) []string {
