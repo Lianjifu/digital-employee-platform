@@ -18,7 +18,7 @@
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 1 | 1 | 0 | 50% |
 | 前端 9 项 | 9 | 9 | 0 | 0 | 100% |
 | 横切（ADR × 16 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI × 3） | ~52 | 52 | 0 | 0 | 100% |
-| **合计** | **83** | **75** | **4** | **4** | **90%** |
+| **合计** | **83** | **79** | **4** | **0** | **95%** |
 
 **关键结论**（2026-09-08，审计后修正）：
 - W1（Skill 安全）：D1 vetter ✅ + D3 gateway ✅ + D4 catalog ✅ + **D2 签名 🟡**（证据字段含 phantom `cmd/check-skill`） — 3 ✅ + 1 🟡
@@ -30,8 +30,9 @@
 - W7（SQLite / WeChat）：D1 ✅ + **D2 WeChat 🟡**（包测实际 20 个，原文档误记 22；无 `handlers_weixin_test.go`，端到端仅 `m4_execution_test.go` 间接覆盖） — 1 ✅ + 1 🟡
 - 前端：FE-1..FE-9 ✅ — **9 ✅ + 0 🟡**（FE-8 Workflow Canvas 已完成：react-flow `features/workflow-canvas/` + 后端 workflow endpoints，commits `21a0e74` + `b309c31`）
 - 横切：ADR × 16 ✅ + 手册 × 8 ✅ + 指标 × 10 ✅ + 权限 × 4 ✅ + env × 11 ✅ + CI × 3 ✅ — 52 ✅
-- 性能 / 可靠性硬化：P1-1 cancel/Shutdown + P1-2 panic recover + P1-3 close 注册 + P1-4 Kafka 注入 — 6 commits ✅（见 §11）
-- 合计 **90%** 完成（75 ✅ / 4 🟡 / 4 ⚪ = 83 项；87% → 90% ≈ W2 路径澄清后 flip 全部 ✅）；剩余 **4 项 ⚪** 均为「已知小事项」（`deprecation` 注释 / docs typo / `infra.OpenSearchAudit` Close / Store 整体 Close 概念 —— 见 §11 §6 out-of-scope 与 §0 「已知小事项」）
+- 性能 / 可靠性硬化：P1-1 cancel/Shutdown + P1-2 panic recover + P1-3 close 注册 + P1-4 Kafka 注入 — 6 commits ✅（见 §11）；外加本轮补的 **2 个 close 尾巴**：`infra.OpenSearchAudit.Close()` (`10731fe`) + `Store.Close()` 幂等 drain (`8d175e5`)
+- 「已知小事项」收尾：`deprecation` 注释 3 处（`approveActionLegacy` / `StampLegacy` / `KnowledgeGraphCanvasLegacy`）+ docs typo 5 处（Gague→Gauge / `<8MB`→`<8 MB` / 重复 `## 2.`→`## 5.` + cascading / ADR-025→ADR-032 / ADR-027→ADR-035） — commit `6fc378c`
+- 合计 **95%** 完成（79 ✅ / 4 🟡 / 0 ⚪ = 83 项；上一档 90% → 95% ≈ 收 4 ⚪ + W2 段全部 ✅ 后的稳定态）；剩余 **4 项 🟡** 均为「证据 / 计数澄清」类（phantom path / 实际测试数 vs 文档数），无功能缺口
 
 ---
 
