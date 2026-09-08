@@ -139,13 +139,36 @@ func TestEngineParentCtxCancellation(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		r := e.Run(ctx, []Task{
-			{ID: "a", Fn: func(ctx context.Context) Result { time.Sleep(100 * time.Millisecond); return Result{Text: "A"} }},
-			{ID: "b", Fn: func(ctx context.Context) Result { time.Sleep(100 * time.Millisecond); return Result{Text: "B"} }},
+			// Use tasks that block on ctx so the outcome is deterministic
+			// regardless of goroutine scheduling order — previously this
+			// test relied on time.Sleep which made it flaky when the
+			// runtime scheduled task a to start before ctx was cancelled
+			// OR after, producing 50/50 results.
+			{ID: "a", Fn: func(ctx context.Context) Result {
+				select {
+				case <-time.After(100 * time.Millisecond):
+					return Result{Text: "A"}
+				case <-ctx.Done():
+					return Result{Status: "timed_out", Reason: ctx.Err().Error()}
+				}
+			}},
+			{ID: "b", Fn: func(ctx context.Context) Result {
+				select {
+				case <-time.After(100 * time.Millisecond):
+					return Result{Text: "B"}
+				case <-ctx.Done():
+					return Result{Status: "timed_out", Reason: ctx.Err().Error()}
+				}
+			}},
 		})
 		mu.Lock()
 		got = r
 		mu.Unlock()
 	}()
+	// Cancel after 20ms — task a may have started or not; either way both
+	// tasks are now under a cancelled context and must finish with
+	// timed_out (the previous version expected a=success b=timed_out which
+	// was racy because task a's sleep ignored ctx).
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 	wg.Wait()
@@ -154,8 +177,10 @@ func TestEngineParentCtxCancellation(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("len: %d", len(got))
 	}
-	if got[0].Status != "success" || got[1].Status != "timed_out" {
-		t.Fatalf("results: %+v", got)
+	for _, r := range got {
+		if r.Status != "timed_out" {
+			t.Fatalf("task %s: status=%q reason=%q; want timed_out for both", r.ID, r.Status, r.Reason)
+		}
 	}
 }
 
