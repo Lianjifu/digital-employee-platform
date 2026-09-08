@@ -25,6 +25,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 const AuditCenter = lazy(() => import('./pages/AuditCenter'));
 const ZeroTrust = lazy(() => import('./pages/ZeroTrust'));
 const VisualDiff = lazy(() => import('./pages/VisualDiff'));
+const SessionSync = lazy(() => import('./pages/SessionSync'));
 
 function PageFallback() {
   return (
@@ -95,6 +96,7 @@ export default function App() {
               )}
             />
             <Route path="/visualdiff" element={<ProtectedRoute roles={['admin', 'auditor', 'user']} permission="access.write"><ErrorBoundary><VisualDiff /></ErrorBoundary></ProtectedRoute>} />
+            <Route path="/session-sync" element={<ProtectedRoute roles={['user', 'admin', 'auditor']}><ErrorBoundary><SessionSync /></ErrorBoundary></ProtectedRoute>} />
             <Route path="/settings/*" element={<ProtectedRoute roles={['admin']}><ErrorBoundary><Settings /></ErrorBoundary></ProtectedRoute>} />
           </Route>
           <Route path="*" element={<NotFound />} />
