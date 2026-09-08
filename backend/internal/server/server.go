@@ -130,6 +130,13 @@ type Server struct {
 	// W2-D3 · SubAgent dispatch engine. Built in New(); concurrency cap
 	// configured via DE_SUBAGENT_MAX_CONCURRENCY.
 	SubAgent *agentos.Engine
+
+	// closeMu guards closeFuncs + closed; RegisterCloseFunc and Shutdown
+	// race in tests where Shutdown runs on a different goroutine than
+	// the apprun boot path.
+	closeMu    sync.Mutex
+	closeFuncs []func() error // external resources, invoked in parallel by Shutdown
+	closed     bool           // set after first Shutdown completes
 }
 
 // serverTestHooks groups the optional test seams. Field types are kept in
@@ -193,31 +200,87 @@ func New(st *store.Store) *Server {
 	return s
 }
 
+// RegisterCloseFunc registers a resource closer that Shutdown will invoke
+// in parallel after cancelling the internal background goroutines. Called
+// by apprun/runDurable right after each external client (PG / Redis /
+// KV / Kernel / UsageSink / AuditSink) is created. Nil fn is skipped.
+// Safe to call after Shutdown — the func will be appended but the goroutine
+// fan-out has already completed, so the new entry is effectively a no-op
+// (a second Shutdown call would still execute it).
+func (s *Server) RegisterCloseFunc(fn func() error) {
+	if fn == nil {
+		return
+	}
+	s.closeMu.Lock()
+	s.closeFuncs = append(s.closeFuncs, fn)
+	s.closeMu.Unlock()
+}
+
 // Shutdown stops background goroutines started by New() and
-// StartMemoryMaintenance. Mirrors http.Server.Shutdown semantics:
-// each registered cancel func is invoked; the goroutines observe
-// ctx.Done() and return at their next select point.
+// StartMemoryMaintenance, then closes every external resource registered
+// via RegisterCloseFunc. Mirrors http.Server.Shutdown semantics: each
+// registered cancel func is invoked; the goroutines observe ctx.Done()
+// and return at their next select point.
 //
-// Returns nil today (cancel funcs return no error) but the signature
-// is shaped so future shutdown hooks can report errors without changing
-// callers. Safe to call multiple times; nil cancel funcs are skipped.
-// Safe to call before New() finished — fields default to nil.
-func (s *Server) Shutdown(_ context.Context) error {
-	stops := []struct {
+// The external close funcs run in parallel bounded by ctx. Returns the
+// first non-nil error encountered, or ctx.Err() when the deadline
+// fires before all funcs complete. Safe to call multiple times — the
+// second and later calls return nil immediately without re-invoking
+// close funcs (so double Shutdown can't double-close a connection).
+func (s *Server) Shutdown(ctx context.Context) error {
+	s.closeMu.Lock()
+	if s.closed {
+		s.closeMu.Unlock()
+		return nil
+	}
+	s.closed = true
+	funcs := append([]func() error(nil), s.closeFuncs...)
+	s.closeFuncs = nil // drain so a 2nd Shutdown has no work even if closed check is bypassed
+	s.closeMu.Unlock()
+
+	// 1. Internal ctx-cancels (sequential, cheap, idempotent).
+	for _, c := range []struct {
 		label string
 		fn    context.CancelFunc
 	}{
 		{"heartbeat", s.HeartbeatCancel},
 		{"visualdiff", s.VisualDiffCancel},
 		{"memoryTTL", s.MemoryTTLCancel},
-	}
-	for _, c := range stops {
-		if c.fn == nil {
-			continue
+	} {
+		if c.fn != nil {
+			c.fn()
 		}
-		c.fn()
 	}
-	return nil
+
+	if len(funcs) == 0 {
+		return nil
+	}
+
+	// 2. Run all close funcs in parallel, bounded by ctx deadline.
+	var wg sync.WaitGroup
+	var errMu sync.Mutex
+	var firstErr error
+	for _, fn := range funcs {
+		wg.Add(1)
+		go func(fn func() error) {
+			defer wg.Done()
+			if err := fn(); err != nil {
+				errMu.Lock()
+				if firstErr == nil {
+					firstErr = err
+				}
+				errMu.Unlock()
+			}
+		}(fn)
+	}
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+		return firstErr
+	case <-ctx.Done():
+		return fmt.Errorf("shutdown timed out: %w", ctx.Err())
+	}
 }
 
 // WithRecoverForTest exposes the withRecover middleware for unit tests
