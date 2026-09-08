@@ -1,18 +1,28 @@
 package server
 
 import (
+	"context"
 	"log"
 	"time"
 )
 
 // StartMemoryMaintenance runs TTL expiry for short/working memory on an interval.
+// The goroutine listens on its own ctx, stored as s.MemoryTTLCancel so
+// Server.Shutdown can stop it deterministically.
 func (s *Server) StartMemoryMaintenance() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.MemoryTTLCancel = cancel
 	go func() {
 		ticker := time.NewTicker(60 * time.Second)
 		defer ticker.Stop()
 		s.runMemoryTTLPass()
-		for range ticker.C {
-			s.runMemoryTTLPass()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.runMemoryTTLPass()
+			}
 		}
 	}()
 }

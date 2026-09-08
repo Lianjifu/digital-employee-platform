@@ -109,6 +109,13 @@ type Server struct {
 	Heartbeat *heartbeat.Tracker
 	// HeartbeatCancel stops the sweeper goroutine on shutdown.
 	HeartbeatCancel context.CancelFunc
+	// VisualDiffCancel stops the W4-D2 cache janitor (hourly eviction sweep)
+	// on shutdown. Previously the cancel returned by context.WithCancel was
+	// discarded, which go vet flagged.
+	VisualDiffCancel context.CancelFunc
+	// MemoryTTLCancel stops the memory TTL expiry goroutine started by
+	// StartMemoryMaintenance. nil until StartMemoryMaintenance runs.
+	MemoryTTLCancel context.CancelFunc
 	// W5-D2 · Multimodal extraction registry. nil until initMultimodal
 	// has registered a provider.
 	Multimodal *multimodal.Registry
@@ -171,7 +178,7 @@ func New(st *store.Store) *Server {
 	s.bootstrapVaultSkillSigning()
 	// W4-D2 · VisualDiff cache janitor (hourly eviction sweep).
 	var vdCtx context.Context
-	vdCtx, _ = context.WithCancel(context.Background())
+	vdCtx, s.VisualDiffCancel = context.WithCancel(context.Background())
 	go s.visualdiffJanitor(vdCtx)
 	// W5-D2 · Multimodal registry (OCR / ASR stubs gated by env flags).
 	s.initMultimodal()
@@ -184,6 +191,33 @@ func New(st *store.Store) *Server {
 	// W2-D3 · SubAgent dispatch engine.
 	s.SubAgent = buildSubAgentEngine()
 	return s
+}
+
+// Shutdown stops background goroutines started by New() and
+// StartMemoryMaintenance. Mirrors http.Server.Shutdown semantics:
+// each registered cancel func is invoked; the goroutines observe
+// ctx.Done() and return at their next select point.
+//
+// Returns nil today (cancel funcs return no error) but the signature
+// is shaped so future shutdown hooks can report errors without changing
+// callers. Safe to call multiple times; nil cancel funcs are skipped.
+// Safe to call before New() finished — fields default to nil.
+func (s *Server) Shutdown(_ context.Context) error {
+	stops := []struct {
+		label string
+		fn    context.CancelFunc
+	}{
+		{"heartbeat", s.HeartbeatCancel},
+		{"visualdiff", s.VisualDiffCancel},
+		{"memoryTTL", s.MemoryTTLCancel},
+	}
+	for _, c := range stops {
+		if c.fn == nil {
+			continue
+		}
+		c.fn()
+	}
+	return nil
 }
 
 // buildSubAgentEngine configures the bounded-concurrency dispatch engine
