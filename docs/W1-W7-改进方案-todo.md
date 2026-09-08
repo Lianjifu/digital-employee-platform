@@ -16,9 +16,9 @@
 | 后端 W5（SelfImproving / Multimodal） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W6（PM SOP / Canvas） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 2 | 0 | 0 | 100% |
-| 前端 9 项 | 9 | 4 | 2 | 3 | 44% |
+| 前端 9 项 | 9 | 5 | 1 | 3 | 56% |
 | 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 11 | 1 | ~38 | ~24% |
-| **合计** | **~80** | **31** | **3** | **~46** | **~39%** |
+| **合计** | **~80** | **32** | **2** | **~46** | **~40%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -101,7 +101,7 @@
 | ID | 项 | 状态 | 证据 / 缺口 |
 |---|---|---|---|
 | FE-1 | Copilot 三列布局（桌面会话历史 + 主区 + 上下文） | ⚪ 未做 | `features/copilot/layout.ts` 仅 4 行：`sessionHistoryPresentation()` 返回 `'pinned' \| 'drawer'`；无第三列容器 |
-| FE-2 | Composer 多模态（mic / 拍照 / 粘贴 / 拖拽） | 🟡 部分 | `pages/Copilot.tsx:1508/1555/2348` 有 `onPaste`(image) + `onDrop`；**mic / camera 未实现** |
+| FE-2 | Composer 多模态（mic / 拍照 / 粘贴 / 拖拽） | ✅ 完成 | `pages/Copilot.tsx` 在 Composer 底部新增 `<ComposerMediaControls>`：mic 录音（MediaRecorder WebM/OGG/MP4）+ 摄像头拍照（canvas snapshot）；`features/copilot/composer-media.ts` 纯函数（pickSupportedAudioMime / captureAudio / captureImage / blobToDataUrl / parseDataUrl / isOverCap 8MB / describeMedia）；结果信封 `{ok,data}` / `{err,error:code ∈ not_supported/permission_denied/no_stream/recorder_error/oversize/aborted}`；Copilot 加 `mediaCapturing` + `mediaAttachments` 状态；27 测试（23 helpers + 4 component）；commit |
 | FE-3 | Document Preview（xlsx/docx/pdf/pptx） | ✅ 完成 | `features/copilot/document-preview.tsx` 654 行，sheets / 段落 / 页码 / 幻灯片齐全 |
 | FE-4 | UI 组件目录 + Design Token 导出 | ✅ 完成 | `packages/ui/src/index.tsx` 628 行，与 `docs/视觉设计规范.md` Token 对齐 |
 | FE-5 | SSE Stream 事件协议（stage/delta/tool/route/thought/evidence/done/error） | ✅ 完成 | `packages/types/src/agent-os.ts:18` `STREAM_EVENT_TYPES` 8 项齐全 |
