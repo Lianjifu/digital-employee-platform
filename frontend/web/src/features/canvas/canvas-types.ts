@@ -1,10 +1,14 @@
 export type CanvasCommentStatus = 'open' | 'resolved';
 
+export type CanvasBoardKind = 'comments' | 'workflow';
+
 export type CanvasBoard = {
   id: string;
   workspaceId: string;
   title: string;
   owner: string;
+  /** comments (default) or workflow. Empty/missing treated as 'comments'. */
+  kind: CanvasBoardKind;
   createdAt: string;
   updatedAt: string;
 };

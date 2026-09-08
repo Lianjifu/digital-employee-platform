@@ -29,7 +29,7 @@ function makeFetch(handlers: Record<string, (body?: unknown) => unknown>) {
 describe('canvas-api: listBoards / createBoard / getBoard / deleteBoard', () => {
   it('listBoards unwraps the { ok, data } envelope', async () => {
     const boards: CanvasBoard[] = [
-      { id: 'b1', workspaceId: 'w1', title: 't1', owner: 'alice', createdAt: 'a', updatedAt: 'u' },
+      { id: 'b1', workspaceId: 'w1', title: 't1', owner: 'alice', kind: 'comments', createdAt: 'a', updatedAt: 'u' },
     ];
     const fetchImpl = makeFetch({
       'GET /api/canvas/boards': () => ({ boards }),
@@ -44,7 +44,7 @@ describe('canvas-api: listBoards / createBoard / getBoard / deleteBoard', () => 
     const fetchImpl = makeFetch({
       'POST /api/canvas/boards': (body) => {
         received = body;
-        return { id: 'new', workspaceId: 'w', title: 'p', owner: 'u', createdAt: '', updatedAt: '' };
+        return { id: 'new', workspaceId: 'w', title: 'p', owner: 'u', kind: 'comments', createdAt: '', updatedAt: '' };
       },
     });
     const r = await createBoard('   padded title   ', { fetchImpl });
@@ -61,7 +61,7 @@ describe('canvas-api: listBoards / createBoard / getBoard / deleteBoard', () => 
           JSON.stringify({
             ok: true,
             data: {
-              board: { id: 'a/b', workspaceId: 'w', title: 't', owner: 'u', createdAt: '', updatedAt: '' },
+              board: { id: 'a/b', workspaceId: 'w', title: 't', owner: 'u', kind: 'comments', createdAt: '', updatedAt: '' },
               comments: [],
               presence: [],
             },

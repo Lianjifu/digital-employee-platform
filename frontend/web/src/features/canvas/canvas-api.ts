@@ -55,14 +55,16 @@ export async function listBoards(
 
 export async function createBoard(
   title: string,
-  opts: CanvasFetchOptions = {},
+  opts: CanvasFetchOptions & { kind?: 'comments' | 'workflow' } = {},
 ): Promise<CanvasEnvelope<CanvasBoard>> {
+  const body: Record<string, unknown> = { title: clampBoardTitle(title) };
+  if (opts.kind) body.kind = opts.kind;
   return send(
     '/api/canvas/boards',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: clampBoardTitle(title) }),
+      body: JSON.stringify(body),
     },
     opts,
   );
