@@ -30,6 +30,7 @@
 - W7（SQLite / WeChat）：D1 + D2 — 2/2 ✅
 - 前端：FE-1 三列 / FE-2 多模态 / FE-3 文档预览 / FE-4 UI / FE-5 SSE / FE-6 Canvas / FE-7 VisualDiff / FE-8 Workflow / FE-9 Session Sync — 9/9 ✅
 - 横切：ADR × 16 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI × 3 — 52/52 ✅
+- 性能 / 可靠性硬化：P1-1 cancel/Shutdown + P1-2 panic recover + P1-3 close 注册 + P1-4 Kafka 注入 — 6 commits ✅（见 §11）
 - 合计 **~95%** 完成，剩余项均为 §0 「已知小事项」（deprecation 注释 / docs typo 等）
 
 ---
@@ -241,6 +242,36 @@
 实际完成率：**~95%**（后端 100% + 前端 100% + 横切 100%）；本节标度与 §0 总览对齐。P1 段所有项也已在 W3-W7 中段落地。
 
 ---
+
+## 11. 性能 / 可靠性硬化（P1-1 ~ P1-4，2026-09-08 收尾）
+
+W1-W7 主线 100% ✅ 后做的最后一公里硬化：让进程退出 / 异常路径不再是黑盒。
+
+| ID | 主题 | Commit | 关键产出 |
+|---|---|---|---|
+| P1-1 | 后台 goroutine cancel + Shutdown API | `42a9752` | `go vet ./...` 干净；`Server.Shutdown(ctx)` 触发 heartbeat / visualdiff / memory TTL 三个 ctx-cancel |
+| P1-1 | apprun SIGTERM-aware graceful shutdown | `a2089f0` | `apprun.serveWithGracefulShutdown`：SIGTERM/SIGINT → httpServer.Shutdown + Server.Shutdown，10s deadline |
+| P1-2 | 外层 panic recover + audit + 指标 | `7a1947b` | 新 `withRecover` 中间件包整链；handler panic → 500 + `de_http_handler_panics_total` + audit row |
+| P1-3 | RegisterCloseFunc + 并行关闭 | `2bb0db4` | `Server.RegisterCloseFunc` 收口所有外部资源；`Shutdown` 并行 fan-out + ctx deadline |
+| P1-3 | apprun 注册 PG / Redis close | `05ab5d2` | dedup by pointer：PG 共享者只注册一次 |
+| P1-4 | Kafka + AuditBus 注入 + Kafka Close | `b2ed099` | `infra.KafkaAuditBus.Close` 直接注册；AuditBus 走 rdb 已注册 closer |
+
+**复核后不存在的尾巴**：
+
+- **cmd/de-audit / de-policy / de-sys 等独立服务进程的 shutdown 审计**：所有 cmd (`de-audit / de-policy / de-sys / de-workflow / de-cap / de-collab / de-app`) 都通过 `apprun.Run(...)` 启动，已自动继承 P1-1 的 graceful shutdown
+- **SSE handler（canvas / heartbeat / copilot）的 goroutine panic + cancel**：`handlers_canvas.go:283-294` 与 `handlers_heartbeat.go:97-118` 已正确使用 `r.Context().Done()` + `defer cancel()`；`httpServer.Shutdown(ctx)` 自然终止
+
+**剩余已知 out-of-scope**：
+
+- `infra.OpenSearchAudit`（HTTP client 复用 default）暂无 close 需求
+- Store 整体 Close 概念（PG 之外的 conn pool lifecycle）留待后续单独 PR
+
+**验证状态**：
+
+- `go vet ./...` 干净
+- `go test -race ./internal/server/... ./internal/apprun/...`：server 包 223s / apprun 2.8s 全过
+- 总测试规模：后端 server 包单包 200+ 测试，apprun 3 测试
+
 
 ## 11. P1（接下来 2 周）
 
