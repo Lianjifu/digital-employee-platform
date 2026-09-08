@@ -27,11 +27,13 @@ describe('role-nav IA', () => {
     expect(getRoleNavGroups('admin').flatMap((g) => g.items.map((i) => i.to))).toContain('/visualdiff');
     expect(getRoleNavGroups('admin').flatMap((g) => g.items.map((i) => i.to))).toContain('/session-sync');
     expect(getRoleNavGroups('auditor').flatMap((g) => g.items.map((i) => i.to))).toEqual([
-      '/home', '/audit-center', '/zero-trust', '/tasks', '/copilot', '/partners', '/workflows', '/knowledge', '/skills', '/memory', '/models', '/visualdiff', '/session-sync',
+      '/home', '/audit-center', '/zero-trust', '/tasks', '/copilot', '/partners', '/workflows', '/canvas', '/knowledge', '/skills', '/memory', '/models', '/visualdiff', '/session-sync',
     ]);
     expect(getRoleNavGroups('user').flatMap((g) => g.items.map((i) => i.to))).not.toContain('/memory');
     expect(getRoleNavGroups('user').flatMap((g) => g.items.map((i) => i.to))).not.toContain('/visualdiff');
     expect(getRoleNavGroups('user').flatMap((g) => g.items.map((i) => i.to))).not.toContain('/session-sync');
+    expect(getRoleNavGroups('user').flatMap((g) => g.items.map((i) => i.to))).not.toContain('/canvas');
+    expect(getRoleNavGroups('admin').flatMap((g) => g.items.map((i) => i.to))).toContain('/canvas');
   });
 
   it('keeps Chinese nav label keys four characters when resolved via DICTS-like map', () => {
@@ -58,6 +60,8 @@ describe('role-nav IA', () => {
       'nav.channels': '消息渠道',
       'nav.visualdiff': '视觉对比',
       'nav.sessionSync': '会话同步',
+      'nav.canvas': '协作画布',
+      'nav.canvas.auditor': '画布核查',
       'nav.auditCenter': '审计中心',
       'nav.zeroTrust': '持续验证',
       'nav.copilot.auditor': '协作记录',

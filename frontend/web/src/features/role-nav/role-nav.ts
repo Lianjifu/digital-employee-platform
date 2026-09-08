@@ -54,6 +54,7 @@ export const ROLE_NAV: Record<AppRole, RoleNavGroup[]> = {
       items: [
         { to: '/partners', i18n: 'nav.agents', icon: 'BriefcaseBusiness' },
         { to: '/workflows', i18n: 'nav.workflows', icon: 'Workflow' },
+        { to: '/canvas', i18n: 'nav.canvas', icon: 'Palette' },
       ],
     },
     {
@@ -84,6 +85,7 @@ export const ROLE_NAV: Record<AppRole, RoleNavGroup[]> = {
         { to: '/copilot', i18n: 'nav.copilot.auditor', icon: 'MessageSquare' },
         { to: '/partners', i18n: 'nav.agents.auditor', icon: 'BriefcaseBusiness' },
         { to: '/workflows', i18n: 'nav.workflows.auditor', icon: 'Workflow' },
+        { to: '/canvas', i18n: 'nav.canvas.auditor', icon: 'Palette' },
         { to: '/knowledge', i18n: 'nav.knowledge.auditor', icon: 'BookOpen' },
         { to: '/skills', i18n: 'nav.skills.auditor', icon: 'Wrench' },
         { to: '/memory', i18n: 'nav.memory.auditor', icon: 'BrainCircuit' },
@@ -114,6 +116,7 @@ export function navLabelKeyForPath(pathname: string, role: Role | undefined | nu
   if (pathname.startsWith('/audit-center')) return 'nav.auditCenter';
   if (pathname.startsWith('/visualdiff')) return 'nav.visualdiff';
   if (pathname.startsWith('/session-sync')) return 'nav.sessionSync';
+  if (pathname.startsWith('/canvas')) return 'nav.canvas';
   if (pathname.startsWith('/workspaces')) return 'workspace.manage';
   return 'nav.home';
 }
