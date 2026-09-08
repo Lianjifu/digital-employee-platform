@@ -124,6 +124,10 @@ type Store struct {
 	persistHook PersistFunc
 	deleteHook  DeleteFunc
 	writeDomain Domain
+
+	// closed is set by Close() to make it idempotent. atomic.Bool so callers
+	// don't need to take mu just to short-circuit a second Close().
+	closed atomic.Bool
 }
 
 func New() *Store {
@@ -260,6 +264,41 @@ func (s *Store) SetAuditHook(fn func(map[string]any)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.auditHook = fn
+}
+
+// Close releases the hooks owned by this Store so any subsequent
+// SetPersistHook / SetDeleteHook / SetAuditHook call re-arms them fresh
+// against a replacement backend. Close does not own the underlying
+// database / cache handles — those belong to Server (and are closed via
+// RegisterCloseFunc in apprun.runDurable). This method is:
+//
+//   - nil-safe: calling Close on a nil *Store returns nil
+//   - idempotent: the second and later calls return nil without
+//     re-running the drain, so double Close can't double-free
+//
+// Returns the first non-nil error from any sub-close. Today every drain
+// step is a simple field nil-out (no I/O), so the error is always nil;
+// the signature is preserved so future hooks that need to flush buffers
+// or signal downstream services can return real ones.
+func (s *Store) Close() error {
+	if s == nil {
+		return nil
+	}
+	if !s.closed.CompareAndSwap(false, true) {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Hooks are function references held by Set{...}Hook. The Store does not
+	// own the resources behind them (pgxpool, redis client, SQLite handle),
+	// so Close just severs our references. After Close, callers that still
+	// hit PersistCollection / AppendAudit / PersistDelete observe nil hooks
+	// and skip the I/O — see PersistCollection / AppendAudit / PersistDelete
+	// for the nil-hook guards.
+	s.auditHook = nil
+	s.persistHook = nil
+	s.deleteHook = nil
+	return nil
 }
 
 func (s *Store) AppendAudit(workspaceID, actor, action, target string, result string, reason string) map[string]any {

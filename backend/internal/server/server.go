@@ -190,6 +190,12 @@ func New(st *store.Store) *Server {
 		s.hydrateVaultFromSecrets()
 	}
 	st.MigrateProvenance()
+	// Drain store-owned hooks (persist / delete / audit) on shutdown so
+	// post-shutdown mutators skip the dangling I/O. Registered before the
+	// external pg/rdb close funcs because the Store hooks reference them.
+	if st != nil {
+		s.RegisterCloseFunc(st.Close)
+	}
 	s.bootstrapSkillSigning()
 	s.bootstrapVaultSkillSigning()
 	// W4-D2 · VisualDiff cache janitor (hourly eviction sweep).
