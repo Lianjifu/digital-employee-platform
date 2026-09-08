@@ -100,7 +100,7 @@
 
 | ID | 项 | 状态 | 证据 / 缺口 |
 |---|---|---|---|
-| FE-1 | Copilot 三列布局（桌面会话历史 + 主区 + 上下文） | ⚪ 未做 | `features/copilot/layout.ts` 仅 4 行：`sessionHistoryPresentation()` 返回 `'pinned' \| 'drawer'`；无第三列容器 |
+| FE-1 | Copilot 三列布局（桌面会话历史 + 主区 + 上下文） | ✅ 完成 | `features/copilot/layout.ts` 111 行：`ColumnMode = 'three-column' \| 'two-column' \| 'stacked'` + `LayoutConfig`（断点 1280/900/220）+ `resolveColumnMode` / `effectiveColumnMode`（details pinned 时强制 three-column）+ `gridTemplateForMode` 输出 CSS Grid `minmax(0,1fr)` 模板与命名 area；`pages/Copilot.tsx` 加 viewport 监听 + `data-column-mode={columnMode}` + CSS vars `--copilot-grid-columns` / `--copilot-grid-areas`；9 个 layout 测试；commit `229025b` |
 | FE-2 | Composer 多模态（mic / 拍照 / 粘贴 / 拖拽） | ✅ 完成 | `pages/Copilot.tsx` 在 Composer 底部新增 `<ComposerMediaControls>`：mic 录音（MediaRecorder WebM/OGG/MP4）+ 摄像头拍照（canvas snapshot）；`features/copilot/composer-media.ts` 纯函数（pickSupportedAudioMime / captureAudio / captureImage / blobToDataUrl / parseDataUrl / isOverCap 8MB / describeMedia）；结果信封 `{ok,data}` / `{err,error:code ∈ not_supported/permission_denied/no_stream/recorder_error/oversize/aborted}`；Copilot 加 `mediaCapturing` + `mediaAttachments` 状态；27 测试（23 helpers + 4 component）；commit |
 | FE-3 | Document Preview（xlsx/docx/pdf/pptx） | ✅ 完成 | `features/copilot/document-preview.tsx` 654 行，sheets / 段落 / 页码 / 幻灯片齐全 |
 | FE-4 | UI 组件目录 + Design Token 导出 | ✅ 完成 | `packages/ui/src/index.tsx` 628 行，与 `docs/视觉设计规范.md` Token 对齐 |
