@@ -62,6 +62,12 @@ import { ComposerContextUsage } from '@/features/copilot/composer-context-usage'
 import { ComposerInsertMenu } from '@/features/copilot/composer-insert';
 import { ComposerMediaControls } from '@/features/copilot/ComposerMediaControls';
 import { type MediaCaptureResult } from '@/features/copilot/composer-media';
+import {
+  effectiveColumnMode,
+  gridTemplateForMode,
+  resolveColumnMode,
+  type ColumnMode,
+} from '@/features/copilot/layout';
 import { TurnThoughtPanel } from '@/features/copilot/turn-narrative/turn-thought-panel';
 import {
   DEFAULT_RUN_MODE,
@@ -382,6 +388,25 @@ export default function Copilot() {
     if (typeof window === 'undefined') return 280;
     const saved = Number(window.localStorage.getItem('copilot-sessions-w'));
     return Number.isFinite(saved) && saved >= 200 && saved <= 420 ? saved : 280;
+  });
+  const [viewportW, setViewportW] = useState(() =>
+    typeof window === 'undefined' ? 1440 : window.innerWidth,
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onResize = () => setViewportW(window.innerWidth);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+  const detailsPinned = contextSelection.pinned;
+  const columnMode: ColumnMode = effectiveColumnMode(
+    { width: viewportW, height: typeof window === 'undefined' ? 900 : window.innerHeight },
+    { sessions: sessionsOpen, main: true, details: detailsOpen },
+    detailsPinned,
+  );
+  const gridTemplate = gridTemplateForMode(columnMode, undefined, {
+    sessions: sessionsPaneW,
+    details: detailsPaneW,
   });
   const [detailsPaneW, setDetailsPaneW] = useState(() => {
     if (typeof window === 'undefined') return 360;
@@ -1940,9 +1965,12 @@ export default function Copilot() {
       className={cn('copilot-shell relative h-full min-h-0 min-w-0 bg-[var(--bg-elevated)]', draggingSplit && 'is-resizing')}
       data-sessions-open={sessionsOpen ? 'true' : 'false'}
       data-details-open={detailsOpen ? 'true' : 'false'}
+      data-column-mode={columnMode}
       style={{
         ['--copilot-sessions-w' as string]: `${sessionsPaneW}px`,
         ['--copilot-details-w' as string]: `${detailsPaneW}px`,
+        ['--copilot-grid-columns' as string]: gridTemplate.columns,
+        ['--copilot-grid-areas' as string]: gridTemplate.areas ?? '',
       }}
     >
       {(sessionsOpen || detailsOpen) && (
