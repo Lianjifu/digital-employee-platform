@@ -17,8 +17,8 @@
 | 后端 W6（PM SOP / Canvas） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 2 | 0 | 0 | 100% |
 | 前端 9 项 | 9 | 9 | 0 | 0 | 100% |
-| 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 16 | 1 | ~33 | ~35% |
-| **合计** | **~80** | **40** | **1** | **~39** | **~53%** |
+| 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 17 | 1 | ~32 | ~37% |
+| **合计** | **~80** | **41** | **1** | **~38** | **~55%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -135,7 +135,7 @@
 | ADR-031 | Heartbeat / 在线探测语义 | ✅ 完成（[ADR-031](../adr/ADR-031-heartbeat-presence.md)） |
 | ADR-036 | Catalog 数据源契约 | ✅ 完成（[ADR-036](../adr/ADR-036-catalog-source-contract.md)） |
 
-### 9.2 用户手册（8 份，5 份已落）
+### 9.2 用户手册（8 份，6 份已落）
 
 | 手册 | 状态 |
 |---|---|
@@ -145,7 +145,7 @@
 | W3-expert-inbox 审核手册 | ✅ 完成（[手册-W3-expert-inbox-审核.md](../手册-W3-expert-inbox-审核.md)） |
 | W4-heartbeat & visualdiff 排查手册 | ✅ 完成（[手册-W4-heartbeat-排查.md](../手册-W4-heartbeat-排查.md) heartbeat §1–4 + visualdiff §2.1–2.4） |
 | W5-multimodal 上传规范 | ⚪ |
-| W6-pm-canvas 协作手册 | ⚪ |
+| W6-pm-canvas 协作手册 | ✅ 完成（[手册-W6-pm-canvas-协作.md](../手册-W6-pm-canvas-协作.md) PM §1.1–1.7 + Canvas §2.1–2.7 + 排查矩阵 §3） |
 | W7-sqlite / wechat 部署手册 | ✅ 完成（[手册-W7-sqlite-wechat-部署.md](../手册-W7-sqlite-wechat-部署.md) SQLite §1.1–1.6 + WeChat §2.1–2.6） |
 
 ### 9.3 Prometheus 指标（10 条，4 条已落）
