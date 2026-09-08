@@ -68,9 +68,10 @@ func (s *Server) canvasCreateBoardHandler(w http.ResponseWriter, r *http.Request
 		writeErr(w, apperr.BadReq(apperr.BadRequest, "title 必填"))
 		return
 	}
+	kind := canvas.BoardKind(strings.TrimSpace(str(body["kind"])))
 	id := identityFrom(r.Context())
 	ws := s.workspaceID(r)
-	b, err := s.Canvas.CreateBoard(ws, title, id.Name)
+	b, err := s.Canvas.CreateBoard(ws, title, id.Name, kind)
 	if err != nil {
 		writeErr(w, apperr.BadReq(apperr.BadRequest, "创建失败: "+err.Error()))
 		return
@@ -311,6 +312,115 @@ func pathTail(path, prefix string) string {
 	return strings.TrimPrefix(strings.TrimPrefix(path, prefix), "/")
 }
 
+// canvasGetWorkflowHandler returns the DAG (nodes + edges) for a
+// workflow board. Returns an empty graph if the board exists but no
+// graph has been persisted yet.
+func (s *Server) canvasGetWorkflowHandler(w http.ResponseWriter, r *http.Request) {
+	if !auth.Has(identityFrom(r.Context()), "access.read") {
+		writeErr(w, apperr.Forbidden(apperr.RoleForbidden, "需要 access.read 权限"))
+		return
+	}
+	bid := pathTail(r.URL.Path, "/api/canvas/boards/")
+	if i := strings.Index(bid, "/workflow"); i >= 0 {
+		bid = bid[:i]
+	}
+	ws := s.workspaceID(r)
+	b, err := s.Canvas.GetBoard(bid)
+	if err != nil {
+		writeErr(w, apperr.NotFoundErr(apperr.NotFound, "画布不存在"))
+		return
+	}
+	if b.WorkspaceID != ws {
+		writeErr(w, apperr.Forbidden(apperr.WorkspaceScope, "画布不在当前工作区"))
+		return
+	}
+	g, err := s.Canvas.GetWorkflow(bid)
+	if err != nil {
+		writeErr(w, apperr.BadReq(apperr.BadRequest, "读取失败: "+err.Error()))
+		return
+	}
+	response.OK(w, g)
+}
+
+// canvasPutWorkflowHandler replaces the DAG for a board atomically.
+// Writes to the board need access.write; only workflow boards
+// accept workflow payloads (other kinds return 400).
+func (s *Server) canvasPutWorkflowHandler(w http.ResponseWriter, r *http.Request) {
+	if !auth.Has(identityFrom(r.Context()), "access.write") {
+		writeErr(w, apperr.Forbidden(apperr.RoleForbidden, "需要 access.write 权限"))
+		return
+	}
+	bid := pathTail(r.URL.Path, "/api/canvas/boards/")
+	if i := strings.Index(bid, "/workflow"); i >= 0 {
+		bid = bid[:i]
+	}
+	ws := s.workspaceID(r)
+	b, err := s.Canvas.GetBoard(bid)
+	if err != nil {
+		writeErr(w, apperr.NotFoundErr(apperr.NotFound, "画布不存在"))
+		return
+	}
+	if b.WorkspaceID != ws {
+		writeErr(w, apperr.Forbidden(apperr.WorkspaceScope, "画布不在当前工作区"))
+		return
+	}
+	body, _ := decodeMap(r)
+	rawNodes, _ := body["nodes"].([]any)
+	rawEdges, _ := body["edges"].([]any)
+	nodes := make([]canvas.WorkflowNode, 0, len(rawNodes))
+	for i, n := range rawNodes {
+		m, ok := n.(map[string]any)
+		if !ok {
+			writeErr(w, apperr.BadReq(apperr.BadRequest, fmt.Sprintf("nodes[%d] 不是对象", i)))
+			return
+		}
+		id := str(m["id"])
+		if id == "" {
+			writeErr(w, apperr.BadReq(apperr.BadRequest, fmt.Sprintf("nodes[%d].id 必填", i)))
+			return
+		}
+		kind := strings.TrimSpace(str(m["kind"]))
+		if kind == "" {
+			kind = "task"
+		}
+		label := strings.TrimSpace(str(m["label"]))
+		x := toFloat(m["x"])
+		y := toFloat(m["y"])
+		meta, _ := m["meta"].(map[string]any)
+		nodes = append(nodes, canvas.WorkflowNode{ID: id, Kind: kind, Label: label, X: x, Y: y, Meta: meta})
+	}
+	edges := make([]canvas.WorkflowEdge, 0, len(rawEdges))
+	for i, e := range rawEdges {
+		m, ok := e.(map[string]any)
+		if !ok {
+			writeErr(w, apperr.BadReq(apperr.BadRequest, fmt.Sprintf("edges[%d] 不是对象", i)))
+			return
+		}
+		id := str(m["id"])
+		src := str(m["source"])
+		dst := str(m["target"])
+		if src == "" || dst == "" {
+			writeErr(w, apperr.BadReq(apperr.BadRequest, fmt.Sprintf("edges[%d] 需要 source + target", i)))
+			return
+		}
+		edges = append(edges, canvas.WorkflowEdge{
+			ID:        id,
+			Source:    src,
+			Target:    dst,
+			Label:     str(m["label"]),
+			Condition: str(m["condition"]),
+		})
+	}
+	g, err := s.Canvas.SetWorkflow(bid, &canvas.WorkflowGraph{Nodes: nodes, Edges: edges})
+	if err != nil {
+		writeErr(w, apperr.BadReq(apperr.BadRequest, "保存失败: "+err.Error()))
+		return
+	}
+	s.appendKnowledgeAuditLocked(ws, identityFrom(r.Context()).Name, "保存工作流", bid, "success", fmt.Sprintf("nodes=%d edges=%d", len(nodes), len(edges)))
+	go s.persistCanvas()
+	response.OK(w, g)
+}
+
 func actionForStatus(st canvas.CommentStatus) string {
 	if st == canvas.CommentResolved {
 		return "resolved"
@@ -328,10 +438,33 @@ func (s *Server) persistCanvas() {
 	}
 	out := make([]map[string]any, 0, len(boards))
 	for _, b := range boards {
-		out = append(out, map[string]any{
+		entry := map[string]any{
 			"id": b.ID, "workspaceId": b.WorkspaceID, "title": b.Title,
-			"owner": b.Owner, "createdAt": b.CreatedAt, "updatedAt": b.UpdatedAt,
-		})
+			"owner": b.Owner, "kind": string(b.Kind),
+			"createdAt": b.CreatedAt, "updatedAt": b.UpdatedAt,
+		}
+		if b.Kind == canvas.BoardWorkflow {
+			g, _ := s.Canvas.GetWorkflow(b.ID)
+			if g != nil {
+				nodes := make([]map[string]any, 0, len(g.Nodes))
+				for _, n := range g.Nodes {
+					nodes = append(nodes, map[string]any{
+						"id": n.ID, "kind": n.Kind, "label": n.Label,
+						"x": n.X, "y": n.Y, "meta": n.Meta,
+					})
+				}
+				edges := make([]map[string]any, 0, len(g.Edges))
+				for _, e := range g.Edges {
+					edges = append(edges, map[string]any{
+						"id": e.ID, "source": e.Source, "target": e.Target,
+						"label": e.Label, "condition": e.Condition,
+					})
+				}
+				entry["nodes"] = nodes
+				entry["edges"] = edges
+			}
+		}
+		out = append(out, entry)
 	}
 	s.Store.KnowledgeExtra["canvas_boards"] = out
 	cmts := []map[string]any{}

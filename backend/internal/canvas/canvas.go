@@ -38,12 +38,52 @@ const (
 	CommentResolved CommentStatus = "resolved"
 )
 
+// BoardKind is the discriminator for boards. "comments" boards are
+// the original comment-pin surface; "workflow" boards carry a node
+// /edge DAG and use the same storage and presence plumbing.
+type BoardKind string
+
+const (
+	BoardComments BoardKind = "comments"
+	BoardWorkflow BoardKind = "workflow"
+)
+
+// WorkflowNode is one node on a workflow board. X/Y are the absolute
+// canvas coordinates (not normalised — workflow DAGs live in an
+// unbounded plane).
+type WorkflowNode struct {
+	ID    string         `json:"id"`
+	Kind  string         `json:"kind"` // "start" | "task" | "decision" | "end"
+	Label string         `json:"label"`
+	X     float64        `json:"x"`
+	Y     float64        `json:"y"`
+	Meta  map[string]any `json:"meta,omitempty"`
+}
+
+// WorkflowEdge is one directed edge on a workflow board. Condition
+// is reserved for decision-node branches ("true" / "false") and
+// optional everywhere else.
+type WorkflowEdge struct {
+	ID        string `json:"id"`
+	Source    string `json:"source"`
+	Target    string `json:"target"`
+	Label     string `json:"label,omitempty"`
+	Condition string `json:"condition,omitempty"`
+}
+
+// WorkflowGraph is the persisted payload for a workflow board.
+type WorkflowGraph struct {
+	Nodes []WorkflowNode `json:"nodes"`
+	Edges []WorkflowEdge `json:"edges"`
+}
+
 // Board is one collaboration surface.
 type Board struct {
 	ID          string    `json:"id"`
 	WorkspaceID string    `json:"workspaceId"`
 	Title       string    `json:"title"`
 	Owner       string    `json:"owner"`
+	Kind        BoardKind `json:"kind"`
 	CreatedAt   string    `json:"createdAt"`
 	UpdatedAt   string    `json:"updatedAt"`
 }
@@ -92,6 +132,7 @@ type Event struct {
 type Store struct {
 	mu       sync.RWMutex
 	boards   map[string]*Board
+	workflow map[string]*WorkflowGraph
 	comments map[string]*Comment
 	// boardKey is "<boardID>|<identity>" → LastTouch.
 	presence map[string]time.Time
@@ -119,6 +160,7 @@ func New(now func() time.Time, idGen func() string) *Store {
 	}
 	return &Store{
 		boards:   map[string]*Board{},
+		workflow: map[string]*WorkflowGraph{},
 		comments: map[string]*Comment{},
 		presence: map[string]time.Time{},
 		now:      now,
@@ -127,8 +169,20 @@ func New(now func() time.Time, idGen func() string) *Store {
 	}
 }
 
-// CreateBoard inserts a new board and returns it.
-func (s *Store) CreateBoard(workspaceID, title, owner string) (*Board, error) {
+// normaliseBoardKind accepts arbitrary strings and returns a known
+// BoardKind, defaulting to BoardComments. Used to tolerate "comments"
+// / "workflow" verbatim or empty input from clients.
+func normaliseBoardKind(k BoardKind) BoardKind {
+	switch k {
+	case BoardComments, BoardWorkflow:
+		return k
+	}
+	return BoardComments
+}
+
+// CreateBoard inserts a new board and returns it. kind defaults to
+// BoardComments when empty or unknown.
+func (s *Store) CreateBoard(workspaceID, title, owner string, kind BoardKind) (*Board, error) {
 	if workspaceID == "" {
 		return nil, errors.New("canvas: workspaceID required")
 	}
@@ -141,6 +195,7 @@ func (s *Store) CreateBoard(workspaceID, title, owner string) (*Board, error) {
 		WorkspaceID: workspaceID,
 		Title:       title,
 		Owner:       owner,
+		Kind:        normaliseBoardKind(kind),
 		CreatedAt:   stamp,
 		UpdatedAt:   stamp,
 	}
@@ -148,6 +203,19 @@ func (s *Store) CreateBoard(workspaceID, title, owner string) (*Board, error) {
 	s.boards[b.ID] = b
 	s.mu.Unlock()
 	return b, nil
+}
+
+// SetKind changes the board kind. Mostly useful for tests; in
+// production the kind is set at create time.
+func (s *Store) SetKind(id string, kind BoardKind) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.boards[id]
+	if !ok {
+		return ErrBoardNotFound
+	}
+	b.Kind = normaliseBoardKind(kind)
+	return nil
 }
 
 // ListBoards returns the boards for a workspace, sorted by CreatedAt
@@ -184,6 +252,7 @@ func (s *Store) DeleteBoard(id string) error {
 		return ErrBoardNotFound
 	}
 	delete(s.boards, id)
+	delete(s.workflow, id)
 	for cid, c := range s.comments {
 		if c.BoardID == id {
 			delete(s.comments, cid)
@@ -195,6 +264,49 @@ func (s *Store) DeleteBoard(id string) error {
 		}
 	}
 	return nil
+}
+
+// GetWorkflow returns the workflow graph for a board. Boards that
+// don't carry a workflow yet get an empty graph back rather than
+// nil so callers can serialise straight to JSON.
+func (s *Store) GetWorkflow(boardID string) (*WorkflowGraph, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if _, ok := s.boards[boardID]; !ok {
+		return nil, ErrBoardNotFound
+	}
+	if g, ok := s.workflow[boardID]; ok && g != nil {
+		return g, nil
+	}
+	return &WorkflowGraph{Nodes: []WorkflowNode{}, Edges: []WorkflowEdge{}}, nil
+}
+
+// SetWorkflow replaces the workflow graph for a board atomically.
+// Empty inputs are tolerated — they clear the board.
+func (s *Store) SetWorkflow(boardID string, g *WorkflowGraph) (*WorkflowGraph, error) {
+	if g == nil {
+		g = &WorkflowGraph{Nodes: []WorkflowNode{}, Edges: []WorkflowEdge{}}
+	}
+	if g.Nodes == nil {
+		g.Nodes = []WorkflowNode{}
+	}
+	if g.Edges == nil {
+		g.Edges = []WorkflowEdge{}
+	}
+	stamp := s.now().UTC().Format(time.RFC3339)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, ok := s.boards[boardID]
+	if !ok {
+		return nil, ErrBoardNotFound
+	}
+	cp := WorkflowGraph{Nodes: append([]WorkflowNode(nil), g.Nodes...), Edges: append([]WorkflowEdge(nil), g.Edges...)}
+	s.workflow[boardID] = &cp
+	b.UpdatedAt = stamp
+	if b.Kind != BoardWorkflow {
+		b.Kind = BoardWorkflow
+	}
+	return &cp, nil
 }
 
 // CreateComment appends a comment to a board. Returns ErrBoardNotFound

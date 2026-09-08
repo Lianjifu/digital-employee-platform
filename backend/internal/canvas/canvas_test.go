@@ -34,17 +34,17 @@ func counterID(n int) string {
 
 func TestCreateBoardRequiresFields(t *testing.T) {
 	s := newStore(t)
-	if _, err := s.CreateBoard("", "t", "alice"); err == nil {
+	if _, err := s.CreateBoard("", "t", "alice", ""); err == nil {
 		t.Fatal("expected error on empty workspace")
 	}
-	if _, err := s.CreateBoard("w1", "", "alice"); err == nil {
+	if _, err := s.CreateBoard("w1", "", "alice", ""); err == nil {
 		t.Fatal("expected error on empty title")
 	}
 }
 
 func TestCreateBoardStored(t *testing.T) {
 	s := newStore(t)
-	b, err := s.CreateBoard("w1", "Plan Q4", "alice")
+	b, err := s.CreateBoard("w1", "Plan Q4", "alice", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,9 +58,9 @@ func TestCreateBoardStored(t *testing.T) {
 
 func TestListBoardsFilteredByWorkspace(t *testing.T) {
 	s := newStore(t)
-	s.CreateBoard("w1", "A", "a")
-	s.CreateBoard("w1", "B", "a")
-	s.CreateBoard("w2", "X", "b")
+	s.CreateBoard("w1", "A", "a", "")
+	s.CreateBoard("w1", "B", "a", "")
+	s.CreateBoard("w2", "X", "b", "")
 	if got := s.ListBoards("w1"); len(got) != 2 {
 		t.Fatalf("want 2, got %d", len(got))
 	}
@@ -78,7 +78,7 @@ func TestGetBoardMissing(t *testing.T) {
 
 func TestDeleteBoardCascades(t *testing.T) {
 	s := newStore(t)
-	b, _ := s.CreateBoard("w1", "T", "a")
+	b, _ := s.CreateBoard("w1", "T", "a", "")
 	c, _ := s.CreateComment(b.ID, "w1", "alice", "x", 0.1, 0.2)
 	if err := s.DeleteBoard(b.ID); err != nil {
 		t.Fatal(err)
@@ -103,7 +103,7 @@ func TestCreateCommentRequiresBoard(t *testing.T) {
 
 func TestCreateCommentWorkspaceMismatch(t *testing.T) {
 	s := newStore(t)
-	b, _ := s.CreateBoard("w1", "T", "a")
+	b, _ := s.CreateBoard("w1", "T", "a", "")
 	if _, err := s.CreateComment(b.ID, "w-other", "alice", "x", 0.1, 0.2); !errors.Is(err, canvas.ErrBoardNotFound) {
 		t.Fatalf("want ErrBoardNotFound, got %v", err)
 	}
@@ -111,7 +111,7 @@ func TestCreateCommentWorkspaceMismatch(t *testing.T) {
 
 func TestCreateCommentRequiresText(t *testing.T) {
 	s := newStore(t)
-	b, _ := s.CreateBoard("w1", "T", "a")
+	b, _ := s.CreateBoard("w1", "T", "a", "")
 	if _, err := s.CreateComment(b.ID, "w1", "alice", "", 0, 0); err == nil {
 		t.Fatal("expected error on empty text")
 	}
@@ -119,7 +119,7 @@ func TestCreateCommentRequiresText(t *testing.T) {
 
 func TestCommentCRUD(t *testing.T) {
 	s := newStore(t)
-	b, _ := s.CreateBoard("w1", "T", "a")
+	b, _ := s.CreateBoard("w1", "T", "a", "")
 	c, err := s.CreateComment(b.ID, "w1", "alice", "first", 0.1, 0.2)
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ func TestPresenceTouchAndSweep(t *testing.T) {
 	// sweep evicts stale entries without resorting to time.Sleep.
 	now := fixedNow()
 	s := canvas.New(func() time.Time { return now }, func() string { return "x" })
-	b, _ := s.CreateBoard("w1", "T", "a")
+	b, _ := s.CreateBoard("w1", "T", "a", "")
 	s.TouchPresence(b.ID, "alice")
 	s.TouchPresence(b.ID, "bob")
 	if got := s.PresenceCount(b.ID); got != 2 {
@@ -195,7 +195,7 @@ func TestUniqueID(t *testing.T) {
 }
 func TestSweepCommentsDisabledWhenTTLZero(t *testing.T) {
 	s := newStore(t)
-	b, _ := s.CreateBoard("w1", "B", "alice")
+	b, _ := s.CreateBoard("w1", "B", "alice", "")
 	c, _ := s.CreateComment(b.ID, "w1", "alice", "test", 0.1, 0.2)
 	if _, err := s.EditComment(c.ID, "alice", canvas.CommentResolved, ""); err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -212,7 +212,7 @@ func TestSweepCommentsRemovesResolvedOlderThanTTL(t *testing.T) {
 		counter++
 		return counterID(counter)
 	})
-	b, _ := s.CreateBoard("w1", "B", "alice")
+	b, _ := s.CreateBoard("w1", "B", "alice", "")
 	c, _ := s.CreateComment(b.ID, "w1", "alice", "test", 0.1, 0.2)
 	if _, err := s.EditComment(c.ID, "alice", canvas.CommentResolved, ""); err != nil {
 		t.Fatalf("resolve: %v", err)
@@ -235,7 +235,7 @@ func TestSweepCommentsKeepsOpen(t *testing.T) {
 		counter++
 		return counterID(counter)
 	})
-	b, _ := s.CreateBoard("w1", "B", "alice")
+	b, _ := s.CreateBoard("w1", "B", "alice", "")
 	_, _ = s.CreateComment(b.ID, "w1", "alice", "still open", 0.1, 0.2)
 	now = now.Add(1 * time.Hour)
 	if swept := s.SweepComments(30 * time.Minute); swept != 0 {
@@ -243,5 +243,119 @@ func TestSweepCommentsKeepsOpen(t *testing.T) {
 	}
 	if got := len(s.ListComments(b.ID)); got != 1 {
 		t.Errorf("open comment missing after sweep, got %d", got)
+	}
+}
+
+func TestCreateBoardKindDefaultsToComments(t *testing.T) {
+	s := newStore(t)
+	b, err := s.CreateBoard("w1", "T", "alice", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Kind != canvas.BoardComments {
+		t.Fatalf("default kind: got %s want %s", b.Kind, canvas.BoardComments)
+	}
+}
+
+func TestCreateBoardKindWorkflow(t *testing.T) {
+	s := newStore(t)
+	b, err := s.CreateBoard("w1", "DAG", "alice", canvas.BoardWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Kind != canvas.BoardWorkflow {
+		t.Fatalf("kind: got %s want workflow", b.Kind)
+	}
+}
+
+func TestCreateBoardKindNormalisesUnknown(t *testing.T) {
+	s := newStore(t)
+	b, err := s.CreateBoard("w1", "T", "alice", canvas.BoardKind("random"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Kind != canvas.BoardComments {
+		t.Fatalf("unknown kind must default to comments, got %s", b.Kind)
+	}
+}
+
+func TestGetWorkflowMissingBoard(t *testing.T) {
+	s := newStore(t)
+	if _, err := s.GetWorkflow("missing"); !errors.Is(err, canvas.ErrBoardNotFound) {
+		t.Fatalf("want ErrBoardNotFound, got %v", err)
+	}
+}
+
+func TestGetWorkflowEmptyDefaults(t *testing.T) {
+	s := newStore(t)
+	b, _ := s.CreateBoard("w1", "T", "a", canvas.BoardWorkflow)
+	g, err := s.GetWorkflow(b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g == nil || len(g.Nodes) != 0 || len(g.Edges) != 0 {
+		t.Fatalf("want empty graph, got %+v", g)
+	}
+}
+
+func TestSetWorkflowReplacesAtomically(t *testing.T) {
+	s := newStore(t)
+	b, _ := s.CreateBoard("w1", "DAG", "a", canvas.BoardWorkflow)
+	first := &canvas.WorkflowGraph{
+		Nodes: []canvas.WorkflowNode{
+			{ID: "n1", Kind: "start", Label: "Start", X: 0, Y: 0},
+			{ID: "n2", Kind: "task", Label: "Task", X: 100, Y: 100},
+		},
+		Edges: []canvas.WorkflowEdge{{ID: "e1", Source: "n1", Target: "n2"}},
+	}
+	if _, err := s.SetWorkflow(b.ID, first); err != nil {
+		t.Fatal(err)
+	}
+	second := &canvas.WorkflowGraph{
+		Nodes: []canvas.WorkflowNode{{ID: "n3", Kind: "end", Label: "End", X: 200, Y: 0}},
+		Edges: []canvas.WorkflowEdge{},
+	}
+	got, err := s.SetWorkflow(b.ID, second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Nodes) != 1 || got.Nodes[0].ID != "n3" {
+		t.Fatalf("expected single n3 after replace, got %+v", got.Nodes)
+	}
+	if len(got.Edges) != 0 {
+		t.Fatalf("expected no edges after replace, got %+v", got.Edges)
+	}
+}
+
+func TestSetWorkflowPromotesCommentsBoard(t *testing.T) {
+	s := newStore(t)
+	b, _ := s.CreateBoard("w1", "T", "a", "") // comments
+	if b.Kind != canvas.BoardComments {
+		t.Fatalf("setup: want comments, got %s", b.Kind)
+	}
+	if _, err := s.SetWorkflow(b.ID, &canvas.WorkflowGraph{
+		Nodes: []canvas.WorkflowNode{{ID: "n1", Kind: "task", Label: "x", X: 0, Y: 0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	b2, _ := s.GetBoard(b.ID)
+	if b2.Kind != canvas.BoardWorkflow {
+		t.Fatalf("kind must promote to workflow on SetWorkflow, got %s", b2.Kind)
+	}
+}
+
+func TestDeleteBoardClearsWorkflow(t *testing.T) {
+	s := newStore(t)
+	b, _ := s.CreateBoard("w1", "DAG", "a", canvas.BoardWorkflow)
+	if _, err := s.SetWorkflow(b.ID, &canvas.WorkflowGraph{
+		Nodes: []canvas.WorkflowNode{{ID: "n1", Kind: "task", Label: "x", X: 0, Y: 0}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DeleteBoard(b.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.GetWorkflow(b.ID); !errors.Is(err, canvas.ErrBoardNotFound) {
+		t.Fatalf("want ErrBoardNotFound, got %v", err)
 	}
 }

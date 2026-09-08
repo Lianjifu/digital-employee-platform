@@ -948,6 +948,12 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/comments") && strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodPost:
 		s.canvasCreateCommentHandler(w, r)
 		return
+	case strings.HasSuffix(path, "/workflow") && strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodGet:
+		s.canvasGetWorkflowHandler(w, r)
+		return
+	case strings.HasSuffix(path, "/workflow") && strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodPut:
+		s.canvasPutWorkflowHandler(w, r)
+		return
 	case strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodGet:
 		s.canvasBoardDetailHandler(w, r)
 		return

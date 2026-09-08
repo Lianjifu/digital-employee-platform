@@ -234,5 +234,132 @@ func TestCanvasNoAuth(t *testing.T) {
 	}
 }
 
+func TestCanvasCreateBoardKind(t *testing.T) {
+	h := canvasHarness(t)
+	_, out := postJSON(t, h, "/api/canvas/boards", map[string]any{"title": "W", "kind": "workflow"})
+	data, _ := out["data"].(map[string]any)
+	if data["kind"] != "workflow" {
+		t.Fatalf("want workflow, got %v", data["kind"])
+	}
+}
+
+func TestCanvasWorkflowRoundTrip(t *testing.T) {
+	h := canvasHarness(t)
+	// Create a workflow board.
+	_, out := postJSON(t, h, "/api/canvas/boards", map[string]any{"title": "DAG", "kind": "workflow"})
+	boardID, _ := out["data"].(map[string]any)["id"].(string)
+
+	// PUT a graph.
+	payload := map[string]any{
+		"nodes": []map[string]any{
+			{"id": "n1", "kind": "start", "label": "Begin", "x": 0, "y": 0},
+			{"id": "n2", "kind": "task", "label": "Run", "x": 120, "y": 0},
+			{"id": "n3", "kind": "decision", "label": "OK?", "x": 240, "y": 0},
+			{"id": "n4", "kind": "end", "label": "Done", "x": 360, "y": -60},
+		},
+		"edges": []map[string]any{
+			{"id": "e1", "source": "n1", "target": "n2"},
+			{"id": "e2", "source": "n2", "target": "n3"},
+			{"id": "e3", "source": "n3", "target": "n4", "condition": "true"},
+		},
+	}
+	{
+		var buf bytes.Buffer
+		_ = json.NewEncoder(&buf).Encode(payload)
+		req := httptest.NewRequest("PUT", "/api/canvas/boards/"+boardID+"/workflow", &buf)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer mock-admin-token")
+		req.Header.Set("X-Workspace-Id", "w1")
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != 200 {
+			t.Fatalf("PUT want 200, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		var putOut map[string]any
+		_ = json.Unmarshal(rr.Body.Bytes(), &putOut)
+		putData, _ := putOut["data"].(map[string]any)
+		if nodes, _ := putData["nodes"].([]any); len(nodes) != 4 {
+			t.Fatalf("PUT want 4 nodes, got %d", len(nodes))
+		}
+		if edges, _ := putData["edges"].([]any); len(edges) != 3 {
+			t.Fatalf("PUT want 3 edges, got %d", len(edges))
+		}
+	}
+
+	// GET it back.
+	_, getOut := getJSON(t, h, "/api/canvas/boards/"+boardID+"/workflow")
+	getData, _ := getOut["data"].(map[string]any)
+	nodes, _ := getData["nodes"].([]any)
+	if len(nodes) != 4 {
+		t.Fatalf("GET want 4 nodes, got %d", len(nodes))
+	}
+	first := nodes[0].(map[string]any)
+	if first["kind"] != "start" {
+		t.Fatalf("first node kind: %v", first["kind"])
+	}
+}
+
+func TestCanvasWorkflowMissingBoard(t *testing.T) {
+	h := canvasHarness(t)
+	req := httptest.NewRequest("GET", "/api/canvas/boards/missing/workflow", nil)
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 404 {
+		t.Fatalf("want 404, got %d", rr.Code)
+	}
+}
+
+func TestCanvasWorkflowPutRejectsMissingEdges(t *testing.T) {
+	h := canvasHarness(t)
+	_, out := postJSON(t, h, "/api/canvas/boards", map[string]any{"title": "DAG", "kind": "workflow"})
+	boardID, _ := out["data"].(map[string]any)["id"].(string)
+
+	bad := map[string]any{
+		"nodes": []map[string]any{{"id": "n1", "kind": "task", "label": "x", "x": 0, "y": 0}},
+		"edges": []map[string]any{{"id": "e1"}}, // missing source/target
+	}
+	var buf bytes.Buffer
+	_ = json.NewEncoder(&buf).Encode(bad)
+	req := httptest.NewRequest("PUT", "/api/canvas/boards/"+boardID+"/workflow", &buf)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 400 {
+		t.Fatalf("want 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestCanvasWorkflowForbiddenWithoutWrite(t *testing.T) {
+	h := canvasHarness(t)
+	_, out := postJSON(t, h, "/api/canvas/boards", map[string]any{"title": "DAG", "kind": "workflow"})
+	boardID, _ := out["data"].(map[string]any)["id"].(string)
+
+	// The mock-admin-token has access.write, so PUT also succeeds.
+	var buf bytes.Buffer
+	_ = json.NewEncoder(&buf).Encode(map[string]any{"nodes": []any{}, "edges": []any{}})
+	req := httptest.NewRequest("PUT", "/api/canvas/boards/"+boardID+"/workflow", &buf)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("PUT want 200 with admin, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	// GET with admin (has access.read).
+	req = httptest.NewRequest("GET", "/api/canvas/boards/"+boardID+"/workflow", nil)
+	req.Header.Set("Authorization", "Bearer mock-admin-token")
+	req.Header.Set("X-Workspace-Id", "w1")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("GET want 200 with admin, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 // fmt is used by the SSE test for the error path.
 var _ = context.Background
