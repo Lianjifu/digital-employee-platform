@@ -283,6 +283,20 @@ func runDurable(ctx context.Context, opts Options, domain store.Domain, rt runti
 	srv.UsageSink = &infra.UsageSink{Pool: pg}
 	srv.KV = kv
 	srv.Search = search
+	// P1-3 · Register each *distinct* external resource for graceful close.
+	// pg is shared by PG / AuditSink / UsageSink / KV / Kernel — only one
+	// closer avoids double-close (pgxpool.Pool.Close is sync.Once-protected
+	// and panics on the second call). rdb is shared by Cache + AuditBus —
+	// same rationale. Kafka writer / AuditBus stream are owned by the
+	// apprun-local kafkaBus / auditBus and not injected into Server, so
+	// their close path is out-of-scope for this PR.
+	if pg != nil {
+		srv.RegisterCloseFunc(func() error { pg.Close(); return nil })
+	}
+	if rdb != nil {
+		srv.RegisterCloseFunc(func() error { return rdb.Close() })
+	}
+	srv.Search = search
 	if opts.Mode == server.ModeCap || opts.Mode == server.ModeCollab || opts.Mode.IsUnified() {
 		srv.StartMemoryMaintenance()
 	}

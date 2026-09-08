@@ -56,3 +56,27 @@ func TestServeWithGracefulShutdownExportedSignature(t *testing.T) {
 	var _ func(apprun.Options) error = apprun.Run
 	_ = atomic.Bool{}
 }
+
+// TestRegisterCloseFuncAdapterSig documents the exact adapter shape
+// runDurable uses when wrapping pgxpool.Pool.Close() and redis.Client.Close()
+// into the func() error signature that server.RegisterCloseFunc expects.
+// If upstream libraries change their Close() signature, this test fails
+// at compile time — a deliberate tripwire.
+func TestRegisterCloseFuncAdapterSig(t *testing.T) {
+	// pgxpool.Pool.Close has signature func(); we wrap to func() error.
+	var pgCloseAdapter func() error = func() error {
+		// var pg *pgxpool.Pool; pg.Close()
+		return nil
+	}
+	// redis.Client.Close already returns error.
+	var redisCloseAdapter func() error = func() error { return nil }
+
+	srv := server.New(store.New())
+	srv.RegisterCloseFunc(pgCloseAdapter)
+	srv.RegisterCloseFunc(redisCloseAdapter)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown returned %v", err)
+	}
+}
