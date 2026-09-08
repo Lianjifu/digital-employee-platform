@@ -16,9 +16,9 @@
 | 后端 W5（SelfImproving / Multimodal） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W6（PM SOP / Canvas） | 2 | 1 | 1 | 0 | 50% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 1 | 1 | 0 | 50% |
-| 前端 9 项 | 9 | 8 | 1 | 0 | 89% |
+| 前端 9 项 | 9 | 9 | 0 | 0 | 100% |
 | 横切（ADR × 16 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI × 3） | ~52 | 52 | 0 | 0 | 100% |
-| **合计** | **83** | **71** | **8** | **4** | **85%** |
+| **合计** | **83** | **72** | **7** | **4** | **87%** |
 
 **关键结论**（2026-09-08，审计后修正）：
 - W1（Skill 安全）：D1 vetter ✅ + D3 gateway ✅ + D4 catalog ✅ + **D2 签名 🟡**（证据字段含 phantom `cmd/check-skill`） — 3 ✅ + 1 🟡
@@ -28,10 +28,10 @@
 - W5（SelfImproving / Multimodal）：D1 + D2 — 2/2 ✅
 - W6（PM SOP / Canvas）：**D1 PM SOP 🟡**（集成测实际 7 个，原文档误记 8） + D2 ✅ — 1 ✅ + 1 🟡
 - W7（SQLite / WeChat）：D1 ✅ + **D2 WeChat 🟡**（包测实际 20 个，原文档误记 22；无 `handlers_weixin_test.go`，端到端仅 `m4_execution_test.go` 间接覆盖） — 1 ✅ + 1 🟡
-- 前端：FE-1..FE-7 ✅ + **FE-8 Workflow Canvas 🟡**（无 `features/workflow-canvas/` 组件，仅 CSS hooks，待 react-flow 节点图接入）+ FE-9 ✅ — 8 ✅ + 1 🟡
+- 前端：FE-1..FE-9 ✅ — **9 ✅ + 0 🟡**（FE-8 Workflow Canvas 已完成：react-flow `features/workflow-canvas/` + 后端 workflow endpoints，commits `21a0e74` + `b309c31`）
 - 横切：ADR × 16 ✅ + 手册 × 8 ✅ + 指标 × 10 ✅ + 权限 × 4 ✅ + env × 11 ✅ + CI × 3 ✅ — 52 ✅
 - 性能 / 可靠性硬化：P1-1 cancel/Shutdown + P1-2 panic recover + P1-3 close 注册 + P1-4 Kafka 注入 — 6 commits ✅（见 §11）
-- 合计 **85%** 完成（71 ✅ / 8 🟡 / 4 ⚪ = 83 项；95% → 85% ≈ 修正后口径）；剩余 **4 项 ⚪** 均为「已知小事项」（`deprecation` 注释 / docs typo / `infra.OpenSearchAudit` Close / Store 整体 Close 概念 —— 见 §11 §6 out-of-scope 与 §0 「已知小事项」）
+- 合计 **87%** 完成（72 ✅ / 7 🟡 / 4 ⚪ = 83 项；95% → 85% ≈ 修正后口径）；剩余 **4 项 ⚪** 均为「已知小事项」（`deprecation` 注释 / docs typo / `infra.OpenSearchAudit` Close / Store 整体 Close 概念 —— 见 §11 §6 out-of-scope 与 §0 「已知小事项」）
 
 ---
 
@@ -115,7 +115,7 @@
 | FE-5 | SSE Stream 事件协议（stage/delta/tool/route/thought/evidence/done/error） | ✅ 完成 | `packages/types/src/agent-os.ts:18` `STREAM_EVENT_TYPES` 8 项齐全 |
 | FE-6 | PM Canvas / 协作画布（白板 / 评论 / presence） | ✅ 完成 | 新 `features/canvas/`：`canvas-types.ts`（`CanvasBoard / CanvasComment / CanvasPresence` + 事件协议 `snapshot/presence/comment/tick/ping` + 纯函数 `clampBoardTitle / clampCommentText / normaliseCoordinate`）+ `canvas-api.ts`（boards / comments / presence 9 个 REST 包装 + `openBoardStream` SSE 解析器）；`useCanvasBoard` hook 自动重连 5s + presence 30s 心跳 + 事件驱动快照/presence/comment 合并；`<CanvasCommentPin>`（按 0..1 归一坐标定位 + 在线徽标 + 弹层 resolve/delete）+ `<CanvasPresenceBar>`（多成员 chip）；新页面 `pages/Canvas.tsx`（侧栏 board 列表 + 新建/删除 + 主区 surface 点击落 pin + 评论 composer）；路由 `/canvas` + `/canvas/:boardId`（user/admin/auditor + `access.read` 权限）；侧栏 admin「编排」与 auditor「核查」组均含 /canvas（user 不含，4 字 `协作画布` / `画布核查`）；i18n 中文「协作画布」/英文「Collab Canvas」；24 测试（7 types + 11 api + 6 component）通过 |
 | FE-7 | Visual Diff（前后截图 / 像素差 / 高亮） | ✅ 完成 | 新 `features/visualdiff/`：`VisualDiffViewer`（两 slot 上传 + threshold/tolerance/highlight 控件 + verdict 徽章 + before/after/diff 三联显示 + diffPNG 下载）+ `visualdiff-api.ts`（POST /api/visualdiff wrapper，自动拆 `{ok,data}` 信封）+ `visualdiff-types.ts`（base64 reader / clamp / 格式化）；新页面 `pages/VisualDiff.tsx` + 路由 `/visualdiff`（admin/auditor/user + `access.write` 权限）+ 侧栏 admin「数据治理」与 auditor「核查」组均含 /visualdiff；i18n 中文键「视觉对比」；18 个测试通过（13 api 单测 + 5 组件测） |
-| FE-8 | Workflow Canvas（react-flow 编排） | 🟡 部分 | 复用 FE-6 `features/canvas/` 后端 presence / 评论 + `pages/Canvas.tsx` 同一画布即承载 PM 模板与 Workflow 流程编排；归一化坐标 + SSE stream 协议 + 30s presence + auto-reconnect 一致；`/canvas/:boardId` 路由直接渲染；后端 W6-D2 `internal/canvas/` 已为 workflow board 提供 `boardId` 维度存储；**实际仅有 CSS hooks（`styles/global.css` `.react-flow__*`），无 `features/workflow-canvas/` 或 node-graph 组件；待 react-flow 节点图组件接入** |
+| FE-8 | Workflow Canvas（react-flow 编排） | ✅ 完成 | 前端 `frontend/web/src/features/workflow-canvas/` 新建（`workflow-types.ts` + `WorkflowBoard.tsx` + `workflow-canvas-api.ts`）；后端 canvas `Board.Kind = "comments" \| "workflow"` + `WorkflowNode` / `WorkflowEdge` / `WorkflowGraph` + `GET/PUT /api/canvas/boards/<id>/workflow`；18 vitest（12 type + 6 component）+ 8 包测 + 5 集成测；commits `21a0e74` + `b309c31` |
 | FE-9 | Session Sync（跨设备 / heartbeat / 标签同步） | ✅ 完成 | 新 `features/session-sync/`：`session-sync-types.ts`（UUID 设备 ID / tab ID / 事件协议 `tab:joined / tab:left / state:updated / conversation:focus / heartbeat` + `clampNowSkewMs` + 纯函数 `makeLocalStorageDeviceId`）；`session-sync-channel.ts`（BroadcastChannel 封装 + 自检过滤 + 关闭安全 + noop fallback）+ `createSessionSync` 工厂；`useSessionSync.ts`（hooks 组件：自忽略 echo / peer 心跳 / 30s offline / 15s 自身 heartbeat）；`SessionSyncIndicator.tsx`（chip 显示标签数）；新页面 `pages/SessionSync.tsx` + 路由 `/session-sync`（user/admin/auditor）+ 侧栏 admin「数据治理」与 auditor「核查」组均含 /session-sync；i18n 中文「会话同步」/英文「Session Sync」；34 测试（11 types + 14 channel + 7 hook + 2 page）；commit `60ec6ed` |
 
 ---
