@@ -17,8 +17,8 @@
 | 后端 W6（PM SOP / Canvas） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 2 | 0 | 0 | 100% |
 | 前端 9 项 | 9 | 9 | 0 | 0 | 100% |
-| 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 18 | 1 | ~31 | ~39% |
-| **合计** | **~80** | **42** | **1** | **~37** | **~56%** |
+| 横切（ADR × 12 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI） | ~50 | 19 | 1 | ~30 | ~41% |
+| **合计** | **~80** | **43** | **1** | **~36** | **~58%** |
 
 **关键结论**：
 - 已落地的 4 项集中在 W1-D2（Skill 签名 + dev keypair + builtin 校验 + audit），全部由本会话前段提交。
@@ -135,11 +135,11 @@
 | ADR-031 | Heartbeat / 在线探测语义 | ✅ 完成（[ADR-031](../adr/ADR-031-heartbeat-presence.md)） |
 | ADR-036 | Catalog 数据源契约 | ✅ 完成（[ADR-036](../adr/ADR-036-catalog-source-contract.md)） |
 
-### 9.2 用户手册（8 份，7 份已落）
+### 9.2 用户手册（8 份，8 份已落 ✅）
 
 | 手册 | 状态 |
 |---|---|
-| W1-vetter 安全策略 / 用户面对白名单 | ⚪ |
+| W1-vetter 安全策略 / 用户面对白名单 | ✅ 完成（[手册-W1-vetter-安全策略.md](../手册-W1-vetter-安全策略.md) §1–9：三道防线 + vetter 5 类 pattern + override 权限 + `.vetter-allow.json` + 端到端 smoke + 排查清单） |
 | W2-publisher-key 运维手册 | ✅ 完成（[手册-W2-skill签名与vault.md](../手册-W2-skill签名与vault.md)） |
 | W2-vault 凭据管理手册 | ✅ 完成（同上 §4） |
 | W3-expert-inbox 审核手册 | ✅ 完成（[手册-W3-expert-inbox-审核.md](../手册-W3-expert-inbox-审核.md)） |
