@@ -1,4 +1,5 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ControlledTask } from '@de/web-types';
 
@@ -38,7 +39,7 @@ describe('controlled task UI resilience', () => {
     const refetch = vi.fn();
     query.mockReturnValue({ data: undefined, isLoading: false, error: new Error('offline'), refetch });
 
-    render(<Tasks />);
+    render(<MemoryRouter><Tasks /></MemoryRouter>);
 
     fireEvent.click(screen.getByRole('button', { name: '重试' }));
     expect(refetch).toHaveBeenCalledOnce();
