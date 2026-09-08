@@ -163,3 +163,16 @@ func (m Mode) EnsureGeneralEmployeeAllowed() bool {
 	}
 	return false
 }
+
+// SessionSyncEnabled reads DE_SESSION_SYNC_ENABLED (default true). When set
+// to "false" / "FALSE" / "0", session-sync metric writes are rejected and the
+// FE should likewise disable BroadcastChannel + heartbeat. The mirror reader
+// keeps FE/BE consistent so ops can globally disable the feature. Matching
+// is case-insensitive on the boolean value (envFlagFalse convention).
+func SessionSyncEnabled() bool {
+	v := strings.TrimSpace(os.Getenv("DE_SESSION_SYNC_ENABLED"))
+	if v == "" {
+		return true
+	}
+	return v != "0" && !strings.EqualFold(v, "false")
+}

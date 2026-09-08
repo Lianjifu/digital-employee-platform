@@ -48,3 +48,34 @@ func TestBanMockDoesNotImplyDualApproval(t *testing.T) {
 		t.Fatal("development + BAN should not allow demo token")
 	}
 }
+
+func TestSessionSyncEnabledFlagVariants(t *testing.T) {
+	// "0" / "false" / "FALSE" → disabled; "1" / "true" / "" / unset → enabled.
+	disabled := []string{"0", "false", "FALSE", "False", "  false  "}
+	enabled := []string{"", "1", "true", "TRUE", "yes", "on"}
+
+	for _, v := range disabled {
+		t.Run("disabled_"+v, func(t *testing.T) {
+			if v == "" {
+				t.Setenv("DE_SESSION_SYNC_ENABLED", "")
+			} else {
+				t.Setenv("DE_SESSION_SYNC_ENABLED", v)
+			}
+			// The empty case is also handled by the enabled group below; skip here.
+			if v == "" {
+				t.Skip()
+			}
+			if SessionSyncEnabled() {
+				t.Fatalf("SessionSyncEnabled()=true for %q, want false", v)
+			}
+		})
+	}
+	for _, v := range enabled {
+		t.Run("enabled_"+v, func(t *testing.T) {
+			t.Setenv("DE_SESSION_SYNC_ENABLED", v)
+			if !SessionSyncEnabled() {
+				t.Fatalf("SessionSyncEnabled()=false for %q, want true", v)
+			}
+		})
+	}
+}

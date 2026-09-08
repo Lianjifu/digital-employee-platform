@@ -17,8 +17,8 @@
 | 后端 W6（PM SOP / Canvas） | 2 | 1 | 1 | 0 | 50% |
 | 后端 W7（SQLite / WeChat-Sync） | 2 | 1 | 1 | 0 | 50% |
 | 前端 9 项 | 9 | 8 | 1 | 0 | 89% |
-| 横切（ADR × 16 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI × 3） | ~52 | 51 | 1 | 0 | 98% |
-| **合计** | **83** | **70** | **9** | **4** | **84%** |
+| 横切（ADR × 16 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI × 3） | ~52 | 52 | 0 | 0 | 100% |
+| **合计** | **83** | **71** | **8** | **4** | **85%** |
 
 **关键结论**（2026-09-08，审计后修正）：
 - W1（Skill 安全）：D1 vetter ✅ + D3 gateway ✅ + D4 catalog ✅ + **D2 签名 🟡**（证据字段含 phantom `cmd/check-skill`） — 3 ✅ + 1 🟡
@@ -29,9 +29,9 @@
 - W6（PM SOP / Canvas）：**D1 PM SOP 🟡**（集成测实际 7 个，原文档误记 8） + D2 ✅ — 1 ✅ + 1 🟡
 - W7（SQLite / WeChat）：D1 ✅ + **D2 WeChat 🟡**（包测实际 20 个，原文档误记 22；无 `handlers_weixin_test.go`，端到端仅 `m4_execution_test.go` 间接覆盖） — 1 ✅ + 1 🟡
 - 前端：FE-1..FE-7 ✅ + **FE-8 Workflow Canvas 🟡**（无 `features/workflow-canvas/` 组件，仅 CSS hooks，待 react-flow 节点图接入）+ FE-9 ✅ — 8 ✅ + 1 🟡
-- 横切：ADR × 16 ✅ + 手册 × 8 ✅ + 指标 × 10 ✅ + 权限 × 4 ✅ + env × 10 ✅ + **DE_SESSION_SYNC_ENABLED 🟡**（仅 `VITE_SESSION_SYNC_ENABLED` 前端 reader，缺后端 reader）+ CI × 3 ✅ — 51 ✅ + 1 🟡
+- 横切：ADR × 16 ✅ + 手册 × 8 ✅ + 指标 × 10 ✅ + 权限 × 4 ✅ + env × 11 ✅ + CI × 3 ✅ — 52 ✅
 - 性能 / 可靠性硬化：P1-1 cancel/Shutdown + P1-2 panic recover + P1-3 close 注册 + P1-4 Kafka 注入 — 6 commits ✅（见 §11）
-- 合计 **85%** 完成（70 ✅ / 9 🟡 / 4 ⚪ = 83 项；95% → 85% ≈ 修正后口径）；剩余 **4 项 ⚪** 均为「已知小事项」（`deprecation` 注释 / docs typo / `infra.OpenSearchAudit` Close / Store 整体 Close 概念 —— 见 §11 §6 out-of-scope 与 §0 「已知小事项」）
+- 合计 **85%** 完成（71 ✅ / 8 🟡 / 4 ⚪ = 83 项；95% → 85% ≈ 修正后口径）；剩余 **4 项 ⚪** 均为「已知小事项」（`deprecation` 注释 / docs typo / `infra.OpenSearchAudit` Close / Store 整体 Close 概念 —— 见 §11 §6 out-of-scope 与 §0 「已知小事项」）
 
 ---
 
@@ -194,7 +194,7 @@
 | `DE_HEARTBEAT_INTERVAL` | ✅ 已接（W4-D1） |
 | `DE_CANVAS_COMMENT_TTL` | ✅ 已接（W6-D2 `canvasJanitor`；TTL=0 关闭；过期 comments 触发 `de_canvas_comment_total{action="expired"}`） |
 | `DE_VISUALDIFF_RETENTION` | ✅ 已接（W4-D2，默认 7 天） |
-| `DE_SESSION_SYNC_ENABLED` | 🟡 部分（frontend-only） | **仅前端 reader**：`useSessionSync.ts:46-50` `isSessionSyncEnabled()` 读 `VITE_SESSION_SYNC_ENABLED`（import.meta.env）；默认 true，置 false 关闭 BroadcastChannel + 心跳；`.env.example` 已留注释。**后端 reader 暂缺** —— `DE_SESSION_SYNC_ENABLED` 在后端无对应实现，session-sync metric POST handler 仅在收到前端事件时被动计数；如需后端 env 门控，由并行任务补 |
+| `DE_SESSION_SYNC_ENABLED` | ✅ 已接（frontend `VITE_SESSION_SYNC_ENABLED` + backend `DE_SESSION_SYNC_ENABLED`（`runtimeenv.SessionSyncEnabled`，默认 true；`false`/`0` 拒收 skew writes）；mirror reader 与 FE 开关一致） |
 
 ### 9.6 CI（3 项已绿）
 

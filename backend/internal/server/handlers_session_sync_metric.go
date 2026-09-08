@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/digital-employee-platform/backend/internal/metrics"
+	"github.com/digital-employee-platform/backend/internal/runtimeenv"
 	apperr "github.com/digital-employee-platform/backend/pkg/errors"
 )
 
@@ -12,7 +13,15 @@ import (
 // we aggregate into a server-side metric for the /metrics scrape. Body:
 // {skewMs: number, device?: string}. No identity check — this is a
 // diagnostic-only endpoint and skew values are not sensitive.
+//
+// When DE_SESSION_SYNC_ENABLED=false the endpoint refuses writes (503) and
+// increments metrics.Global.SessionSync.Rejected so ops can see the FE is
+// still trying to push metrics despite the kill switch.
 func (s *Server) recordSessionSyncSkew(r *http.Request) (any, error) {
+	if !runtimeenv.SessionSyncEnabled() {
+		metrics.Global.SessionSync.Reject()
+		return nil, apperr.Unavailable(apperr.SessionSyncDisabled, "session sync disabled via DE_SESSION_SYNC_ENABLED")
+	}
 	body, _ := decodeMap(r)
 	raw, ok := body["skewMs"]
 	if !ok {

@@ -123,6 +123,9 @@ const (
 	ExpertInboxForbidden Code = "E_EXPERT_INBOX_FORBIDDEN"
 	ExpertInboxNotFound Code = "E_EXPERT_INBOX_NOT_FOUND"
 	ExpertInboxInvalid  Code = "E_EXPERT_INBOX_INVALID"
+
+	// Session sync disabled (DE_SESSION_SYNC_ENABLED=false)
+	SessionSyncDisabled Code = "E_SESSION_SYNC_DISABLED"
 )
 
 // AppError 携带错误码与 HTTP 状态。

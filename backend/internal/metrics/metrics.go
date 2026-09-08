@@ -352,11 +352,13 @@ var Global = &Registry{processStart: time.Now()}
 // SessionSync tracks cross-tab clock skew reported by the FE BroadcastChannel
 // layer. The FE calls POST /api/metrics/session-sync-skew with observed skew;
 // the server aggregates into a simple histogram (count + sum + max) and
-// emits `de_session_sync_skew_ms` in the scrape output.
+// emits `de_session_sync_skew_ms` in the scrape output. Rejected counts
+// skew writes that were refused because DE_SESSION_SYNC_ENABLED=false.
 type SessionSync struct {
 	Count    Counter
 	SumMS    Counter
 	MaxMS    Counter
+	Rejected Counter
 }
 
 func (s *SessionSync) Observe(skewMS int64) {
@@ -376,8 +378,12 @@ func (s *SessionSync) Observe(skewMS int64) {
 	}
 }
 
-func (s *SessionSync) Snapshot() (count, sumMS, maxMS uint64) {
-	return s.Count.Value(), s.SumMS.Value(), s.MaxMS.Value()
+// Reject increments the rejected counter for writes refused while
+// DE_SESSION_SYNC_ENABLED=false (or "0").
+func (s *SessionSync) Reject() { s.Rejected.Inc() }
+
+func (s *SessionSync) Snapshot() (count, sumMS, maxMS, rejected uint64) {
+	return s.Count.Value(), s.SumMS.Value(), s.MaxMS.Value(), s.Rejected.Value()
 }
 
 // SubAgentBuckets tracks the multi-agent dispatch primitive: total run
