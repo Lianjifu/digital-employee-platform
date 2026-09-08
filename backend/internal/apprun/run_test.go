@@ -96,3 +96,17 @@ func TestKafkaAuditBusCloseAdapterSig(t *testing.T) {
 		t.Fatalf("nil KafkaAuditBus.Close returned %v, want nil", err)
 	}
 }
+
+// TestOpenSearchAuditCloseAdapterSig (P1-4) is the matching tripwire for
+// infra.OpenSearchAudit.Close: if its signature ever drifts away from
+// func() error, runDurable's RegisterCloseFunc(search.Close) call stops
+// compiling and this test breaks first.
+func TestOpenSearchAuditCloseAdapterSig(t *testing.T) {
+	var o *infra.OpenSearchAudit
+	var fn func() error = o.Close // compile-time assertion
+	_ = fn
+	// Runtime assertion: Close is nil-safe on a nil receiver.
+	if err := o.Close(); err != nil {
+		t.Fatalf("nil OpenSearchAudit.Close returned %v, want nil", err)
+	}
+}

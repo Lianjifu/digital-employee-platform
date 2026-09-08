@@ -303,6 +303,12 @@ func runDurable(ctx context.Context, opts Options, domain store.Domain, rt runti
 	if kafkaBus != nil {
 		srv.RegisterCloseFunc(kafkaBus.Close)
 	}
+	// P1-4 · OpenSearchAudit.Close drains the pooled *http.Client's idle
+	// connections so the audit sink doesn't leak sockets across restarts.
+	// Nil-safe on both the receiver and the HTTP client (opensearch.go:38-45).
+	if search != nil {
+		srv.RegisterCloseFunc(search.Close)
+	}
 	srv.Search = search
 	if opts.Mode == server.ModeCap || opts.Mode == server.ModeCollab || opts.Mode.IsUnified() {
 		srv.StartMemoryMaintenance()

@@ -35,6 +35,19 @@ func NewOpenSearchAuditFromEnv() *OpenSearchAudit {
 
 func (o *OpenSearchAudit) Available() bool { return o != nil && o.Base != "" }
 
+// Close releases the underlying *http.Client's idle connections so the
+// graceful-shutdown path doesn't leak goroutines / sockets back to the
+// pool after the audit sink goes idle. Nil-safe on a nil receiver
+// (consistent with infra.KafkaAuditBus.Close) and on a struct that has
+// no HTTP client (e.g. zero-value literal used in tests).
+func (o *OpenSearchAudit) Close() error {
+	if o == nil || o.HTTP == nil {
+		return nil
+	}
+	o.HTTP.CloseIdleConnections()
+	return nil
+}
+
 func (o *OpenSearchAudit) EnsureIndex(ctx context.Context) error {
 	if !o.Available() {
 		return nil
