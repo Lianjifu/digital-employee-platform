@@ -118,7 +118,7 @@
 
 | ADR | 主题 | 状态 |
 |---|---|---|
-| ADR-018 | Skill Vetter 接入策略 | ⚪ |
+| ADR-018 | Skill Vetter 接入策略 | ✅ 完成（[ADR-018](../adr/ADR-018-skill-vetter-integration.md)） |
 | ADR-019 | Gateway 硬墙策略 | ✅ 完成（[ADR-019](../adr/ADR-019-gateway-hardening.md)） |
 | ADR-020 | Workspace Publisher Key 信任链 | ✅ 完成（[ADR-020](../adr/ADR-020-workspace-publisher-key.md)） |
 | ADR-021 | Vault 接入策略（dev/staging/prod 三段） | ✅ 完成（[ADR-021](../adr/ADR-021-vault-integration.md)） |
