@@ -23,6 +23,10 @@ func (c *Counter) Add(n uint64) {
 	atomic.AddUint64((*uint64)(c), n)
 }
 func (c *Counter) Value() uint64 { return atomic.LoadUint64((*uint64)(c)) }
+func (c *Counter) Store(v uint64) { atomic.StoreUint64((*uint64)(c), v) }
+func (c *Counter) CAS(old, new uint64) bool {
+	return atomic.CompareAndSwapUint64((*uint64)(c), old, new)
+}
 
 // SkillVetterTotal counts vetter.Run outcomes across all builtin attach /
 // skill import paths. verdict ∈ {"allow", "warn", "deny"}.
@@ -251,6 +255,7 @@ type Registry struct {
 	PMSop        PMSopBuckets
 	Canvas       CanvasBuckets
 	SubAgent     SubAgentBuckets
+	SessionSync  SessionSync
 	processStart time.Time
 }
 
@@ -338,6 +343,37 @@ func (s *SelfImprovingBuckets) Snapshot() (created, merged, rejected uint64) {
 // Global is the default registry. All call sites use it directly so the
 // scrape handler can find values without indirection.
 var Global = &Registry{processStart: time.Now()}
+
+// SessionSync tracks cross-tab clock skew reported by the FE BroadcastChannel
+// layer. The FE calls POST /api/metrics/session-sync-skew with observed skew;
+// the server aggregates into a simple histogram (count + sum + max) and
+// emits `de_session_sync_skew_ms` in the scrape output.
+type SessionSync struct {
+	Count    Counter
+	SumMS    Counter
+	MaxMS    Counter
+}
+
+func (s *SessionSync) Observe(skewMS int64) {
+	if skewMS < 0 {
+		skewMS = -skewMS
+	}
+	s.Count.Inc()
+	s.SumMS.Add(uint64(skewMS))
+	for {
+		old := s.MaxMS.Value()
+		if uint64(skewMS) <= old {
+			return
+		}
+		if s.MaxMS.CAS(old, uint64(skewMS)) {
+			return
+		}
+	}
+}
+
+func (s *SessionSync) Snapshot() (count, sumMS, maxMS uint64) {
+	return s.Count.Value(), s.SumMS.Value(), s.MaxMS.Value()
+}
 
 // SubAgentBuckets tracks the multi-agent dispatch primitive: total run
 // wall-clock seconds and per-status run counts. status ∈

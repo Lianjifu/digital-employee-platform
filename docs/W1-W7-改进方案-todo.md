@@ -143,7 +143,7 @@
 | W2-publisher-key 运维手册 | ✅ 完成（[手册-W2-skill签名与vault.md](../手册-W2-skill签名与vault.md)） |
 | W2-vault 凭据管理手册 | ✅ 完成（同上 §4） |
 | W3-expert-inbox 审核手册 | ✅ 完成（[手册-W3-expert-inbox-审核.md](../手册-W3-expert-inbox-审核.md)） |
-| W4-heartbeat & visualdiff 排查手册 | ✅ 完成（[手册-W4-heartbeat-排查.md](../手册-W4-heartbeat-排查.md) heartbeat 段；visualdiff 待） |
+| W4-heartbeat & visualdiff 排查手册 | ✅ 完成（[手册-W4-heartbeat-排查.md](../手册-W4-heartbeat-排查.md) heartbeat §1–4 + visualdiff §2.1–2.4） |
 | W5-multimodal 上传规范 | ⚪ |
 | W6-pm-canvas 协作手册 | ⚪ |
 | W7-sqlite / wechat 部署手册 | ⚪ |
@@ -161,15 +161,15 @@
 | `de_heartbeat_lag_seconds` | ✅ 完成（`metrics.Global` + scrape handler；W4-D1） |
 | `de_visualdiff_seconds{size}` | ✅ 完成（`metrics.Global.VisualDiff` 4 个 size bucket；W4-D2） |
 | `de_canvas_clients_online{workspace}` | ✅ 完成（W4-D1 `Tracker.Snapshot()`；W6-D2 将叠加 deviceId） |
-| `de_session_sync_skew_ms{device}` | ⚪ |
+| `de_session_sync_skew_ms{device}` | ✅ 完成（`metrics.Global.SessionSync` + `POST /api/metrics/session-sync-skew` + FE `reportSkew`；count/sum/max 三个子指标） |
 
 ### 9.4 权限（4 个，0 个已落）
 
 | 权限 | 状态 |
 |---|---|
-| `skill.vet.override` | ⚪ |
-| `publisher_key.rotate` | ⚪ |
-| `vault.read` | ⚪ |
+| `skill.vet.override` | ✅ 完成（`internal/auth/jwt.go` admin 列表；`handlers_skills_package.go` vetter 拒绝路径 bypass + audit `override` 行） |
+| `publisher_key.rotate` | ✅ 完成（`internal/auth/jwt.go` admin 列表；`rotateWorkspacePublisherKey` handler 入口校验） |
+| `vault.read` | ✅ 完成（`internal/auth/jwt.go` admin 列表；`GET /api/vault/keys` 校验；admin 旁路；refs 通过 `vault.Client.Refs()` 暴露） |
 | `canvas.comment` | ✅ 完成（W6-D2） |
 
 ### 9.5 环境变量（11 个，1 个已接）
@@ -184,9 +184,9 @@
 | `DE_VAULT_ADDR` / `DE_VAULT_TOKEN` / `DE_VAULT_KV_MOUNT` | 🟡 仅 Client.NewFromEnv 读，无 caller |
 | `DE_SUBAGENT_MAX_CONCURRENCY` | ✅ 已接（W2-D3；默认 4） |
 | `DE_HEARTBEAT_INTERVAL` | ✅ 已接（W4-D1） |
-| `DE_CANVAS_COMMENT_TTL` | ⚪ |
+| `DE_CANVAS_COMMENT_TTL` | ✅ 已接（W6-D2 `canvasJanitor`；TTL=0 关闭；过期 comments 触发 `de_canvas_comment_total{action="expired"}`） |
 | `DE_VISUALDIFF_RETENTION` | ✅ 已接（W4-D2，默认 7 天） |
-| `DE_SESSION_SYNC_ENABLED` | ⚪ |
+| `DE_SESSION_SYNC_ENABLED` | ✅ 已接（FE `useSessionSync.ts` `isSessionSyncEnabled()`；默认 true，置 false 关闭 BroadcastChannel + 心跳；`.env.example` 已留注释） |
 
 ### 9.6 CI（1 项已绿）
 

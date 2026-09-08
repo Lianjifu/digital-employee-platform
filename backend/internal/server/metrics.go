@@ -341,6 +341,14 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"task.unblock\"} %d\n", svc, psUnblock)
 	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"task.note\"} %d\n", svc, psNote)
 
+	// Cross-tab session sync clock skew (FE BroadcastChannel layer reports).
+	ssCount, ssSumMS, ssMaxMS := metrics.Global.SessionSync.Snapshot()
+	_, _ = fmt.Fprintf(w, "# HELP de_session_sync_skew_ms Cross-tab clock skew (ms) observed by the FE session-sync layer\n# TYPE de_session_sync_skew_ms counter\n")
+	_, _ = fmt.Fprintf(w, "de_session_sync_skew_ms_count{service=%q} %d\n", svc, ssCount)
+	_, _ = fmt.Fprintf(w, "de_session_sync_skew_ms_sum{service=%q} %d\n", svc, ssSumMS)
+	_, _ = fmt.Fprintf(w, "# HELP de_session_sync_skew_ms_max max single observation skew (ms)\n# TYPE de_session_sync_skew_ms_max gauge\n")
+	_, _ = fmt.Fprintf(w, "de_session_sync_skew_ms_max{service=%q} %d\n", svc, ssMaxMS)
+
 	// W6-D2 · Canvas comment lifecycle
 	cvCreated, cvEdited, cvResolved, cvDeleted, cvExpired := metrics.Global.Canvas.Snapshot()
 	_, _ = fmt.Fprintf(w, "# HELP de_canvas_comment_total Canvas comment lifecycle events\n# TYPE de_canvas_comment_total counter\n")

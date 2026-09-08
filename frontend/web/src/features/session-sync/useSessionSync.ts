@@ -59,6 +59,23 @@ function resolveDeviceId(storage: DeviceIdStorage | null, fallbackKey: string): 
   return storage.getOrCreate();
 }
 
+// reportSkew posts one observation to /api/metrics/session-sync-skew.
+// Errors and network failures are swallowed — skew reporting is
+// diagnostic and must never break the BroadcastChannel loop.
+function reportSkew(skewMs: number): void {
+  if (typeof window === 'undefined' || typeof fetch === 'undefined') return;
+  try {
+    void fetch('/api/metrics/session-sync-skew', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ skewMs }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    // ignore
+  }
+}
+
 function resolveStorage(storageKey: string): DeviceIdStorage | null {
   if (typeof window === 'undefined') {
     return null;
@@ -123,6 +140,13 @@ export function useSessionSync(options: UseSessionSyncOptions = {}): SessionSync
       }
       if (filterRef.current && !filterRef.current.includes(event.kind)) {
         return;
+      }
+      // Observe clock skew between this tab and the sender — useful
+      // diagnostic for FE-side staleness. Negative skew = sender clock
+      // ahead of ours (already absolute value here).
+      const skew = Math.abs(Date.now() - event.at);
+      if (skew > 0 && skew < 60_000) {
+        reportSkew(skew);
       }
       if (event.kind === 'tab:left') {
         peersRef.current.delete(event.tabId);
