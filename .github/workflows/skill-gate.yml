@@ -1,0 +1,43 @@
+name: skill-gate
+
+on:
+  pull_request:
+    paths:
+      - "backend/**"
+      - "builtin/skills/**"
+      - ".github/workflows/skill-gate.yml"
+      - "Makefile"
+  push:
+    branches: [main, master]
+    paths:
+      - "backend/**"
+      - "builtin/skills/**"
+  workflow_dispatch:
+
+jobs:
+  skill-gate:
+    name: skill-gate (vetter strict + signature verify)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Cache go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/cache
+          key: ${{ runner.os }}-go-${{ hashFiles('backend/go.sum') }}
+      - name: Run skill-gate
+        run: make skill-gate
+      - name: Report summary
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "::notice::skill-gate passed: 34 builtin skills vetter + signed"
+          else
+            echo "::error::skill-gate failed — vetter deny or signature mismatch"
+          fi

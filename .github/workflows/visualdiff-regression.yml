@@ -1,0 +1,55 @@
+name: visualdiff-regression
+
+on:
+  pull_request:
+    paths:
+      - "backend/internal/visualdiff/**"
+      - "backend/internal/server/visualdiff*"
+      - "frontend/web/src/features/visualdiff/**"
+      - ".github/workflows/visualdiff-regression.yml"
+  push:
+    branches: [main, master]
+    paths:
+      - "backend/internal/visualdiff/**"
+      - "frontend/web/src/features/visualdiff/**"
+  workflow_dispatch:
+
+jobs:
+  visualdiff-backend:
+    name: visualdiff backend (unit + integration)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.x"
+      - name: Cache go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/cache
+          key: ${{ runner.os }}-go-${{ hashFiles('backend/go.sum') }}
+      - name: Unit tests
+        run: go test -race -count=1 -timeout 60s ./internal/visualdiff/...
+      - name: Integration tests (server handler)
+        run: go test -race -count=1 -timeout 120s -run 'TestVisualDiff' ./internal/server/...
+
+  visualdiff-frontend:
+    name: visualdiff frontend (vitest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20.x"
+          cache: npm
+          cache-dependency-path: frontend/web/package-lock.json
+      - name: Install
+        run: npm ci --no-audit --no-fund
+      - name: Vitest (visualdiff)
+        run: npx vitest run src/features/visualdiff --reporter=default

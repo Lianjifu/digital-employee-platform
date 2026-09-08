@@ -188,13 +188,13 @@
 | `DE_VISUALDIFF_RETENTION` | ✅ 已接（W4-D2，默认 7 天） |
 | `DE_SESSION_SYNC_ENABLED` | ✅ 已接（FE `useSessionSync.ts` `isSessionSyncEnabled()`；默认 true，置 false 关闭 BroadcastChannel + 心跳；`.env.example` 已留注释） |
 
-### 9.6 CI（1 项已绿）
+### 9.6 CI（3 项已绿）
 
 | CI | 状态 |
 |---|---|
 | `.github/workflows/backend-contract.yml` | ✅ 已绿（PR unit + 契约探针） |
-| `make skill-gate` job | ⚪ 未入库 |
-| visual regression job | ⚪ |
+| `make skill-gate` job | ✅ 已绿（`.github/workflows/skill-gate.yml`：vetter strict + signature verify；34 builtin skills 全过） |
+| visual regression job | ✅ 已绿（`.github/workflows/visualdiff-regression.yml`：后端 unit + integration + 前端 vitest） |
 
 ---
 
