@@ -130,6 +130,15 @@ type Server struct {
 	// W2-D3 · SubAgent dispatch engine. Built in New(); concurrency cap
 	// configured via DE_SUBAGENT_MAX_CONCURRENCY.
 	SubAgent *agentos.Engine
+	// P1-4 · AuditBus is the Redis stream publisher (DE_REDIS_URL). Injected
+	// by apprun/runDurable so future code can read or replace it; its
+	// underlying *redis.Client is closed via RegisterCloseFunc by runDurable
+	// (registered once for Cache — same rdb).
+	AuditBus *infra.AuditBus
+	// P1-4 · KafkaBus is the optional Kafka audit publisher
+	// (DE_KAFKA_BROKERS). nil when env unset; Close is registered by
+	// apprun/runDurable.
+	KafkaBus *infra.KafkaAuditBus
 
 	// closeMu guards closeFuncs + closed; RegisterCloseFunc and Shutdown
 	// race in tests where Shutdown runs on a different goroutine than

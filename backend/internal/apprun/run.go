@@ -296,6 +296,13 @@ func runDurable(ctx context.Context, opts Options, domain store.Domain, rt runti
 	if rdb != nil {
 		srv.RegisterCloseFunc(func() error { return rdb.Close() })
 	}
+	srv.AuditBus = auditBus
+	srv.KafkaBus = kafkaBus
+	// P1-4 · KafkaAuditBus.Close returns error directly — no adapter needed.
+	// Nil-safe by infra implementation (kafkabus.go:39-44).
+	if kafkaBus != nil {
+		srv.RegisterCloseFunc(kafkaBus.Close)
+	}
 	srv.Search = search
 	if opts.Mode == server.ModeCap || opts.Mode == server.ModeCollab || opts.Mode.IsUnified() {
 		srv.StartMemoryMaintenance()

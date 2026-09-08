@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/apprun"
+	"github.com/digital-employee-platform/backend/internal/infra"
 	"github.com/digital-employee-platform/backend/internal/server"
 	"github.com/digital-employee-platform/backend/internal/store"
 )
@@ -78,5 +79,20 @@ func TestRegisterCloseFuncAdapterSig(t *testing.T) {
 	defer cancel()
 	if err := srv.Shutdown(ctx); err != nil {
 		t.Fatalf("Shutdown returned %v", err)
+	}
+}
+
+// TestKafkaAuditBusCloseAdapterSig (P1-4) is a compile-time assertion that
+// infra.KafkaAuditBus.Close already matches the func() error shape that
+// server.RegisterCloseFunc expects — so runDurable passes it directly with
+// no adapter. If the signature ever changes, this test fails to compile
+// and the wrapper in run.go must be updated.
+func TestKafkaAuditBusCloseAdapterSig(t *testing.T) {
+	var k *infra.KafkaAuditBus
+	var fn func() error = k.Close // compile-time assertion
+	_ = fn
+	// Runtime assertion: Close is nil-safe on a nil receiver.
+	if err := k.Close(); err != nil {
+		t.Fatalf("nil KafkaAuditBus.Close returned %v, want nil", err)
 	}
 }
