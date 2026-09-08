@@ -9,29 +9,29 @@
 
 | 段 | 项数 | ✅ 完成 | 🟡 部分 | ⚪ 未做 | 完成率 |
 |----|----:|------:|------:|------:|-----:|
-| 后端 W1（Skill Vetter / Gateway 硬墙 / Catalog / DS） | 4 | 4 | 0 | 0 | 100% |
-| 后端 W2（SubAgent / 3-列 / Vault） | 3 | 3 | 0 | 0 | 100% |
-| 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 3 | 0 | 0 | 100% |
+| 后端 W1（Skill Vetter / Gateway 硬墙 / Catalog / DS） | 4 | 3 | 1 | 0 | 75% |
+| 后端 W2（SubAgent / 3-列 / Vault） | 3 | 0 | 3 | 0 | 0% |
+| 后端 W3（ExpertInbox / HotReload / Preview） | 3 | 2 | 1 | 0 | 67% |
 | 后端 W4（Heartbeat / VisualDiff） | 2 | 2 | 0 | 0 | 100% |
 | 后端 W5（SelfImproving / Multimodal） | 2 | 2 | 0 | 0 | 100% |
-| 后端 W6（PM SOP / Canvas） | 2 | 2 | 0 | 0 | 100% |
-| 后端 W7（SQLite / WeChat-Sync） | 2 | 2 | 0 | 0 | 100% |
-| 前端 9 项 | 9 | 9 | 0 | 0 | 100% |
-| 横切（ADR × 16 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI × 3） | ~52 | 52 | 0 | 0 | 100% |
-| **合计** | **82** | **78** | **0** | **4** | **95%** |
+| 后端 W6（PM SOP / Canvas） | 2 | 1 | 1 | 0 | 50% |
+| 后端 W7（SQLite / WeChat-Sync） | 2 | 1 | 1 | 0 | 50% |
+| 前端 9 项 | 9 | 8 | 1 | 0 | 89% |
+| 横切（ADR × 16 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI × 3） | ~52 | 51 | 1 | 0 | 98% |
+| **合计** | **83** | **70** | **9** | **4** | **84%** |
 
-**关键结论**（2026-09-08）：
-- W1（Skill 安全）：D1 vetter + D3 gateway + D4 catalog + D2 签名 — 4/4 ✅
-- W2（Agent OS）：D1 publisher key + D2 vault + D3 subagent — 3/3 ✅
-- W3（ExpertInbox / HotReload / Preview）：D1 + D2 + D3 — 3/3 ✅
+**关键结论**（2026-09-08，审计后修正）：
+- W1（Skill 安全）：D1 vetter ✅ + D3 gateway ✅ + D4 catalog ✅ + **D2 签名 🟡**（证据字段含 phantom `cmd/check-skill`） — 3 ✅ + 1 🟡
+- W2（Agent OS）：**D1 publisher key 🟡 + D2 vault 🟡 + D3 subagent 🟡**（3 项均为路径 / 文件名澄清，非功能缺陷，但证据列与实际不一致） — 0 ✅ + 3 🟡
+- W3（ExpertInbox / HotReload / Preview）：**D1 expert-inbox 🟡**（实现路径实为 `handlers_expert_inbox.go`，非独立包） + D2 ✅ + D3 ✅ — 2 ✅ + 1 🟡
 - W4（Heartbeat / VisualDiff）：D1 + D2 — 2/2 ✅
 - W5（SelfImproving / Multimodal）：D1 + D2 — 2/2 ✅
-- W6（PM SOP / Canvas）：D1 + D2 — 2/2 ✅
-- W7（SQLite / WeChat）：D1 + D2 — 2/2 ✅
-- 前端：FE-1 三列 / FE-2 多模态 / FE-3 文档预览 / FE-4 UI / FE-5 SSE / FE-6 Canvas / FE-7 VisualDiff / FE-8 Workflow / FE-9 Session Sync — 9/9 ✅
-- 横切：ADR × 16 / 手册 × 8 / 指标 × 10 / 权限 × 4 / env × 11 / CI × 3 — 52/52 ✅
+- W6（PM SOP / Canvas）：**D1 PM SOP 🟡**（集成测实际 7 个，原文档误记 8） + D2 ✅ — 1 ✅ + 1 🟡
+- W7（SQLite / WeChat）：D1 ✅ + **D2 WeChat 🟡**（包测实际 20 个，原文档误记 22；无 `handlers_weixin_test.go`，端到端仅 `m4_execution_test.go` 间接覆盖） — 1 ✅ + 1 🟡
+- 前端：FE-1..FE-7 ✅ + **FE-8 Workflow Canvas 🟡**（无 `features/workflow-canvas/` 组件，仅 CSS hooks，待 react-flow 节点图接入）+ FE-9 ✅ — 8 ✅ + 1 🟡
+- 横切：ADR × 16 ✅ + 手册 × 8 ✅ + 指标 × 10 ✅ + 权限 × 4 ✅ + env × 10 ✅ + **DE_SESSION_SYNC_ENABLED 🟡**（仅 `VITE_SESSION_SYNC_ENABLED` 前端 reader，缺后端 reader）+ CI × 3 ✅ — 51 ✅ + 1 🟡
 - 性能 / 可靠性硬化：P1-1 cancel/Shutdown + P1-2 panic recover + P1-3 close 注册 + P1-4 Kafka 注入 — 6 commits ✅（见 §11）
-- 合计 **95%** 完成；剩余 **4 项 ⚪** 均为「已知小事项」（`deprecation` 注释 / docs typo / `infra.OpenSearchAudit` Close / Store 整体 Close 概念 —— 见 §11 §6 out-of-scope 与 §0 「已知小事项」）
+- 合计 **85%** 完成（70 ✅ / 9 🟡 / 4 ⚪ = 83 项；95% → 85% ≈ 修正后口径）；剩余 **4 项 ⚪** 均为「已知小事项」（`deprecation` 注释 / docs typo / `infra.OpenSearchAudit` Close / Store 整体 Close 概念 —— 见 §11 §6 out-of-scope 与 §0 「已知小事项」）
 
 ---
 
@@ -40,8 +40,8 @@
 | ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
 |---|---|---|---|---|
 | W1-D1 | Skill Vetter（内容危险模式） | ✅ 完成 | `internal/skills/vetter/` 已联通 builtin + import 两条 server 路径（`builtin_skills.go:296`、`handlers_skills_package.go:38`），正确排序在 signer 之前；audit 行写入（denied / warn / allow=无）；`cmd/verify-skill --vet=strict` CLI parity；`internal/server/skill_vetter_integration_test.go` 3 个集成测试；`cmd/check_skill/` 已清理 |
-| W1-D2 | Skill 签名（ed25519 + trust store） | ✅ 完成 | `signing/keystore.go`、`signing/canonical.go`、`signing/signer.go`、`cmd/sign-skill`、`cmd/verify-skill`、`cmd/check-skill`、`hard_delete_persist_test.go`；13+ 测试通过 | — |
-| W1-D3 | Gateway 硬墙（SSRF / path traversal / size / mime） | ✅ 完成 | `internal/gateway/artifact_gateway.go` + `artifact_gateway_test.go`（12 个测试）；3 个 handler 路由改造 `serveSkillArtifact` / `serveSkillArtifactPreview` / `serveSkillArtifactSlidePNG`；env `DE_ARTIFACT_MAX_BYTES`（默认 100 MB）/`DE_ARTIFACT_REQUIRE_AUTH`（默认 true）；ext 白名单放在 stat 前避免 404 vs 415 信息泄漏；2 个 commit (`fcee0c7`, `e0d3edc`) | ADR-019 ✅（[ADR-019](../adr/ADR-019-gateway-hardening.md)） |
+| W1-D2 | Skill 签名（ed25519 + trust store） | ✅ 完成 | `signing/keystore.go`、`signing/canonical.go`、`signing/signer.go`、`cmd/sign-skill`、`cmd/verify-skill`、`hard_delete_persist_test.go`；13+ 测试通过 | — |
+| W1-D3 | Gateway 硬墙（SSRF / path traversal / size / mime） | ✅ 完成 | `internal/gateway/artifact_gateway.go` + `artifact_gateway_test.go`（11 个测试）；3 个 handler 路由改造 `serveSkillArtifact` / `serveSkillArtifactPreview` / `serveSkillArtifactSlidePNG`；env `DE_ARTIFACT_MAX_BYTES`（默认 100 MB）/`DE_ARTIFACT_REQUIRE_AUTH`（默认 true）；ext 白名单放在 stat 前避免 404 vs 415 信息泄漏；2 个 commit (`fcee0c7`, `e0d3edc`) | ADR-019 ✅（[ADR-019](../adr/ADR-019-gateway-hardening.md)） |
 | W1-D4 | Catalog / DS 数据源契约 | ✅ 完成 | 新 `internal/catalog/`：`Option{ID,Name,Meta,Kind}` + `Section map[Kind][]Option` + `Source{Kind,Fetch(ctx,ws)}` 接口 + `Registry{Assemble, FailOpen}` + 纯函数 `MergeOptions` + `StaticSource`（内存 / Web channel 注入）；`Section` 空 kind 仍为非 nil 空 slice；workspace 隔离 = source 责任；fail-open / fail-closed + ctx 取消语义 | ADR-036 + 10 个 contract 测试（跨源合并 / workspace / ctx 传递 / fail-mode / 空 Name / SortedNames 确定性） |
 
 **W1 退出门槛**：CI `make skill-gate` 已入库（`.github/workflows/skill-gate.yml`）；34 builtin skills 全过。
@@ -52,9 +52,9 @@
 
 | ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
 |---|---|---|---|---|
-| W2-D1 | Workspace Publisher Key（per-workspace Ed25519 + sidecar） | ✅ 完成 | commit `9ecc607`；`handlers_workspaces_publisher*.go`、`cmd/sign-skill-pack`、`internal/skills/parse_sidecar.go`；22 个测试 | — |
-| W2-D2 | Vault 集成（dev keypair / 私钥 / 模型凭据） | ✅ 完成 | `signing.SignerResolver` 接口（`Signer/TrustedKey/BackedByVault`）+ `signing.VaultKeyStore`（`vault:skill-keys/<keyID>` 路径，base64 私钥，本地缓存）+ `vault.Client.PutMap/ResolveMap` 批量；`Server.SkillSigner` slot + `bootstrapVaultSkillSigning()`（`DE_VAULT_ADDR` + `DE_SKILL_KEYSTORE=vault` 启用，probe 失败回退 dev）；11 个新测试；commit `217924c`；ADR-021 已出 | — |
-| W2-D3 | SubAgent（多 Agent 委派 / merge opinions） | ✅ 完成 | 新 `internal/agentos/`：`Engine{MaxConc, DefaultTimeout, OnMetric}` + `Run(ctx, tasks []Task)`；semaphore 限并发 + per-task `context.WithTimeout` + panic-recover 转 `failed/panic_recovered` + 父 ctx 取消传播；`mergeParticipantOpinions` 保留为线性拼接策略；`metrics.SubAgentBuckets` + scrape 输出 `de_subagent_run_seconds_sum/count/avg` + `de_subagent_run_total{status}`；env `DE_SUBAGENT_MAX_CONCURRENCY`（默认 4） | ADR-022 + 11 包测；既有 `dispatchParticipants` / `mergeParticipantOpinions` 测试 100% 兼容 |
+| W2-D1 | Workspace Publisher Key（per-workspace Ed25519 + sidecar） | 🟡 部分 | commit `9ecc607`；`handlers_workspaces_publisher*.go`、`cmd/sign-skill-pack`；sidecar 解析内联于 `handlers_workspaces_publisher.go` + `skill_package.go`（无独立 `parse_sidecar.go` 文件）；22 个测试 | — |
+| W2-D2 | Vault 集成（dev keypair / 私钥 / 模型凭据） | 🟡 部分 | `signing.SignerResolver` 接口（`Signer/TrustedKey/BackedByVault`）+ `signing.VaultKeyStore`（`vault:skill-keys/<keyID>` 路径，base64 私钥，本地缓存）+ `vault.Client.PutMap/ResolveMap` 批量；VaultKeyStore / SignerResolver 定义在 `signing/keystore.go`（非 `vault_keystore.go`；测试文件 `vault_keystore_test.go`）；`Server.SkillSigner` slot + `bootstrapVaultSkillSigning()`（`DE_VAULT_ADDR` + `DE_SKILL_KEYSTORE=vault` 启用，probe 失败回退 dev）；11 个新测试；commit `217924c`；ADR-021 已出 | — |
+| W2-D3 | SubAgent（多 Agent 委派 / merge opinions） | 🟡 部分 | `internal/agentos/subagent.go`（Engine / Task / Run 全部内联于此，**无独立 `engine.go` 文件**）：`Engine{MaxConc, DefaultTimeout, OnMetric}` + `Run(ctx, tasks []Task)`；semaphore 限并发 + per-task `context.WithTimeout` + panic-recover 转 `failed/panic_recovered` + 父 ctx 取消传播；`mergeParticipantOpinions` 保留为线性拼接策略；`metrics.SubAgentBuckets` + scrape 输出 `de_subagent_run_seconds_sum/count/avg` + `de_subagent_run_total{status}`；env `DE_SUBAGENT_MAX_CONCURRENCY`（默认 4） | ADR-022 + 11 包测；既有 `dispatchParticipants` / `mergeParticipantOpinions` 测试 100% 兼容 |
 
 ---
 
@@ -62,7 +62,7 @@
 
 | ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
 |---|---|---|---|---|
-| W3-D1 | ExpertInbox（邮件 / IM 类聚合） | ✅ 完成 | store 加 `ExpertInbox []map[string]any`，路由 `GET /api/expert-inbox` + `POST /api/expert-inbox/:id/review` + `POST /api/expert-inbox`；状态机 `pending → approved/rejected/dismissed`；workspace 隔离；audit 行；metric `de_expert_inbox_pending` 已接真值 | ADR-023 + 手册 + 13 测试 |
+| W3-D1 | ExpertInbox（邮件 / IM 类聚合） | 🟡 部分 | store 加 `ExpertInbox []map[string]any`，路由 `GET /api/expert-inbox` + `POST /api/expert-inbox/:id/review` + `POST /api/expert-inbox`；状态机 `pending → approved/rejected/dismissed`；workspace 隔离；audit 行；metric `de_expert_inbox_pending` 已接真值；**实现位于 `internal/server/handlers_expert_inbox.go`（非独立 `internal/expertinbox/` 包）** | ADR-023 + 手册 + 13 测试 |
 | W3-D2 | HotReload（配置变更热加载） | ✅ 完成 | 新 `internal/hotreload/` 包：mtime 轮询 + SIGHUP；解析/应用失败保留旧值；`de_hotreload_reload_total{resource,result}` 指标 | ADR-024 + 9 测试 |
 | W3-D3 | Preview（artifact 预览服务端） | ✅ 完成 | `internal/server/preview_sandbox.go`：X-Frame-Options / CSP (`frame-ancestors 'self'` / `img-src 'self' data: blob:`) / X-Content-Type-Options: nosniff / Referrer-Policy: no-referrer / Cache-Control private；`?inline=1` 翻转 Content-Disposition；接入 3 个 handler (`serveSkillArtifact` / `serveSkillArtifactSlidePNG` / `writeJSON`) | ADR-030 + 4 测试 |
 
@@ -90,7 +90,7 @@
 
 | ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
 |---|---|---|---|---|
-| W6-D1 | PM SOP（项目管理模板引擎） | ✅ 完成 | 新 `internal/pmsop/`：Engine + Template/Plan + 状态机（5 个 task.* 事件 + 自动 stage/plan 完成判定）；内置 `agile-sprint` / `launch-checklist` 模板；`POST /api/pmsop/plans` 渲染、`GET /api/pmsop/plans/<id>` 详情、`POST /api/pmsop/plans/<id>/events` 应用事件；持久化在 `Store.KnowledgeExtra["pmsop_plans"]`；`de_pmsop_plan_total{action}` 指标 | ADR-034 + 12 包测 + 8 集成测 |
+| W6-D1 | PM SOP（项目管理模板引擎） | 🟡 部分 | 新 `internal/pmsop/`：Engine + Template/Plan + 状态机（5 个 task.* 事件 + 自动 stage/plan 完成判定）；内置 `agile-sprint` / `launch-checklist` 模板；`POST /api/pmsop/plans` 渲染、`GET /api/pmsop/plans/<id>` 详情、`POST /api/pmsop/plans/<id>/events` 应用事件；持久化在 `Store.KnowledgeExtra["pmsop_plans"]`；`de_pmsop_plan_total{action}` 指标 | ADR-034 + 12 包测 + 7 集成测（`handlers_pmsop_test.go`，原文档误记 8） |
 | W6-D2 | Canvas 协作后端（presence / CRDT） | ✅ 完成 | 新 `internal/canvas/`：Store（boards / comments / presence map）+ Broadcaster（per-board SSE fan-out）；9 个路由：`/api/canvas/boards[/{id}][/{comments,presence,stream}]` 与 `/api/canvas/comments/{id}`；SSE 事件 `snapshot / presence / comment / tick`；新增权限 `canvas.comment`；`de_canvas_comment_total{action}` 指标 | ADR-035 + 13 包测 + 10 集成测 |
 
 ---
@@ -100,7 +100,7 @@
 | ID | 项 | 状态 | 证据 / 缺口 | 下一步 |
 |---|---|---|---|---|
 | W7-D1 | SQLite（嵌入式单机演示） | ✅ 完成 | 新 `internal/store/sqlite.go`：`OpenSQLite`（PRAGMA WAL + busy_timeout + foreign_keys）+ `PersistFunc`/`DeleteFunc`（shrink-heavy 走 replaceCollection，其余 upsertMany）+ `List`/`Count`；schema 对齐 PG `platform.kv_documents`；env `DE_STORE_BACKEND=sqlite` + `DE_SQLITE_PATH`（默认 `data/store.db`）由 `initSQLiteDurability()` 在 `server.New()` 末尾挂 `SetPersistHook`；失败回退 in-memory（不 panic）；依赖 `modernc.org/sqlite`（pure Go，无 CGO） | ADR-028 + 10 包测 + 3 集成测 |
-| W7-D2 | WeChat 同步渠道 | ✅ 完成 | 新 `internal/weixin/`（Credentials 双形态：个人号 ilink sidecar + 公众号 Open API；自动 Mode 识别）；Client `Probe / SendText / AccessToken`；公众号 SHA1 + AES-CBC 回调加解密（`VerifySignature/EncryptCallback/DecryptCallback/ParseEncryptedCallback/ReplyText`）；`WeixinHTTP` 字段允许测试注入；修复 `handlers_channels.go` 既存的 `weixin.*` 编译错误 | ADR-029 + 22 包测 + 1 端到端集成测 |
+| W7-D2 | WeChat 同步渠道 | 🟡 部分 | `internal/weixin/`（Credentials 双形态：个人号 ilink sidecar + 公众号 Open API；自动 Mode 识别）；Client `Probe / SendText / AccessToken`；公众号 SHA1 + AES-CBC 回调加解密（`VerifySignature/EncryptCallback/DecryptCallback/ParseEncryptedCallback/ReplyText`）；`WeixinHTTP` 字段允许测试注入；修复 `handlers_channels.go` 既存的 `weixin.*` 编译错误 | ADR-029 + 20 包测（`internal/weixin/client_test.go`，原文档误记 22）+ 1 端到端集成测；**无单独 `handlers_weixin_test.go`**，端到端路径仅由 `internal/server/m4_execution_test.go` 间接覆盖 |
 
 ---
 
@@ -115,7 +115,7 @@
 | FE-5 | SSE Stream 事件协议（stage/delta/tool/route/thought/evidence/done/error） | ✅ 完成 | `packages/types/src/agent-os.ts:18` `STREAM_EVENT_TYPES` 8 项齐全 |
 | FE-6 | PM Canvas / 协作画布（白板 / 评论 / presence） | ✅ 完成 | 新 `features/canvas/`：`canvas-types.ts`（`CanvasBoard / CanvasComment / CanvasPresence` + 事件协议 `snapshot/presence/comment/tick/ping` + 纯函数 `clampBoardTitle / clampCommentText / normaliseCoordinate`）+ `canvas-api.ts`（boards / comments / presence 9 个 REST 包装 + `openBoardStream` SSE 解析器）；`useCanvasBoard` hook 自动重连 5s + presence 30s 心跳 + 事件驱动快照/presence/comment 合并；`<CanvasCommentPin>`（按 0..1 归一坐标定位 + 在线徽标 + 弹层 resolve/delete）+ `<CanvasPresenceBar>`（多成员 chip）；新页面 `pages/Canvas.tsx`（侧栏 board 列表 + 新建/删除 + 主区 surface 点击落 pin + 评论 composer）；路由 `/canvas` + `/canvas/:boardId`（user/admin/auditor + `access.read` 权限）；侧栏 admin「编排」与 auditor「核查」组均含 /canvas（user 不含，4 字 `协作画布` / `画布核查`）；i18n 中文「协作画布」/英文「Collab Canvas」；24 测试（7 types + 11 api + 6 component）通过 |
 | FE-7 | Visual Diff（前后截图 / 像素差 / 高亮） | ✅ 完成 | 新 `features/visualdiff/`：`VisualDiffViewer`（两 slot 上传 + threshold/tolerance/highlight 控件 + verdict 徽章 + before/after/diff 三联显示 + diffPNG 下载）+ `visualdiff-api.ts`（POST /api/visualdiff wrapper，自动拆 `{ok,data}` 信封）+ `visualdiff-types.ts`（base64 reader / clamp / 格式化）；新页面 `pages/VisualDiff.tsx` + 路由 `/visualdiff`（admin/auditor/user + `access.write` 权限）+ 侧栏 admin「数据治理」与 auditor「核查」组均含 /visualdiff；i18n 中文键「视觉对比」；18 个测试通过（13 api 单测 + 5 组件测） |
-| FE-8 | Workflow Canvas（react-flow 编排） | ✅ 完成 | 复用 FE-6 `features/canvas/` 后端 presence / 评论 + `pages/Canvas.tsx` 同一画布即承载 PM 模板与 Workflow 流程编排；归一化坐标 + SSE stream 协议 + 30s presence + auto-reconnect 一致；`/canvas/:boardId` 路由直接渲染，UI 后续可在 board detail 区嵌入 react-flow 节点；后端 W6-D2 `internal/canvas/` 已为 workflow board 提供 `boardId` 维度存储 |
+| FE-8 | Workflow Canvas（react-flow 编排） | 🟡 部分 | 复用 FE-6 `features/canvas/` 后端 presence / 评论 + `pages/Canvas.tsx` 同一画布即承载 PM 模板与 Workflow 流程编排；归一化坐标 + SSE stream 协议 + 30s presence + auto-reconnect 一致；`/canvas/:boardId` 路由直接渲染；后端 W6-D2 `internal/canvas/` 已为 workflow board 提供 `boardId` 维度存储；**实际仅有 CSS hooks（`styles/global.css` `.react-flow__*`），无 `features/workflow-canvas/` 或 node-graph 组件；待 react-flow 节点图组件接入** |
 | FE-9 | Session Sync（跨设备 / heartbeat / 标签同步） | ✅ 完成 | 新 `features/session-sync/`：`session-sync-types.ts`（UUID 设备 ID / tab ID / 事件协议 `tab:joined / tab:left / state:updated / conversation:focus / heartbeat` + `clampNowSkewMs` + 纯函数 `makeLocalStorageDeviceId`）；`session-sync-channel.ts`（BroadcastChannel 封装 + 自检过滤 + 关闭安全 + noop fallback）+ `createSessionSync` 工厂；`useSessionSync.ts`（hooks 组件：自忽略 echo / peer 心跳 / 30s offline / 15s 自身 heartbeat）；`SessionSyncIndicator.tsx`（chip 显示标签数）；新页面 `pages/SessionSync.tsx` + 路由 `/session-sync`（user/admin/auditor）+ 侧栏 admin「数据治理」与 auditor「核查」组均含 /session-sync；i18n 中文「会话同步」/英文「Session Sync」；34 测试（11 types + 14 channel + 7 hook + 2 page）；commit `60ec6ed` |
 
 ---
@@ -194,7 +194,7 @@
 | `DE_HEARTBEAT_INTERVAL` | ✅ 已接（W4-D1） |
 | `DE_CANVAS_COMMENT_TTL` | ✅ 已接（W6-D2 `canvasJanitor`；TTL=0 关闭；过期 comments 触发 `de_canvas_comment_total{action="expired"}`） |
 | `DE_VISUALDIFF_RETENTION` | ✅ 已接（W4-D2，默认 7 天） |
-| `DE_SESSION_SYNC_ENABLED` | ✅ 已接（FE `useSessionSync.ts` `isSessionSyncEnabled()`；默认 true，置 false 关闭 BroadcastChannel + 心跳；`.env.example` 已留注释） |
+| `DE_SESSION_SYNC_ENABLED` | 🟡 部分（frontend-only） | **仅前端 reader**：`useSessionSync.ts:46-50` `isSessionSyncEnabled()` 读 `VITE_SESSION_SYNC_ENABLED`（import.meta.env）；默认 true，置 false 关闭 BroadcastChannel + 心跳；`.env.example` 已留注释。**后端 reader 暂缺** —— `DE_SESSION_SYNC_ENABLED` 在后端无对应实现，session-sync metric POST handler 仅在收到前端事件时被动计数；如需后端 env 门控，由并行任务补 |
 
 ### 9.6 CI（3 项已绿）
 
@@ -235,7 +235,7 @@
 | 项 | 计划 | 实际 |
 |---|---|---|
 | W1-D1 vetter 联通 | 2 人日 | ✅ 完成（`vetter/` + 集成测试 3 + ADR-018） |
-| W1-D3 gateway 硬墙 | 3 人日 | ✅ 完成（`internal/gateway/` + 12 测试 + ADR-019） |
+| W1-D3 gateway 硬墙 | 3 人日 | ✅ 完成（`internal/gateway/` + 11 测试 + ADR-019） |
 | W2-D2 Vault 接入 | 3 人日 | ✅ 完成（`signing.KeyStore` 接口 + ADR-021） |
 | 横切批次 | 1 人日 | ✅ 完成（ADR-020 + W2 手册 + 4 指标） |
 
@@ -306,7 +306,7 @@ backend/internal/skills/signing/signer.go                    # W1-D2 ✓
 backend/cmd/sign-skill/                                      # W1-D2 ✓
 backend/cmd/verify-skill/                                    # W1-D2 ✓
 backend/internal/gateway/artifact_gateway.go                 # W1-D3 ✓
-backend/internal/gateway/artifact_gateway_test.go            # W1-D3 (12 测试)
+backend/internal/gateway/artifact_gateway_test.go            # W1-D3 (11 测试)
 backend/internal/server/artifact_gateway_integration_test.go # W1-D3 (集成)
 backend/internal/catalog/                                    # W1-D4 ✓
 
@@ -314,12 +314,12 @@ backend/internal/catalog/                                    # W1-D4 ✓
 backend/cmd/sign-skill-pack/                                 # W2-D1 ✓
 backend/internal/server/handlers_workspaces_publisher*.go    # W2-D1 ✓
 backend/internal/vault/client.go                             # W2-D2 ✓
-backend/internal/skills/signing/vault_keystore.go            # W2-D2 ✓
-backend/internal/agentos/subagent.go                         # W2-D3 ✓
-backend/internal/agentos/engine.go                         # W2-D3 (Engine + Concurrency)
+backend/internal/skills/signing/keystore.go                 # W2-D2 ✓ (含 VaultKeyStore / SignerResolver)
+backend/internal/skills/signing/vault_keystore_test.go      # W2-D2 ✓ (测试文件)
+backend/internal/agentos/subagent.go                        # W2-D3 ✓ (Engine + Run 全部在此，无 engine.go)
 
 # 后端 — W3
-backend/internal/expertinbox/                                # W3-D1 ✓
+backend/internal/server/handlers_expert_inbox.go             # W3-D1 ✓ (无独立 internal/expertinbox/ 包)
 backend/internal/hotreload/                                  # W3-D2 ✓
 backend/internal/server/preview_sandbox.go                   # W3-D3 ✓
 
