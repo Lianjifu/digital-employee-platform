@@ -60,6 +60,8 @@ import { ComposerReasoningMenu } from '@/features/copilot/composer-reasoning';
 import { ComposerReplyModeMenu } from '@/features/copilot/composer-reply-mode';
 import { ComposerContextUsage } from '@/features/copilot/composer-context-usage';
 import { ComposerInsertMenu } from '@/features/copilot/composer-insert';
+import { ComposerMediaControls } from '@/features/copilot/ComposerMediaControls';
+import { type MediaCaptureResult } from '@/features/copilot/composer-media';
 import { TurnThoughtPanel } from '@/features/copilot/turn-narrative/turn-thought-panel';
 import {
   DEFAULT_RUN_MODE,
@@ -339,6 +341,9 @@ export default function Copilot() {
   // 右栏由消息上下文驱动：没有可追溯信息时保持隐藏，避免空面板占用工作区。
   const [contextSelection, setContextSelection] = useState<ContextSelection>({ open: false, scope: 'session', tab: 'overview', pinned: false });
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  // Composer 媒体采集：mic / 拍照结果暂存，供用户编辑/附在会话消息中。
+  const [mediaCapturing, setMediaCapturing] = useState<null | 'mic' | 'camera'>(null);
+  const [mediaAttachments, setMediaAttachments] = useState<MediaCaptureResult[]>([]);
   // Composer 协作控件：本地即时切换，避免 sessions 列表回灌冲掉选择
   const [runMode, setRunMode] = useState<RunMode>(DEFAULT_RUN_MODE);
   const [reasoningEffort, setReasoningEffort] = useState<ReasoningEffort>(DEFAULT_REASONING_EFFORT);
@@ -2725,6 +2730,23 @@ export default function Copilot() {
                   value={runMode}
                   disabled={isClosed || handoffActive || !canMutate}
                   onChange={handleRunModeChange}
+                />
+                <ComposerMediaControls
+                  disabled={isClosed || handoffActive || !canMutate}
+                  isCapturing={mediaCapturing}
+                  onCameraStart={() => setMediaCapturing('camera')}
+                  onCameraStop={() => setMediaCapturing(null)}
+                  onMicStart={() => setMediaCapturing('mic')}
+                  onMicStop={() => setMediaCapturing(null)}
+                  onError={(err) => {
+                    toast.error(err.message);
+                    if (err.code === 'not_supported') {
+                      // 环境不支持，给用户明确提示一次。
+                    }
+                  }}
+                  onCapture={(result) => {
+                    setMediaAttachments((prev) => [...prev, result].slice(-4));
+                  }}
                 />
                 <ComposerReasoningMenu
                   value={reasoningEffort}
