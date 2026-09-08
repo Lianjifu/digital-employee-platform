@@ -8,6 +8,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/digital-employee-platform/backend/internal/infra"
@@ -74,8 +76,39 @@ func runDemo(ctx context.Context, opts Options, domain store.Domain) error {
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	log.Printf("%s listening on %s [mode=%s env=demo memory-only]", opts.Mode.String(), opts.Addr, opts.Mode)
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return err
+	return serveWithGracefulShutdown(httpServer, srv)
+}
+
+// serveWithGracefulShutdown runs httpServer.ListenAndServe in a goroutine
+// and listens for SIGTERM/SIGINT. On signal it calls httpServer.Shutdown
+// and srv.Shutdown with a 10s deadline so the heartbeat sweep / visualdiff
+// janitor / memory TTL goroutine exit cleanly instead of being SIGKILLed.
+//
+// Used by runDemo and runDurable. Other cmd entry points (de-audit /
+// de-policy / de-sys) manage their own lifecycle.
+func serveWithGracefulShutdown(httpServer *http.Server, srv *server.Server) error {
+	errCh := make(chan error, 1)
+	go func() { errCh <- httpServer.ListenAndServe() }()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(sigCh)
+
+	select {
+	case err := <-errCh:
+		if err != nil && err != http.ErrServerClosed {
+			return err
+		}
+	case sig := <-sigCh:
+		log.Printf("apprun: received %s, shutting down", sig)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := httpServer.Shutdown(shutdownCtx); err != nil {
+			log.Printf("apprun: http shutdown: %v", err)
+		}
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			log.Printf("apprun: server shutdown: %v", err)
+		}
 	}
 	return nil
 }
@@ -260,10 +293,7 @@ func runDurable(ctx context.Context, opts Options, domain store.Domain, rt runti
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	log.Printf("%s listening on %s [mode=%s env=%s]", opts.Mode.String(), opts.Addr, opts.Mode, rt)
-	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		return err
-	}
-	return nil
+	return serveWithGracefulShutdown(httpServer, srv)
 }
 
 func env(k, def string) string {
