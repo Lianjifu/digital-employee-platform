@@ -419,11 +419,17 @@ function SlideVisual({ slide, total }: { slide: PptxPreviewSlide; total: number 
 function SlideDeckReader({
   slides,
   deckTitle,
+  initialIndex,
 }: {
   slides: PptxPreviewSlide[];
   deckTitle: string;
+  /** 1-based slide number to jump to when the deck first mounts. */
+  initialIndex?: number;
 }) {
-  const [index, setIndex] = useState(0);
+  const [index, setIndex] = useState(() => {
+    if (typeof initialIndex !== 'number' || initialIndex < 1) return 0;
+    return Math.min(initialIndex - 1, Math.max(0, slides.length - 1));
+  });
   const total = slides.length;
   const slide = slides[Math.min(index, Math.max(0, total - 1))];
 
@@ -484,9 +490,12 @@ function SlideDeckReader({
 export function DocumentPreviewPanel({
   artifact,
   onDownload,
+  startSlide,
 }: {
   artifact: SkillArtifactLink;
   onDownload?: () => void;
+  /** 1-based slide number to jump to when the deck first loads. */
+  startSlide?: number;
 }) {
   const [payload, setPayload] = useState<DocPreviewPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -624,7 +633,7 @@ export function DocumentPreviewPanel({
               {payload.contentWarning}
             </div>
           ) : null}
-          <SlideDeckReader slides={slides} deckTitle={title} />
+          <SlideDeckReader slides={slides} deckTitle={title} initialIndex={startSlide} />
         </>
       )}
       {!loading && !error && payload && isPaperKind && (

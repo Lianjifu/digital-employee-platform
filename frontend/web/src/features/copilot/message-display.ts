@@ -1,4 +1,5 @@
 import { stripArtifactNoise } from '@/features/copilot/artifact-links';
+import { stripPageOutlineSection } from '@/features/copilot/page-outline';
 
 export const AUTHORIZED_EXECUTE_MARKER = '—— 授权后执行结果 ——';
 
@@ -203,7 +204,7 @@ export function formatAssistantDisplayContent(content: string, hasArtifacts: boo
 
   if (!execution) {
     const base = hasArtifacts ? stripArtifactNoise(sanitized) : sanitized;
-    return base.trim();
+    return stripPageOutlineSection(base).trim();
   }
 
   const docSummary = extractDocSuccessSummary(execution);
@@ -212,7 +213,8 @@ export function formatAssistantDisplayContent(content: string, hasArtifacts: boo
 
   const parts = [userIntro, summary].filter(Boolean);
   const merged = parts.join('\n\n');
-  return hasArtifacts ? stripArtifactNoise(merged) : merged;
+  const base = hasArtifacts ? stripArtifactNoise(merged) : merged;
+  return stripPageOutlineSection(base);
 }
 
 /** Full execution block for expandable details (sanitized). */

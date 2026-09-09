@@ -19,6 +19,14 @@ export type ContextUsage = {
   max: number;
   percent: number;
   estimated: boolean;
+  /** 各部分 token 估算占比；只有估算模式可能有真实值 */
+  breakdown?: {
+    system: number;
+    skills: number;
+    history: number;
+    attachments: number;
+    draft: number;
+  };
 };
 
 const CHARS_PER_TOKEN = 1 / 0.6;

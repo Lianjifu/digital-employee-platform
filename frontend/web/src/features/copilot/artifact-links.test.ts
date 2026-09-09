@@ -81,4 +81,24 @@ describe('stripArtifactNoise', () => {
     expect(cleaned).not.toContain('/api/skill-artifacts');
     expect(cleaned).not.toContain('文件名：');
   });
+
+  it('strips download link line even when payload is empty (Q3 PPT shape)', () => {
+    // Real failure case: assistant emits "下载链接：" with no path, leaving a
+    // literal ```\n..\n``` block that <Markdown> renders as empty/broken.
+    const text = [
+      '已按「方案 A」生成 Q3 研发季度汇报 PPT，共 6 页。',
+      '下载链接：',
+      '```',
+      '..',
+      '```',
+      '',
+      '## 页面结构',
+      '- 封面',
+    ].join('\n');
+    const cleaned = stripArtifactNoise(text);
+    expect(cleaned).toContain('已按「方案 A」');
+    expect(cleaned).toContain('## 页面结构');
+    expect(cleaned).not.toContain('下载链接');
+    expect(cleaned).not.toMatch(/^\s*\.\.\s*$/m);
+  });
 });

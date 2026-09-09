@@ -167,7 +167,11 @@ export function stripArtifactNoise(text: string): string {
   const lines = text.split('\n');
   const cleaned = lines
     .map((line) => {
-      if (DOWNLOAD_LINE_RE.test(line) && (/\/api\/skill-artifacts\//i.test(line) || DISPLAY_NAME_LINE_RE.test(line))) {
+      if (DOWNLOAD_LINE_RE.test(line)) {
+        return null;
+      }
+      // 助手偶尔会发出孤立的代码块 ```\n..\n``` 作为占位（与下载链接同行），一并清掉。
+      if (/^\s*```\s*$/.test(line) || /^\s*\.\.\s*$/.test(line)) {
         return null;
       }
       if (/^\s*[`'"]?\/api\/skill-artifacts\/\S+[`'"]?\s*$/i.test(line)) {

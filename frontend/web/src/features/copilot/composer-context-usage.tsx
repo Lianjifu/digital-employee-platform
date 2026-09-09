@@ -3,6 +3,14 @@ import { cn } from '@de/web-utils';
 import { formatTokenCount, type ContextUsage } from './composer-context';
 import { ComposerPortal } from './composer-portal';
 
+const BREAKDOWN_LABELS: Record<keyof NonNullable<ContextUsage['breakdown']>, string> = {
+  system: '系统',
+  skills: '技能',
+  history: '历史',
+  attachments: '附件',
+  draft: '草稿',
+};
+
 type Props = {
   usage: ContextUsage;
 };
@@ -14,6 +22,12 @@ export function ComposerContextUsage({ usage }: Props) {
   const pct = Math.max(0, Math.min(100, Math.round(usage.percent)));
   const pctLabel = `${pct}%`;
   const tone = usage.percent > 90 ? 'danger' : usage.percent > 60 ? 'warning' : 'ok';
+  const breakdownEntries = usage.breakdown
+    ? (Object.entries(usage.breakdown) as [keyof NonNullable<ContextUsage['breakdown']>, number][])
+        .filter(([, v]) => v > 0)
+        .sort(([, a], [, b]) => b - a)
+    : null;
+  const breakdownMax = breakdownEntries?.reduce((m, [, v]) => Math.max(m, v), 0) ?? 0;
 
   return (
     <>
@@ -39,16 +53,19 @@ export function ComposerContextUsage({ usage }: Props) {
         open={open}
         anchorRef={btnRef}
         onClose={() => setOpen(false)}
-        width={224}
+        width={260}
         className="copilot-composer__menu overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-3 shadow-lg"
       >
         <div id={popId} role="dialog" aria-label="Context window">
-          <div className="text-[11px] font-semibold text-[var(--text)]">Context window</div>
+          <div className="flex items-baseline justify-between gap-2">
+            <div className="text-[11px] font-semibold text-[var(--text)]">Context window</div>
+            <div className="font-mono tabular-nums text-[10px] text-[var(--text-muted)]">{pctLabel}</div>
+          </div>
           <div className="mt-1.5 flex items-baseline justify-between gap-2 text-[11px]">
             <span className="font-mono tabular-nums text-[var(--text-secondary)]">
               {formatTokenCount(usage.used)} / {formatTokenCount(usage.max)}
             </span>
-            <span className="font-mono tabular-nums text-[var(--text-muted)]">{pctLabel}</span>
+            {usage.estimated && <span className="text-[9px] text-[var(--text-muted)]">估算</span>}
           </div>
           <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[var(--bg-hover)]">
             <div
@@ -59,6 +76,22 @@ export function ComposerContextUsage({ usage }: Props) {
               style={{ width: `${Math.min(100, usage.percent)}%` }}
             />
           </div>
+          {breakdownEntries && breakdownEntries.length > 0 && (
+            <div className="mt-2.5 space-y-1">
+              {breakdownEntries.map(([key, tokens]) => (
+                <div key={key} className="flex items-center gap-2 text-[10.5px]">
+                  <span className="w-12 shrink-0 text-[var(--text-muted)]">{BREAKDOWN_LABELS[key]}</span>
+                  <div className="h-1 flex-1 overflow-hidden rounded-full bg-[var(--bg-hover)]">
+                    <div
+                      className="h-full bg-[var(--brand)]"
+                      style={{ width: breakdownMax > 0 ? `${Math.min(100, (tokens / breakdownMax) * 100)}%` : '0%' }}
+                    />
+                  </div>
+                  <span className="w-10 text-right font-mono tabular-nums text-[var(--text-secondary)]">{formatTokenCount(tokens)}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <p className="mt-2 text-[10px] leading-relaxed text-[var(--text-muted)]">
             {usage.estimated
               ? '当前为估算占用（尚无 promptTokens）。接近上限时将优先保留近期对话，更早要点写入工作记忆。'

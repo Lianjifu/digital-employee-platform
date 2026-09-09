@@ -101,6 +101,7 @@ import {
   type SlashUiAction,
 } from '@/features/copilot/slash-commands';
 import { extractSkillArtifacts, type SkillArtifactLink, artifactKindLabel } from '@/features/copilot/artifact-links';
+import { extractPageOutline, type PageOutline } from '@/features/copilot/page-outline';
 import {
   formatAssistantDisplayContent,
   formatExecutionDetails,
@@ -233,6 +234,8 @@ type ContextSelection = {
   tab: WorkbenchContextTab;
   messageId?: string;
   artifact?: SkillArtifactLink;
+  /** PPT 预览跳转到指定 1-based 页码；undefined = 从头播放 */
+  startSlide?: number;
   pinned: boolean;
 };
 
@@ -1246,13 +1249,35 @@ export default function Copilot() {
       return sum + p + c;
     }, 0);
     const historyChars = msgs.reduce((sum, m) => sum + (m.content?.length ?? 0), 0);
-    return computeContextUsage({
+    const usage = computeContextUsage({
       promptTokens,
       sessionTokens: sessionTokens || null,
       contextWindow: currentModel?.contextWindow,
       draftChars: charCount,
       historyChars,
     });
+    // Breakdown only when we don't have a server-reported promptTokens figure —
+    // otherwise the segments would be a wild guess.
+    if (usage.estimated) {
+      const system = Math.round((currentModel?.contextWindow ?? 0) > 0 ? 800 : 600);
+      const skills = 0; // 服务端未上报，按钮显示时仍展示空段（>0 过滤掉）
+      const history = Math.round(historyChars * 0.6);
+      const attachments = 0;
+      const draft = Math.round(charCount * 0.6);
+      const sum = system + history + draft;
+      if (sum > 0) {
+        // 不让 breakdown 总和超过 reported used；按比例缩放
+        const scale = sum > usage.used && usage.used > 0 ? usage.used / sum : 1;
+        usage.breakdown = {
+          system: Math.round(system * scale),
+          skills: Math.round(skills * scale),
+          history: Math.round(history * scale),
+          attachments: Math.round(attachments * scale),
+          draft: Math.round(draft * scale),
+        };
+      }
+    }
+    return usage;
   }, [activeSession?.messages, charCount, currentModel?.contextWindow]);
 
   const mentionSkillItems = useMemo(
@@ -1835,6 +1860,7 @@ export default function Copilot() {
     }
     return undefined;
   }, [contextMessages, contextSelection.artifact]);
+  const selectedArtifactStartSlide = contextSelection.startSlide;
   const messageHasContext = (message?: ChatMessageEx) => !!message && (
     (message.citations?.length ?? 0) > 0
     || (message.toolCalls?.length ?? 0) > 0
@@ -1843,7 +1869,7 @@ export default function Copilot() {
     || (!!message.content && message.role !== 'user' && message.role !== 'tool' && extractSkillArtifacts(message.content).length > 0)
   );
   const hasSelectedContext = !!selectedContextMessage && messageHasContext(selectedContextMessage);
-  const openContext = (tab: WorkbenchContextTab, messageId?: string, artifact?: SkillArtifactLink) => {
+  const openContext = (tab: WorkbenchContextTab, messageId?: string, artifact?: SkillArtifactLink, options?: { startSlide?: number }) => {
     const target = messageId ? currentSession?.messages.find((message) => message.id === messageId) : undefined;
     if (messageId && !target) return;
     if (messageId && !messageHasContext(target)) return;
@@ -1854,6 +1880,7 @@ export default function Copilot() {
       tab,
       messageId,
       artifact: tab === 'document' ? artifact : undefined,
+      startSlide: tab === 'document' ? options?.startSlide : undefined,
       pinned: selection.pinned,
     }));
     setSessionsOpen(false);
@@ -2139,6 +2166,7 @@ export default function Copilot() {
                       ? { label: '仅问答', tone: 'success' as const, text: '只回答不改系统 · 需要变更请切换方案或执行' }
                       : { label: '方案优先', tone: 'success' as const, text: '先出计划再确认 · 写操作请切换到执行' };
             const showCost = sessionUsage.tokens > 0;
+            const showSanitizedTag = runMode === 'agent' && riskLevel === 'low' && !workbench.pendingApprovals && !handoffActive;
             return (
               <>
           <div className="copilot-work-header">
@@ -2148,11 +2176,20 @@ export default function Copilot() {
               </div>
               <div className="min-w-0">
                 <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  <span className="copilot-work-title truncate font-semibold">{workbench.title}</span>
+                  <span className="copilot-work-title truncate font-semibold" title={workbench.title}>{workbench.title}</span>
                   <Badge tone={workbench.tone === 'warning' ? 'warn' : isGenerating ? 'info' : 'brand'} className="shrink-0 text-[10px]">
                     {workbench.pendingApprovals ? '待处置' : isGenerating ? '生成中' : runMode === 'agent' ? '执行模式' : runMode === 'ask' ? '问答中' : '方案中'}
                   </Badge>
-                  {riskLevel !== 'low' && <Badge tone={riskLevel === 'high' ? 'error' : 'warn'} className="shrink-0 text-[10px]">{riskLevel === 'high' ? '高风险' : '中风险'}</Badge>}
+                  {riskLevel !== 'low' && (
+                    <Badge tone={riskLevel === 'high' ? 'error' : 'warn'} className="shrink-0 text-[10px] font-semibold ring-1 ring-inset ring-current/30">
+                      {riskLevel === 'high' ? '高风险' : '中风险'}
+                    </Badge>
+                  )}
+                  {showSanitizedTag && (
+                    <Badge tone="success" className="shrink-0 text-[10px] ring-1 ring-inset ring-[var(--success)]/30">
+                      <ShieldCheck className="mr-0.5 inline h-2.5 w-2.5" />已脱敏
+                    </Badge>
+                  )}
                 </div>
                 {(workbench.nextAction || handoffActive) && (
                   <div className="copilot-header__meta copilot-work-next mt-0.5 flex items-center gap-1.5 text-[var(--text-muted)]">
@@ -2222,15 +2259,15 @@ export default function Copilot() {
 
             <div className="copilot-header__decision" role="status" aria-label="策略裁决">
               <div className="flex min-w-0 flex-1 items-center gap-2">
-                <Badge tone={decision.tone} className="shrink-0">{decision.label}</Badge>
+                {decision.label !== '脱敏放行' && (
+                  <Badge tone={decision.tone} className="shrink-0">{decision.label}</Badge>
+                )}
                 <span className="copilot-header__decision-text">{decision.text}</span>
               </div>
-              {showCost ? (
+              {showCost && (
                 <span className="shrink-0 font-mono text-[10px] text-[var(--text-muted)]" title={`计入 ${expertName}`}>
                   {sessionUsage.priced != null ? `¥${sessionUsage.priced}` : '计量中'} · {sessionUsage.tokens} tok · {expertName}
                 </span>
-              ) : (
-                <span className="shrink-0 text-[10px] text-[var(--text-muted)]">与 {expertName} 协作</span>
               )}
             </div>
               </>
@@ -2838,14 +2875,15 @@ export default function Copilot() {
                 : handoffActive
                   ? `交接中 · ${handoffOwner}`
                   : (
-                    <>
-                      与 {expertName} 协作中
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--bg-elevated)] px-2 py-0.5 text-[var(--text)]">
+                      <DigitalEmployeeAvatar employee={activeEmployee ?? { id: 'assistant', name: expertName }} size={12} />
+                      <span>与 {expertName} 协作中</span>
                       {riskLevel !== 'low' && (
-                        <span className={cn('ml-1.5', riskLevel === 'high' ? 'text-[var(--danger)]' : 'text-[var(--warning)]')}>
-                          · 风险{riskLevel === 'high' ? '高' : '中'}
+                        <span className={cn('rounded-sm px-1 text-[9px] font-medium uppercase tracking-wide', riskLevel === 'high' ? 'bg-[var(--danger)]/15 text-[var(--danger)]' : 'bg-[var(--warning)]/15 text-[var(--warning)]')}>
+                          {riskLevel === 'high' ? '高风险' : '中风险'}
                         </span>
                       )}
-                    </>
+                    </span>
                   )}
             </span>
             <span className="inline-flex items-center gap-2 shrink-0">
@@ -2980,7 +3018,7 @@ export default function Copilot() {
               </section>
             )}
             {contextTab !== 'overview' && contextTab !== 'admin' && (
-              <ContextDrawerPanel tab={contextTab} messages={contextMessages} onCitation={openCitation} focusedCitation={focusedCitation} artifact={selectedDocumentArtifact} />
+              <ContextDrawerPanel tab={contextTab} messages={contextMessages} onCitation={openCitation} focusedCitation={focusedCitation} artifact={selectedDocumentArtifact} startSlide={contextSelection.startSlide} />
             )}
             {contextTab === 'overview' && (
               <ExpertContextPanel
@@ -3397,7 +3435,7 @@ function MessageCapabilityTrace({
   onToggle,
 }: {
   message: ChatMessageEx;
-  onOpenContext: (tab: WorkbenchContextTab, messageId?: string, artifact?: SkillArtifactLink) => void;
+  onOpenContext: (tab: WorkbenchContextTab, messageId?: string, artifact?: SkillArtifactLink, options?: { startSlide?: number }) => void;
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -3443,8 +3481,32 @@ function RiskDecisionCard({ onOpenContext, messageId }: { onOpenContext: (tab: W
   return <section className="max-w-[760px] rounded-lg border border-[var(--warning)]/35 bg-[var(--warning-bg)]/25 p-3" aria-label="风险处置建议"><div className="flex items-start justify-between gap-3"><div><div className="flex items-center gap-1.5 text-xs font-semibold"><AlertTriangle className="h-3.5 w-3.5 text-[var(--warning)]" />风险处置建议</div><p className="mt-1 text-[11px] text-[var(--text-secondary)]">已识别高风险项。建议先核验受影响资产，再生成受控修复任务并发起人工复核。</p></div><Badge tone="warn" className="shrink-0 text-[10px]">需复核</Badge></div><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" variant="secondary" onClick={() => onOpenContext('evidence', messageId)}>查看受影响资产</Button><Button size="sm" onClick={() => onOpenContext('tasks', messageId)}>生成修复任务</Button><Button size="sm" variant="secondary" onClick={() => onOpenContext('approvals', messageId)}>发起人工复核</Button></div></section>;
 }
 
+function formatFileSize(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
+async function fetchContentLength(href: string, timeoutMs = 1500): Promise<number | null> {
+  if (typeof fetch !== 'function') return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    const res = await fetch(href, { method: 'HEAD', credentials: 'same-origin', signal: ctrl.signal });
+    if (!res.ok) return null;
+    const len = res.headers.get('Content-Length');
+    return len ? Number(len) : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function SkillArtifactDownloadCard({
-  href, filename, downloadName, title, kind, onView,
+  href, filename, downloadName, title, kind, onView, sanitizedFields,
 }: {
   href: string;
   filename: string;
@@ -3452,11 +3514,25 @@ function SkillArtifactDownloadCard({
   title: string;
   kind: SkillArtifactLink['kind'];
   onView?: () => void;
+  /** 已脱敏的敏感字段数；> 0 时显示右上徽章 */
+  sanitizedFields?: number;
 }) {
   const label = artifactKindLabel(kind);
   const saveAs = downloadName || filename;
   const [busy, setBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [size, setSize] = useState<number | null>(null);
   const Icon = kind === 'pptx' ? Presentation : FileText;
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchContentLength(href).then((n) => {
+      if (!cancelled) setSize(n);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [href]);
 
   const handleDownload = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -3477,6 +3553,21 @@ function SkillArtifactDownloadCard({
     onView?.();
   };
 
+  const handleCopyPath = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(href);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.error('复制失败，请手动选择');
+    }
+  };
+
+  const subtitleParts = [label, saveAs];
+  if (size != null) subtitleParts.push(formatFileSize(size));
+
   return (
     <div
       role="button"
@@ -3488,26 +3579,96 @@ function SkillArtifactDownloadCard({
           handleOpen();
         }
       }}
-      className="copilot-artifact-card group flex max-w-[420px] cursor-pointer items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3.5 py-3 transition-colors hover:border-[var(--brand)]/45 hover:bg-[var(--brand-light)]/40"
+      className="copilot-artifact-card group flex max-w-[480px] flex-col gap-2 rounded-xl border border-[var(--border)] bg-[var(--bg-elevated)] px-3.5 py-3 transition-colors hover:border-[var(--brand)]/45 hover:bg-[var(--brand-light)]/40"
       aria-label={`查看 ${title}`}
     >
-      <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${kind === 'pptx' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : kind === 'pdf' ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300' : 'bg-[var(--brand-light)] text-[var(--brand)]'}`}>
-        <Icon className="h-5 w-5" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[13px] font-semibold text-[var(--text)]">{title}</span>
-        <span className="mt-0.5 block truncate text-[11px] text-[var(--text-muted)]">{label} · {saveAs}</span>
-      </span>
-      <button
-        type="button"
-        onClick={handleDownload}
-        className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[var(--brand)] px-2.5 py-1.5 text-[11px] font-medium text-white shadow-sm group-hover:bg-[var(--brand-hover)]"
-        aria-label={`下载 ${title}`}
-        aria-busy={busy}
-      >
-        <Download className="h-3.5 w-3.5" />
-        {busy ? '下载中…' : '下载'}
-      </button>
+      <div className="flex items-center gap-3">
+        <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg ${kind === 'pptx' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : kind === 'pdf' ? 'bg-rose-500/15 text-rose-700 dark:text-rose-300' : 'bg-[var(--brand-light)] text-[var(--brand)]'}`}>
+          <Icon className="h-5 w-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="block truncate text-[13px] font-semibold text-[var(--text)]">{title}</div>
+          <div className="mt-0.5 block truncate text-[11px] text-[var(--text-muted)]">
+            {subtitleParts.join(' · ')}
+          </div>
+        </div>
+        {typeof sanitizedFields === 'number' && sanitizedFields > 0 && (
+          <span
+            className="inline-flex shrink-0 items-center gap-1 rounded-md bg-[var(--success)]/12 px-1.5 py-0.5 text-[10px] font-medium text-[var(--success)]"
+            title="本轮产出已自动替换敏感字段"
+          >
+            <ShieldCheck className="h-3 w-3" />
+            已脱敏 {sanitizedFields} 处
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-center justify-end gap-1.5">
+        <button
+          type="button"
+          onClick={handleDownload}
+          aria-busy={busy}
+          className="inline-flex items-center gap-1 rounded-md bg-[var(--brand)] px-2.5 py-1 text-[11px] font-medium text-white shadow-sm hover:bg-[var(--brand-hover)]"
+        >
+          <Download className="h-3.5 w-3.5" />
+          {busy ? '下载中…' : '下载'}
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            handleOpen();
+          }}
+          className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2.5 py-1 text-[11px] font-medium text-[var(--text)] hover:border-[var(--brand)]/40 hover:text-[var(--brand)]"
+        >
+          <Eye className="h-3.5 w-3.5" />
+          预览
+        </button>
+        <button
+          type="button"
+          onClick={handleCopyPath}
+          className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1 text-[11px] font-medium text-[var(--text-muted)] hover:border-[var(--brand)]/40 hover:text-[var(--text)]"
+          title="复制相对路径"
+        >
+          <Link2 className="h-3 w-3" />
+          {copied ? '已复制' : '路径'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ArtifactOutline({
+  outline,
+  onJump,
+}: {
+  outline: PageOutline;
+  onJump: (page: number) => void;
+}) {
+  return (
+    <div className="copilot-outline mt-1.5">
+      <div className="flex items-baseline justify-between">
+        <div className="text-[11px] font-medium text-[var(--text-muted)]">
+          页面结构 · {outline.pages.length} 页
+        </div>
+        <div className="text-[10px] text-[var(--text-muted)]">点击跳转预览</div>
+      </div>
+      <div className="mt-1.5 flex gap-1.5 overflow-x-auto pb-1">
+        {outline.pages.map((p, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => onJump(i + 1)}
+            className="copilot-outline__chip shrink-0 inline-flex items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--surface-1)] px-2 py-1.5 text-[11px] text-[var(--text)] hover:border-[var(--brand)]/40 hover:bg-[var(--brand-light)]/30"
+          >
+            <span className="inline-flex h-4 min-w-4 items-center justify-center rounded bg-[var(--bg-hover)] px-1 font-mono text-[9px] font-medium text-[var(--text-muted)]">
+              P{i + 1}
+            </span>
+            <span className="max-w-[140px] truncate font-medium">{p}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -3545,7 +3706,7 @@ function MessageBubble({
   agentName?: string;
   expertRole?: string;
   expert?: Pick<DigitalEmployee, 'id' | 'name' | 'department' | 'avatarUrl'> | { id: string; name: string; department?: string; avatarUrl?: string };
-  onOpenContext: (tab: WorkbenchContextTab, messageId?: string, artifact?: SkillArtifactLink) => void;
+  onOpenContext: (tab: WorkbenchContextTab, messageId?: string, artifact?: SkillArtifactLink, options?: { startSlide?: number }) => void;
   selectedContextMessageId?: string;
   messageRef?: (element: HTMLDivElement | null) => void;
   currentUser: { id: string; name: string; role: 'user' | 'admin' | 'auditor' } | null;
@@ -3571,6 +3732,16 @@ function MessageBubble({
     () => formatExecutionDetails(m.content ?? ''),
     [m.content],
   );
+  const outline = useMemo<PageOutline | null>(
+    () => (isUser || isTool || !m.content ? null : extractPageOutline(m.content)),
+    [isUser, isTool, m.content],
+  );
+  const sanitizedFields = useMemo(() => {
+    if (!m.safety || m.safety.action !== 'redact') return undefined;
+    const text = m.content ?? '';
+    const matches = text.match(/\[已脱敏\]|\[REDACTED\]|<redacted>|<\*\*\*>/gi);
+    return matches ? matches.length : 1;
+  }, [m.content, m.safety]);
   const expectedPlatformRole: Record<Signer['role'], 'user' | 'admin' | 'auditor'> = { operator: 'user', approver: 'admin', auditor: 'auditor' };
   const isSingleAuth = (m.approvalRequest?.required ?? 2) <= 1;
   const canSign = (signer: Signer) => {
@@ -3707,10 +3878,17 @@ function MessageBubble({
                           downloadName={a.downloadName}
                           title={a.title}
                           kind={a.kind}
+                          sanitizedFields={sanitizedFields}
                           onView={() => onOpenContext('document', m.id, a)}
                         />
                       </div>
                     ))}
+                    {outline && (
+                      <ArtifactOutline
+                        outline={outline}
+                        onJump={(page) => onOpenContext('document', m.id, artifacts[0], { startSlide: page })}
+                      />
+                    )}
                   </div>
                 )}
                 {displayContent ? <Markdown text={displayContent} /> : null}
@@ -4098,7 +4276,7 @@ function MessageBubble({
   );
 }
 
-function ContextDrawerPanel({ tab, messages, onCitation, focusedCitation, artifact }: { tab: Exclude<WorkbenchContextTab, 'overview' | 'admin'>; messages: ChatMessageEx[]; onCitation: (citation: any, messageId?: string) => void; focusedCitation?: any | null; artifact?: SkillArtifactLink }) {
+function ContextDrawerPanel({ tab, messages, onCitation, focusedCitation, artifact, startSlide }: { tab: Exclude<WorkbenchContextTab, 'overview' | 'admin'>; messages: ChatMessageEx[]; onCitation: (citation: any, messageId?: string) => void; focusedCitation?: any | null; artifact?: SkillArtifactLink; startSlide?: number }) {
   const evidence = messages.flatMap((message) => (message.citations ?? []).map((citation) => ({ ...citation, __messageId: message.id })));
   const tasks = messages.flatMap((message) => {
     const id = message.linkedTaskId ?? message.approvalRequest?.ticketId;
@@ -4121,7 +4299,7 @@ function ContextDrawerPanel({ tab, messages, onCitation, focusedCitation, artifa
 
   if (tab === 'document') {
     return artifact
-      ? <DocumentPreviewPanel artifact={artifact} />
+      ? <DocumentPreviewPanel artifact={artifact} startSlide={startSlide} />
       : empty('生成文档');
   }
   if (tab === 'evidence') return <section className="copilot-details-panel"><div className="copilot-details-panel__intro"><div className="copilot-details-panel__title"><PanelIcon className="h-4 w-4" />{meta.label}</div><div>{meta.hint}</div></div>{focusedCitation && <div className="copilot-citation-focus"><div className="copilot-citation-focus__header"><span><Hash className="mr-1 inline h-3 w-3 text-[var(--text-muted)]" />当前引用</span><span className="font-mono text-[10px] text-[var(--text-muted)]">{focusedCitation.page ? `p.${focusedCitation.page}` : '可追溯'}</span></div><div className="mt-2 flex items-center gap-2"><span className={cn('nav-pill text-[9px]', SOURCE_COLOR[focusedCitation.source] ?? 'text-[var(--text-secondary)] bg-[var(--bg-elevated)]')}>{focusedCitation.source ?? focusedCitation.src ?? '来源'}</span><span className="truncate text-xs font-semibold">{focusedCitation.docId ?? focusedCitation.src ?? focusedCitation.source ?? '关联文档'}</span></div><div className="mt-2 flex items-center gap-2 text-[10px]"><span className="text-[var(--text-muted)]">相关度</span><span className="copilot-confidence-bar"><span style={{ width: `${(focusedCitation.score ?? 0) * 100}%` }} /></span><span className="font-mono text-[var(--success)]">{((focusedCitation.score ?? 0) * 100).toFixed(0)}%</span></div><div className="copilot-citation-focus__text">{focusedCitation.text ?? '已定位到该来源。当前引用由会话检索结果生成，可继续回到中栏查看关联消息。'}</div></div>}{evidence.length ? <div className="copilot-details-list">{evidence.map((citation) => <button key={citation.id} type="button" onClick={() => onCitation(citation, citation.__messageId)} className={cn('copilot-context-item copilot-context-item--button', focusedCitation?.id === citation.id && 'is-focused')}><div className="flex min-w-0 items-center gap-2"><span className={cn('nav-pill text-[9px]', SOURCE_COLOR[citation.source] ?? 'text-[var(--text-secondary)] bg-[var(--bg-elevated)]')}>{citation.source}</span><span className="truncate text-xs font-semibold">{citation.docId || citation.source}</span></div><div className="mt-2 flex items-center gap-2 text-[10px]"><span className="text-[var(--text-muted)]">置信度</span><span className="copilot-confidence-bar"><span style={{ width: `${citation.score * 100}%` }} /></span><span className="font-mono text-[var(--text-secondary)]">{(citation.score * 100).toFixed(0)}%</span><span className="ml-auto text-[var(--text-muted)]">{citation.page ? `p.${citation.page}` : '可追溯'}</span></div></button>)}</div> : empty('证据')}</section>;
