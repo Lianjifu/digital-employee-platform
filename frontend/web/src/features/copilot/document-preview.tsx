@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, Download, FileSpreadsheet, FileText, Loader2
 import { renderMarkdownDocument } from '@/features/knowledge/markdown-doc';
 import type { SkillArtifactLink } from '@/features/copilot/artifact-links';
 import { artifactKindLabel } from '@/features/copilot/artifact-links';
+import { authHeader } from '@/lib/api-headers';
 
 export type DocxPreviewBlock = {
   type: 'h1' | 'h2' | 'h3' | 'p' | 'li' | 'blank';
@@ -227,7 +228,7 @@ export function artifactPreviewHref(artifact: Pick<SkillArtifactLink, 'filename'
 }
 
 export async function downloadArtifactSafely(href: string, downloadName: string): Promise<void> {
-  const res = await fetch(href, { method: 'GET', credentials: 'same-origin' });
+  const res = await fetch(href, { method: 'GET', credentials: 'same-origin', headers: authHeader() });
   if (!res.ok) {
     throw new Error(res.status === 404 ? '文件不存在或已过期' : `下载失败（${res.status}）`);
   }
@@ -521,7 +522,7 @@ export function DocumentPreviewPanel({
     }
     (async () => {
       try {
-        const res = await fetch(artifactPreviewHref(artifact), { credentials: 'same-origin' });
+        const res = await fetch(artifactPreviewHref(artifact), { credentials: 'same-origin', headers: authHeader() });
         if (!res.ok) {
           throw new Error(res.status === 404 ? '文档不存在或尚未生成' : `预览失败（${res.status}）`);
         }

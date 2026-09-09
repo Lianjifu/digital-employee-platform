@@ -111,6 +111,7 @@ import { sortSessionsByRecency } from '@/features/copilot/session-sort';
 import { resolveHydratedMessages } from '@/features/copilot/conversation-merge';
 import { collapseDuplicateArtifactSegments } from '@/features/copilot/artifact-segment';
 import { readCopilotLastSession } from '@/lib/copilot-workspace';
+import { authHeader } from '@/lib/api-headers';
 import { getApiClient } from '@de/web-api';
 import { deriveExpertContextOverview, deriveTurnProgress } from '@/features/copilot/expert-context';
 import { ExpertContextPanel } from '@/features/copilot/expert-context-panel';
@@ -3493,7 +3494,7 @@ async function fetchContentLength(href: string, timeoutMs = 1500): Promise<numbe
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetch(href, { method: 'HEAD', credentials: 'same-origin', signal: ctrl.signal });
+    const res = await fetch(href, { method: 'HEAD', credentials: 'same-origin', signal: ctrl.signal, headers: authHeader() });
     if (!res.ok) return null;
     const len = res.headers.get('Content-Length');
     return len ? Number(len) : null;
