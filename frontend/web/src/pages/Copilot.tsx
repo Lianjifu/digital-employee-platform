@@ -2214,7 +2214,6 @@ export default function Copilot() {
                   {expertMeta && <span className="copilot-toolbar-btn__role">{expertMeta}</span>}
                 </span>
               </button>
-              <button ref={sessionToggleRef} type="button" onClick={() => { setSessionsOpen((open) => !open); closeContext(); }} className="copilot-mobile-toggle copilot-toolbar-btn !px-0 !w-8 justify-center" aria-label="打开会话列表" aria-expanded={sessionsOpen} aria-controls="copilot-sessions"><ListChecksIcon className="h-4 w-4" /></button>
               {canOpenExpertContext && (
                 <Button ref={detailsToggleRef} variant="secondary" size="sm" className="copilot-header-action" onClick={() => openContext('overview')}>
                   <FileText className="h-3.5 w-3.5" />专家上下文
