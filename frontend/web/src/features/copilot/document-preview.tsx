@@ -314,6 +314,42 @@ export function slidesFromPreviewPayload(payload: DocPreviewPayload): PptxPrevie
   return slides;
 }
 
+/**
+ * 将受 Bearer 鉴权保护的图片 URL 转为同源 blob URL，喂给 <img src>。
+ * 浏览器原生 <img> 不能附加 Authorization，所以必须先以 fetch 拿到字节
+ * 再用 URL.createObjectURL 暴露给标签。未指定 URL 时返回 null。
+ */
+function useAuthedImageSrc(url: string | undefined): string | null {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!url) {
+      setBlobUrl(null);
+      return;
+    }
+    let aborted = false;
+    const ctrl = new AbortController();
+    fetch(url, { credentials: 'same-origin', signal: ctrl.signal, headers: authHeader() })
+      .then(async (res) => {
+        if (!res.ok || aborted) return;
+        const blob = await res.blob();
+        if (aborted) return;
+        const next = URL.createObjectURL(blob);
+        setBlobUrl((prev) => {
+          if (prev) URL.revokeObjectURL(prev);
+          return next;
+        });
+      })
+      .catch(() => {
+        /* aborted or network error — leave placeholder src */
+      });
+    return () => {
+      aborted = true;
+      ctrl.abort();
+    };
+  }, [url]);
+  return blobUrl;
+}
+
 function DocumentMarkdownBody({ blocks }: { blocks: DocxPreviewBlock[] }) {
   const rendered = useMemo(() => renderMarkdownDocument(blocksToPreviewMarkdown(blocks)), [blocks]);
   if (rendered.isEmpty) {
@@ -328,11 +364,12 @@ function DocumentMarkdownBody({ blocks }: { blocks: DocxPreviewBlock[] }) {
 }
 
 function SlideVisual({ slide, total }: { slide: PptxPreviewSlide; total: number }) {
+  const src = useAuthedImageSrc(slide.imageUrl);
   if (slide.imageUrl) {
     return (
       <article className="copilot-pptx-slide copilot-pptx-slide--raster" aria-label={`第 ${slide.index} 页：${slide.title}`}>
         <img
-          src={slide.imageUrl}
+          src={src ?? slide.imageUrl}
           alt={`第 ${slide.index} 页 ${slide.title}`}
           className="copilot-pptx-slide__image"
           draggable={false}
