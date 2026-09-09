@@ -144,49 +144,6 @@ type HotReloadBuckets struct {
 	mu      sync.Mutex
 }
 
-// VisualDiffBuckets records per-size cumulative latency for visualdiff.
-// size ∈ {"small", "medium", "large", "huge"} — coarse buckets so the
-// dashboard can chart "tiny snapshot diffs" vs "1080p canvas diffs"
-// without per-resolution cardinality.
-type VisualDiffBuckets struct {
-	SmallCount  Counter
-	SmallSumNS  Counter
-	MediumCount Counter
-	MediumSumNS Counter
-	LargeCount  Counter
-	LargeSumNS  Counter
-	HugeCount   Counter
-	HugeSumNS   Counter
-}
-
-func (v *VisualDiffBuckets) Observe(size string, d time.Duration) {
-	ns := uint64(d.Nanoseconds())
-	switch size {
-	case "small":
-		v.SmallCount.Inc()
-		v.SmallSumNS.Add(ns)
-	case "medium":
-		v.MediumCount.Inc()
-		v.MediumSumNS.Add(ns)
-	case "large":
-		v.LargeCount.Inc()
-		v.LargeSumNS.Add(ns)
-	case "huge":
-		v.HugeCount.Inc()
-		v.HugeSumNS.Add(ns)
-	default:
-		v.MediumCount.Inc()
-		v.MediumSumNS.Add(ns)
-	}
-}
-
-func (v *VisualDiffBuckets) Snapshot() (smallN, smallSum, medN, medSum, largeN, largeSum, hugeN, hugeSum uint64) {
-	return v.SmallCount.Value(), v.SmallSumNS.Value(),
-		v.MediumCount.Value(), v.MediumSumNS.Value(),
-		v.LargeCount.Value(), v.LargeSumNS.Value(),
-		v.HugeCount.Value(), v.HugeSumNS.Value()
-}
-
 func (h *HotReloadBuckets) Inc(resource, result string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -250,46 +207,15 @@ type Registry struct {
 	Vault        VaultBuckets
 	ExpertInbox  ExpertInboxGauge
 	HotReload    HotReloadBuckets
-	VisualDiff   VisualDiffBuckets
 	SelfImproving SelfImprovingBuckets
 	PMSop        PMSopBuckets
-	Canvas       CanvasBuckets
 	SubAgent     SubAgentBuckets
-	SessionSync  SessionSync
 	// HandlerPanics counts panics caught by the outer withRecover middleware
 	// (see internal/server/metrics.go). No labels — full context (path,
 	// method, stack) is logged separately to avoid Prometheus cardinality
 	// explosion.
 	HandlerPanics Counter
 	processStart  time.Time
-}
-
-// CanvasBuckets counts canvas comment lifecycle events.
-type CanvasBuckets struct {
-	Created         Counter
-	Edited          Counter
-	Resolved        Counter
-	Deleted         Counter
-	CommentsExpired Counter
-}
-
-func (c *CanvasBuckets) Inc(action string) {
-	switch action {
-	case "created":
-		c.Created.Inc()
-	case "edited":
-		c.Edited.Inc()
-	case "resolved":
-		c.Resolved.Inc()
-	case "deleted":
-		c.Deleted.Inc()
-	case "expired":
-		c.CommentsExpired.Add(1)
-	}
-}
-
-func (c *CanvasBuckets) Snapshot() (created, edited, resolved, deleted, expired uint64) {
-	return c.Created.Value(), c.Edited.Value(), c.Resolved.Value(), c.Deleted.Value(), c.CommentsExpired.Value()
 }
 
 // PMSopBuckets counts PM plan creations and event types applied.
@@ -348,43 +274,6 @@ func (s *SelfImprovingBuckets) Snapshot() (created, merged, rejected uint64) {
 // Global is the default registry. All call sites use it directly so the
 // scrape handler can find values without indirection.
 var Global = &Registry{processStart: time.Now()}
-
-// SessionSync tracks cross-tab clock skew reported by the FE BroadcastChannel
-// layer. The FE calls POST /api/metrics/session-sync-skew with observed skew;
-// the server aggregates into a simple histogram (count + sum + max) and
-// emits `de_session_sync_skew_ms` in the scrape output. Rejected counts
-// skew writes that were refused because DE_SESSION_SYNC_ENABLED=false.
-type SessionSync struct {
-	Count    Counter
-	SumMS    Counter
-	MaxMS    Counter
-	Rejected Counter
-}
-
-func (s *SessionSync) Observe(skewMS int64) {
-	if skewMS < 0 {
-		skewMS = -skewMS
-	}
-	s.Count.Inc()
-	s.SumMS.Add(uint64(skewMS))
-	for {
-		old := s.MaxMS.Value()
-		if uint64(skewMS) <= old {
-			return
-		}
-		if s.MaxMS.CAS(old, uint64(skewMS)) {
-			return
-		}
-	}
-}
-
-// Reject increments the rejected counter for writes refused while
-// DE_SESSION_SYNC_ENABLED=false (or "0").
-func (s *SessionSync) Reject() { s.Rejected.Inc() }
-
-func (s *SessionSync) Snapshot() (count, sumMS, maxMS, rejected uint64) {
-	return s.Count.Value(), s.SumMS.Value(), s.MaxMS.Value(), s.Rejected.Value()
-}
 
 // SubAgentBuckets tracks the multi-agent dispatch primitive: total run
 // wall-clock seconds and per-status run counts. status ∈

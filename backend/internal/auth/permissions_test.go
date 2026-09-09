@@ -7,7 +7,6 @@ import (
 func TestRolePermissionsAdminIncludesAdminOnlyPerms(t *testing.T) {
 	perms := RolePermissions("admin")
 	want := []string{
-		"canvas.comment",
 		"skill.vet.override",
 		"publisher_key.rotate",
 		"vault.read",
@@ -29,7 +28,6 @@ func TestRolePermissionsAdminIncludesAdminOnlyPerms(t *testing.T) {
 func TestRolePermissionsAuditorExcludesAdminOnlyPerms(t *testing.T) {
 	perms := RolePermissions("auditor")
 	forbid := []string{
-		"canvas.comment",
 		"skill.vet.override",
 		"publisher_key.rotate",
 		"vault.read",
@@ -46,7 +44,6 @@ func TestRolePermissionsAuditorExcludesAdminOnlyPerms(t *testing.T) {
 func TestRolePermissionsUserExcludesAdminOnlyPerms(t *testing.T) {
 	perms := RolePermissions("user")
 	forbid := []string{
-		"canvas.comment",
 		"skill.vet.override",
 		"publisher_key.rotate",
 		"vault.read",

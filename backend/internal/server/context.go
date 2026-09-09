@@ -59,7 +59,6 @@ func (s *Server) requireAuth(next http.Handler) http.Handler {
 		if r.URL.Path == "/v1/evaluate" ||
 			r.URL.Path == "/api/auth/login" ||
 			r.URL.Path == "/api/auth/oidc/login" || r.URL.Path == "/api/auth/oidc/callback" ||
-			r.URL.Path == "/api/metrics/session-sync-skew" ||
 			strings.HasPrefix(r.URL.Path, "/api/share/") ||
 			strings.HasPrefix(r.URL.Path, "/api/channel/feishu/events/") ||
 			strings.HasPrefix(r.URL.Path, "/api/channel/wecom/events/") ||

@@ -351,19 +351,6 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 		_, _ = fmt.Fprintf(w, "de_canvas_clients_online{service=%q,workspace=%q} %d\n", svc, ws, n)
 	}
 
-	// W4-D2 · VisualDiff cumulative latency by size bucket
-	vdSmallN, vdSmallSum, vdMedN, vdMedSum, vdLargeN, vdLargeSum, vdHugeN, vdHugeSum := metrics.Global.VisualDiff.Snapshot()
-	_, _ = fmt.Fprintf(w, "# HELP de_visualdiff_seconds_sum VisualDiff cumulative seconds by image size bucket\n# TYPE de_visualdiff_seconds_sum counter\n")
-	_, _ = fmt.Fprintf(w, "de_visualdiff_seconds_sum{service=%q,size=\"small\"} %f\n", svc, float64(vdSmallSum)/1e9)
-	_, _ = fmt.Fprintf(w, "de_visualdiff_seconds_sum{service=%q,size=\"medium\"} %f\n", svc, float64(vdMedSum)/1e9)
-	_, _ = fmt.Fprintf(w, "de_visualdiff_seconds_sum{service=%q,size=\"large\"} %f\n", svc, float64(vdLargeSum)/1e9)
-	_, _ = fmt.Fprintf(w, "de_visualdiff_seconds_sum{service=%q,size=\"huge\"} %f\n", svc, float64(vdHugeSum)/1e9)
-	_, _ = fmt.Fprintf(w, "# HELP de_visualdiff_total VisualDiff call count by image size bucket\n# TYPE de_visualdiff_total counter\n")
-	_, _ = fmt.Fprintf(w, "de_visualdiff_total{service=%q,size=\"small\"} %d\n", svc, vdSmallN)
-	_, _ = fmt.Fprintf(w, "de_visualdiff_total{service=%q,size=\"medium\"} %d\n", svc, vdMedN)
-	_, _ = fmt.Fprintf(w, "de_visualdiff_total{service=%q,size=\"large\"} %d\n", svc, vdLargeN)
-	_, _ = fmt.Fprintf(w, "de_visualdiff_total{service=%q,size=\"huge\"} %d\n", svc, vdHugeN)
-
 	// W5-D1 · SelfImproving SOP verdicts
 	siCreated, siMerged, siRejected := metrics.Global.SelfImproving.Snapshot()
 	_, _ = fmt.Fprintf(w, "# HELP de_selfimproving_sop_total SelfImproving SOP generations by verdict\n# TYPE de_selfimproving_sop_total counter\n")
@@ -380,25 +367,6 @@ func (s *Server) metricsPrometheus(w http.ResponseWriter, r *http.Request) {
 	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"task.block\"} %d\n", svc, psBlock)
 	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"task.unblock\"} %d\n", svc, psUnblock)
 	_, _ = fmt.Fprintf(w, "de_pmsop_plan_total{service=%q,action=\"task.note\"} %d\n", svc, psNote)
-
-	// Cross-tab session sync clock skew (FE BroadcastChannel layer reports).
-	ssCount, ssSumMS, ssMaxMS, ssRejected := metrics.Global.SessionSync.Snapshot()
-	_, _ = fmt.Fprintf(w, "# HELP de_session_sync_skew_ms Cross-tab clock skew (ms) observed by the FE session-sync layer\n# TYPE de_session_sync_skew_ms counter\n")
-	_, _ = fmt.Fprintf(w, "de_session_sync_skew_ms_count{service=%q} %d\n", svc, ssCount)
-	_, _ = fmt.Fprintf(w, "de_session_sync_skew_ms_sum{service=%q} %d\n", svc, ssSumMS)
-	_, _ = fmt.Fprintf(w, "# HELP de_session_sync_skew_ms_max max single observation skew (ms)\n# TYPE de_session_sync_skew_ms_max gauge\n")
-	_, _ = fmt.Fprintf(w, "de_session_sync_skew_ms_max{service=%q} %d\n", svc, ssMaxMS)
-	_, _ = fmt.Fprintf(w, "# HELP de_session_sync_skew_rejected_total skew writes refused because DE_SESSION_SYNC_ENABLED=false\n# TYPE de_session_sync_skew_rejected_total counter\n")
-	_, _ = fmt.Fprintf(w, "de_session_sync_skew_rejected_total{service=%q} %d\n", svc, ssRejected)
-
-	// W6-D2 · Canvas comment lifecycle
-	cvCreated, cvEdited, cvResolved, cvDeleted, cvExpired := metrics.Global.Canvas.Snapshot()
-	_, _ = fmt.Fprintf(w, "# HELP de_canvas_comment_total Canvas comment lifecycle events\n# TYPE de_canvas_comment_total counter\n")
-	_, _ = fmt.Fprintf(w, "de_canvas_comment_total{service=%q,action=\"created\"} %d\n", svc, cvCreated)
-	_, _ = fmt.Fprintf(w, "de_canvas_comment_total{service=%q,action=\"edited\"} %d\n", svc, cvEdited)
-	_, _ = fmt.Fprintf(w, "de_canvas_comment_total{service=%q,action=\"resolved\"} %d\n", svc, cvResolved)
-	_, _ = fmt.Fprintf(w, "de_canvas_comment_total{service=%q,action=\"deleted\"} %d\n", svc, cvDeleted)
-	_, _ = fmt.Fprintf(w, "de_canvas_comment_total{service=%q,action=\"expired\"} %d\n", svc, cvExpired)
 
 	// W2-D3 · SubAgent dispatch primitive.
 	saCount, saSumNS, saSuccess, saRefused, saTimedOut, saFailed := metrics.Global.SubAgent.Snapshot()

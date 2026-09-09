@@ -18,7 +18,6 @@ import (
 	"github.com/digital-employee-platform/backend/internal/deworkflow"
 	"github.com/digital-employee-platform/backend/internal/heartbeat"
 	"github.com/digital-employee-platform/backend/internal/infra"
-	"github.com/digital-employee-platform/backend/internal/canvas"
 	"github.com/digital-employee-platform/backend/internal/multimodal"
 	"github.com/digital-employee-platform/backend/internal/pmsop"
 	memid "github.com/digital-employee-platform/backend/internal/memory/identity"
@@ -109,10 +108,6 @@ type Server struct {
 	Heartbeat *heartbeat.Tracker
 	// HeartbeatCancel stops the sweeper goroutine on shutdown.
 	HeartbeatCancel context.CancelFunc
-	// VisualDiffCancel stops the W4-D2 cache janitor (hourly eviction sweep)
-	// on shutdown. Previously the cancel returned by context.WithCancel was
-	// discarded, which go vet flagged.
-	VisualDiffCancel context.CancelFunc
 	// MemoryTTLCancel stops the memory TTL expiry goroutine started by
 	// StartMemoryMaintenance. nil until StartMemoryMaintenance runs.
 	MemoryTTLCancel context.CancelFunc
@@ -121,10 +116,6 @@ type Server struct {
 	Multimodal *multimodal.Registry
 	// W6-D1 · PM SOP engine + bundled templates. nil until initPMsop.
 	PMSop *pmsop.Engine
-	// W6-D2 · Canvas collaboration. nil until initCanvas.
-	Canvas *canvas.Store
-	// CanvasBroadcaster fans board events to per-board subscribers.
-	CanvasBroadcaster *canvas.Broadcaster
 	// W7-D1 · SQLite durability hooks. nil when DE_STORE_BACKEND != "sqlite".
 	SQLite *store.SQLiteHooks
 	// W2-D3 · SubAgent dispatch engine. Built in New(); concurrency cap
@@ -198,16 +189,10 @@ func New(st *store.Store) *Server {
 	}
 	s.bootstrapSkillSigning()
 	s.bootstrapVaultSkillSigning()
-	// W4-D2 · VisualDiff cache janitor (hourly eviction sweep).
-	var vdCtx context.Context
-	vdCtx, s.VisualDiffCancel = context.WithCancel(context.Background())
-	go s.visualdiffJanitor(vdCtx)
 	// W5-D2 · Multimodal registry (OCR / ASR stubs gated by env flags).
 	s.initMultimodal()
 	// W6-D1 · PM SOP templates + plan state machine.
 	s.initPMsop()
-	// W6-D2 · Canvas collaboration store + broadcaster.
-	s.initCanvas()
 	// W7-D1 · SQLite durability layer (gated on DE_STORE_BACKEND=sqlite).
 	s.initSQLiteDurability()
 	// W2-D3 · SubAgent dispatch engine.
@@ -259,7 +244,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		fn    context.CancelFunc
 	}{
 		{"heartbeat", s.HeartbeatCancel},
-		{"visualdiff", s.VisualDiffCancel},
 		{"memoryTTL", s.MemoryTTLCancel},
 	} {
 		if c.fn != nil {
@@ -554,8 +538,6 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		data, err = s.revokeWorkspacePublisherKey(r)
 	case path == "/api/vault/keys" && method == http.MethodGet:
 		data, err = s.listVaultKeys(r)
-	case path == "/api/metrics/session-sync-skew" && method == http.MethodPost:
-		data, err = s.recordSessionSyncSkew(r)
 	case path == "/api/workspace-switch-history" && method == http.MethodGet:
 		data, err = s.switchHistory(r)
 	case strings.HasPrefix(path, "/api/workspaces/") && method == http.MethodGet:
@@ -907,13 +889,6 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	case path == "/api/online/stream" && method == http.MethodGet:
 		s.onlineStream(w, r)
 		return
-	// W4-D2 · VisualDiff
-	case path == "/api/visualdiff" && method == http.MethodPost:
-		s.visualdiffHandler(w, r)
-		return
-	case strings.HasPrefix(path, "/api/visualdiff/") && method == http.MethodGet:
-		s.visualdiffFetchHandler(w, r)
-		return
 	// W5-D2 · Multimodal extraction
 	case path == "/api/multimodal/extract" && method == http.MethodPost:
 		s.multimodalExtractHandler(w, r)
@@ -937,40 +912,6 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 		return
 	case strings.HasSuffix(path, "/events") && strings.HasPrefix(path, "/api/pmsop/plans/") && method == http.MethodPost:
 		s.pmsopPlanEventHandler(w, r)
-		return
-	// W6-D2 · Canvas collaboration
-	case path == "/api/canvas/boards" && method == http.MethodPost:
-		s.canvasCreateBoardHandler(w, r)
-		return
-	case path == "/api/canvas/boards" && method == http.MethodGet:
-		s.canvasListBoardsHandler(w, r)
-		return
-	case strings.HasSuffix(path, "/stream") && strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodGet:
-		s.canvasStreamHandler(w, r)
-		return
-	case strings.HasSuffix(path, "/presence") && strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodPost:
-		s.canvasTouchPresenceHandler(w, r)
-		return
-	case strings.HasSuffix(path, "/comments") && strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodPost:
-		s.canvasCreateCommentHandler(w, r)
-		return
-	case strings.HasSuffix(path, "/workflow") && strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodGet:
-		s.canvasGetWorkflowHandler(w, r)
-		return
-	case strings.HasSuffix(path, "/workflow") && strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodPut:
-		s.canvasPutWorkflowHandler(w, r)
-		return
-	case strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodGet:
-		s.canvasBoardDetailHandler(w, r)
-		return
-	case strings.HasPrefix(path, "/api/canvas/boards/") && method == http.MethodDelete:
-		s.canvasDeleteBoardHandler(w, r)
-		return
-	case strings.HasPrefix(path, "/api/canvas/comments/") && method == http.MethodPatch:
-		s.canvasEditCommentHandler(w, r)
-		return
-	case strings.HasPrefix(path, "/api/canvas/comments/") && method == http.MethodDelete:
-		s.canvasDeleteCommentHandler(w, r)
 		return
 	case path == "/api/skill-integrations" && method == http.MethodGet:
 		data, err = s.listSkillIntegrations(r)

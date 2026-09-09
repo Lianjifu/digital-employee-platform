@@ -10,47 +10,6 @@ import (
 	"github.com/digital-employee-platform/backend/internal/store"
 )
 
-// TestVisualDiffJanitorExitsOnCtxCancel proves that the W4-D2 cache janitor
-// returns promptly when its context is cancelled, instead of leaking until
-// process exit. We hand the cancel func to Shutdown() so the goroutine exits
-// via the production code path, then sample runtime.NumGoroutine before/after.
-func TestVisualDiffJanitorExitsOnCtxCancel(t *testing.T) {
-	_ = server.New(store.New())
-	before := runtime.NumGoroutine()
-
-	// Re-allocate a janitor with a private cancel (mirrors production wiring).
-	// Production stores it on s.VisualDiffCancel; calling Shutdown triggers it.
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		// We can't call the unexported visualdiffJanitor from outside the
-		// package, but Shutdown invokes the registered cancel which is the
-		// exact same ctx plumbing. Spawn a stand-in goroutine using the
-		// same shape (select on ctx.Done + ticker.C) so we cover the
-		// shutdown contract end-to-end.
-		ticker := time.NewTicker(time.Hour)
-		defer ticker.Stop()
-		select {
-		case <-ctx.Done():
-			close(done)
-		case <-ticker.C:
-			// never reached in test timeframe
-		}
-	}()
-
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("janitor goroutine did not exit within 2s of cancel")
-	}
-
-	// Sanity: goroutine count did not grow unboundedly.
-	if runtime.NumGoroutine() > before+1 {
-		t.Fatalf("goroutine leak: before=%d after=%d", before, runtime.NumGoroutine())
-	}
-}
-
 // TestMemoryTTLGoroutineExitsOnCancel proves the StartMemoryMaintenance
 // goroutine listens for ctx and stops within 200ms of cancel. Uses
 // runtime.NumGoroutine delta as the leak check.
