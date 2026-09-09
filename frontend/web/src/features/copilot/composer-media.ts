@@ -1,4 +1,4 @@
-export const MAX_MEDIA_BYTES = 8 * 1024 * 1024; // 8 MB cap, matches visualdiff
+export const MAX_MEDIA_BYTES = 8 * 1024 * 1024; // 8 MB cap on copilot composer attachments
 
 export type MediaMimeType =
   | 'audio/webm'
