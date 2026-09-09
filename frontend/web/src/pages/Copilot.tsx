@@ -3705,7 +3705,7 @@ function MessageBubble({
   copiedId: string | null;
   agentName?: string;
   expertRole?: string;
-  expert?: Pick<DigitalEmployee, 'id' | 'name' | 'department' | 'avatarUrl'> | { id: string; name: string; department?: string; avatarUrl?: string };
+  expert?: Pick<DigitalEmployee, 'id' | 'name' | 'department' | 'avatarUrl' | 'capabilities'> | { id: string; name: string; department?: string; avatarUrl?: string; capabilities?: DigitalEmployee['capabilities'] };
   onOpenContext: (tab: WorkbenchContextTab, messageId?: string, artifact?: SkillArtifactLink, options?: { startSlide?: number }) => void;
   selectedContextMessageId?: string;
   messageRef?: (element: HTMLDivElement | null) => void;
@@ -4066,7 +4066,7 @@ function MessageBubble({
                     {m.approvalRequest.skillTurn.steps.map((step, i) => (
                       <li key={step.id ?? i}>
                         {step.title ?? step.action ?? `步骤 ${i + 1}`}
-                        {m.approvalRequest.decision !== 'pending' && step.status ? ` · ${step.status}` : ''}
+                        {m.approvalRequest!.decision !== 'pending' && step.status ? ` · ${step.status}` : ''}
                       </li>
                     ))}
                   </ol>
