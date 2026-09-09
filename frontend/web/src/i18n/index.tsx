@@ -354,7 +354,7 @@ export const DICTS: Record<Locale, Dict> = { 'zh-CN': zh, 'en-US': en };
 
 interface I18nCtx {
   locale: Locale;
-  t: (key: string) => string;
+  t: (key: string, fallback?: string) => string;
   setLocale: (l: Locale) => void;
 }
 
@@ -374,8 +374,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     try { localStorage.setItem('de-locale', locale); } catch {}
   }, [locale]);
 
-  const t = (key: string): string => {
-    return DICTS[locale][key] ?? key;
+  const t = (key: string, fallback?: string): string => {
+    return DICTS[locale][key] ?? fallback ?? key;
   };
 
   return <Ctx.Provider value={{ locale, t, setLocale }}>{children}</Ctx.Provider>;

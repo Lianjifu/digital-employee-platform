@@ -30,9 +30,16 @@ async function send<T>(
 ): Promise<CanvasEnvelope<T>> {
   const fetchImpl = opts.fetchImpl ?? (typeof fetch !== 'undefined' ? fetch : (() => undefined) as unknown as typeof fetch);
   const base = opts.baseUrl ?? '';
+  const token = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
+  const initHeaders = (init.headers ?? {}) as Record<string, string>;
+  const headers: Record<string, string> = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...initHeaders,
+  };
   const res = await fetchImpl(base + path, {
     credentials: 'same-origin',
     ...init,
+    headers,
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -180,10 +187,14 @@ export function openBoardStream(
   const fetchImpl =
     opts.fetchImpl ?? (typeof fetch !== 'undefined' ? fetch : (() => undefined) as unknown as typeof fetch);
   const controller = new AbortController();
+  const streamToken = typeof localStorage !== 'undefined' ? localStorage.getItem('token') : null;
   fetchImpl(url, {
     method: 'GET',
     credentials: 'same-origin',
-    headers: { Accept: 'text/event-stream' },
+    headers: {
+      Accept: 'text/event-stream',
+      ...(streamToken ? { Authorization: `Bearer ${streamToken}` } : {}),
+    },
     signal: controller.signal,
   })
     .then(async (res) => {

@@ -392,6 +392,11 @@ export default function Copilot() {
   const [viewportW, setViewportW] = useState(() =>
     typeof window === 'undefined' ? 1440 : window.innerWidth,
   );
+  const [detailsPaneW, setDetailsPaneW] = useState(() => {
+    if (typeof window === 'undefined') return 360;
+    const saved = Number(window.localStorage.getItem('copilot-details-w'));
+    return Number.isFinite(saved) && saved >= 280 && saved <= 520 ? saved : 360;
+  });
   useEffect(() => {
     if (typeof window === 'undefined') return;
     const onResize = () => setViewportW(window.innerWidth);
@@ -401,17 +406,12 @@ export default function Copilot() {
   const detailsPinned = contextSelection.pinned;
   const columnMode: ColumnMode = effectiveColumnMode(
     { width: viewportW, height: typeof window === 'undefined' ? 900 : window.innerHeight },
-    { sessions: sessionsOpen, main: true, details: detailsOpen },
+    { sessions: sessionsOpen, main: true, details: contextSelection.open },
     detailsPinned,
   );
   const gridTemplate = gridTemplateForMode(columnMode, undefined, {
     sessions: sessionsPaneW,
     details: detailsPaneW,
-  });
-  const [detailsPaneW, setDetailsPaneW] = useState(() => {
-    if (typeof window === 'undefined') return 360;
-    const saved = Number(window.localStorage.getItem('copilot-details-w'));
-    return Number.isFinite(saved) && saved >= 280 && saved <= 520 ? saved : 360;
   });
   const [draggingSplit, setDraggingSplit] = useState<'sessions' | 'details' | null>(null);
 

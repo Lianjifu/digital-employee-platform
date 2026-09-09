@@ -1,9 +1,9 @@
 export {
   useSessionSync,
-  clampNowSkewMs,
   type SessionSyncHandle,
   type UseSessionSyncOptions,
 } from './useSessionSync';
+export { clampNowSkewMs } from './session-sync-types';
 export {
   SessionSyncIndicator,
   type SessionSyncIndicatorProps,
