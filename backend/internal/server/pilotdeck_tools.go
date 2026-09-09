@@ -252,6 +252,17 @@ func (s *Server) runtimeSendAttachment(ctx toolRunContext, call toolCallRequest,
 	if path == "" {
 		return toolExecResult{Status: "failed", Error: "缺少 path/url", DurationMs: int(time.Since(started).Milliseconds())}
 	}
+	// .pptx 必须经过内容审计：禁止 SKILL.md 指令文案 / 通用占位 boilerplate
+	// 作为 slide 内容泄漏。命中则阻断附件链接，要求 LLM 重生成。
+	if strings.EqualFold(filepath.Ext(path), ".pptx") {
+		if _, err := os.Stat(path); err == nil {
+			if reason, verr := pptxLeakageReason(path); verr != nil {
+				return toolExecResult{Status: "failed", Error: "pptx 校验失败：" + verr.Error(), DurationMs: int(time.Since(started).Milliseconds())}
+			} else if reason != "" {
+				return toolExecResult{Status: "failed", Error: "pptx 内容疑似模板指令/占位泄漏：" + reason + "。请按 SKILL.md 要求重生成（禁止把 SKILL 指令或通用 boilerplate 写入 slide）", DurationMs: int(time.Since(started).Milliseconds())}
+			}
+		}
+	}
 	link := path
 	if !strings.HasPrefix(link, "http") && !strings.HasPrefix(link, "/") {
 		link = "/api/skill-artifacts/" + filepath.Base(path)
