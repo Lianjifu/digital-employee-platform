@@ -1329,13 +1329,25 @@ const executionModeOptions: Array<[DigitalEmployeeExecutionMode, string]> = [['r
 const environmentOptions = [['sandbox', '沙箱'], ['staging', '预发'], ['production', '生产']] as const;
 
 function resolveBoundaryPolicy(employee: DigitalEmployee): DigitalEmployeeBoundaryPolicy {
-  if (employee.boundaryPolicy) return {
-    ...employee.boundaryPolicy,
-    responsibilities: employee.boundaryPolicy.responsibilities.map((item) => ({ ...item, deliverables: [...item.deliverables] })),
-    capabilityModes: employee.boundaryPolicy.capabilityModes.map((item) => ({ ...item })),
-    allowedEnvironments: [...employee.boundaryPolicy.allowedEnvironments],
-    handoff: { ...employee.boundaryPolicy.handoff, triggers: [...employee.boundaryPolicy.handoff.triggers], approvers: [...employee.boundaryPolicy.handoff.approvers], notificationChannels: [...employee.boundaryPolicy.handoff.notificationChannels] },
-  };
+  const stored = employee.boundaryPolicy;
+  const storedIsComplete =
+    !!stored &&
+    Array.isArray(stored.responsibilities) &&
+    Array.isArray(stored.capabilityModes) &&
+    Array.isArray(stored.allowedEnvironments) &&
+    !!stored.handoff &&
+    Array.isArray(stored.handoff.triggers) &&
+    Array.isArray(stored.handoff.approvers) &&
+    Array.isArray(stored.handoff.notificationChannels);
+  if (storedIsComplete) {
+    return {
+      ...stored,
+      responsibilities: stored.responsibilities.map((item) => ({ ...item, deliverables: [...(item.deliverables ?? [])] })),
+      capabilityModes: stored.capabilityModes.map((item) => ({ ...item })),
+      allowedEnvironments: [...stored.allowedEnvironments],
+      handoff: { ...stored.handoff, triggers: [...stored.handoff.triggers], approvers: [...stored.handoff.approvers], notificationChannels: [...stored.handoff.notificationChannels] },
+    };
+  }
   return {
     responsibilities: employee.responsibilities.map((title, index) => ({ id: `${employee.id}-responsibility-${index}`, title, objective: '在岗位授权范围内形成可复核的业务结果。', trigger: '收到工作请求或命中服务事件', deliverables: ['处理结论与处置证据'], evidenceRequired: true })),
     capabilityModes: [
